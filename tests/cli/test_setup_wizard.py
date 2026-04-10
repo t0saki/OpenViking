@@ -11,11 +11,13 @@ from openviking_cli.setup_wizard import (
     VLM_PRESETS,
     _build_cloud_config,
     _build_ollama_config,
-    _check_ollama_running,
-    _get_ollama_models,
     _get_recommended_indices,
-    _is_model_available,
     _write_config,
+)
+from openviking_cli.utils.ollama import (
+    check_ollama_running,
+    get_ollama_models,
+    is_model_available,
 )
 
 # ---------------------------------------------------------------------------
@@ -29,17 +31,17 @@ class TestOllamaDetection:
         mock_resp.__enter__ = MagicMock(return_value=mock_resp)
         mock_resp.__exit__ = MagicMock(return_value=False)
 
-        with patch("openviking_cli.setup_wizard.urllib.request.urlopen", return_value=mock_resp):
-            assert _check_ollama_running() is True
+        with patch("openviking_cli.utils.ollama.urllib.request.urlopen", return_value=mock_resp):
+            assert check_ollama_running() is True
 
     def test_ollama_not_running(self):
         import urllib.error
 
         with patch(
-            "openviking_cli.setup_wizard.urllib.request.urlopen",
+            "openviking_cli.utils.ollama.urllib.request.urlopen",
             side_effect=urllib.error.URLError("refused"),
         ):
-            assert _check_ollama_running() is False
+            assert check_ollama_running() is False
 
     def test_get_models(self):
         mock_data = json.dumps({
@@ -54,8 +56,8 @@ class TestOllamaDetection:
         mock_resp.__enter__ = MagicMock(return_value=mock_resp)
         mock_resp.__exit__ = MagicMock(return_value=False)
 
-        with patch("openviking_cli.setup_wizard.urllib.request.urlopen", return_value=mock_resp):
-            models = _get_ollama_models()
+        with patch("openviking_cli.utils.ollama.urllib.request.urlopen", return_value=mock_resp):
+            models = get_ollama_models()
             assert "qwen3-embedding:0.6b" in models
             assert "gemma4:e4b" in models
 
@@ -63,10 +65,10 @@ class TestOllamaDetection:
         import urllib.error
 
         with patch(
-            "openviking_cli.setup_wizard.urllib.request.urlopen",
+            "openviking_cli.utils.ollama.urllib.request.urlopen",
             side_effect=urllib.error.URLError("refused"),
         ):
-            assert _get_ollama_models() == []
+            assert get_ollama_models() == []
 
 
 # ---------------------------------------------------------------------------
@@ -77,19 +79,19 @@ class TestOllamaDetection:
 class TestModelAvailability:
     def test_exact_match(self):
         available = ["qwen3-embedding:0.6b", "gemma4:e4b"]
-        assert _is_model_available("qwen3-embedding:0.6b", available) is True
+        assert is_model_available("qwen3-embedding:0.6b", available) is True
 
     def test_no_match(self):
         available = ["qwen3-embedding:0.6b"]
-        assert _is_model_available("nomic-embed-text", available) is False
+        assert is_model_available("nomic-embed-text", available) is False
 
     def test_tagless_matches_latest(self):
         available = ["gemma:300m"]
-        assert _is_model_available("gemma", available) is True
+        assert is_model_available("gemma", available) is True
 
     def test_prefix_variant(self):
         available = ["qwen3-embedding:0.6b-fp16"]
-        assert _is_model_available("qwen3-embedding:0.6b", available) is True
+        assert is_model_available("qwen3-embedding:0.6b", available) is True
 
 
 # ---------------------------------------------------------------------------

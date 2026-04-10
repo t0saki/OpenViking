@@ -207,6 +207,43 @@ def check_vlm() -> tuple[bool, str, Optional[str]]:
     return True, f"{provider}/{model}", None
 
 
+def check_ollama() -> tuple[bool, str, Optional[str]]:
+    """Check Ollama connectivity if the config uses an Ollama provider."""
+    config_path = _find_config()
+    if config_path is None:
+        return True, "not configured", None
+
+    data = _load_config_json(config_path)
+    if data is None:
+        return True, "not configured", None
+
+    # Detect whether config uses Ollama
+    dense = data.get("embedding", {}).get("dense", {})
+    vlm = data.get("vlm", {})
+    uses_embedding = dense.get("provider") == "ollama"
+    uses_vlm = vlm.get("provider") == "litellm" and (vlm.get("model", "")).startswith("ollama/")
+
+    if not uses_embedding and not uses_vlm:
+        return True, "not configured", None
+
+    from openviking_cli.utils.ollama import check_ollama_running, parse_ollama_url
+
+    # Determine host/port from config
+    if uses_embedding:
+        host, port = parse_ollama_url(dense.get("api_base"))
+    else:
+        host, port = parse_ollama_url(vlm.get("api_base"))
+
+    if check_ollama_running(host, port):
+        return True, f"running at {host}:{port}", None
+
+    return (
+        False,
+        f"unreachable at {host}:{port}",
+        "Run 'ollama serve' or check your Ollama configuration",
+    )
+
+
 def check_disk() -> tuple[bool, str, Optional[str]]:
     """Check free disk space in the workspace directory."""
     config_path = _find_config()
@@ -245,6 +282,7 @@ _CHECKS = [
     ("AGFS", check_agfs),
     ("Embedding", check_embedding),
     ("VLM", check_vlm),
+    ("Ollama", check_ollama),
     ("Disk", check_disk),
 ]
 

@@ -8,18 +8,22 @@ from __future__ import annotations
 
 import json
 import os
-import platform
-import shutil
 import subprocess
 import sys
-import time
-import urllib.error
-import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from openviking_cli.utils.config.consts import DEFAULT_CONFIG_DIR
+from openviking_cli.utils.ollama import (
+    check_ollama_running,
+    get_ollama_models,
+    install_ollama,
+    is_model_available,
+    is_ollama_installed,
+    ollama_pull_model,
+    start_ollama,
+)
 
 # ---------------------------------------------------------------------------
 # ANSI helpers (same pattern as doctor.py)
@@ -146,140 +150,27 @@ def _get_system_ram_gb() -> int:
 
 
 # ---------------------------------------------------------------------------
-# Ollama interaction
+# Ollama interaction (delegates to openviking_cli.utils.ollama)
 # ---------------------------------------------------------------------------
-
-_OLLAMA_DEFAULT_HOST = "localhost"
-_OLLAMA_DEFAULT_PORT = 11434
-
-
-def _check_ollama_running(
-    host: str = _OLLAMA_DEFAULT_HOST, port: int = _OLLAMA_DEFAULT_PORT
-) -> bool:
-    """Check if Ollama is running by hitting the /api/tags endpoint."""
-    try:
-        url = f"http://{host}:{port}/api/tags"
-        req = urllib.request.Request(url, method="GET")
-        with urllib.request.urlopen(req, timeout=3):
-            return True
-    except (urllib.error.URLError, OSError, TimeoutError):
-        return False
-
-
-def _get_ollama_models(
-    host: str = _OLLAMA_DEFAULT_HOST, port: int = _OLLAMA_DEFAULT_PORT
-) -> list[str]:
-    """Fetch names of locally available Ollama models."""
-    try:
-        url = f"http://{host}:{port}/api/tags"
-        req = urllib.request.Request(url, method="GET")
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            data = json.loads(resp.read().decode())
-            return [m["name"] for m in data.get("models", [])]
-    except (urllib.error.URLError, OSError, TimeoutError, json.JSONDecodeError, KeyError):
-        return []
-
-
-def _is_model_available(model_name: str, available: list[str]) -> bool:
-    """Check if a model is available locally (prefix match for tag variants)."""
-    for m in available:
-        # "qwen3-embedding:0.6b" matches "qwen3-embedding:0.6b"
-        # "qwen3-embedding:8b" matches "qwen3-embedding:8b-fp16" etc.
-        if m == model_name or m.startswith(model_name + "-"):
-            return True
-        # model_name without tag matches model with ":latest"
-        if ":" not in model_name and m.split(":")[0] == model_name:
-            return True
-    return False
-
-
-def _ollama_pull_model(model_name: str) -> bool:
-    """Pull an Ollama model via CLI subprocess (shows native progress bar)."""
-    try:
-        result = subprocess.run(["ollama", "pull", model_name], check=False)
-        return result.returncode == 0
-    except FileNotFoundError:
-        print(f"  {_red('ollama command not found. Is Ollama installed?')}")
-        return False
-
-
-def _is_ollama_installed() -> bool:
-    """Check if the ollama CLI binary is on PATH."""
-    return shutil.which("ollama") is not None
-
-
-def _install_ollama() -> bool:
-    """Install Ollama automatically based on the current platform."""
-    system = platform.system()
-
-    if system == "Darwin":
-        # macOS: prefer brew, fallback to official script
-        if shutil.which("brew"):
-            print(f"  {_dim('Installing via Homebrew...')}")
-            result = subprocess.run(["brew", "install", "ollama"], check=False)
-            if result.returncode == 0:
-                return True
-        # Fallback: official install script
-        print(f"  {_dim('Installing via official script...')}")
-        result = subprocess.run(
-            ["bash", "-c", "curl -fsSL https://ollama.com/install.sh | sh"],
-            check=False,
-        )
-        return result.returncode == 0
-
-    elif system == "Linux":
-        print(f"  {_dim('Installing via official script...')}")
-        result = subprocess.run(
-            ["bash", "-c", "curl -fsSL https://ollama.com/install.sh | sh"],
-            check=False,
-        )
-        return result.returncode == 0
-
-    else:
-        # Windows or other: can't auto-install
-        print(f"  {_yellow('Automatic installation is not supported on ' + system)}")
-        print(f"  Please download from: {_cyan('https://ollama.com/download')}")
-        return False
-
-
-def _start_ollama() -> bool:
-    """Start Ollama in the background and wait for it to be ready."""
-    # Already running?
-    if _check_ollama_running():
-        return True
-
-    print(f"  {_dim('Starting Ollama...')}", end=" ", flush=True)
-    try:
-        subprocess.Popen(
-            ["ollama", "serve"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-    except FileNotFoundError:
-        print(_red("failed"))
-        return False
-
-    # Wait up to 15 seconds for Ollama to become ready
-    for _ in range(30):
-        time.sleep(0.5)
-        if _check_ollama_running():
-            print(_green("ready"))
-            return True
-
-    print(_yellow("timeout (Ollama may still be starting)"))
-    return False
 
 
 def _ensure_ollama() -> bool:
-    """Make sure Ollama is installed and running. Returns True if ready."""
+    """Make sure Ollama is installed and running (interactive). Returns True if ready."""
     print("\n  Checking Ollama...", end=" ", flush=True)
 
-    if _is_ollama_installed():
-        if _check_ollama_running():
+    if is_ollama_installed():
+        if check_ollama_running():
             print(_green("running at localhost:11434"))
             return True
         print(_yellow("installed but not running"))
-        return _start_ollama()
+        print(f"  {_dim('Starting Ollama...')}", end=" ", flush=True)
+        result = start_ollama()
+        if result.success:
+            print(_green("ready"))
+        else:
+            msg = result.stderr_output or result.message
+            print(_yellow(f"failed ({msg})"))
+        return result.success
 
     # Not installed
     print(_yellow("not installed"))
@@ -288,13 +179,20 @@ def _ensure_ollama() -> bool:
         return False
 
     print()
-    if not _install_ollama():
+    if not install_ollama():
         print(f"  {_red('Installation failed.')}")
         print(f"  {_dim('Try manually: https://ollama.com/download')}")
         return False
 
     print(f"  {_green('OK')} Ollama installed")
-    return _start_ollama()
+    print(f"  {_dim('Starting Ollama...')}", end=" ", flush=True)
+    result = start_ollama()
+    if result.success:
+        print(_green("ready"))
+    else:
+        msg = result.stderr_output or result.message
+        print(_yellow(f"failed ({msg})"))
+    return result.success
 
 
 # ---------------------------------------------------------------------------
@@ -495,7 +393,7 @@ def _wizard_ollama() -> dict[str, Any] | None:
         ):
             return None
 
-    available_models = _get_ollama_models() if ollama_running else []
+    available_models = get_ollama_models() if ollama_running else []
 
     # System RAM
     ram_gb = _get_system_ram_gb()
@@ -508,7 +406,7 @@ def _wizard_ollama() -> dict[str, Any] | None:
     for i, p in enumerate(EMBEDDING_PRESETS):
         rec = " *" if i == rec_embed_idx else ""
         avail = ""
-        if ollama_running and _is_model_available(p.model, available_models):
+        if ollama_running and is_model_available(p.model, available_models):
             avail = _green(" [downloaded]")
         embed_options.append((
             f"{p.label}",
@@ -519,10 +417,10 @@ def _wizard_ollama() -> dict[str, Any] | None:
     embedding = EMBEDDING_PRESETS[embed_choice - 1]
 
     # Pull embedding model
-    if ollama_running and not _is_model_available(embedding.model, available_models):
+    if ollama_running and not is_model_available(embedding.model, available_models):
         if _prompt_confirm(f"'{embedding.model}' not found locally. Pull now?"):
             print()
-            if not _ollama_pull_model(embedding.model):
+            if not ollama_pull_model(embedding.model):
                 print(f"  {_yellow('Pull failed. You can pull it later: ollama pull ' + embedding.model)}")
             else:
                 print(f"  {_green('OK')} {embedding.model} pulled successfully")
@@ -532,7 +430,7 @@ def _wizard_ollama() -> dict[str, Any] | None:
     for i, p in enumerate(VLM_PRESETS):
         rec = " *" if i == rec_vlm_idx else ""
         avail = ""
-        if ollama_running and _is_model_available(p.ollama_model, available_models):
+        if ollama_running and is_model_available(p.ollama_model, available_models):
             avail = _green(" [downloaded]")
         vlm_options.append((
             f"{p.label}",
@@ -543,10 +441,10 @@ def _wizard_ollama() -> dict[str, Any] | None:
     vlm = VLM_PRESETS[vlm_choice - 1]
 
     # Pull VLM model
-    if ollama_running and not _is_model_available(vlm.ollama_model, available_models):
+    if ollama_running and not is_model_available(vlm.ollama_model, available_models):
         if _prompt_confirm(f"'{vlm.ollama_model}' not found locally. Pull now?"):
             print()
-            if not _ollama_pull_model(vlm.ollama_model):
+            if not ollama_pull_model(vlm.ollama_model):
                 print(f"  {_yellow('Pull failed. You can pull it later: ollama pull ' + vlm.ollama_model)}")
             else:
                 print(f"  {_green('OK')} {vlm.ollama_model} pulled successfully")
