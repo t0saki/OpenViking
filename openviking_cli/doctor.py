@@ -160,6 +160,10 @@ def check_embedding() -> tuple[bool, str, Optional[str]]:
     if provider == "unknown":
         return False, "No embedding provider configured", "Add embedding.dense section to ov.conf"
 
+    # Ollama doesn't need an API key
+    if provider == "ollama":
+        return True, f"{provider}/{model}", None
+
     api_key = dense.get("api_key", "")
     if not api_key or api_key.startswith("{"):
         return (
@@ -187,6 +191,10 @@ def check_vlm() -> tuple[bool, str, Optional[str]]:
 
     if not provider:
         return False, "No VLM provider configured", "Add vlm section to ov.conf"
+
+    # Ollama via LiteLLM doesn't need a real API key
+    if provider == "litellm" and model.startswith("ollama/"):
+        return True, f"{provider}/{model}", None
 
     api_key = vlm.get("api_key", "")
     if not api_key or api_key.startswith("{"):

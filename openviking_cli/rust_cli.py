@@ -54,6 +54,11 @@ def main():
         from openviking_cli.doctor import main as doctor_main
 
         sys.exit(doctor_main())
+
+    if len(sys.argv) > 1 and sys.argv[1] == "init":
+        from openviking_cli.setup_wizard import main as init_main
+
+        sys.exit(init_main())
     # 1. 检查开发环境（仅在直接运行脚本时有效）
     try:
         # __file__ is openviking_cli/rust_cli.py, so parent is openviking_cli directory
