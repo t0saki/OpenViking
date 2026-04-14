@@ -44,12 +44,14 @@ class TestOllamaDetection:
             assert check_ollama_running() is False
 
     def test_get_models(self):
-        mock_data = json.dumps({
-            "models": [
-                {"name": "qwen3-embedding:0.6b", "size": 639000000},
-                {"name": "gemma4:e4b", "size": 9600000000},
-            ]
-        }).encode()
+        mock_data = json.dumps(
+            {
+                "models": [
+                    {"name": "qwen3-embedding:0.6b", "size": 639000000},
+                    {"name": "gemma4:e4b", "size": 9600000000},
+                ]
+            }
+        ).encode()
 
         mock_resp = MagicMock()
         mock_resp.read.return_value = mock_data
