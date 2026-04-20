@@ -208,69 +208,24 @@ openviking-server
 
 **From local source (for development):**
 
-Manually register the hooks and MCP server by adding the following to your Claude Code config.
-Replace `PLUGIN_DIR` with the absolute path to `examples/claude-code-memory-plugin`.
+The repo includes a local marketplace manifest at `examples/.claude-plugin/marketplace.json`.
+Install with two commands:
 
-Add hooks to `~/.claude/settings.json` (merge into existing `hooks` if present):
+```bash
+# Run from the OpenViking repo root:
 
-```json
-{
-  "hooks": {
-    "SessionStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node PLUGIN_DIR/scripts/bootstrap-runtime.mjs",
-            "timeout": 120
-          }
-        ]
-      }
-    ],
-    "UserPromptSubmit": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node PLUGIN_DIR/scripts/auto-recall.mjs",
-            "timeout": 8
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node PLUGIN_DIR/scripts/auto-capture.mjs",
-            "timeout": 45
-          }
-        ]
-      }
-    ]
-  }
-}
+# Add the examples directory as a local marketplace (one-time)
+claude plugin marketplace add "$(pwd)/examples" --scope local
+
+# Install the plugin
+claude plugin install claude-code-memory-plugin@openviking-plugins-local --scope local
 ```
 
-Add the MCP server to `~/.claude/.mcp.json` (or project-level `.mcp.json`):
-
-```json
-{
-  "openviking-memory": {
-    "command": "node",
-    "args": ["PLUGIN_DIR/scripts/start-memory-server.mjs"]
-  }
-}
-```
-
-Install dependencies and build the MCP server:
+When you modify `src/memory-server.ts`, rebuild the compiled JS:
 
 ```bash
 cd examples/claude-code-memory-plugin
-npm install
+npm install   # first time only
 npm run build # recompile TypeScript → servers/memory-server.js
 ```
 
