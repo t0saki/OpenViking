@@ -205,18 +205,68 @@ openviking-server
 
 **从本地源码安装（开发用）：**
 
-将插件目录软链接到 Claude Code 的插件目录：
+手动注册 hooks 和 MCP server。将下面的 `PLUGIN_DIR` 替换为 `examples/claude-code-memory-plugin` 的绝对路径。
 
-```bash
-ln -s /path/to/OpenViking/examples/claude-code-memory-plugin \
-  ~/.claude/plugins/installed/claude-code-memory-plugin
+在 `~/.claude/settings.json` 中添加 hooks（如已有 `hooks` 字段则合并）：
+
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node PLUGIN_DIR/scripts/bootstrap-runtime.mjs",
+            "timeout": 120
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node PLUGIN_DIR/scripts/auto-recall.mjs",
+            "timeout": 8
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node PLUGIN_DIR/scripts/auto-capture.mjs",
+            "timeout": 45
+          }
+        ]
+      }
+    ]
+  }
+}
 ```
 
-修改 `src/memory-server.ts` 后需要重新编译：
+在 `~/.claude/.mcp.json`（或项目级 `.mcp.json`）中添加 MCP server：
+
+```json
+{
+  "openviking-memory": {
+    "command": "node",
+    "args": ["PLUGIN_DIR/scripts/start-memory-server.mjs"]
+  }
+}
+```
+
+安装依赖并编译 MCP server：
 
 ```bash
 cd examples/claude-code-memory-plugin
-npm install   # 仅首次需要
+npm install
 npm run build # 编译 TypeScript → servers/memory-server.js
 ```
 
