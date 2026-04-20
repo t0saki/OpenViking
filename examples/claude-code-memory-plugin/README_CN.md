@@ -229,6 +229,8 @@ npm install   # 仅首次需要
 npm run build # 编译 TypeScript → servers/memory-server.js
 ```
 
+> **注意：** 本地安装模式下 Claude Code 直接引用源目录 — 对 scripts、hooks、config 的修改下次触发时立即生效（无需重装），便于迭代。但反过来说，移动、重命名或删除源目录会导致插件失效；`git checkout` 到不包含这些文件的分支也会有同样效果。修改 `src/memory-server.ts` 后需要 `npm run build` 重新编译，因为 hook 运行的是编译后的 JS，不是 TypeScript 源码。
+
 ### 5. 启动新的 Claude 会话
 
 ```bash

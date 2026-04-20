@@ -232,6 +232,8 @@ npm install   # first time only
 npm run build # recompile TypeScript → servers/memory-server.js
 ```
 
+> **Note:** Local install points Claude Code directly at the source directory — any changes you make to scripts, hooks, or configs take effect the next time the plugin is invoked (no reinstall needed). This is convenient for iteration but also means moving, renaming, or deleting the source directory will break the plugin; `git checkout` to a branch without these files has the same effect. Rebuild the MCP server (`npm run build`) after editing `src/memory-server.ts` since hooks run the compiled JS, not the TypeScript source.
+
 ### 5. Start a New Claude Session
 
 ```bash
