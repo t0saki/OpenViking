@@ -199,9 +199,64 @@ openviking-server
 
 ### 4. Install Plugin
 
+**From marketplace:**
+
 ```bash
 /plugin marketplace add Castor6/openviking-plugins
 /plugin install claude-code-memory-plugin@openviking-plugin
+```
+
+**From local source (for development):**
+
+If you have cloned the OpenViking repo and want to install the plugin from your local checkout:
+
+```bash
+# 1. Add the repo as a local marketplace (one-time setup)
+claude plugin marketplace add /path/to/OpenViking/examples/claude-code-memory-plugin-marketplace --scope local
+
+# 2. Install the plugin
+claude plugin install claude-code-memory-plugin@openviking-plugin-local --scope local
+```
+
+To set up the local marketplace directory, create a `marketplace.json` manifest:
+
+```bash
+# In your OpenViking repo root
+mkdir -p examples/claude-code-memory-plugin-marketplace/.claude-plugin
+cat > examples/claude-code-memory-plugin-marketplace/.claude-plugin/marketplace.json << 'MANIFEST'
+{
+  "name": "openviking-plugin-local",
+  "description": "Local OpenViking plugins (development)",
+  "owner": { "name": "OpenViking" },
+  "plugins": [
+    {
+      "name": "claude-code-memory-plugin",
+      "description": "Long-term semantic memory for Claude Code",
+      "source": "../claude-code-memory-plugin",
+      "category": "productivity"
+    }
+  ]
+}
+MANIFEST
+```
+
+Alternatively, you can symlink the plugin directory directly into Claude Code's plugin store:
+
+```bash
+# Find your Claude Code plugins directory
+ls ~/.claude/plugins/installed/
+
+# Symlink the plugin
+ln -s /path/to/OpenViking/examples/claude-code-memory-plugin \
+  ~/.claude/plugins/installed/claude-code-memory-plugin
+```
+
+After local install, rebuild the MCP server when you modify `src/memory-server.ts`:
+
+```bash
+cd examples/claude-code-memory-plugin
+npm install   # first time only
+npm run build # recompile TypeScript → servers/memory-server.js
 ```
 
 ### 5. Start a New Claude Session

@@ -196,9 +196,64 @@ openviking-server
 
 ### 4. 安装插件
 
+**从 marketplace 安装：**
+
 ```bash
 /plugin marketplace add Castor6/openviking-plugins
 /plugin install claude-code-memory-plugin@openviking-plugin
+```
+
+**从本地源码安装（开发用）：**
+
+如果你已克隆 OpenViking 仓库，想从本地安装插件：
+
+```bash
+# 1. 将仓库添加为本地 marketplace（仅需一次）
+claude plugin marketplace add /path/to/OpenViking/examples/claude-code-memory-plugin-marketplace --scope local
+
+# 2. 安装插件
+claude plugin install claude-code-memory-plugin@openviking-plugin-local --scope local
+```
+
+需要先创建本地 marketplace 目录和 `marketplace.json`：
+
+```bash
+# 在 OpenViking 仓库根目录
+mkdir -p examples/claude-code-memory-plugin-marketplace/.claude-plugin
+cat > examples/claude-code-memory-plugin-marketplace/.claude-plugin/marketplace.json << 'MANIFEST'
+{
+  "name": "openviking-plugin-local",
+  "description": "Local OpenViking plugins (development)",
+  "owner": { "name": "OpenViking" },
+  "plugins": [
+    {
+      "name": "claude-code-memory-plugin",
+      "description": "Long-term semantic memory for Claude Code",
+      "source": "../claude-code-memory-plugin",
+      "category": "productivity"
+    }
+  ]
+}
+MANIFEST
+```
+
+也可以直接将插件目录软链接到 Claude Code 的插件目录：
+
+```bash
+# 查看 Claude Code 插件目录
+ls ~/.claude/plugins/installed/
+
+# 创建软链接
+ln -s /path/to/OpenViking/examples/claude-code-memory-plugin \
+  ~/.claude/plugins/installed/claude-code-memory-plugin
+```
+
+本地安装后，修改 `src/memory-server.ts` 需要重新编译：
+
+```bash
+cd examples/claude-code-memory-plugin
+npm install   # 仅首次需要
+npm run build # 编译 TypeScript → servers/memory-server.js
 ```
 
 ### 5. 启动新的 Claude 会话
