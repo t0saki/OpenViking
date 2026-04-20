@@ -96,7 +96,7 @@ class BaseClient(ABC):
         ...
 
     @abstractmethod
-    async def mkdir(self, uri: str) -> None:
+    async def mkdir(self, uri: str, description: Optional[str] = None) -> None:
         """Create directory."""
         ...
 
@@ -182,7 +182,7 @@ class BaseClient(ABC):
         pattern: str,
         case_insensitive: bool = False,
         exclude_uri: Optional[str] = None,
-        node_limit: Optional[int] = None
+        node_limit: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Content search with pattern."""
         ...
@@ -263,6 +263,7 @@ class BaseClient(ABC):
         content: str | None = None,
         parts: list[dict] | None = None,
         created_at: str | None = None,
+        role_id: str | None = None,
     ) -> Dict[str, Any]:
         """Add a message to a session.
 
@@ -272,6 +273,7 @@ class BaseClient(ABC):
             content: Text content (simple mode)
             parts: Parts array (full Part support: TextPart, ContextPart, ToolPart)
             created_at: Message creation time (ISO format string)
+            role_id: Optional explicit actor identity. Omit to let the server derive it.
 
         If both content and parts are provided, parts takes precedence.
         """
