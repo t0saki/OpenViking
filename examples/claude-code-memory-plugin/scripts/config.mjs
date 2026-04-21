@@ -182,6 +182,21 @@ export function loadConfig() {
     captureMaxLength: Math.max(200, Math.floor(num(cc.captureMaxLength, 24000))),
     captureTimeoutMs,
     captureAssistantTurns: cc.captureAssistantTurns === true,
+    // P0-2: client-driven commit threshold (ported from openclaw afterTurn).
+    // Default 20000 aligns with openclaw; lower values produce archives faster.
+    commitTokenThreshold: Math.max(1000, Math.floor(num(cc.commitTokenThreshold, 20000))),
+
+    // P0-3b: token budget for session-start archive-overview fetch
+    resumeContextBudget: Math.max(1024, Math.floor(num(cc.resumeContextBudget, 32000))),
+
+    // P1-15: bypass patterns (glob) — when the CC session_id or cwd matches,
+    // skip capture/recall entirely. Useful for one-off scratch sessions that
+    // should not contaminate OV.
+    bypassSessionPatterns: Array.isArray(cc.bypassSessionPatterns)
+      ? cc.bypassSessionPatterns.filter((p) => typeof p === "string" && p.trim())
+      : [],
+    bypassSession: process.env.OPENVIKING_BYPASS_SESSION === "1"
+      || process.env.OPENVIKING_BYPASS_SESSION === "true",
 
     // Debug
     debug,

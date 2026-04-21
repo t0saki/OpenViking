@@ -55,7 +55,7 @@
 ### 运行时引导（透明，会话启动时）
 
 1. Claude 启动会话 → `SessionStart` hook 触发
-2. `bootstrap-runtime.mjs` 计算 `package.json`、`package-lock.json` 和 `servers/memory-server.js` 的哈希值
+2. `session-start.mjs` 计算 `package.json`、`package-lock.json` 和 `servers/memory-server.js` 的哈希值
 3. 如果运行时目录缺失或过期，将运行时文件复制到该目录
 4. 在该运行时目录中运行 `npm ci --omit=dev`
 5. 写入 `install-state.json`，以便后续会话跳过重新安装
@@ -381,7 +381,7 @@ claude-code-memory-plugin/
 ├── scripts/
 │   ├── config.mjs               # 共享配置加载器
 │   ├── runtime-common.mjs       # 共享运行时路径 + 安装状态助手
-│   ├── bootstrap-runtime.mjs    # SessionStart 运行时依赖安装器
+│   ├── session-start.mjs        # SessionStart: 运行时安装 + resume/compact 归档注入
 │   ├── start-memory-server.mjs  # 从 plugin data runtime 启动 MCP 服务器
 │   ├── auto-recall.mjs          # 自动召回 hook 脚本
 │   └── auto-capture.mjs         # 自动捕获 hook 脚本

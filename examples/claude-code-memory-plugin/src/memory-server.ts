@@ -340,6 +340,39 @@ class OpenVikingClient {
       method: "DELETE",
     });
   }
+
+  /**
+   * Commit a persistent session (archive + background extract).
+   * Used by the new memory_store path; mirrors POST /sessions/{id}/commit.
+   */
+  async commitSession(sessionId: string): Promise<Record<string, unknown>> {
+    return this.request<Record<string, unknown>>(
+      `/api/v1/sessions/${encodeURIComponent(sessionId)}/commit`,
+      { method: "POST", body: JSON.stringify({}) },
+    );
+  }
+
+  /**
+   * Get session meta including pending_tokens (used to decide when to commit).
+   */
+  async getSessionMeta(sessionId: string): Promise<Record<string, unknown> | null> {
+    try {
+      return await this.request<Record<string, unknown>>(
+        `/api/v1/sessions/${encodeURIComponent(sessionId)}?auto_create=true`,
+      );
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Thin wrapper around /api/v1/fs/ls used by list_context.
+   */
+  async lsUri(uri: string): Promise<Array<Record<string, unknown>>> {
+    return this.request<Array<Record<string, unknown>>>(
+      `/api/v1/fs/ls?uri=${encodeURIComponent(uri)}&output=original`,
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -355,7 +388,19 @@ function normalizeDedupeText(text: string): string {
   return text.toLowerCase().replace(/\s+/g, " ").trim();
 }
 
+/**
+ * events/cases specialization (ported from openclaw-plugin/memory-ranking.ts
+ * isEventOrCaseMemory): items describing unique occurrences dedupe by URI
+ * rather than abstract, because their abstracts frequently collide.
+ */
+function isEventOrCaseMemory(item: FindResultItem): boolean {
+  const cat = (item.category ?? "").toLowerCase();
+  const uri = (item.uri ?? "").toLowerCase();
+  return cat === "events" || cat === "cases" || uri.includes("/events/") || uri.includes("/cases/");
+}
+
 function getMemoryDedupeKey(item: FindResultItem): string {
+  if (isEventOrCaseMemory(item)) return `uri:${item.uri}`;
   const abstract = normalizeDedupeText(item.abstract ?? item.overview ?? "");
   const category = (item.category ?? "").toLowerCase() || "unknown";
   if (abstract) return `abstract:${category}:${abstract}`;
@@ -552,6 +597,15 @@ server.tool(
 );
 
 // -- Tool: memory_store ---------------------------------------------------
+// P1-8: store into a PERSISTENT ovSessionId (not one-shot). MCP doesn't know
+// the CC session_id, so we derive a stable identity-scoped session so
+// repeated store calls accumulate and OV's own commit pipeline produces
+// archives + memories via the normal extract path.
+
+const mcpStoreSessionId =
+  "cc-mcpstore-" +
+  md5Short(`${config.accountId}|${config.userId}|${config.agentId}`);
+const COMMIT_THRESHOLD_TOKENS = 4000;
 
 server.tool(
   "memory_store",
@@ -562,31 +616,165 @@ server.tool(
   },
   async ({ text, role }) => {
     const msgRole = role || "user";
-    let sessionId: string | undefined;
-    try {
-      sessionId = await client.createSession();
-      await client.addSessionMessage(sessionId, msgRole, text);
-      const extracted = await client.extractSessionMemories(sessionId);
+    await client.addSessionMessage(mcpStoreSessionId, msgRole, text);
 
-      if (extracted.length === 0) {
-        return {
-          content: [{
-            type: "text" as const,
-            text: "Memory stored but extraction returned 0 memories. The text may be too short or not contain extractable information. Check OpenViking server logs for details.",
-          }],
-        };
+    // Commit opportunistically when pending_tokens crosses a small threshold.
+    // The MCP store session lives across invocations, so we don't want to
+    // commit on every call — batching is cheaper and produces more coherent
+    // extractions.
+    let committed = false;
+    const meta = await client.getSessionMeta(mcpStoreSessionId);
+    const pending = Number((meta as { pending_tokens?: number } | null)?.pending_tokens || 0);
+    if (pending >= COMMIT_THRESHOLD_TOKENS) {
+      await client.commitSession(mcpStoreSessionId);
+      committed = true;
+    }
+
+    return {
+      content: [{
+        type: "text" as const,
+        text: committed
+          ? `Stored into ${mcpStoreSessionId}. Pending ${pending} tokens → committed for extraction.`
+          : `Stored into ${mcpStoreSessionId}. Pending ${pending} tokens (will commit when it crosses ${COMMIT_THRESHOLD_TOKENS}).`,
+      }],
+    };
+  },
+);
+
+// -- Tool: search_context -------------------------------------------------
+// P1-7: general-purpose search across all OV context types. Used when the
+// model wants to look up memories/resources/skills from the hint block
+// injected by auto-recall, or when triggered by the user asking for
+// something likely to live in OV.
+
+server.tool(
+  "search_context",
+  "Search OpenViking context (memories, resources, skills). Returns a ranked list with URI + abstract + score. Use read_context to expand a specific URI.",
+  {
+    query: z.string().describe("What to search for"),
+    scope: z
+      .enum(["all", "memories", "resources", "skills"])
+      .optional()
+      .describe("Which context type to search (default: all)"),
+    limit: z.number().optional().describe("Max results per scope (default: 6)"),
+  },
+  async ({ query, scope, limit }) => {
+    const perLimit = limit ?? config.recallLimit;
+    const scopes = scope && scope !== "all"
+      ? [scope]
+      : ["memories", "resources", "skills"] as const;
+
+    const targets: Record<string, string[]> = {
+      memories: ["viking://user/memories", "viking://agent/memories"],
+      resources: ["viking://resources"],
+      skills: ["viking://agent/skills"],
+    };
+
+    type Tagged = FindResultItem & { _type: string };
+    const results: Tagged[] = [];
+    for (const s of scopes) {
+      for (const uri of targets[s] ?? []) {
+        try {
+          const r = await client.find(query, {
+            targetUri: uri,
+            limit: perLimit,
+            scoreThreshold: 0,
+          });
+          const bucket = (r as Record<string, FindResultItem[] | undefined>)[s];
+          for (const item of bucket ?? []) {
+            results.push({ ...item, _type: s.slice(0, -1) }); // "memories" → "memory"
+          }
+        } catch {
+          /* best-effort per target */
+        }
       }
+    }
 
+    const filtered = results.filter((r) => clampScore(r.score) >= config.scoreThreshold);
+    filtered.sort((a, b) => clampScore(b.score) - clampScore(a.score));
+
+    const seen = new Set<string>();
+    const picked: Tagged[] = [];
+    for (const item of filtered) {
+      const key = getMemoryDedupeKey(item);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      picked.push(item);
+      if (picked.length >= perLimit * scopes.length) break;
+    }
+
+    if (picked.length === 0) {
+      return { content: [{ type: "text" as const, text: "No matching context found." }] };
+    }
+
+    const lines = picked.map((item) => {
+      const score = clampScore(item.score);
+      const abstract = (item.abstract ?? item.overview ?? "").trim() || "(no abstract)";
+      return `- [${item._type} ${(score * 100).toFixed(0)}%] ${item.uri}\n    ${abstract}`;
+    });
+    return {
+      content: [{
+        type: "text" as const,
+        text: `Found ${picked.length} item(s):\n\n${lines.join("\n")}\n\nExpand a URI with the read_context tool.`,
+      }],
+    };
+  },
+);
+
+// -- Tool: read_context ---------------------------------------------------
+
+server.tool(
+  "read_context",
+  "Read the full body behind a viking:// URI. Use after search_context or after seeing an <openviking-context> hint block.",
+  {
+    uri: z.string().describe("viking:// URI to read"),
+  },
+  async ({ uri }) => {
+    try {
+      const body = await client.read(uri);
+      const text = typeof body === "string" ? body : JSON.stringify(body);
+      if (!text.trim()) {
+        return { content: [{ type: "text" as const, text: `(${uri} is empty)` }] };
+      }
+      return { content: [{ type: "text" as const, text }] };
+    } catch (err) {
       return {
         content: [{
           type: "text" as const,
-          text: `Successfully extracted ${extracted.length} memory/memories from the provided text and stored them in OpenViking.`,
+          text: `Failed to read ${uri}: ${err instanceof Error ? err.message : String(err)}`,
         }],
       };
-    } finally {
-      if (sessionId) {
-        await client.deleteSession(sessionId).catch(() => {});
+    }
+  },
+);
+
+// -- Tool: list_context ---------------------------------------------------
+
+server.tool(
+  "list_context",
+  "List entries under a viking:// directory URI (e.g. viking://resources or viking://agent/memories). Use for navigation when the URI structure is not known.",
+  {
+    uri: z.string().describe("viking:// directory URI to list"),
+  },
+  async ({ uri }) => {
+    try {
+      const entries = await client.lsUri(uri);
+      if (!Array.isArray(entries) || entries.length === 0) {
+        return { content: [{ type: "text" as const, text: `(no entries under ${uri})` }] };
       }
+      const lines = entries.map((e) => {
+        const name = typeof e.name === "string" ? e.name : "?";
+        const kind = e.isDir ? "dir" : "file";
+        return `- [${kind}] ${name}`;
+      });
+      return { content: [{ type: "text" as const, text: lines.join("\n") }] };
+    } catch (err) {
+      return {
+        content: [{
+          type: "text" as const,
+          text: `Failed to list ${uri}: ${err instanceof Error ? err.message : String(err)}`,
+        }],
+      };
     }
   },
 );

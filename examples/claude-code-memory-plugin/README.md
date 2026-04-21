@@ -58,7 +58,7 @@ into the plugin source tree.
 ### Runtime Bootstrap (transparent, on session start)
 
 1. Claude starts a session → `SessionStart` hook fires
-2. `bootstrap-runtime.mjs` hashes `package.json`, `package-lock.json`, and `servers/memory-server.js`
+2. `session-start.mjs` hashes `package.json`, `package-lock.json`, and `servers/memory-server.js`
 3. If the runtime directory is missing or stale, it copies runtime files there
 4. Runs `npm ci --omit=dev` in that runtime directory
 5. Writes `install-state.json` so later sessions can skip reinstall
@@ -386,7 +386,7 @@ claude-code-memory-plugin/
 ├── scripts/
 │   ├── config.mjs               # Shared config loader
 │   ├── runtime-common.mjs       # Shared runtime paths + install state helpers
-│   ├── bootstrap-runtime.mjs    # SessionStart installer for runtime deps
+│   ├── session-start.mjs        # SessionStart: runtime install + resume/compact archive inject
 │   ├── start-memory-server.mjs  # Launches MCP server from plugin data runtime
 │   ├── auto-recall.mjs          # Auto-recall hook script
 │   └── auto-capture.mjs         # Auto-capture hook script
