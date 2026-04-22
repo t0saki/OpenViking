@@ -251,6 +251,10 @@ def run_claude_code(
     model: Optional[str] = None,
     timeout_sec: int = 300,
     retries: int = 2,
+    hooks_settings: Optional[str] = None,
+    mcp_config: Optional[str] = None,
+    ov_config: Optional[str] = None,
+    ov_agent_id: Optional[str] = None,
 ) -> dict:
     """Run claude -p with retries on TIMEOUT/ERROR."""
     env = os.environ.copy()
@@ -261,9 +265,22 @@ def run_claude_code(
         env["ANTHROPIC_AUTH_TOKEN"] = auth_token
     if api_url:
         env["ANTHROPIC_BASE_URL"] = api_url
+    if ov_config:
+        env["OPENVIKING_CONFIG_FILE"] = ov_config
+        env["OPENVIKING_MEMORY_ENABLED"] = "1"
+        env["OPENVIKING_DEBUG"] = "1"
+    if ov_agent_id:
+        env["OPENVIKING_AGENT_ID"] = ov_agent_id
+        env["OPENVIKING_USER"] = ov_agent_id
+
+    extra_flags = ["--no-session-persistence"]
+    if hooks_settings:
+        extra_flags.extend(["--settings", hooks_settings])
+    if mcp_config:
+        extra_flags.extend(["--mcp-config", mcp_config])
 
     for attempt in range(retries + 1):
-        result = _run_claude_once(prompt, project_dir, env, model, timeout_sec, ["--no-session-persistence"])
+        result = _run_claude_once(prompt, project_dir, env, model, timeout_sec, extra_flags)
         resp = result["response"]
         if not resp.startswith("[TIMEOUT]") and not resp.startswith("[ERROR]"):
             return result
@@ -286,6 +303,9 @@ def process_question(
     model: Optional[str],
     output_path: str,
     timeout_sec: int,
+    hooks_settings: Optional[str] = None,
+    mcp_config: Optional[str] = None,
+    ov_config: Optional[str] = None,
 ) -> dict:
     sample_id = qa["sample_id"]
     qi = qa["question_index"]
@@ -294,10 +314,14 @@ def process_question(
 
     project_dir = os.path.join(project_root, sample_id)
 
+    ov_hint = ""
+    if ov_config:
+        ov_hint = " If MCP tools are insufficient, you can also use `ov find/ls/read` CLI to search and read memories."
+
     if question_time:
-        prompt = f"Current date: {question_time}. Answer the question directly: {question}"
+        prompt = f"Current date: {question_time}.{ov_hint} Answer the question directly: {question}"
     else:
-        prompt = f"Answer the question directly: {question}"
+        prompt = f"{ov_hint.strip()} Answer the question directly: {question}" if ov_hint else f"Answer the question directly: {question}"
 
     print(
         f"  [{sample_id}] Q{qi}: {question[:60]}{'...' if len(question) > 60 else ''}",
@@ -309,6 +333,8 @@ def process_question(
         prompt, project_dir, home_dir,
         api_url=api_url, api_key=api_key, auth_token=auth_token,
         model=model, timeout_sec=timeout_sec,
+        hooks_settings=hooks_settings, mcp_config=mcp_config,
+        ov_config=ov_config, ov_agent_id=sample_id,
     )
     elapsed = time.perf_counter() - t0
 
@@ -406,6 +432,18 @@ def main():
         "--timeout", type=int, default=300,
         help="Timeout per question in seconds (default: 300)",
     )
+    parser.add_argument(
+        "--hooks-settings", default=None,
+        help="Path to hooks settings JSON (passed as --settings to claude)",
+    )
+    parser.add_argument(
+        "--mcp-config", default=None,
+        help="Path to MCP server config JSON (passed as --mcp-config to claude)",
+    )
+    parser.add_argument(
+        "--ov-config", default=None,
+        help="Path to ov.conf for OpenViking (sets OPENVIKING_CONFIG_FILE env var)",
+    )
     args = parser.parse_args()
 
     api_key = args.api_key or os.environ.get("ANTHROPIC_API_KEY", "")
@@ -472,6 +510,9 @@ def main():
                 qa, args.project_root, args.home,
                 api_url, api_key, auth_token, args.model,
                 args.output, args.timeout,
+                hooks_settings=args.hooks_settings,
+                mcp_config=args.mcp_config,
+                ov_config=args.ov_config,
             )
             futures[fut] = qa
 

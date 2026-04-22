@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "viking": {
+      "command": "node",
+      "args": ["/Users/zhengxiao.wu/Dev/OpenViking/examples/claude-code-memory-plugin/servers/memory-server.js"],
+      "cwd": "/Users/zhengxiao.wu/Dev/OpenViking/examples/claude-code-memory-plugin"
+    }
+  }
+}

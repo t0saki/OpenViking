@@ -28,6 +28,12 @@ EVAL_HOME="/tmp/claude-eval-home"
 # 可选的 ingest prompt 前缀（可用 --prompt-prefix 覆盖）
 PROMPT_PREFIX=""
 
+# OV (OpenViking) 参数
+HOOKS_SETTINGS=""
+MCP_CONFIG=""
+OV_INGEST_CONFIG=""
+OV_QA_CONFIG=""
+
 # QA 并行度（注意 API rate limit）
 QA_PARALLEL=5
 
@@ -90,8 +96,28 @@ while [[ $# -gt 0 ]]; do
             RESULT_DIR="$2"
             shift 2
             ;;
+        --input)
+            INPUT_FILE="$2"
+            shift 2
+            ;;
         --prompt-prefix)
             PROMPT_PREFIX="$2"
+            shift 2
+            ;;
+        --hooks-settings)
+            HOOKS_SETTINGS="$2"
+            shift 2
+            ;;
+        --mcp-config)
+            MCP_CONFIG="$2"
+            shift 2
+            ;;
+        --ov-ingest-config)
+            OV_INGEST_CONFIG="$2"
+            shift 2
+            ;;
+        --ov-qa-config)
+            OV_QA_CONFIG="$2"
             shift 2
             ;;
         *)
@@ -142,6 +168,17 @@ fi
 # =============================================================================
 # Step 2: QA 评估
 # =============================================================================
+OV_QA_ARGS=""
+if [ -n "$HOOKS_SETTINGS" ]; then
+    OV_QA_ARGS="$OV_QA_ARGS --hooks-settings $HOOKS_SETTINGS"
+fi
+if [ -n "$MCP_CONFIG" ]; then
+    OV_QA_ARGS="$OV_QA_ARGS --mcp-config $MCP_CONFIG"
+fi
+if [ -n "$OV_QA_CONFIG" ]; then
+    OV_QA_ARGS="$OV_QA_ARGS --ov-config $OV_QA_CONFIG"
+fi
+
 echo "[2/4] Running QA evaluation..."
 uv run python "$SCRIPT_DIR/eval.py" \
     --input "$INPUT_FILE" \
@@ -153,7 +190,8 @@ uv run python "$SCRIPT_DIR/eval.py" \
     $API_URL_ARG \
     $API_KEY_ARG \
     $AUTH_TOKEN_ARG \
-    $MODEL_ARG
+    $MODEL_ARG \
+    $OV_QA_ARGS
 
 # =============================================================================
 # Step 3: Judge 打分
