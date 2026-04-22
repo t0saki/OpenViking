@@ -1,10 +1,11 @@
 """
 Statistics for Claude Code LoCoMo QA judge results.
 
-Reports accuracy by category and token/cost/latency statistics.
+Reports accuracy by category, token/cost/latency for both ingest and QA phases.
 
 Usage:
     python stat_judge_result.py --input ./result/qa_results.csv
+    python stat_judge_result.py --input ./result/qa_results.csv --ingest-csv ./result/ingest_success.csv
 """
 
 import argparse
@@ -19,20 +20,38 @@ def main():
         "--input", default="./result/qa_results.csv",
         help="Path to judge result CSV",
     )
+    parser.add_argument(
+        "--ingest-csv", default=None,
+        help="Path to ingest_success.csv for ingest-phase token stats. "
+             "Default: auto-detect from --input's directory.",
+    )
     args = parser.parse_args()
 
     if not os.path.exists(args.input):
         print(f"Error: file not found: {args.input}", file=sys.stderr)
         sys.exit(1)
 
-    lines = process_qa_results(args.input)
-    for line in lines:
+    ingest_csv = args.ingest_csv
+    if ingest_csv is None:
+        ingest_csv = os.path.join(os.path.dirname(args.input), "ingest_success.csv")
+
+    output_lines = []
+
+    output_lines.extend(process_qa_results(args.input))
+
+    if os.path.exists(ingest_csv):
+        output_lines.append("")
+        output_lines.extend(process_ingest_csv(ingest_csv))
+    else:
+        output_lines.append(f"\n(Ingest CSV not found: {ingest_csv}, skipping ingest stats)")
+
+    for line in output_lines:
         print(line)
 
     summary_path = os.path.join(os.path.dirname(args.input), "summary.txt")
     os.makedirs(os.path.dirname(summary_path), exist_ok=True)
     with open(summary_path, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines) + "\n")
+        f.write("\n".join(output_lines) + "\n")
     print(f"\nSummary saved to {summary_path}")
 
 
@@ -149,12 +168,12 @@ def process_qa_results(input_path: str) -> list[str]:
             )
 
     output.extend([
-        f"\nLatency:",
+        f"\nQA latency:",
         f"  Total elapsed: {total_elapsed:,.1f}s",
         f"  Avg elapsed: {avg_elapsed:,.1f}s",
         f"  Min elapsed: {(min_elapsed or 0.0):,.1f}s",
         f"  Max elapsed: {(max_elapsed or 0.0):,.1f}s",
-        f"\nToken usage:",
+        f"\nQA token usage:",
         f"  Total input tokens: {total_input_tokens:,}",
         f"  Total cache creation: {total_cache_creation:,}",
         f"  Total cache read: {total_cache_read:,}",
@@ -165,7 +184,7 @@ def process_qa_results(input_path: str) -> list[str]:
         f"  Avg cache read: {avg_cache_read:,.0f}",
         f"  Avg output tokens: {avg_output:,.0f}",
         f"  Avg reasoning tokens: {avg_reasoning:,.0f}",
-        f"\nCost:",
+        f"\nQA cost:",
         f"  Total cost: ${total_cost:,.4f}",
         f"  Avg cost per question: ${avg_cost:,.4f}",
         f"\nTurns:",
@@ -174,6 +193,68 @@ def process_qa_results(input_path: str) -> list[str]:
     ])
 
     return output
+
+
+def process_ingest_csv(input_path: str) -> list[str]:
+    total_input_tokens = 0
+    total_cache_creation = 0
+    total_cache_read = 0
+    total_output_tokens = 0
+    total_reasoning_tokens = 0
+    total_cost = 0.0
+    total_duration_ms = 0
+    valid_rows = 0
+
+    with open(input_path, "r", encoding="utf-8", newline="") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            valid_rows += 1
+            try:
+                total_input_tokens += int(row.get("input_tokens", 0))
+                total_cache_creation += int(row.get("cache_creation_input_tokens", 0))
+                total_cache_read += int(row.get("cache_read_input_tokens", 0))
+                total_output_tokens += int(row.get("output_tokens", 0))
+                total_reasoning_tokens += int(row.get("reasoning_tokens", 0))
+            except (ValueError, TypeError):
+                pass
+            try:
+                total_cost += float(row.get("total_cost_usd", 0))
+            except (ValueError, TypeError):
+                pass
+            try:
+                total_duration_ms += int(row.get("duration_ms", 0))
+            except (ValueError, TypeError):
+                pass
+
+    total_elapsed = total_duration_ms / 1000.0
+    avg_input = total_input_tokens / valid_rows if valid_rows > 0 else 0.0
+    avg_cache_creation = total_cache_creation / valid_rows if valid_rows > 0 else 0.0
+    avg_cache_read = total_cache_read / valid_rows if valid_rows > 0 else 0.0
+    avg_output = total_output_tokens / valid_rows if valid_rows > 0 else 0.0
+    avg_reasoning = total_reasoning_tokens / valid_rows if valid_rows > 0 else 0.0
+    avg_cost = total_cost / valid_rows if valid_rows > 0 else 0.0
+
+    return [
+        "=== Ingest Phase Statistics ===",
+        f"Total sessions: {valid_rows:,}",
+        f"\nIngest latency:",
+        f"  Total elapsed: {total_elapsed:,.1f}s",
+        f"  Avg elapsed: {(total_elapsed / valid_rows if valid_rows > 0 else 0.0):,.1f}s",
+        f"\nIngest token usage:",
+        f"  Total input tokens: {total_input_tokens:,}",
+        f"  Total cache creation: {total_cache_creation:,}",
+        f"  Total cache read: {total_cache_read:,}",
+        f"  Total output tokens: {total_output_tokens:,}",
+        f"  Total reasoning tokens: {total_reasoning_tokens:,}",
+        f"  Avg input tokens: {avg_input:,.0f}",
+        f"  Avg cache creation: {avg_cache_creation:,.0f}",
+        f"  Avg cache read: {avg_cache_read:,.0f}",
+        f"  Avg output tokens: {avg_output:,.0f}",
+        f"  Avg reasoning tokens: {avg_reasoning:,.0f}",
+        f"\nIngest cost:",
+        f"  Total cost: ${total_cost:,.4f}",
+        f"  Avg cost per session: ${avg_cost:,.4f}",
+    ]
 
 
 if __name__ == "__main__":

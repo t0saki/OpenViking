@@ -361,6 +361,11 @@ def main():
         "--timeout", type=int, default=600,
         help="Timeout per session in seconds (default: 600)",
     )
+    parser.add_argument(
+        "--prompt-prefix", default="",
+        help="Optional prefix prepended before each session's conversation text "
+             "(e.g. to nudge auto-memory). Default: empty (bare conversation).",
+    )
     args = parser.parse_args()
 
     api_key = args.api_key or os.environ.get("ANTHROPIC_API_KEY", "")
@@ -421,9 +426,11 @@ def main():
             preview = msg.replace("\n", " | ")[:80]
             print(f"  [{label}] {preview}...", file=sys.stderr)
 
+            send_msg = f"{args.prompt_prefix}\n\n{msg}" if args.prompt_prefix else msg
+
             t0 = time.time()
             result = run_claude_ingest(
-                msg, project_dir, args.home,
+                send_msg, project_dir, args.home,
                 api_url=api_url, api_key=api_key, auth_token=auth_token,
                 model=args.model, timeout_sec=args.timeout,
             )

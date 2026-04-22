@@ -21,9 +21,12 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 INPUT_FILE="$SCRIPT_DIR/../locomo10.json"
 RESULT_DIR="$SCRIPT_DIR/result"
 
-# 隔离环境目录
+# 隔离环境目录（可用 --project-root / --home 覆盖）
 PROJECT_ROOT="/tmp/locomo-eval"
 EVAL_HOME="/tmp/claude-eval-home"
+
+# 可选的 ingest prompt 前缀（可用 --prompt-prefix 覆盖）
+PROMPT_PREFIX=""
 
 # QA 并行度（注意 API rate limit）
 QA_PARALLEL=5
@@ -75,6 +78,22 @@ while [[ $# -gt 0 ]]; do
             QA_PARALLEL="$2"
             shift 2
             ;;
+        --project-root)
+            PROJECT_ROOT="$2"
+            shift 2
+            ;;
+        --home)
+            EVAL_HOME="$2"
+            shift 2
+            ;;
+        --result-dir)
+            RESULT_DIR="$2"
+            shift 2
+            ;;
+        --prompt-prefix)
+            PROMPT_PREFIX="$2"
+            shift 2
+            ;;
         *)
             echo "Unknown argument: $1"
             shift
@@ -106,6 +125,10 @@ if [ "$SKIP_IMPORT" = false ]; then
         --input "$INPUT_FILE" \
         --project-root "$PROJECT_ROOT" \
         --home "$EVAL_HOME" \
+        --record "$RESULT_DIR/.ingest_record.json" \
+        --success-csv "$RESULT_DIR/ingest_success.csv" \
+        --error-log "$RESULT_DIR/ingest_errors.log" \
+        --prompt-prefix "$PROMPT_PREFIX" \
         $SAMPLE_ARG \
         $API_URL_ARG \
         $API_KEY_ARG \
