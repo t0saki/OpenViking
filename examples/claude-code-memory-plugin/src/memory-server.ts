@@ -538,9 +538,13 @@ const client = new OpenVikingClient(
   config.accountId, config.userId,
 );
 
+// MCP server name becomes the tool prefix exposed to Claude:
+//   mcp__viking__{search,read,list}_context, mcp__viking__memory_{recall,store,forget,health}
+// Picked short + aligned with the viking:// URI scheme so the model sees
+// lexical symmetry between tool names and the resources they operate on.
 const server = new McpServer({
-  name: "openviking-memory",
-  version: "0.1.0",
+  name: "viking",
+  version: "0.2.0",
 });
 
 // -- Tool: memory_recall --------------------------------------------------

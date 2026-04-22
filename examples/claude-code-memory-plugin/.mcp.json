@@ -1,5 +1,5 @@
 {
-  "openviking-memory": {
+  "viking": {
     "command": "node",
     "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/start-memory-server.mjs"],
     "env": {
