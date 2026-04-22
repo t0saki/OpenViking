@@ -198,6 +198,13 @@ export function loadConfig() {
     bypassSession: process.env.OPENVIKING_BYPASS_SESSION === "1"
       || process.env.OPENVIKING_BYPASS_SESSION === "true",
 
+    // Write-path async: auto-capture / session-end / subagent-stop fire-and-
+    // forget via a detached child process, so the hook returns to CC instantly.
+    // pre-compact stays sync regardless (CC rewrites transcript right after).
+    // Default on — OV commit is already half-async server-side, so eventual
+    // consistency matches the sync path.
+    writePathAsync: cc.writePathAsync !== false,
+
     // Debug
     debug,
     debugLogPath,

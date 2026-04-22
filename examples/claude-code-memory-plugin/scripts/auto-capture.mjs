@@ -32,6 +32,7 @@ import {
   isBypassed,
   makeFetchJSON,
 } from "./lib/ov-session.mjs";
+import { maybeDetach, readHookStdin } from "./lib/async-writer.mjs";
 
 if (!isPluginEnabled()) {
   process.stdout.write(JSON.stringify({ decision: "approve" }) + "\n");
@@ -258,11 +259,12 @@ async function main() {
     return;
   }
 
+  // Async write path: parent detaches and returns, worker continues below.
+  if (await maybeDetach(cfg, { approve })) return;
+
   let input;
   try {
-    const chunks = [];
-    for await (const chunk of process.stdin) chunks.push(chunk);
-    input = JSON.parse(Buffer.concat(chunks).toString());
+    input = JSON.parse(await readHookStdin());
   } catch {
     log("skip", { stage: "stdin_parse", reason: "invalid input" });
     approve();
