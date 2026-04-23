@@ -49,9 +49,22 @@ FIELDNAMES = [
     "total_cost_usd",
     "elapsed_seconds",
     "num_turns",
+    "ov_recall_hooks",
+    "ov_mcp_calls",
     "result",
     "reasoning",
 ]
+
+OV_HOOK_LOG = None  # resolved per-call using home_dir
+OV_MCP_LOG = "/Users/zhengxiao.wu/Dev/OpenViking-benchmark/benchmark/locomo/claudecode/.tmp/result-ov/mcp-calls.log"
+
+
+def _count_file_lines(path: str) -> int:
+    try:
+        with open(path, "rb") as f:
+            return sum(1 for _ in f)
+    except FileNotFoundError:
+        return 0
 
 
 # ---------------------------------------------------------------------------
@@ -314,19 +327,26 @@ def process_question(
 
     project_dir = os.path.join(project_root, sample_id)
 
-    ov_hint = ""
     if ov_config:
-        ov_hint = " If MCP tools are insufficient, you can also use `ov find/ls/read` CLI to search and read memories."
+        ov_preamble = (
+            "If context is insufficient, use OpenViking MCP tools or auto-memory files to find more information.\n\n"
+        )
+    else:
+        ov_preamble = ""
 
     if question_time:
-        prompt = f"Current date: {question_time}.{ov_hint} Answer the question directly: {question}"
+        prompt = f"{ov_preamble}Current date: {question_time}. Answer the question directly: {question}"
     else:
-        prompt = f"{ov_hint.strip()} Answer the question directly: {question}" if ov_hint else f"Answer the question directly: {question}"
+        prompt = f"{ov_preamble}Answer the question directly: {question}"
 
     print(
         f"  [{sample_id}] Q{qi}: {question[:60]}{'...' if len(question) > 60 else ''}",
         file=sys.stderr,
     )
+
+    hook_log = os.path.join(home_dir, ".openviking", "logs", "cc-hooks.log") if ov_config else ""
+    hook_before = _count_file_lines(hook_log) if hook_log else 0
+    mcp_before = _count_file_lines(OV_MCP_LOG) if ov_config else 0
 
     t0 = time.perf_counter()
     result = run_claude_code(
@@ -337,6 +357,9 @@ def process_question(
         ov_config=ov_config, ov_agent_id=sample_id,
     )
     elapsed = time.perf_counter() - t0
+
+    hook_delta = _count_file_lines(hook_log) - hook_before if hook_log else 0
+    mcp_delta = _count_file_lines(OV_MCP_LOG) - mcp_before if ov_config else 0
 
     usage = result.get("usage", {})
     response = result["response"]
@@ -364,6 +387,8 @@ def process_question(
         "total_cost_usd": result.get("cost", 0),
         "elapsed_seconds": round(elapsed, 2),
         "num_turns": result.get("num_turns", 0),
+        "ov_recall_hooks": hook_delta,
+        "ov_mcp_calls": mcp_delta,
         "result": "",
         "reasoning": "",
     }
