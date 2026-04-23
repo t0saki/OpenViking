@@ -3,28 +3,15 @@
 /**
  * SessionStart Hook for Claude Code.
  *
- * Responsibilities:
- *   1. Bootstrap the MCP runtime (install deps for memory-server) — this is
- *      what bootstrap-runtime.mjs used to do; merged here so one hook owns
- *      the SessionStart event.
- *   2. When source in {"resume","compact"}, fetch the persistent OV session's
- *      latest_archive_overview and inject it as additionalContext wrapped in
- *      <openviking-context>. For "compact", this supplies OV's canonical
- *      long-term record alongside CC's own compact summary; for "resume",
- *      it re-hydrates the context that was lost when CC restarted.
- *
- * PreCompact has no additionalContext output (platform-verified), so the
- * compact-branch injection here is how OV archive context reaches the
- * post-compact model.
+ * When source in {"resume","compact"}, fetches the persistent OV session's
+ * latest_archive_overview and injects it as additionalContext wrapped in
+ * <openviking-context>. For "compact", this supplies OV's canonical
+ * long-term record alongside CC's own compact summary; for "resume",
+ * it re-hydrates the context that was lost when CC restarted.
  */
 
 import { isPluginEnabled, loadConfig } from "./config.mjs";
 import { createLogger } from "./debug-log.mjs";
-import {
-  computeSourceState,
-  ensureRuntimeInstalled,
-  getRuntimePaths,
-} from "./runtime-common.mjs";
 import {
   deriveOvSessionId,
   getSessionContext,
@@ -55,18 +42,6 @@ function approve(additionalContext) {
   output(out);
 }
 
-async function bootstrapRuntime() {
-  try {
-    const paths = getRuntimePaths();
-    const expectedState = await computeSourceState(paths);
-    await ensureRuntimeInstalled(paths, expectedState);
-  } catch (err) {
-    process.stderr.write(
-      `[openviking-memory] Failed to prepare MCP runtime: ${err instanceof Error ? err.message : String(err)}\n`,
-    );
-  }
-}
-
 /**
  * Build <openviking-context> block from session context.
  * Pulls latest_archive_overview (pre-archive abstracts list if populated).
@@ -92,10 +67,6 @@ function formatArchiveContext(sessionCtx, source) {
 }
 
 async function main() {
-  // Runtime install runs on every SessionStart regardless of source. It's
-  // idempotent and a no-op when already installed (see runtime-common.mjs).
-  await bootstrapRuntime();
-
   let input = {};
   try {
     const chunks = [];
