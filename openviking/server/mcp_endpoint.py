@@ -21,6 +21,7 @@ from contextlib import asynccontextmanager
 from typing import Optional
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from openviking.server.dependencies import get_service
@@ -77,7 +78,10 @@ class _IdentityASGIMiddleware:
 # MCP server + tools
 # ---------------------------------------------------------------------------
 
-mcp = FastMCP("openviking")
+mcp = FastMCP(
+    "openviking",
+    transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
+)
 
 SEARCH_TARGETS: dict[str, list[str]] = {
     "memories": ["viking://user/memories", "viking://agent/memories"],
