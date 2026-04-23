@@ -3,18 +3,15 @@
 /**
  * Auto-Recall Hook Script for Claude Code (UserPromptSubmit).
  *
- * Injects a compact <openviking-context> hint block so the model can
- * decide which items to expand via the read_context MCP tool. The hint
- * block carries URI + abstract + score + type for each match, but NOT
- * the full content. The model expands what it actually wants.
+ * Searches OpenViking for relevant context and injects an
+ * <openviking-context> block. High-score items within the token budget
+ * include resolved content; remaining items degrade to URI + score.
  *
- * Multi-source search (P1-5): user memories, agent memories, agent skills,
- * resources — all searched in parallel and merged with per-type tagging.
- *
- * Ported from openclaw-plugin/ memory-ranking.ts (query profile + boosts)
- * and index.ts (auto-recall orchestration). The `<openviking-context>`
- * envelope is new (replaces `<relevant-memories>`) to signal to Claude
- * that these are references to expand, not pre-read content.
+ * Ranking: ported from openclaw-plugin/memory-ranking.ts (query profile
+ * + boosts). Content resolution + budget: ported from
+ * openclaw-plugin/index.ts resolveMemoryContent / buildMemoryLinesWithBudget,
+ * modified so items beyond the budget are degraded (URI-only) instead of
+ * dropped.
  */
 
 import { isPluginEnabled, loadConfig } from "./config.mjs";
@@ -92,8 +89,7 @@ function rankItem(item, profile) {
 
 /**
  * events/cases specialization (ported from openclaw-plugin/memory-ranking.ts
- * isEventOrCaseMemory): these items describe unique occurrences — dedupe by
- * URI instead of abstract since their abstracts often collide.
+ * isEventOrCaseMemory): dedupe by URI instead of abstract.
  */
 function isEventOrCaseItem(item) {
   const cat = (item.category || "").toLowerCase();
@@ -165,14 +161,14 @@ async function resolveTargetUri(targetUri) {
 }
 
 // ---------------------------------------------------------------------------
-// Multi-source search
+// Multi-source search (scoped sources only — resources excluded to prevent
+// cross-namespace leakage; use MCP search(scope="resources") explicitly)
 // ---------------------------------------------------------------------------
 
 const SOURCES = [
-  { type: "memory",   uri: "viking://user/memories",  bucket: "memories" },
-  { type: "memory",   uri: "viking://agent/memories", bucket: "memories" },
-  { type: "skill",    uri: "viking://agent/skills",   bucket: "skills"   },
-  { type: "resource", uri: "viking://resources",      bucket: "resources"},
+  { type: "memory", uri: "viking://user/memories",  bucket: "memories" },
+  { type: "memory", uri: "viking://agent/memories", bucket: "memories" },
+  { type: "skill",  uri: "viking://agent/skills",   bucket: "skills"   },
 ];
 
 async function searchOneSource(query, source, limit) {
@@ -197,30 +193,95 @@ async function searchAllSources(query, perSourceLimit) {
 }
 
 // ---------------------------------------------------------------------------
-// Hint-mode injection formatting (P1-6)
+// Content resolution + budget formatting
+// Ported from openclaw-plugin/index.ts resolveMemoryContent (line 1822-1850)
+// and buildMemoryLinesWithBudget (line 1878-1907).
+// Key difference: items beyond token budget are degraded to URI+score
+// instead of being dropped entirely.
 // ---------------------------------------------------------------------------
 
-function escapeAttr(s) {
-  return String(s).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+/** chars/4 heuristic (openclaw-plugin/index.ts:1812) */
+function estimateTokens(text) {
+  return text ? Math.ceil(text.length / 4) : 0;
 }
 
-function formatHintBlock(items, query) {
+/**
+ * Resolve display content for a single item.
+ * Ported from openclaw-plugin/index.ts:1822 resolveMemoryContent.
+ */
+async function resolveItemContent(item) {
+  let content;
+
+  if (cfg.recallPreferAbstract && (item.abstract || item.overview || "").trim()) {
+    content = (item.abstract || item.overview).trim();
+  } else if (item.level === 2) {
+    try {
+      const res = await fetchJSON(`/api/v1/content/read?uri=${encodeURIComponent(item.uri)}`);
+      const body = res.ok && typeof res.result === "string" ? res.result.trim() : "";
+      content = body || (item.abstract || item.overview || "").trim() || item.uri;
+    } catch {
+      content = (item.abstract || item.overview || "").trim() || item.uri;
+    }
+  } else {
+    content = (item.abstract || item.overview || "").trim() || item.uri;
+  }
+
+  if (content.length > cfg.recallMaxContentChars) {
+    content = content.slice(0, cfg.recallMaxContentChars) + "...";
+  }
+
+  return content;
+}
+
+/**
+ * Build the injection block with token budget.
+ * Front items (within budget) get full content lines.
+ * Remaining items (beyond budget) degrade to URI + score only.
+ */
+async function buildInjectionBlock(items) {
   if (items.length === 0) return null;
 
+  let budgetRemaining = cfg.recallTokenBudget;
   const lines = [
     "<openviking-context>",
-    "  The OpenViking Context Database has items related to the user's prompt.",
-    "  Each hint below has a URI + abstract + score. To read the full body,",
-    "  call the read_context MCP tool with the URI.",
+    "Relevant context from OpenViking. Use the read MCP tool to expand URIs.",
   ];
-  for (const it of items) {
-    const score = clampScore(it.score).toFixed(2);
-    const abstract = (it.abstract || it.overview || "").trim().replace(/\s+/g, " ").slice(0, 200);
-    lines.push(
-      `  <item type="${it._sourceType}" score="${score}" uri="${escapeAttr(it.uri)}" abstract="${escapeAttr(abstract)}"/>`,
-    );
+  let contentCount = 0;
+  let hintCount = 0;
+
+  for (const item of items) {
+    const score = (clampScore(item.score) * 100).toFixed(0);
+    const uriLine = `- [${item._sourceType} ${score}%] ${item.uri}`;
+
+    if (budgetRemaining > 0) {
+      const content = await resolveItemContent(item);
+      const fullLine = `${uriLine}\n  ${content}`;
+      const lineTokens = estimateTokens(fullLine);
+
+      // First item always included even if over budget (openclaw spec §6.2)
+      if (lineTokens > budgetRemaining && contentCount > 0) {
+        lines.push(uriLine);
+        hintCount++;
+      } else {
+        lines.push(fullLine);
+        budgetRemaining -= lineTokens;
+        contentCount++;
+      }
+    } else {
+      lines.push(uriLine);
+      hintCount++;
+    }
   }
+
   lines.push("</openviking-context>");
+
+  log("injection_built", {
+    contentItems: contentCount,
+    hintItems: hintCount,
+    budgetUsed: cfg.recallTokenBudget - budgetRemaining,
+    budgetTotal: cfg.recallTokenBudget,
+  });
+
   return lines.join("\n");
 }
 
@@ -252,7 +313,12 @@ async function main() {
   log("start", {
     query: userPrompt.slice(0, 200),
     queryLength: userPrompt.length,
-    config: { recallLimit: cfg.recallLimit, scoreThreshold: cfg.scoreThreshold },
+    config: {
+      recallLimit: cfg.recallLimit,
+      scoreThreshold: cfg.scoreThreshold,
+      recallMaxContentChars: cfg.recallMaxContentChars,
+      recallTokenBudget: cfg.recallTokenBudget,
+    },
   });
 
   if (isBypassed(cfg, { sessionId, cwd })) {
@@ -274,7 +340,6 @@ async function main() {
     return;
   }
 
-  // Per-source over-fetch so ranking can pick from a broader pool.
   const perSourceLimit = Math.max(cfg.recallLimit * 2, 8);
   const raw = await searchAllSources(userPrompt, perSourceLimit);
   if (raw.length === 0) {
@@ -284,7 +349,6 @@ async function main() {
   }
 
   const profile = buildQueryProfile(userPrompt);
-  // Filter by threshold first, rank, then dedupe.
   const filtered = raw.filter(it => clampScore(it.score) >= cfg.scoreThreshold);
   filtered.sort((a, b) => rankItem(b, profile) - rankItem(a, profile));
   const deduped = dedupeItems(filtered);
@@ -302,7 +366,7 @@ async function main() {
     return;
   }
 
-  const block = formatHintBlock(picked, userPrompt);
+  const block = await buildInjectionBlock(picked);
   approve(block);
 }
 

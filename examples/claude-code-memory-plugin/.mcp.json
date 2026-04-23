@@ -1,17 +1,12 @@
 {
   "openviking": {
-    "command": "node",
-    "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/start-memory-server.mjs"],
-    "env": {
-      "OPENVIKING_CONFIG_FILE": "${OPENVIKING_CONFIG_FILE:-}",
-      "OPENVIKING_CLI_CONFIG_FILE": "${OPENVIKING_CLI_CONFIG_FILE:-}",
-      "OPENVIKING_URL": "${OPENVIKING_URL:-}",
-      "OPENVIKING_BASE_URL": "${OPENVIKING_BASE_URL:-}",
-      "OPENVIKING_API_KEY": "${OPENVIKING_API_KEY:-}",
-      "OPENVIKING_ACCOUNT": "${OPENVIKING_ACCOUNT:-}",
-      "OPENVIKING_USER": "${OPENVIKING_USER:-}",
-      "OPENVIKING_AGENT_ID": "${OPENVIKING_AGENT_ID:-}",
-      "OPENVIKING_MEMORY_ENABLED": "${OPENVIKING_MEMORY_ENABLED:-}"
+    "type": "http",
+    "url": "${OPENVIKING_URL:-http://127.0.0.1:1933}/mcp",
+    "headers": {
+      "X-API-Key": "${OPENVIKING_API_KEY:-}",
+      "X-OpenViking-Account": "${OPENVIKING_ACCOUNT:-}",
+      "X-OpenViking-User": "${OPENVIKING_USER:-}",
+      "X-OpenViking-Agent": "${OPENVIKING_AGENT_ID:-}"
     }
   }
 }

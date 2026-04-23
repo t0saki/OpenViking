@@ -25,7 +25,7 @@ import { createHash } from "node:crypto";
 // When no config file exists and no env-var override enables the plugin,
 // the server exits silently (code 0) so Claude Code is not disrupted.
 // ---------------------------------------------------------------------------
-import { readFileSync, appendFileSync, mkdirSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve as resolvePath } from "node:path";
 const DEFAULT_OV_CONF_PATH = join(homedir(), ".openviking", "ov.conf");
@@ -109,16 +109,8 @@ const config = {
     userId: str(process.env.OPENVIKING_USER, "") || str(cli.user, "") || str(cc.userId, ""),
     timeoutMs: Math.max(1000, Math.floor(num(cc.timeoutMs, 15000))),
     recallLimit: Math.max(1, Math.floor(num(cc.recallLimit, 6))),
-    scoreThreshold: Math.min(1, Math.max(0, num(cc.scoreThreshold, 0.01))),
+    scoreThreshold: Math.min(1, Math.max(0, num(cc.scoreThreshold, 0.35))),
 };
-// ---------------------------------------------------------------------------
-// MCP tool call logging (opt-in via OPENVIKING_MCP_CALL_LOG env var)
-// ---------------------------------------------------------------------------
-const MCP_CALL_LOG = process.env.OPENVIKING_MCP_CALL_LOG || join(process.env.HOME || homedir(), ".openviking", "logs", "mcp-calls.log");
-try { mkdirSync(MCP_CALL_LOG.replace(/\/[^/]+$/, ""), { recursive: true }); } catch {}
-function logMcpCall(tool, meta) {
-    try { appendFileSync(MCP_CALL_LOG, JSON.stringify({ ts: new Date().toISOString(), tool, ...meta }) + "\n"); } catch {}
-}
 // ---------------------------------------------------------------------------
 // OpenViking HTTP Client (ported from openclaw-plugin/client.ts)
 // ---------------------------------------------------------------------------
@@ -325,7 +317,7 @@ class OpenVikingClient {
     }
 }
 // ---------------------------------------------------------------------------
-// Memory ranking helpers (ported from openclaw-plugin/memory-ranking.ts)
+// Helpers (ported from openclaw-plugin/memory-ranking.ts)
 // ---------------------------------------------------------------------------
 function clampScore(value) {
     if (typeof value !== "number" || Number.isNaN(value))
@@ -337,8 +329,7 @@ function normalizeDedupeText(text) {
 }
 /**
  * events/cases specialization (ported from openclaw-plugin/memory-ranking.ts
- * isEventOrCaseMemory): items describing unique occurrences dedupe by URI
- * rather than abstract, because their abstracts frequently collide.
+ * isEventOrCaseMemory): dedupe by URI instead of abstract.
  */
 function isEventOrCaseMemory(item) {
     const cat = (item.category ?? "").toLowerCase();
@@ -373,229 +364,52 @@ function postProcessMemories(items, options) {
     }
     return deduped;
 }
-function formatMemoryLines(items) {
-    return items
-        .map((item, i) => {
-        const score = clampScore(item.score);
-        const abstract = item.abstract?.trim() || item.overview?.trim() || item.uri;
-        const category = item.category ?? "memory";
-        return `${i + 1}. [${category}] ${abstract} (${(score * 100).toFixed(0)}%)`;
-    })
-        .join("\n");
-}
-// Query-aware ranking (ported from openclaw-plugin/memory-ranking.ts)
-const PREFERENCE_QUERY_RE = /prefer|preference|favorite|favourite|like|偏好|喜欢|爱好|更倾向/i;
-const TEMPORAL_QUERY_RE = /when|what time|date|day|month|year|yesterday|today|tomorrow|last|next|什么时候|何时|哪天|几月|几年|昨天|今天|明天/i;
-const QUERY_TOKEN_RE = /[a-z0-9]{2,}/gi;
-const QUERY_TOKEN_STOPWORDS = new Set([
-    "what", "when", "where", "which", "who", "whom", "whose", "why", "how", "did", "does",
-    "is", "are", "was", "were", "the", "and", "for", "with", "from", "that", "this", "your", "you",
-]);
-function buildQueryProfile(query) {
-    const text = query.trim();
-    const allTokens = text.toLowerCase().match(QUERY_TOKEN_RE) ?? [];
-    const tokens = allTokens.filter((t) => !QUERY_TOKEN_STOPWORDS.has(t));
-    return {
-        tokens,
-        wantsPreference: PREFERENCE_QUERY_RE.test(text),
-        wantsTemporal: TEMPORAL_QUERY_RE.test(text),
-    };
-}
-function lexicalOverlapBoost(tokens, text) {
-    if (tokens.length === 0 || !text)
-        return 0;
-    const haystack = ` ${text.toLowerCase()} `;
-    let matched = 0;
-    for (const token of tokens.slice(0, 8)) {
-        if (haystack.includes(token))
-            matched += 1;
-    }
-    return Math.min(0.2, (matched / Math.min(tokens.length, 4)) * 0.2);
-}
-function rankForInjection(item, query) {
-    const baseScore = clampScore(item.score);
-    const abstract = (item.abstract ?? item.overview ?? "").trim();
-    const leafBoost = item.level === 2 ? 0.12 : 0;
-    const cat = (item.category ?? "").toLowerCase();
-    const eventBoost = query.wantsTemporal && (cat === "events" || item.uri.includes("/events/")) ? 0.1 : 0;
-    const prefBoost = query.wantsPreference && (cat === "preferences" || item.uri.includes("/preferences/")) ? 0.08 : 0;
-    const overlapBoost = lexicalOverlapBoost(query.tokens, `${item.uri} ${abstract}`);
-    return baseScore + leafBoost + eventBoost + prefBoost + overlapBoost;
-}
-function pickMemoriesForInjection(items, limit, queryText) {
-    if (items.length === 0 || limit <= 0)
-        return [];
-    const query = buildQueryProfile(queryText);
-    const sorted = [...items].sort((a, b) => rankForInjection(b, query) - rankForInjection(a, query));
-    const deduped = [];
-    const seen = new Set();
-    for (const item of sorted) {
-        const key = (item.abstract ?? item.overview ?? "").trim().toLowerCase() || item.uri;
-        if (seen.has(key))
-            continue;
-        seen.add(key);
-        deduped.push(item);
-    }
-    const leaves = deduped.filter((item) => item.level === 2);
-    if (leaves.length >= limit)
-        return leaves.slice(0, limit);
-    const picked = [...leaves];
-    const used = new Set(leaves.map((item) => item.uri));
-    for (const item of deduped) {
-        if (picked.length >= limit)
-            break;
-        if (used.has(item.uri))
-            continue;
-        picked.push(item);
-    }
-    return picked;
-}
 // ---------------------------------------------------------------------------
-// Shared search helpers
-// ---------------------------------------------------------------------------
-async function searchBothScopes(client, query, limit) {
-    const [userSettled, agentSettled] = await Promise.allSettled([
-        client.find(query, { targetUri: "viking://user/memories", limit, scoreThreshold: 0 }),
-        client.find(query, { targetUri: "viking://agent/memories", limit, scoreThreshold: 0 }),
-    ]);
-    const userResult = userSettled.status === "fulfilled" ? userSettled.value : { memories: [] };
-    const agentResult = agentSettled.status === "fulfilled" ? agentSettled.value : { memories: [] };
-    const all = [...(userResult.memories ?? []), ...(agentResult.memories ?? [])];
-    // Deduplicate by URI and keep only leaf memories
-    const unique = all.filter((m, i, self) => i === self.findIndex((o) => o.uri === m.uri));
-    return unique.filter((m) => m.level === 2);
-}
-// ---------------------------------------------------------------------------
-// MCP Server
+// MCP Server — 5 tools: search, read, store, forget, health
+// Redesigned post-benchmark to reduce MCP call count and tool redundancy.
+// Previous tools (memory_recall, search_context, read_context, list_context,
+// memory_store, memory_forget, memory_health) replaced without backward compat.
 // ---------------------------------------------------------------------------
 const client = new OpenVikingClient(config.baseUrl, config.apiKey, config.agentId, config.timeoutMs, config.accountId, config.userId);
-// MCP server name becomes the tool prefix exposed to Claude:
-//   mcp__openviking__{search,read,list}_context, mcp__openviking__memory_{recall,store,forget,health}
-// Aligns with the viking:// URI scheme and the OpenViking brand; avoids
-// collision with any hypothetical other "viking" MCP server.
 const server = new McpServer({
     name: "openviking",
     version: "0.2.0",
 });
-// -- Tool: memory_recall --------------------------------------------------
-server.tool("memory_recall", "Search long-term memories from OpenViking. Use when you need past user preferences, facts, decisions, or any previously stored information.", {
-    query: z.string().describe("Search query — describe what you want to recall"),
-    limit: z.number().optional().describe("Max results to return (default: 6)"),
-    score_threshold: z.number().optional().describe("Min relevance score 0-1 (default: 0.01)"),
-    target_uri: z.string().optional().describe("Search scope URI, e.g. viking://user/memories"),
-}, async ({ query, limit, score_threshold, target_uri }) => {
-    logMcpCall("memory_recall", { query: query?.slice(0, 80) });
-    const recallLimit = limit ?? config.recallLimit;
-    const threshold = score_threshold ?? config.scoreThreshold;
-    const candidateLimit = Math.max(recallLimit * 4, 20);
-    let leafMemories;
-    if (target_uri) {
-        const result = await client.find(query, { targetUri: target_uri, limit: candidateLimit, scoreThreshold: 0 });
-        leafMemories = (result.memories ?? []).filter((m) => m.level === 2);
-    }
-    else {
-        leafMemories = await searchBothScopes(client, query, candidateLimit);
-    }
-    const processed = postProcessMemories(leafMemories, { limit: candidateLimit, scoreThreshold: threshold });
-    const memories = pickMemoriesForInjection(processed, recallLimit, query);
-    if (memories.length === 0) {
-        return { content: [{ type: "text", text: "No relevant memories found in OpenViking." }] };
-    }
-    // Read full content for leaf memories
-    const lines = await Promise.all(memories.map(async (item) => {
-        if (item.level === 2) {
-            try {
-                const content = await client.read(item.uri);
-                if (content?.trim())
-                    return `- [${item.category ?? "memory"}] ${content.trim()}`;
-            }
-            catch { /* fallback */ }
-        }
-        return `- [${item.category ?? "memory"}] ${item.abstract ?? item.uri}`;
-    }));
-    return {
-        content: [{
-                type: "text",
-                text: `Found ${memories.length} relevant memories:\n\n${lines.join("\n")}\n\n---\n${formatMemoryLines(memories)}`,
-            }],
-    };
-});
-// -- Tool: memory_store ---------------------------------------------------
-// P1-8: store into a PERSISTENT ovSessionId (not one-shot). MCP doesn't know
-// the CC session_id, so we derive a stable identity-scoped session so
-// repeated store calls accumulate and OV's own commit pipeline produces
-// archives + memories via the normal extract path.
-const mcpStoreSessionId = "cc-mcpstore-" +
-    md5Short(`${config.accountId}|${config.userId}|${config.agentId}`);
-const COMMIT_THRESHOLD_TOKENS = 4000;
-server.tool("memory_store", "Store information into OpenViking long-term memory. Use when the user says 'remember this', shares preferences, important facts, decisions, or any information worth persisting across sessions.", {
-    text: z.string().describe("The information to store as memory"),
-    role: z.string().optional().describe("Message role: 'user' (default) or 'assistant'"),
-}, async ({ text, role }) => {
-    const msgRole = role || "user";
-    await client.addSessionMessage(mcpStoreSessionId, msgRole, text);
-    // Commit opportunistically when pending_tokens crosses a small threshold.
-    // The MCP store session lives across invocations, so we don't want to
-    // commit on every call — batching is cheaper and produces more coherent
-    // extractions.
-    let committed = false;
-    const meta = await client.getSessionMeta(mcpStoreSessionId);
-    const pending = Number(meta?.pending_tokens || 0);
-    if (pending >= COMMIT_THRESHOLD_TOKENS) {
-        await client.commitSession(mcpStoreSessionId);
-        committed = true;
-    }
-    return {
-        content: [{
-                type: "text",
-                text: committed
-                    ? `Stored into ${mcpStoreSessionId}. Pending ${pending} tokens → committed for extraction.`
-                    : `Stored into ${mcpStoreSessionId}. Pending ${pending} tokens (will commit when it crosses ${COMMIT_THRESHOLD_TOKENS}).`,
-            }],
-    };
-});
-// -- Tool: search_context -------------------------------------------------
-// P1-7: general-purpose search across all OV context types. Used when the
-// model wants to look up memories/resources/skills from the hint block
-// injected by auto-recall, or when triggered by the user asking for
-// something likely to live in OV.
-server.tool("search_context", "Search OpenViking context (memories, resources, skills). Returns a ranked list with URI + abstract + score. Use read_context to expand a specific URI.", {
+// -- Tool: search ---------------------------------------------------------
+// Replaces both memory_recall and search_context. Returns URI + abstract +
+// score (no full content reads — use read tool to expand).
+const SEARCH_TARGETS = {
+    memories: ["viking://user/memories", "viking://agent/memories"],
+    resources: ["viking://resources"],
+    skills: ["viking://agent/skills"],
+};
+server.tool("search", "Search OpenViking context database. Auto-recall already injects top matches — use this for deeper or narrower searches. Prefer search over manual directory traversal.", {
     query: z.string().describe("What to search for"),
     scope: z
         .enum(["all", "memories", "resources", "skills"])
         .optional()
-        .describe("Which context type to search (default: all)"),
-    limit: z.number().optional().describe("Max results per scope (default: 6)"),
+        .describe("Context type to search (default: all)"),
+    limit: z.number().optional().describe("Max results (default: 6)"),
 }, async ({ query, scope, limit }) => {
-    logMcpCall("search_context", { query: query?.slice(0, 80), scope });
-    const perLimit = limit ?? config.recallLimit;
+    const maxResults = limit ?? config.recallLimit;
     const scopes = scope && scope !== "all"
         ? [scope]
         : ["memories", "resources", "skills"];
-    const targets = {
-        memories: ["viking://user/memories", "viking://agent/memories"],
-        resources: ["viking://resources"],
-        skills: ["viking://agent/skills"],
-    };
     const results = [];
-    for (const s of scopes) {
-        for (const uri of targets[s] ?? []) {
-            try {
-                const r = await client.find(query, {
-                    targetUri: uri,
-                    limit: perLimit,
-                    scoreThreshold: 0,
-                });
-                const bucket = r[s];
-                for (const item of bucket ?? []) {
-                    results.push({ ...item, _type: s.slice(0, -1) }); // "memories" → "memory"
-                }
-            }
-            catch {
-                /* best-effort per target */
+    await Promise.all(scopes.flatMap((s) => (SEARCH_TARGETS[s] ?? []).map(async (uri) => {
+        try {
+            const r = await client.find(query, {
+                targetUri: uri,
+                limit: maxResults,
+                scoreThreshold: 0,
+            });
+            const bucket = r[s];
+            for (const item of bucket ?? []) {
+                results.push({ ...item, _type: s.replace(/s$/, "") });
             }
         }
-    }
+        catch { /* best-effort */ }
+    })));
     const filtered = results.filter((r) => clampScore(r.score) >= config.scoreThreshold);
     filtered.sort((a, b) => clampScore(b.score) - clampScore(a.score));
     const seen = new Set();
@@ -606,7 +420,7 @@ server.tool("search_context", "Search OpenViking context (memories, resources, s
             continue;
         seen.add(key);
         picked.push(item);
-        if (picked.length >= perLimit * scopes.length)
+        if (picked.length >= maxResults)
             break;
     }
     if (picked.length === 0) {
@@ -620,123 +434,135 @@ server.tool("search_context", "Search OpenViking context (memories, resources, s
     return {
         content: [{
                 type: "text",
-                text: `Found ${picked.length} item(s):\n\n${lines.join("\n")}\n\nExpand a URI with the read_context tool.`,
+                text: `Found ${picked.length} item(s):\n\n${lines.join("\n")}\n\nUse the read tool to expand a URI.`,
             }],
     };
 });
-// -- Tool: read_context ---------------------------------------------------
-server.tool("read_context", "Read the full body behind a viking:// URI. Use after search_context or after seeing an <openviking-context> hint block.", {
-    uri: z.string().describe("viking:// URI to read"),
-}, async ({ uri }) => {
-    logMcpCall("read_context", { uri });
+// -- Tool: read -----------------------------------------------------------
+// Replaces read_context + list_context. Supports batch URIs. Directory URIs
+// return a listing; file URIs return content.
+async function readOneUri(uri) {
     try {
         const body = await client.read(uri);
         const text = typeof body === "string" ? body : JSON.stringify(body);
-        if (!text.trim()) {
-            return { content: [{ type: "text", text: `(${uri} is empty)` }] };
-        }
-        return { content: [{ type: "text", text }] };
+        if (text.trim())
+            return text;
     }
-    catch (err) {
-        return {
-            content: [{
-                    type: "text",
-                    text: `Failed to read ${uri}: ${err instanceof Error ? err.message : String(err)}`,
-                }],
-        };
-    }
-});
-// -- Tool: list_context ---------------------------------------------------
-server.tool("list_context", "List entries under a viking:// directory URI (e.g. viking://resources or viking://agent/memories). Use for navigation when the URI structure is not known.", {
-    uri: z.string().describe("viking:// directory URI to list"),
-}, async ({ uri }) => {
-    logMcpCall("list_context", { uri });
+    catch { /* fall through to try ls */ }
     try {
         const entries = await client.lsUri(uri);
-        if (!Array.isArray(entries) || entries.length === 0) {
-            return { content: [{ type: "text", text: `(no entries under ${uri})` }] };
+        if (Array.isArray(entries) && entries.length > 0) {
+            return entries
+                .map((e) => {
+                const name = typeof e.name === "string" ? e.name : "?";
+                const kind = e.isDir ? "dir" : "file";
+                return `[${kind}] ${name}`;
+            })
+                .join("\n");
         }
-        const lines = entries.map((e) => {
-            const name = typeof e.name === "string" ? e.name : "?";
-            const kind = e.isDir ? "dir" : "file";
-            return `- [${kind}] ${name}`;
-        });
-        return { content: [{ type: "text", text: lines.join("\n") }] };
     }
-    catch (err) {
-        return {
-            content: [{
-                    type: "text",
-                    text: `Failed to list ${uri}: ${err instanceof Error ? err.message : String(err)}`,
-                }],
-        };
+    catch { /* fall through */ }
+    return `(nothing found at ${uri})`;
+}
+server.tool("read", "Read one or more viking:// URIs. Pass a single URI or an array for batch reads. Directory URIs return a listing of entries. Prefer search to find relevant URIs rather than navigating directories.", {
+    uris: z.union([
+        z.string().describe("Single viking:// URI"),
+        z.array(z.string()).describe("Array of viking:// URIs for batch read"),
+    ]),
+}, async ({ uris }) => {
+    const uriList = Array.isArray(uris) ? uris : [uris];
+    if (uriList.length === 1) {
+        const text = await readOneUri(uriList[0]);
+        return { content: [{ type: "text", text }] };
     }
+    const results = await Promise.all(uriList.map(async (uri) => {
+        const text = await readOneUri(uri);
+        return `=== ${uri} ===\n${text}`;
+    }));
+    return { content: [{ type: "text", text: results.join("\n\n") }] };
 });
-// -- Tool: memory_forget --------------------------------------------------
-server.tool("memory_forget", "Delete a memory from OpenViking. Provide an exact URI for direct deletion, or a search query to find and delete matching memories.", {
+// -- Tool: store ----------------------------------------------------------
+// Persistent identity-scoped session (ported from P1-8 memory_store).
+const mcpStoreSessionId = "cc-mcpstore-" +
+    md5Short(`${config.accountId}|${config.userId}|${config.agentId}`);
+const COMMIT_THRESHOLD_TOKENS = 4000;
+server.tool("store", "Store information into OpenViking long-term memory. Use when the user says 'remember this', shares preferences, important facts, or decisions worth persisting.", {
+    text: z.string().describe("The information to store"),
+    role: z.string().optional().describe("Message role: 'user' (default) or 'assistant'"),
+}, async ({ text, role }) => {
+    const msgRole = role || "user";
+    await client.addSessionMessage(mcpStoreSessionId, msgRole, text);
+    let committed = false;
+    const meta = await client.getSessionMeta(mcpStoreSessionId);
+    const pending = Number(meta?.pending_tokens || 0);
+    if (pending >= COMMIT_THRESHOLD_TOKENS) {
+        await client.commitSession(mcpStoreSessionId);
+        committed = true;
+    }
+    return {
+        content: [{
+                type: "text",
+                text: committed
+                    ? `Stored. ${pending} tokens committed for extraction.`
+                    : `Stored. ${pending} pending tokens (commits at ${COMMIT_THRESHOLD_TOKENS}).`,
+            }],
+    };
+});
+// -- Tool: forget ---------------------------------------------------------
+server.tool("forget", "Delete a memory from OpenViking. Provide an exact URI for direct deletion, or a search query to find and delete matching memories.", {
     uri: z.string().optional().describe("Exact viking:// memory URI to delete"),
     query: z.string().optional().describe("Search query to find the memory to delete"),
-    target_uri: z.string().optional().describe("Search scope URI (default: viking://user/memories)"),
-}, async ({ uri, query, target_uri }) => {
-    // Direct URI deletion
+}, async ({ uri, query }) => {
     if (uri) {
         if (!isMemoryUri(uri)) {
             return { content: [{ type: "text", text: `Refusing to delete non-memory URI: ${uri}` }] };
         }
         await client.deleteUri(uri);
-        return { content: [{ type: "text", text: `Deleted memory: ${uri}` }] };
+        return { content: [{ type: "text", text: `Deleted: ${uri}` }] };
     }
     if (!query) {
-        return { content: [{ type: "text", text: "Please provide either a uri or query parameter." }] };
+        return { content: [{ type: "text", text: "Provide either uri or query." }] };
     }
-    // Search then delete
     const candidateLimit = 20;
-    let candidates;
-    if (target_uri) {
-        const result = await client.find(query, { targetUri: target_uri, limit: candidateLimit, scoreThreshold: 0 });
-        candidates = postProcessMemories(result.memories ?? [], {
-            limit: candidateLimit,
-            scoreThreshold: config.scoreThreshold,
-            leafOnly: true,
-        }).filter((item) => isMemoryUri(item.uri));
-    }
-    else {
-        const leafMemories = await searchBothScopes(client, query, candidateLimit);
-        candidates = postProcessMemories(leafMemories, {
-            limit: candidateLimit,
-            scoreThreshold: config.scoreThreshold,
-            leafOnly: true,
-        }).filter((item) => isMemoryUri(item.uri));
-    }
+    const [userSettled, agentSettled] = await Promise.allSettled([
+        client.find(query, { targetUri: "viking://user/memories", limit: candidateLimit, scoreThreshold: 0 }),
+        client.find(query, { targetUri: "viking://agent/memories", limit: candidateLimit, scoreThreshold: 0 }),
+    ]);
+    const userMems = userSettled.status === "fulfilled" ? (userSettled.value.memories ?? []) : [];
+    const agentMems = agentSettled.status === "fulfilled" ? (agentSettled.value.memories ?? []) : [];
+    const all = [...userMems, ...agentMems].filter((m) => m.level === 2);
+    const candidates = postProcessMemories(all, {
+        limit: candidateLimit,
+        scoreThreshold: config.scoreThreshold,
+        leafOnly: true,
+    }).filter((item) => isMemoryUri(item.uri));
     if (candidates.length === 0) {
-        return { content: [{ type: "text", text: "No matching memories found. Try a more specific query." }] };
+        return { content: [{ type: "text", text: "No matching memories found." }] };
     }
-    // Auto-delete if single strong match
     const top = candidates[0];
     if (candidates.length === 1 && clampScore(top.score) >= 0.85) {
         await client.deleteUri(top.uri);
-        return { content: [{ type: "text", text: `Deleted memory: ${top.uri}` }] };
+        return { content: [{ type: "text", text: `Deleted: ${top.uri}` }] };
     }
-    // List candidates for confirmation
     const list = candidates
         .map((item) => `- ${item.uri} — ${item.abstract?.trim() || "?"} (${(clampScore(item.score) * 100).toFixed(0)}%)`)
         .join("\n");
     return {
         content: [{
                 type: "text",
-                text: `Found ${candidates.length} candidate memories. Please specify the exact URI to delete:\n\n${list}`,
+                text: `Found ${candidates.length} candidates. Specify the exact URI:\n\n${list}`,
             }],
     };
 });
-// -- Tool: memory_health --------------------------------------------------
-server.tool("memory_health", "Check whether the OpenViking memory server is reachable and healthy.", {}, async () => {
+// -- Tool: health ---------------------------------------------------------
+server.tool("health", "Check whether the OpenViking server is reachable.", {}, async () => {
     const ok = await client.healthCheck();
     return {
         content: [{
                 type: "text",
                 text: ok
                     ? `OpenViking is healthy (${config.baseUrl})`
-                    : `OpenViking is unreachable at ${config.baseUrl}. Please check if the server is running.`,
+                    : `OpenViking is unreachable at ${config.baseUrl}`,
             }],
     };
 });

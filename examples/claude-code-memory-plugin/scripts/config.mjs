@@ -172,9 +172,14 @@ export function loadConfig() {
     // Recall
     autoRecall: cc.autoRecall !== false,
     recallLimit: Math.max(1, Math.floor(num(cc.recallLimit, 6))),
-    scoreThreshold: Math.min(1, Math.max(0, num(cc.scoreThreshold, 0.01))),
+    scoreThreshold: Math.min(1, Math.max(0, num(cc.scoreThreshold, 0.35))),
     minQueryLength: Math.max(1, Math.floor(num(cc.minQueryLength, 3))),
     logRankingDetails: cc.logRankingDetails === true,
+    // Ported from openclaw DEFAULT_RECALL_MAX_CONTENT_CHARS / DEFAULT_RECALL_TOKEN_BUDGET /
+    // DEFAULT_RECALL_PREFER_ABSTRACT (openclaw-plugin/config.ts:44-47).
+    recallMaxContentChars: Math.max(50, Math.floor(num(cc.recallMaxContentChars, 500))),
+    recallTokenBudget: Math.max(200, Math.floor(num(cc.recallTokenBudget, 2000))),
+    recallPreferAbstract: cc.recallPreferAbstract !== false,
 
     // Capture
     autoCapture: cc.autoCapture !== false,
