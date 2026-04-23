@@ -405,7 +405,8 @@ server.tool("search", "Search OpenViking context database. Auto-recall already i
             });
             const bucket = r[s];
             for (const item of bucket ?? []) {
-                results.push({ ...item, _type: s.replace(/s$/, "") });
+                const typeMap = { memories: "memory", resources: "resource", skills: "skill" };
+                results.push({ ...item, _type: typeMap[s] ?? s });
             }
         }
         catch { /* best-effort */ }

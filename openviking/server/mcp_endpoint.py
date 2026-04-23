@@ -116,7 +116,7 @@ async def search(query: str, scope: str = "all", limit: int = 6) -> str:
                 bucket = items.get(s, []) if isinstance(items, dict) else []
                 for item in bucket:
                     if (item.get("score", 0) or 0) >= score_threshold:
-                        results.append({**item, "_type": s.rstrip("s")})
+                        results.append({**item, "_type": {"memories": "memory", "resources": "resource", "skills": "skill"}[s]})
             except Exception:
                 pass
 

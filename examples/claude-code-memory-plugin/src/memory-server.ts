@@ -483,7 +483,8 @@ server.tool(
             });
             const bucket = (r as Record<string, FindResultItem[] | undefined>)[s];
             for (const item of bucket ?? []) {
-              results.push({ ...item, _type: s.replace(/s$/, "") });
+              const typeMap: Record<string, string> = { memories: "memory", resources: "resource", skills: "skill" };
+              results.push({ ...item, _type: typeMap[s] ?? s });
             }
           } catch { /* best-effort */ }
         }),
