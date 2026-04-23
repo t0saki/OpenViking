@@ -129,7 +129,11 @@ def create_app(
 
         tracer_module.init_tracer_from_config()
 
-        yield
+        # Start MCP session manager (must be active before /mcp requests)
+        from openviking.server.mcp_endpoint import mcp_lifespan
+
+        async with mcp_lifespan():
+            yield
 
         # Cleanup
         from openviking.metrics.global_api import shutdown_metrics
@@ -258,5 +262,13 @@ def create_app(
     app.include_router(webdav_router)
     app.include_router(maintenance_router)
     app.include_router(bot_router, prefix="/bot/v1")
+
+    # MCP endpoint — serves 5 tools (search, read, store, forget, health)
+    # via streamable HTTP for Claude Code and other MCP clients.
+    from openviking.server.mcp_endpoint import create_mcp_app
+    from starlette.routing import Route
+
+    mcp_app = create_mcp_app()
+    app.routes.append(Route("/mcp", endpoint=mcp_app, methods=["GET", "POST", "DELETE"]))
 
     return app
