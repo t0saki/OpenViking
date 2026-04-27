@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: AGPL-3.0
 """MCP (Model Context Protocol) endpoint for OpenViking server.
 
-Exposes 5 tools to Claude Code (or any MCP client) via streamable HTTP:
-  search, read, store, forget, health
+Exposes 7 tools to Claude Code (or any MCP client) via streamable HTTP:
+  search, read, list, store, add_resource, forget, health
 
 Mounted on the FastAPI app at /mcp. The MCP session manager lifecycle is
 tied to the FastAPI app lifespan (not a sub-app lifespan) so the task group
@@ -17,17 +17,18 @@ from __future__ import annotations
 
 import contextvars
 from contextlib import asynccontextmanager
-from typing import Optional
+from typing import Literal, Optional
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
+from pydantic import BaseModel, Field
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from openviking.server.auth import resolve_identity
 from openviking.server.dependencies import get_service
-from openviking.server.identity import RequestContext, Role
+from openviking.server.identity import RequestContext
 from openviking_cli.exceptions import (
     InvalidArgumentError,
     PermissionDeniedError,
@@ -50,10 +51,7 @@ _mcp_ctx: contextvars.ContextVar[Optional[RequestContext]] = contextvars.Context
 def _get_ctx() -> RequestContext:
     ctx = _mcp_ctx.get()
     if ctx is None:
-        return RequestContext(
-            user=UserIdentifier("default", "default", "default"),
-            role=Role.ROOT,
-        )
+        raise UnauthenticatedError("MCP request identity not set")
     return ctx
 
 
@@ -106,7 +104,7 @@ class _IdentityASGIMiddleware:
 
 
 # ---------------------------------------------------------------------------
-# MCP server + tools
+# MCP server + 7 tools (aligned with vikingbot/agent/tools/ov_file.py)
 # ---------------------------------------------------------------------------
 
 mcp = FastMCP(
@@ -114,112 +112,101 @@ mcp = FastMCP(
     transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
 )
 
-SEARCH_TARGETS: dict[str, list[str]] = {
-    "memories": ["viking://user/memories", "viking://agent/memories"],
-    "resources": ["viking://resources"],
-    "skills": ["viking://agent/skills"],
-}
-
-
-def _is_memory_uri(uri: str) -> bool:
-    return ("viking://user/" in uri or "viking://agent/" in uri) and "/memories/" in uri
-
-
 
 # -- search ----------------------------------------------------------------
 
 @mcp.tool()
-async def search(query: str, scope: str = "all", limit: int = 6) -> str:
-    """Search OpenViking context database. Auto-recall already injects top matches — use this for deeper or narrower searches. Prefer search over manual directory traversal."""
+async def search(query: str, target_uri: str = "", limit: int = 10, min_score: float = 0.35) -> str:
+    """Search OpenViking context database (memories, resources, skills). Returns ranked results with URI, abstract, and score. Leave target_uri empty to search everything, or pass a viking:// URI to narrow scope."""
     service = get_service()
     ctx = _get_ctx()
-    scopes = [scope] if scope != "all" else ["memories", "resources", "skills"]
-    score_threshold = 0.35
 
-    results: list[dict] = []
-    for s in scopes:
-        for uri in SEARCH_TARGETS.get(s, []):
-            try:
-                r = await service.search.find(
-                    query=query, ctx=ctx, target_uri=uri,
-                    limit=limit, score_threshold=None,
-                )
-                items = getattr(r, "to_dict", lambda: r)()
-                bucket = items.get(s, []) if isinstance(items, dict) else []
-                for item in bucket:
-                    if (item.get("score", 0) or 0) >= score_threshold:
-                        results.append({**item, "_type": {"memories": "memory", "resources": "resource", "skills": "skill"}[s]})
-            except Exception:
-                pass
+    result = await service.search.find(
+        query=query, ctx=ctx, target_uri=target_uri,
+        limit=limit, score_threshold=min_score,
+    )
 
-    results.sort(key=lambda x: x.get("score", 0), reverse=True)
+    items = []
+    for ctx_type, contexts in [("memory", result.memories), ("resource", result.resources), ("skill", result.skills)]:
+        for m in contexts:
+            items.append((ctx_type, m))
 
-    seen: set[str] = set()
-    picked: list[dict] = []
-    for item in results:
-        key = item.get("uri", "")
-        if key in seen:
-            continue
-        seen.add(key)
-        picked.append(item)
-        if len(picked) >= limit:
-            break
-
-    if not picked:
+    if not items:
         return "No matching context found."
 
     lines = []
-    for item in picked:
-        score = item.get("score", 0)
-        abstract = (item.get("abstract") or item.get("overview") or "(no abstract)").strip()
-        typ = item.get("_type", "memory")
-        lines.append(f"- [{typ} {score * 100:.0f}%] {item['uri']}\n    {abstract}")
+    for ctx_type, m in items:
+        abstract = (m.abstract or m.overview or "(no abstract)").strip()
+        lines.append(f"- [{ctx_type} {m.score * 100:.0f}%] {m.uri}\n    {abstract}")
 
-    return f"Found {len(picked)} item(s):\n\n" + "\n".join(lines) + "\n\nUse the read tool to expand a URI."
+    return f"Found {len(items)} item(s):\n\n" + "\n".join(lines) + "\n\nUse the read tool to expand a URI."
 
 
 # -- read ------------------------------------------------------------------
 
-async def _read_one(uri: str) -> str:
-    service = get_service()
-    ctx = _get_ctx()
-    try:
-        result = await service.fs.read(uri, ctx=ctx)
-        if isinstance(result, str) and result.strip():
-            return result
-    except Exception:
-        pass
-    try:
-        entries = await service.fs.ls(uri, ctx=ctx)
-        if entries:
-            lines = []
-            for e in entries:
-                name = e.get("name", "?") if isinstance(e, dict) else getattr(e, "name", "?")
-                is_dir = e.get("isDir", False) if isinstance(e, dict) else getattr(e, "is_dir", False)
-                lines.append(f"[{'dir' if is_dir else 'file'}] {name}")
-            return "\n".join(lines)
-    except Exception:
-        pass
-    return f"(nothing found at {uri})"
-
-
 @mcp.tool()
 async def read(uris: str | list[str]) -> str:
-    """Read one or more viking:// URIs. Pass a single URI or a list for batch reads. Directory URIs return a listing. Prefer search to find relevant URIs rather than navigating directories."""
+    """Read full content from one or more viking:// file URIs. Pass a single URI string or a list for batch reads. For directory listing, use the list tool instead."""
+    import asyncio
+
+    service = get_service()
+    ctx = _get_ctx()
     uri_list = uris if isinstance(uris, list) else [uris]
+    semaphore = asyncio.Semaphore(10)
+
+    async def _read_one(uri: str) -> str:
+        async with semaphore:
+            try:
+                body = await service.fs.read(uri, ctx=ctx)
+                if isinstance(body, str) and body.strip():
+                    return body
+            except Exception:
+                pass
+            return f"(nothing found at {uri})"
+
     if len(uri_list) == 1:
         return await _read_one(uri_list[0])
+
+    results = await asyncio.gather(*[_read_one(u) for u in uri_list])
     parts = []
-    for uri in uri_list:
-        text = await _read_one(uri)
+    for uri, text in zip(uri_list, results, strict=True):
         parts.append(f"=== {uri} ===\n{text}")
     return "\n\n".join(parts)
 
 
+# -- list ------------------------------------------------------------------
+
+@mcp.tool(name="list")
+async def list_dir(uri: str, recursive: bool = False) -> str:
+    """List entries under a viking:// directory URI. Use recursive=true for deep listing."""
+    service = get_service()
+    ctx = _get_ctx()
+
+    entries = await service.fs.ls(uri, ctx=ctx, recursive=recursive, output="original")
+    if not entries:
+        return f"(no entries under {uri})"
+
+    lines = []
+    for e in entries:
+        name = e.get("name", "?") if isinstance(e, dict) else getattr(e, "name", "?")
+        is_dir = e.get("isDir", False) if isinstance(e, dict) else getattr(e, "is_dir", False)
+        entry_uri = e.get("uri", "") if isinstance(e, dict) else getattr(e, "uri", "")
+        if recursive and entry_uri:
+            lines.append(f"[{'dir' if is_dir else 'file'}] {entry_uri}")
+        else:
+            lines.append(f"[{'dir' if is_dir else 'file'}] {name}")
+    return "\n".join(lines)
+
+
 # -- store -----------------------------------------------------------------
 
+class StoreMessage(BaseModel):
+    role: Literal["user", "assistant"] = Field(description="Message role")
+    content: str = Field(description="Message text content")
+
+
 @mcp.tool()
-async def store(text: str, role: str = "user") -> str:
+async def store(messages: list[StoreMessage]) -> str:
     """Store information into OpenViking long-term memory. Use when the user says 'remember this', shares preferences, important facts, or decisions worth persisting."""
     import uuid
 
@@ -229,48 +216,111 @@ async def store(text: str, role: str = "user") -> str:
     ctx = _get_ctx()
     session_id = f"mcp-store-{uuid.uuid4().hex[:12]}"
     session = await service.sessions.get(session_id, ctx, auto_create=True)
-    session.add_message(role, [TextPart(text=text)])
+    for msg in messages:
+        if msg.content:
+            session.add_message(msg.role, [TextPart(text=msg.content)])
     await service.sessions.commit_async(session_id, ctx)
-    return "Stored and committed for memory extraction."
+    return f"Stored {len(messages)} message(s) and committed for memory extraction."
+
+
+# -- add_resource ----------------------------------------------------------
+
+@mcp.tool()
+async def add_resource(path: str, description: str = "") -> str:
+    """Add a resource (local file path or URL) to OpenViking. This is an asynchronous operation — the resource will be processed in the background."""
+    service = get_service()
+    ctx = _get_ctx()
+    try:
+        result = await service.resources.add_resource(
+            path=path, ctx=ctx, reason=description, wait=False,
+        )
+        root_uri = result.get("root_uri", "")
+        return f"Resource added: {root_uri}" if root_uri else "Resource added (processing in background)."
+    except Exception as e:
+        return f"Error adding resource: {e}"
+
+
+# -- grep ------------------------------------------------------------------
+
+@mcp.tool()
+async def grep(
+    uri: str, pattern: str | list[str], case_insensitive: bool = False, node_limit: int = 10
+) -> str:
+    """Search content in viking:// files using regex patterns (like grep). Supports multiple patterns searched concurrently. Use this for exact text matching; use the search tool for semantic retrieval."""
+    import asyncio
+
+    service = get_service()
+    ctx = _get_ctx()
+    patterns = [pattern] if isinstance(pattern, str) else pattern
+    semaphore = asyncio.Semaphore(10)
+
+    async def _grep_one(p: str) -> tuple[str, list[dict]]:
+        async with semaphore:
+            try:
+                result = await service.fs.grep(
+                    uri, p, ctx=ctx, case_insensitive=case_insensitive, node_limit=node_limit,
+                )
+                return (p, result.get("matches", []))
+            except Exception:
+                return (p, [])
+
+    results = await asyncio.gather(*[_grep_one(p) for p in patterns])
+
+    merged: dict[str, list[tuple]] = {}
+    total = 0
+    for p, matches in results:
+        total += len(matches)
+        for m in matches:
+            m_uri = m.get("uri", "?")
+            merged.setdefault(m_uri, []).append(
+                (m.get("line", "?"), m.get("content", ""), p)
+            )
+
+    if not merged:
+        return f"No matches found for pattern(s): {', '.join(patterns)}"
+
+    lines = [f"Found {total} match(es) across {len(patterns)} pattern(s):"]
+    for m_uri, hits in merged.items():
+        hits.sort(key=lambda x: int(x[0]) if str(x[0]).isdigit() else 0)
+        lines.append(f"\n{m_uri}")
+        for line_no, content, p in hits:
+            lines.append(f"  L{line_no} [{p}]: {content}")
+    return "\n".join(lines)
+
+
+# -- glob ------------------------------------------------------------------
+
+@mcp.tool()
+async def glob(pattern: str, uri: str = "viking://", node_limit: int = 100) -> str:
+    """Find viking:// files matching a glob pattern (e.g. **/*.md, *.py). Use this for filename matching; use the search tool for content-based retrieval."""
+    service = get_service()
+    ctx = _get_ctx()
+
+    try:
+        result = await service.fs.glob(pattern, ctx=ctx, uri=uri, node_limit=node_limit)
+    except Exception as e:
+        return f"Error: {e}"
+
+    matches = result.get("matches", [])
+    if not matches:
+        return f"No files found matching: {pattern}"
+
+    lines = [f"Found {len(matches)} file(s):"]
+    for m in matches:
+        m_uri = m.get("uri", str(m)) if isinstance(m, dict) else str(m)
+        lines.append(f"  {m_uri}")
+    return "\n".join(lines)
 
 
 # -- forget ----------------------------------------------------------------
 
 @mcp.tool()
-async def forget(uri: str = "", query: str = "") -> str:
-    """Delete a memory from OpenViking. Provide an exact URI for direct deletion, or a search query to find and delete matching memories."""
+async def forget(uri: str) -> str:
+    """Delete a viking:// URI from OpenViking. Use the search tool first to find the exact URI, then pass it here."""
     service = get_service()
     ctx = _get_ctx()
-    if uri:
-        if not _is_memory_uri(uri):
-            return f"Refusing to delete non-memory URI: {uri}"
-        await service.fs.delete(uri, ctx=ctx)
-        return f"Deleted: {uri}"
-    if not query:
-        return "Provide either uri or query."
-    candidates = []
-    for target in SEARCH_TARGETS["memories"]:
-        try:
-            r = await service.search.find(query=query, ctx=ctx, target_uri=target, limit=20, score_threshold=None)
-            items = getattr(r, "to_dict", lambda: r)()
-            for item in items.get("memories", []):
-                if item.get("level") == 2 and _is_memory_uri(item.get("uri", "")):
-                    candidates.append(item)
-        except Exception:
-            pass
-    candidates.sort(key=lambda x: x.get("score", 0), reverse=True)
-    if not candidates:
-        return "No matching memories found."
-    top = candidates[0]
-    if len(candidates) == 1 and (top.get("score", 0) or 0) >= 0.85:
-        await service.fs.delete(top["uri"], ctx=ctx)
-        return f"Deleted: {top['uri']}"
-    lines = []
-    for item in candidates[:10]:
-        score = item.get("score", 0) or 0
-        abstract = (item.get("abstract") or "?").strip()
-        lines.append(f"- {item['uri']} — {abstract} ({score * 100:.0f}%)")
-    return f"Found {len(candidates)} candidates. Specify the exact URI:\n\n" + "\n".join(lines)
+    await service.fs.rm(uri, ctx=ctx)
+    return f"Deleted: {uri}"
 
 
 # -- health ----------------------------------------------------------------
@@ -293,7 +343,7 @@ async def health() -> str:
 async def mcp_lifespan():
     """Run the MCP session manager. Call this inside the FastAPI lifespan."""
     async with mcp.session_manager.run():
-        logger.info("MCP endpoint ready (5 tools: search, read, store, forget, health)")
+        logger.info("MCP endpoint ready (9 tools: search, read, list, store, add_resource, grep, glob, forget, health)")
         yield
 
 
@@ -303,8 +353,6 @@ def create_mcp_app() -> ASGIApp:
     IMPORTANT: call `mcp_lifespan()` inside the FastAPI lifespan BEFORE
     serving requests. The session manager task group must be initialized.
     """
-    # streamable_http_app() lazily creates the session_manager.
-    # We call it to trigger creation, then extract the route handler.
     starlette_app = mcp.streamable_http_app()
-    handler = starlette_app.routes[0].app  # StreamableHTTPASGIApp
+    handler = starlette_app.routes[0].app
     return _IdentityASGIMiddleware(handler)
