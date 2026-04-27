@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: AGPL-3.0
 """MCP (Model Context Protocol) endpoint for OpenViking server.
 
-Exposes 5 tools to Claude Code (or any MCP client) via streamable HTTP:
-  search, read, store, forget, health
+Exposes 7 tools to Claude Code (or any MCP client) via streamable HTTP:
+  search, read, list, store, add_resource, forget, health
 
 Mounted on the FastAPI app at /mcp. The MCP session manager lifecycle is
 tied to the FastAPI app lifespan (not a sub-app lifespan) so the task group
@@ -103,7 +103,7 @@ class _IdentityASGIMiddleware:
 
 
 # ---------------------------------------------------------------------------
-# MCP server + tools
+# MCP server + 7 tools (aligned with vikingbot/agent/tools/ov_file.py)
 # ---------------------------------------------------------------------------
 
 mcp = FastMCP(
@@ -111,17 +111,18 @@ mcp = FastMCP(
     transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
 )
 
+
 # -- search ----------------------------------------------------------------
 
 @mcp.tool()
-async def search(query: str, target_uri: str = "", limit: int = 6) -> str:
-    """Search OpenViking context database. Auto-recall already injects top matches — use this for deeper or narrower searches. Prefer search over manual directory traversal. Leave target_uri empty to search everything, or pass a viking:// URI to narrow scope."""
+async def search(query: str, target_uri: str = "", limit: int = 10, min_score: float = 0.35) -> str:
+    """Search OpenViking context database (memories, resources, skills). Returns ranked results with URI, abstract, and score. Leave target_uri empty to search everything, or pass a viking:// URI to narrow scope."""
     service = get_service()
     ctx = _get_ctx()
 
     result = await service.search.find(
         query=query, ctx=ctx, target_uri=target_uri,
-        limit=limit, score_threshold=0.35,
+        limit=limit, score_threshold=min_score,
     )
 
     items = []
@@ -142,47 +143,65 @@ async def search(query: str, target_uri: str = "", limit: int = 6) -> str:
 
 # -- read ------------------------------------------------------------------
 
-async def _read_one(uri: str) -> str:
-    service = get_service()
-    ctx = _get_ctx()
-    try:
-        result = await service.fs.read(uri, ctx=ctx)
-        if isinstance(result, str) and result.strip():
-            return result
-    except Exception:
-        pass
-    try:
-        entries = await service.fs.ls(uri, ctx=ctx)
-        if entries:
-            lines = []
-            for e in entries:
-                name = e.get("name", "?") if isinstance(e, dict) else getattr(e, "name", "?")
-                is_dir = e.get("isDir", False) if isinstance(e, dict) else getattr(e, "is_dir", False)
-                lines.append(f"[{'dir' if is_dir else 'file'}] {name}")
-            return "\n".join(lines)
-    except Exception:
-        pass
-    return f"(nothing found at {uri})"
-
-
 @mcp.tool()
 async def read(uris: str | list[str]) -> str:
-    """Read one or more viking:// URIs. Pass a single URI or a list for batch reads. Directory URIs return a listing. Prefer search to find relevant URIs rather than navigating directories."""
+    """Read full content from one or more viking:// file URIs. Pass a single URI string or a list for batch reads. For directory listing, use the list tool instead."""
+    import asyncio
+
+    service = get_service()
+    ctx = _get_ctx()
     uri_list = uris if isinstance(uris, list) else [uris]
+    semaphore = asyncio.Semaphore(10)
+
+    async def _read_one(uri: str) -> str:
+        async with semaphore:
+            try:
+                body = await service.fs.read(uri, ctx=ctx)
+                if isinstance(body, str) and body.strip():
+                    return body
+            except Exception:
+                pass
+            return f"(nothing found at {uri})"
+
     if len(uri_list) == 1:
         return await _read_one(uri_list[0])
+
+    results = await asyncio.gather(*[_read_one(u) for u in uri_list])
     parts = []
-    for uri in uri_list:
-        text = await _read_one(uri)
+    for uri, text in zip(uri_list, results, strict=True):
         parts.append(f"=== {uri} ===\n{text}")
     return "\n\n".join(parts)
+
+
+# -- list ------------------------------------------------------------------
+
+@mcp.tool(name="list")
+async def list_dir(uri: str, recursive: bool = False) -> str:
+    """List entries under a viking:// directory URI. Use recursive=true for deep listing."""
+    service = get_service()
+    ctx = _get_ctx()
+
+    entries = await service.fs.ls(uri, ctx=ctx, recursive=recursive, output="original")
+    if not entries:
+        return f"(no entries under {uri})"
+
+    lines = []
+    for e in entries:
+        name = e.get("name", "?") if isinstance(e, dict) else getattr(e, "name", "?")
+        is_dir = e.get("isDir", False) if isinstance(e, dict) else getattr(e, "is_dir", False)
+        entry_uri = e.get("uri", "") if isinstance(e, dict) else getattr(e, "uri", "")
+        if recursive and entry_uri:
+            lines.append(f"[{'dir' if is_dir else 'file'}] {entry_uri}")
+        else:
+            lines.append(f"[{'dir' if is_dir else 'file'}] {name}")
+    return "\n".join(lines)
 
 
 # -- store -----------------------------------------------------------------
 
 @mcp.tool()
-async def store(text: str, role: str = "user") -> str:
-    """Store information into OpenViking long-term memory. Use when the user says 'remember this', shares preferences, important facts, or decisions worth persisting."""
+async def store(messages: list[dict[str, str]]) -> str:
+    """Store information into OpenViking long-term memory. Pass a list of messages, each with 'role' ('user' or 'assistant') and 'content'. Use when the user says 'remember this', shares preferences, important facts, or decisions worth persisting."""
     import uuid
 
     from openviking.message.part import TextPart
@@ -191,9 +210,30 @@ async def store(text: str, role: str = "user") -> str:
     ctx = _get_ctx()
     session_id = f"mcp-store-{uuid.uuid4().hex[:12]}"
     session = await service.sessions.get(session_id, ctx, auto_create=True)
-    session.add_message(role, [TextPart(text=text)])
+    for msg in messages:
+        role = msg.get("role", "user")
+        content = msg.get("content", "")
+        if content:
+            session.add_message(role, [TextPart(text=content)])
     await service.sessions.commit_async(session_id, ctx)
-    return "Stored and committed for memory extraction."
+    return f"Stored {len(messages)} message(s) and committed for memory extraction."
+
+
+# -- add_resource ----------------------------------------------------------
+
+@mcp.tool()
+async def add_resource(path: str, description: str = "") -> str:
+    """Add a resource (local file path or URL) to OpenViking. This is an asynchronous operation — the resource will be processed in the background."""
+    service = get_service()
+    ctx = _get_ctx()
+    try:
+        result = await service.resources.add_resource(
+            path=path, ctx=ctx, reason=description, wait=False,
+        )
+        root_uri = result.get("root_uri", "")
+        return f"Resource added: {root_uri}" if root_uri else "Resource added (processing in background)."
+    except Exception as e:
+        return f"Error adding resource: {e}"
 
 
 # -- forget ----------------------------------------------------------------
@@ -251,7 +291,7 @@ async def health() -> str:
 async def mcp_lifespan():
     """Run the MCP session manager. Call this inside the FastAPI lifespan."""
     async with mcp.session_manager.run():
-        logger.info("MCP endpoint ready (5 tools: search, read, store, forget, health)")
+        logger.info("MCP endpoint ready (7 tools: search, read, list, store, add_resource, forget, health)")
         yield
 
 

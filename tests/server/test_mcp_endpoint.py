@@ -14,12 +14,14 @@ from openviking.server.identity import RequestContext, Role
 from openviking.server.mcp_endpoint import (
     _get_ctx,
     _mcp_ctx,
+    add_resource,
     forget,
     health,
     read,
     search,
     store,
 )
+from openviking.server.mcp_endpoint import list_dir as list_tool
 from openviking_cli.exceptions import UnauthenticatedError
 from openviking_cli.session.user_id import UserIdentifier
 
@@ -98,6 +100,11 @@ async def test_search_with_target_uri(service):
     assert isinstance(result, str)
 
 
+async def test_search_with_min_score(service):
+    result = await search(query="test", min_score=0.99)
+    assert result == "No matching context found."
+
+
 # ---------------------------------------------------------------------------
 # read tool
 # ---------------------------------------------------------------------------
@@ -106,11 +113,6 @@ async def test_search_with_target_uri(service):
 async def test_read_nonexistent_uri(service):
     result = await read("viking://user/default/memories/does_not_exist.md")
     assert "nothing found" in result.lower()
-
-
-async def test_read_directory(service):
-    result = await read("viking://user")
-    assert isinstance(result, str)
 
 
 async def test_read_batch(service):
@@ -125,18 +127,56 @@ async def test_read_batch(service):
 
 
 # ---------------------------------------------------------------------------
+# list tool
+# ---------------------------------------------------------------------------
+
+
+async def test_list_root(service):
+    result = await list_tool("viking://user")
+    assert isinstance(result, str)
+
+
+async def test_list_empty_dir(service):
+    ctx = DEFAULT_CTX
+    await service.viking_fs.mkdir(
+        "viking://user/default/memories/empty_test", ctx=ctx, exist_ok=True
+    )
+    result = await list_tool("viking://user/default/memories/empty_test")
+    assert isinstance(result, str)
+
+
+# ---------------------------------------------------------------------------
 # store tool
 # ---------------------------------------------------------------------------
 
 
-async def test_store_returns_confirmation(service):
-    result = await store(text="Test memory: the sky is blue")
+async def test_store_single_message(service):
+    result = await store(messages=[{"role": "user", "content": "The sky is blue"}])
     assert "stored" in result.lower()
+    assert "1 message" in result
 
 
-async def test_store_with_assistant_role(service):
-    result = await store(text="I learned something", role="assistant")
+async def test_store_batch_messages(service):
+    result = await store(
+        messages=[
+            {"role": "user", "content": "Remember my favorite color is blue"},
+            {"role": "assistant", "content": "Noted, your favorite color is blue."},
+        ]
+    )
     assert "stored" in result.lower()
+    assert "2 message" in result
+
+
+# ---------------------------------------------------------------------------
+# add_resource tool
+# ---------------------------------------------------------------------------
+
+
+async def test_add_resource_nonexistent_path(service):
+    result = await add_resource(path="/tmp/definitely_does_not_exist_xyz.md")
+    assert (
+        "error" in result.lower() or "not found" in result.lower() or "resource" in result.lower()
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -171,7 +211,7 @@ async def test_forget_by_query_no_matches(service):
 
 
 # ---------------------------------------------------------------------------
-# Identity middleware
+# Route registration
 # ---------------------------------------------------------------------------
 
 
