@@ -255,15 +255,15 @@ async function buildInjectionBlock(items) {
 
     if (budgetRemaining > 0) {
       const content = await resolveItemContent(item);
-      const fullLine = `${uriLine}\n  ${content}`;
-      const lineTokens = estimateTokens(fullLine);
+      const contentLine = `- [${item._sourceType} ${score}%] ${content}`;
+      const lineTokens = estimateTokens(contentLine);
 
       // First item always included even if over budget (openclaw spec §6.2)
       if (lineTokens > budgetRemaining && contentCount > 0) {
         lines.push(uriLine);
         hintCount++;
       } else {
-        lines.push(fullLine);
+        lines.push(contentLine);
         budgetRemaining -= lineTokens;
         contentCount++;
       }
