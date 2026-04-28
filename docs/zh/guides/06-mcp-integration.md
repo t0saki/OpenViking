@@ -43,7 +43,7 @@ MCP 端点的鉴权与 OpenViking REST API 完全一致，复用同一套 API-Ke
     "openviking": {
       "url": "https://your-server.com/mcp",
       "headers": {
-        "X-Api-Key": "your-api-key-here"
+        "Authorization": "Bearer your-api-key-here"
       }
     }
   }
@@ -57,7 +57,7 @@ Claude Code 需要额外指定 `"type": "http"`。可通过命令行添加：
 ```bash
 claude mcp add --transport http openviking \
   https://your-server.com/mcp \
-  --header "X-Api-Key: your-api-key-here"
+  --header "Authorization: Bearer your-api-key-here"
 ```
 
 或在 `.mcp.json` 中手动配置：
@@ -69,7 +69,7 @@ claude mcp add --transport http openviking \
       "type": "http",
       "url": "https://your-server.com/mcp",
       "headers": {
-        "X-Api-Key": "your-api-key-here"
+        "Authorization": "Bearer your-api-key-here"
       }
     }
   }

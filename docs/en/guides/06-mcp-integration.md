@@ -43,7 +43,7 @@ Most MCP-compatible platforms (Trae, Manus, Cursor, etc.) use the standard `mcpS
     "openviking": {
       "url": "https://your-server.com/mcp",
       "headers": {
-        "X-Api-Key": "your-api-key-here"
+        "Authorization": "Bearer your-api-key-here"
       }
     }
   }
@@ -57,7 +57,7 @@ Claude Code requires `"type": "http"`. Add via CLI:
 ```bash
 claude mcp add --transport http openviking \
   https://your-server.com/mcp \
-  --header "X-Api-Key: your-api-key-here"
+  --header "Authorization: Bearer your-api-key-here"
 ```
 
 Or in `.mcp.json`:
@@ -69,7 +69,7 @@ Or in `.mcp.json`:
       "type": "http",
       "url": "https://your-server.com/mcp",
       "headers": {
-        "X-Api-Key": "your-api-key-here"
+        "Authorization": "Bearer your-api-key-here"
       }
     }
   }
