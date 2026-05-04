@@ -25,30 +25,33 @@ This guide helps you migrate from the legacy `claude-memory-plugin` to the new `
 
 4. **Global Configuration**: One config file for all projects (`~/.openviking/ov.conf`), not per-project `./ov.conf` files.
 
-## Capture Strategy: User Messages Only by Default
+## Capture Strategy: Both Sides by Default (revised 2026-05)
 
-One design choice worth explaining in detail:
+The plugin originally shipped with `captureAssistantTurns: false` so coding-only workflows wouldn't pay LLM-extraction cost on tool-heavy assistant turns. Field testing showed two problems with that posture:
 
-### Why Auto-Capture User Messages Only
-
-In practice, auto-capturing assistant turns in coding scenarios has proven problematic:
-
-1. **VLM Token Cost**: Each capture triggers an LLM extraction call to OpenViking. Capturing every assistant turn (including tool calls, sub-agent outputs, etc.) quickly becomes expensive.
-
-2. **Signal-to-Noise Ratio**: Claude Code's assistant messages often contain verbose tool outputs, file contents, and nested sub-agent traces. These rarely contain memorable personal context — the valuable signal is typically in the *user's* questions, decisions, and stated preferences.
-
-3. **Coding Workflow Nature**: For coding tasks, "memory" is often about:
-   - User preferences ("use tabs not spaces", "prefer arrow functions")
-   - Project context ("this repo uses bun, not npm")
-   - Decisions made ("let's skip the refactor for now")
-   
-   These almost always originate from the *user*, not the assistant.
+1. **Asymmetric capture confused users.** The `subagent-stop` path always pushed both sides; only the main-session path filtered. Same plugin, same config, different sessions ended up half-empty vs. full with no log line explaining why.
+2. **Memory extraction degraded substantially.** Without assistant turns the extractor saw "user asked X" → next turn → "user asked Y", missing the agent's reasoning, decisions, and any context surfaced by tool I/O. For non-trivial workflows the plugin felt like it was "forgetting half the conversation".
 
 ### Current Default
 
-The plugin defaults to `captureAssistantTurns: false` — only user messages are considered for auto-capture. This keeps token usage manageable while still preserving the most valuable context.
+The plugin defaults to `captureAssistantTurns: true` — both user and assistant turns are captured, including tool input/output (truncated per block to 4096 chars). This aligns the main-session and subagent paths and gives the memory extractor enough context to do real extraction.
 
-Users can opt-in to full capture by setting `"captureAssistantTurns": true` in their `ov.conf` if they want assistant turns included (e.g., for non-coding workflows where assistant insights matter).
+Operators who want the old user-only behavior can opt out:
+
+```json
+// ~/.openviking/ov.conf
+{
+  "claude_code": {
+    "captureAssistantTurns": false
+  }
+}
+```
+
+…or set `OPENVIKING_CAPTURE_ASSISTANT_TURNS=0` in the environment.
+
+### Cost note
+
+Assistant capture does increase OV-side LLM extraction load (roughly 2× more tokens per session in coding workflows). The plugin's `commitTokenThreshold` (default 20000) still bounds how often extraction runs. If extraction cost is a concern for a deployment, opt out via the env var rather than hand-editing the default.
 
 ## Migration Steps
 
