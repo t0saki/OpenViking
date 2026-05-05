@@ -375,3 +375,4 @@ jobs:
                 "${dockerhub_image_refs[@]}"
             fi
           done <<< "$SOURCE_TAGS"
+

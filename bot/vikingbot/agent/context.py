@@ -46,6 +46,7 @@ class ContextBuilder:
         self._sender_name = sender_name
         self._is_group_chat = is_group_chat
         self._eval = eval
+        self.latest_relevant_memories: str | None = None
 
     @property
     def memory(self):
@@ -70,7 +71,10 @@ class ContextBuilder:
             self._templates_ensured = True
 
     async def build_system_prompt(
-        self, session_key: SessionKey, ov_tools_enable: bool = True, profile_user_list: list[str] | None = None
+        self,
+        session_key: SessionKey,
+        ov_tools_enable: bool = True,
+        profile_user_list: list[str] | None = None,
     ) -> str:
         """
         Build the system prompt from bootstrap files, memory, and skills.
@@ -152,7 +156,12 @@ Skills with available="false" need dependencies installed first - you can try in
         return "\n\n---\n\n".join(parts)
 
     async def _build_user_memory(
-        self, session_key: SessionKey, current_message: str, sender_id: str, memory_user: str, ov_tools_enable: bool = True
+        self,
+        session_key: SessionKey,
+        current_message: str,
+        sender_id: str,
+        memory_user: str,
+        ov_tools_enable: bool = True,
     ) -> str:
         """
         Build the system prompt from bootstrap files, memory, and skills.
@@ -189,18 +198,20 @@ Skills with available="false" need dependencies installed first - you can try in
             viking_memory = await self.memory.get_viking_memory_context(
                 current_message=current_message, workspace_id=workspace_id, sender_id=user
             )
-            logger.info(f'viking_memory={viking_memory}')
+            logger.info(f"viking_memory={viking_memory}")
             cost = round(_time.time() - start, 2)
             logger.info(
                 f"[READ_USER_MEMORY]: cost {cost}s, memory={viking_memory[:50] if viking_memory else 'None'}"
             )
             if viking_memory:
-                parts.append(
-                    f"## openviking_search(query=[user_query])\n"
-                    f"{viking_memory}"
-                )
+                self.latest_relevant_memories = viking_memory
+                parts.append(f"## openviking_search(query=[user_query])\n{viking_memory}")
+            else:
+                self.latest_relevant_memories = None
 
-        parts.append("Reply in the same language as the user's query, ignoring the language of the reference materials. User's query:")
+        parts.append(
+            "Reply in the same language as the user's query, ignoring the language of the reference materials. User's query:"
+        )
 
         return "\n\n---\n\n".join(parts)
 
@@ -238,7 +249,7 @@ You have two workspaces:
 2. OpenViking workspace: managed via OpenViking tools
 - Custom skills: {workspace_display}/skills/{{skill-name}}/SKILL.md
 
-IMPORTANT: 
+IMPORTANT:
 - When responding to direct questions or conversations, reply directly with your text response.
 - Only use the 'message' tool when you need to send a message to a specific chat channel (like WhatsApp).For normal conversation, just respond with text - do not call the message tool.
 - Always be helpful, accurate, and concise. When using tools, think step by step: what you know, what you need, and why you chose this tool.
@@ -299,7 +310,11 @@ IMPORTANT:
 
         # User
         user_info = await self._build_user_memory(
-            session_key, current_message, self._sender_id, memory_user, ov_tools_enable=ov_tools_enable
+            session_key,
+            current_message,
+            self._sender_id,
+            memory_user,
+            ov_tools_enable=ov_tools_enable,
         )
         messages.append({"role": "user", "content": user_info})
 

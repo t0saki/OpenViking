@@ -270,6 +270,71 @@ Add the following to `~/.openviking/ov.conf` (or the path passed via `--config`)
 
 Restart OpenViking Server after editing the config.
 
+### Observability config hierarchy
+
+OpenViking groups signal-level observability configuration under `server.observability`:
+
+- `server.observability.metrics`: metrics subsystem and exporters
+- `server.observability.traces`: trace export configuration
+- `server.observability.logs`: log export configuration
+
+Example:
+
+```json
+{
+  "server": {
+    "observability": {
+      "metrics": {
+        "enabled": true,
+        "exporters": {
+          "prometheus": {
+            "enabled": true
+          },
+          "otel": {
+            "enabled": true,
+            "protocol": "grpc",
+            "tls": {
+              "insecure": true
+            },
+            "endpoint": "otel-collector:4317",
+            "service_name": "openviking-server",
+            "export_interval_ms": 10000,
+            "headers": {}
+          }
+        }
+      },
+      "traces": {
+        "enabled": true,
+        "protocol": "grpc",
+        "tls": {
+          "insecure": true
+        },
+        "endpoint": "otel-collector:4317",
+        "service_name": "openviking-server",
+        "headers": {}
+      },
+      "logs": {
+        "enabled": true,
+        "protocol": "grpc",
+        "tls": {
+          "insecure": true
+        },
+        "endpoint": "otel-collector:4317",
+        "service_name": "openviking-server",
+        "headers": {}
+      }
+    }
+  }
+}
+```
+
+Notes:
+
+- `headers` forwards custom OTLP request headers or gRPC metadata to the exporter.
+- This is useful when an OTLP backend requires extra auth headers for direct ingestion.
+- The `headers` shape is the same across `traces`, `logs`, and `metrics.exporters.otel`.
+- When `protocol="grpc"`, `headers` are sent as gRPC metadata and keys should be lowercase, for example `x-byteapm-appkey`; this restriction does not apply to `protocol="http"`.
+
 For full fields, supported ranges, and more examples, see:
 
 - [Metrics](../concepts/12-metrics.md)

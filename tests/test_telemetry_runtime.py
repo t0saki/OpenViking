@@ -9,9 +9,16 @@ from types import SimpleNamespace
 
 import pytest
 
-from openviking.metrics.account_context import get_metric_account_context
 from openviking.models.embedder.base import EmbedResult, embed_compat
 from openviking.models.vlm.base import VLMBase
+from openviking.observability.context import (
+    bind_operation_observability_context,
+    bind_root_observability_context,
+    get_operation_observability_context,
+    get_root_observability_context,
+    reset_operation_observability_context,
+    reset_root_observability_context,
+)
 from openviking.server.identity import RequestContext, Role
 from openviking.service.resource_service import ResourceService
 from openviking.storage.collection_schemas import TextEmbeddingHandler
@@ -22,12 +29,15 @@ from openviking.telemetry import (
     get_current_telemetry,
     get_telemetry_runtime,
     register_telemetry,
+    tracer_module,
     unregister_telemetry,
 )
 from openviking.telemetry.backends.memory import MemoryOperationTelemetry
 from openviking.telemetry.context import bind_telemetry, bind_telemetry_stage
 from openviking.telemetry.snapshot import TelemetrySnapshot
+from openviking.telemetry.span_models import OperationSpanAttributes, RootSpanAttributes
 from openviking_cli.session.user_id import UserIdentifier
+from openviking_cli.utils import logger as logger_module
 
 
 def test_telemetry_module_exports_snapshot_and_runtime():
@@ -39,6 +49,26 @@ def test_telemetry_module_exports_snapshot_and_runtime():
 
     assert usage == {"duration_ms": 1.2, "token_total": 0}
     assert get_telemetry_runtime().meter() is not None
+
+
+def test_root_observability_context_bind_and_reset():
+    root = RootSpanAttributes(http_method="GET", http_route="/demo", request_id="req-1")
+    token = bind_root_observability_context(root)
+    try:
+        assert get_root_observability_context() is root
+    finally:
+        reset_root_observability_context(token)
+    assert get_root_observability_context() is None
+
+
+def test_operation_observability_context_bind_and_reset():
+    operation = OperationSpanAttributes(operation="search.find", telemetry_id="tm-demo")
+    token = bind_operation_observability_context(operation)
+    try:
+        assert get_operation_observability_context() is operation
+    finally:
+        reset_operation_observability_context(token)
+    assert get_operation_observability_context() is None
 
 
 def test_telemetry_snapshot_to_dict_supports_summary_only():
@@ -208,6 +238,222 @@ def test_telemetry_summary_uses_simplified_internal_metric_keys():
     assert result["memory"] == {"extracted": 6}
 
 
+def test_init_tracer_forwards_headers_to_grpc_exporter(monkeypatch):
+    captured = {}
+
+    class FakeExporter:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(tracer_module, "OTLPGrpcSpanExporter", FakeExporter)
+    monkeypatch.setattr(tracer_module, "BatchSpanProcessor", lambda exporter, **kwargs: exporter)
+
+    class FakeTracerProvider:
+        def __init__(self, resource=None):
+            self.resource = resource
+
+        def add_span_processor(self, _processor):
+            return None
+
+    monkeypatch.setattr(tracer_module, "TracerProvider", FakeTracerProvider)
+    monkeypatch.setattr(
+        tracer_module,
+        "Resource",
+        SimpleNamespace(create=lambda attrs: attrs),
+    )
+    monkeypatch.setattr(
+        tracer_module,
+        "otel_trace",
+        SimpleNamespace(
+            set_tracer_provider=lambda _provider: None,
+            get_tracer=lambda service_name: f"tracer:{service_name}",
+        ),
+    )
+    monkeypatch.setattr(
+        tracer_module,
+        "TraceContextTextMapPropagator",
+        lambda: "propagator",
+    )
+    monkeypatch.setattr(tracer_module, "_setup_logging", lambda: None)
+    monkeypatch.setattr(tracer_module, "_init_asyncio_instrumentation", lambda: None)
+
+    tracer_module.init_tracer(
+        endpoint="apmplus-cn-beijing.ivolces.com:4317",
+        service_name="memorydb",
+        protocol="grpc",
+        insecure=True,
+        headers={"x-byteapm-appkey": "trace-appkey"},
+        enabled=True,
+    )
+
+    assert captured["endpoint"] == "apmplus-cn-beijing.ivolces.com:4317"
+    assert captured["insecure"] is True
+    assert captured["headers"] == {"x-byteapm-appkey": "trace-appkey"}
+
+
+def test_init_tracer_forwards_headers_to_http_exporter(monkeypatch):
+    captured = {}
+
+    class FakeExporter:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(tracer_module, "OTLPHttpSpanExporter", FakeExporter)
+    monkeypatch.setattr(tracer_module, "BatchSpanProcessor", lambda exporter, **kwargs: exporter)
+
+    class FakeTracerProvider:
+        def __init__(self, resource=None):
+            self.resource = resource
+
+        def add_span_processor(self, _processor):
+            return None
+
+    monkeypatch.setattr(tracer_module, "TracerProvider", FakeTracerProvider)
+    monkeypatch.setattr(
+        tracer_module,
+        "Resource",
+        SimpleNamespace(create=lambda attrs: attrs),
+    )
+    monkeypatch.setattr(
+        tracer_module,
+        "otel_trace",
+        SimpleNamespace(
+            set_tracer_provider=lambda _provider: None,
+            get_tracer=lambda service_name: f"tracer:{service_name}",
+        ),
+    )
+    monkeypatch.setattr(
+        tracer_module,
+        "TraceContextTextMapPropagator",
+        lambda: "propagator",
+    )
+    monkeypatch.setattr(tracer_module, "_setup_logging", lambda: None)
+    monkeypatch.setattr(tracer_module, "_init_asyncio_instrumentation", lambda: None)
+
+    tracer_module.init_tracer(
+        endpoint="https://apmplus-cn-beijing.ivolces.com/api/otlp/v1/traces",
+        service_name="memorydb",
+        protocol="http",
+        headers={"X-ByteAPM-AppKey": "trace-appkey"},
+        enabled=True,
+    )
+
+    assert captured["endpoint"] == "https://apmplus-cn-beijing.ivolces.com/api/otlp/v1/traces"
+    assert captured["headers"] == {"X-ByteAPM-AppKey": "trace-appkey"}
+
+
+def test_init_otel_log_handler_forwards_headers_to_grpc_exporter(monkeypatch):
+    captured = {}
+
+    class FakeExporter:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    class FakeLoggerProvider:
+        def __init__(self, resource=None):
+            self.resource = resource
+
+        def add_log_record_processor(self, _processor):
+            return None
+
+    monkeypatch.setattr(logger_module, "_otel_log_handler_initialized", False)
+    monkeypatch.setattr(logger_module, "_otel_log_handler", None)
+    monkeypatch.setattr(logger_module, "OTLPGrpcLogExporter", FakeExporter)
+    monkeypatch.setattr(
+        logger_module,
+        "BatchLogRecordProcessor",
+        lambda exporter: exporter,
+    )
+    monkeypatch.setattr(logger_module, "LoggerProvider", FakeLoggerProvider)
+    monkeypatch.setattr(
+        logger_module,
+        "LoggingHandler",
+        lambda **kwargs: SimpleNamespace(**kwargs),
+    )
+    monkeypatch.setattr(
+        logger_module,
+        "Resource",
+        SimpleNamespace(create=lambda attrs: attrs),
+    )
+    monkeypatch.setattr(logger_module, "set_logger_provider", lambda _provider: None)
+    monkeypatch.setattr(
+        logger_module,
+        "get_logger",
+        lambda _name: SimpleNamespace(
+            info=lambda *args, **kwargs: None, warning=lambda *args, **kwargs: None
+        ),
+    )
+
+    handler = logger_module.init_otel_log_handler(
+        protocol="grpc",
+        endpoint="apmplus-cn-beijing.ivolces.com:4317",
+        service_name="memorydb",
+        insecure=True,
+        headers={"x-byteapm-appkey": "log-appkey"},
+        enabled=True,
+    )
+
+    assert handler is not None
+    assert captured["endpoint"] == "apmplus-cn-beijing.ivolces.com:4317"
+    assert captured["insecure"] is True
+    assert captured["headers"] == {"x-byteapm-appkey": "log-appkey"}
+
+
+def test_init_otel_log_handler_forwards_headers_to_http_exporter(monkeypatch):
+    captured = {}
+
+    class FakeExporter:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    class FakeLoggerProvider:
+        def __init__(self, resource=None):
+            self.resource = resource
+
+        def add_log_record_processor(self, _processor):
+            return None
+
+    monkeypatch.setattr(logger_module, "_otel_log_handler_initialized", False)
+    monkeypatch.setattr(logger_module, "_otel_log_handler", None)
+    monkeypatch.setattr(logger_module, "OTLPHttpLogExporter", FakeExporter)
+    monkeypatch.setattr(
+        logger_module,
+        "BatchLogRecordProcessor",
+        lambda exporter: exporter,
+    )
+    monkeypatch.setattr(logger_module, "LoggerProvider", FakeLoggerProvider)
+    monkeypatch.setattr(
+        logger_module,
+        "LoggingHandler",
+        lambda **kwargs: SimpleNamespace(**kwargs),
+    )
+    monkeypatch.setattr(
+        logger_module,
+        "Resource",
+        SimpleNamespace(create=lambda attrs: attrs),
+    )
+    monkeypatch.setattr(logger_module, "set_logger_provider", lambda _provider: None)
+    monkeypatch.setattr(
+        logger_module,
+        "get_logger",
+        lambda _name: SimpleNamespace(
+            info=lambda *args, **kwargs: None, warning=lambda *args, **kwargs: None
+        ),
+    )
+
+    handler = logger_module.init_otel_log_handler(
+        protocol="http",
+        endpoint="https://apmplus-cn-beijing.ivolces.com/api/otlp/v1/logs",
+        service_name="memorydb",
+        headers={"X-ByteAPM-AppKey": "log-appkey"},
+        enabled=True,
+    )
+
+    assert handler is not None
+    assert captured["endpoint"] == "https://apmplus-cn-beijing.ivolces.com/api/otlp/v1/logs"
+    assert captured["headers"] == {"X-ByteAPM-AppKey": "log-appkey"}
+
+
 def test_telemetry_summary_detects_groups_by_prefix_without_static_key_lists():
     telemetry = MemoryOperationTelemetry(operation="search.find", enabled=True)
     telemetry.set("vector.debug_probe", 1)
@@ -286,7 +532,9 @@ async def test_semantic_processor_binds_metric_account_context(monkeypatch):
 
         async def run(self, root_uri):
             ran["value"] = True
-            assert get_metric_account_context().http_account_id == "acct-semantic"
+            root_context = get_root_observability_context()
+            assert root_context is not None
+            assert root_context.account_id == "acct-semantic"
 
         def get_stats(self):
             return DagStats()

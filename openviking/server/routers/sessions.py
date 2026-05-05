@@ -3,22 +3,20 @@
 """Sessions endpoints for OpenViking HTTP Server."""
 
 import logging
-import re
 from typing import Any, Dict, List, Literal, Optional
 
-from fastapi import APIRouter, Depends, Path, Query, Request
-from pydantic import BaseModel, model_validator
+from fastapi import APIRouter, Body, Depends, Path, Query, Request
+from pydantic import BaseModel, Field, model_validator
 
 from openviking.message.part import TextPart, part_from_dict
 from openviking.server.auth import get_request_context
 from openviking.server.dependencies import get_service
-from openviking.server.identity import AuthMode, RequestContext, Role
+from openviking.server.identity import AuthMode, RequestContext
 from openviking.server.models import ErrorInfo, Response
-from openviking_cli.exceptions import InvalidArgumentError
+from openviking.server.responses import error_response
 
 router = APIRouter(prefix="/api/v1/sessions", tags=["sessions"])
 logger = logging.getLogger(__name__)
-_ROLE_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 
 class TextPartRequest(BaseModel):
@@ -116,22 +114,9 @@ def _resolve_message_role_id(
     if request.role not in {"user", "assistant"}:
         return request.role_id
 
-    role_id_provided = "role_id" in request.model_fields_set
-    allow_explicit_role_id = _request_auth_mode(http_request) == AuthMode.TRUSTED or ctx.role in {
-        Role.ROOT,
-        Role.ADMIN,
-    }
-    if not allow_explicit_role_id and role_id_provided:
-        raise InvalidArgumentError(
-            "USER requests cannot explicitly set role_id; it is derived from the request context."
-        )
-
-    role_id = request.role_id if allow_explicit_role_id else None
+    role_id = request.role_id
     if not role_id:
         role_id = ctx.user.user_id if request.role == "user" else ctx.user.agent_id
-
-    if not _ROLE_ID_PATTERN.match(role_id):
-        raise InvalidArgumentError("role_id must be alpha-numeric string.")
 
     return role_id
 
@@ -189,8 +174,7 @@ async def get_session(
         )
     result = session.meta.to_dict()
     result["user"] = session.user.to_dict()
-    pending_tokens = sum(len(m.content) // 4 for m in session.messages)
-    result["pending_tokens"] = pending_tokens
+    result["pending_tokens"] = int(session.meta.pending_tokens or 0)
     return Response(status="ok", result=result)
 
 
@@ -201,6 +185,13 @@ async def get_session_context(
     _ctx: RequestContext = Depends(get_request_context),
 ):
     """Get assembled session context."""
+    if token_budget < 0:
+        return error_response(
+            "INVALID_ARGUMENT",
+            "token_budget must be greater than or equal to 0",
+            details={"field": "token_budget", "value": token_budget},
+        )
+
     service = get_service()
     session = service.sessions.session(_ctx, session_id)
     await session.load()
@@ -241,9 +232,31 @@ async def delete_session(
     return Response(status="ok", result={"session_id": session_id})
 
 
+class CommitRequest(BaseModel):
+    """Commit request body.
+
+    WM v2: ``keep_recent_count`` allows the plugin to retain a tail of recent
+    messages in the live session after commit so the next turn still has
+    immediate context. Default 0 preserves the pre-v2 "archive everything"
+    behavior.
+    """
+
+    keep_recent_count: int = Field(
+        default=0,
+        ge=0,
+        le=10_000,
+        description=(
+            "Number of most-recent messages to keep live after commit. "
+            "Plugin's afterTurn path typically passes its configured value "
+            "(default 10); compact path passes 0 to archive everything."
+        ),
+    )
+
+
 @router.post("/{session_id}/commit")
 async def commit_session(
     session_id: str = Path(..., description="Session ID"),
+    body: CommitRequest = Body(default_factory=CommitRequest),
     _ctx: RequestContext = Depends(get_request_context),
 ):
     """Commit a session (archive and extract memories).
@@ -253,7 +266,9 @@ async def commit_session(
     polling progress via ``GET /tasks/{task_id}``.
     """
     service = get_service()
-    result = await service.sessions.commit_async(session_id, _ctx)
+    result = await service.sessions.commit_async(
+        session_id, _ctx, keep_recent_count=body.keep_recent_count
+    )
     return Response(status="ok", result=result).model_dump(exclude_none=True)
 
 
