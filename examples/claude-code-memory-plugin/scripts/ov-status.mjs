@@ -8,13 +8,14 @@
  *   - Last session-start injection (size, age, audit path)
  *   - Last auto-recall (item count, top score, token budget use)
  *   - Toggle state for the three injection paths
- *   - Active config file + env overrides currently in effect
+ *   - Auth source — which file/env actually drove url + api_key, mirroring
+ *     config.mjs's priority chain (env → ovcli.conf → ov.conf → default)
  *
  * Reads the same state files the statusline uses (~/.openviking/state/)
  * plus the audit file written by session-start.mjs.
  */
 
-import { existsSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve as resolvePath } from "node:path";
 
@@ -24,6 +25,14 @@ import { readJsonState } from "./lib/state.mjs";
 
 function expandHome(p) {
   return p ? resolvePath(p.replace(/^~(?=$|\/)/, homedir())) : p;
+}
+
+function tryReadJson(path) {
+  try {
+    return JSON.parse(readFileSync(path, "utf-8"));
+  } catch {
+    return null;
+  }
 }
 
 function fmtBytes(n) {
@@ -108,18 +117,28 @@ async function main() {
   }
   console.log("");
 
-  // 5. Auth source — single source of truth for url+api_key. We compute which
-  // file/env actually drove each value rather than listing every file on disk
-  // that "could have" contributed: that gives the false impression of competing
-  // sources when there's just one chain (env → ovcli.conf → ov.conf → default,
-  // first hit wins per field).
+  // 5. Auth source — which file/env actually drove each value, mirroring
+  // config.mjs's priority chain (env → ovcli.conf → ov.conf → default).
+  // Computed rather than file-listed so we never advertise a source that
+  // isn't actually in play.
   const cliConfPath = expandHome(process.env.OPENVIKING_CLI_CONFIG_FILE
     || join(homedir(), ".openviking", "ovcli.conf"));
-  const cliExists = existsSync(cliConfPath);
-  const urlSrc = process.env.OPENVIKING_URL || process.env.OPENVIKING_BASE_URL
-    ? "env" : (cliExists ? homeShort(cliConfPath) : "default");
-  const keySrc = process.env.OPENVIKING_API_KEY || process.env.OPENVIKING_BEARER_TOKEN
-    ? "env" : (cliExists ? homeShort(cliConfPath) : "(none)");
+  const ovConfPath = expandHome(process.env.OPENVIKING_CONFIG_FILE
+    || join(homedir(), ".openviking", "ov.conf"));
+  const cliConf = tryReadJson(cliConfPath);
+  const ovConf = tryReadJson(ovConfPath);
+  const cliShort = homeShort(cliConfPath);
+  const ovShort = homeShort(ovConfPath);
+
+  const urlSrc = (process.env.OPENVIKING_URL || process.env.OPENVIKING_BASE_URL) ? "env"
+    : (cliConf?.url) ? cliShort
+    : (ovConf?.server?.url) ? ovShort
+    : "default";
+  const keySrc = (process.env.OPENVIKING_API_KEY || process.env.OPENVIKING_BEARER_TOKEN) ? "env"
+    : (cliConf?.api_key) ? cliShort
+    : (ovConf?.claude_code?.apiKey) ? ovShort
+    : (ovConf?.server?.root_api_key) ? ovShort
+    : "(none)";
   console.log(`Auth: url from ${urlSrc}, api_key from ${keySrc}`);
 }
 

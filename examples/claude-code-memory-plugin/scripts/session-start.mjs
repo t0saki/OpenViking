@@ -9,7 +9,7 @@
  *   1. Profile injection (every source: startup/clear/resume/compact unless
  *      OPENVIKING_NO_AUTO_INJECT=1): full profile.md + description-annotated
  *      ls of preferences/ and entities/. Total capped at
- *      OPENVIKING_PROFILE_TOKEN_BUDGET (default 5000 tokens).
+ *      OPENVIKING_PROFILE_TOKEN_BUDGET (default 10000 tokens, CJK-aware).
  *
  *   2. Archive injection (resume/compact only): OV's persistent session's
  *      latest_archive_overview + pre-archive abstracts, fetched at
@@ -32,7 +32,7 @@ import {
   isBypassed,
   makeFetchJSON,
 } from "./lib/ov-session.mjs";
-import { buildProfileBlock } from "./lib/profile-inject.mjs";
+import { buildProfileBlock, estimateTokens } from "./lib/profile-inject.mjs";
 import { writeJsonState } from "./lib/state.mjs";
 
 if (!isPluginEnabled()) {
@@ -57,10 +57,6 @@ function approve(additionalContext) {
     };
   }
   output(out);
-}
-
-function estimateTokens(text) {
-  return text ? Math.ceil(text.length / 4) : 0;
 }
 
 /**
@@ -112,6 +108,17 @@ async function main() {
 
   if (isBypassed(cfg, { sessionId, cwd })) {
     log("skip", { reason: "bypass_session_pattern" });
+    approve();
+    return;
+  }
+
+  // Short-circuit before the network probe when neither injection path will
+  // run for this source/config combination. Saves a /health call and avoids
+  // misleading "server unreachable" log noise when injection is disabled.
+  const willInjectProfile = !cfg.noAutoInject;
+  const willInjectArchive = (source === "resume" || source === "compact") && !!sessionId;
+  if (!willInjectProfile && !willInjectArchive) {
+    log("skip", { reason: "no_injection_planned", source, noAutoInject: cfg.noAutoInject });
     approve();
     return;
   }
@@ -171,7 +178,7 @@ async function main() {
   if (cfg.debug) {
     process.stderr.write(
       `[ov] session-start injected ~${composed.length} chars / ~${estimateTokens(composed)} tokens` +
-      (profile ? ` (profile=${profile.profileBytes}B, prefs=${profile.prefCount}${profile.droppedPref ? `(+${profile.droppedPref} dropped)` : ""}, entities=${profile.entCount}${profile.droppedEnt ? `(+${profile.droppedEnt} dropped)` : ""})` : "") +
+      (profile ? ` (profile=${profile.profileChars} chars, prefs=${profile.prefCount}${profile.droppedPref ? `(+${profile.droppedPref} dropped)` : ""}, entities=${profile.entCount}${profile.droppedEnt ? `(+${profile.droppedEnt} dropped)` : ""})` : "") +
       (archiveSection ? " +archive" : "") +
       "\n",
     );
@@ -183,7 +190,7 @@ async function main() {
     tokens: estimateTokens(composed),
     profile: profile && {
       tokens: profile.tokens,
-      profileBytes: profile.profileBytes,
+      profileChars: profile.profileChars,
       prefCount: profile.prefCount,
       entCount: profile.entCount,
       droppedPref: profile.droppedPref,

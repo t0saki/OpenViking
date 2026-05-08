@@ -6,7 +6,10 @@
  *   viking://user/<space>/memories/preferences/   (ls with abstracts)
  *   viking://user/<space>/memories/entities/      (ls with abstracts)
  *
- * Budget enforced via chars/4 token estimate (matches auto-recall.mjs:205-207).
+ * Budget enforced via the CJK-aware estimateTokens() below — codepoint >=
+ * 0x3000 counts at 1.5 tokens, else chars/4. The estimator is exported so
+ * callers (e.g. session-start.mjs) can log token counts that match what
+ * the budget logic actually sees.
  *
  * Returned block is the *inner* content only (no outer <openviking-context>);
  * session-start.mjs composes the outer wrapper so the archive block can sit
@@ -64,7 +67,7 @@ async function resolveUserSpace(fetchJSON) {
  * by ~10-20% in the worst case (some common Chinese phrases compress better
  * than 1.5 tokens/char), which is the safe direction for budget enforcement.
  */
-function estimateTokens(text) {
+export function estimateTokens(text) {
   if (!text) return 0;
   let cjk = 0;
   for (let i = 0; i < text.length; i++) {
@@ -72,6 +75,24 @@ function estimateTokens(text) {
   }
   const other = text.length - cjk;
   return Math.ceil(cjk * 1.5 + other / 4);
+}
+
+/**
+ * Convert a token budget to a max-chars budget that respects this content's
+ * actual CJK density. Avoids the chars/4 trap where a "5000 token" sub-cap
+ * yields 20000 chars of pure-CJK text → 30000 actual tokens (6× over).
+ *
+ * For an empty/missing string, returns 0.
+ */
+function tokensToCharsBudget(content, maxTokens) {
+  if (!content) return 0;
+  let cjk = 0;
+  for (let i = 0; i < content.length; i++) {
+    if (content.charCodeAt(i) >= 0x3000) cjk++;
+  }
+  const ratio = cjk / content.length;
+  const tokensPerChar = ratio * 1.5 + (1 - ratio) * 0.25;
+  return Math.floor(maxTokens / Math.max(tokensPerChar, 0.25));
 }
 
 async function readProfile(fetchJSON, profileUri) {
@@ -125,8 +146,11 @@ async function lsDir(fetchJSON, dirUri) {
  * both head and a useful tail.
  */
 function elideProfile(content, maxTokens) {
-  const maxChars = Math.max(400, maxTokens * 4);
-  if (content.length <= maxChars) return content;
+  // Compute char budget from token budget using *this* content's CJK density,
+  // not chars/4 — otherwise the truncated string can still blow the token cap
+  // for CJK-heavy profiles (Copilot review point).
+  const maxChars = Math.max(400, tokensToCharsBudget(content, maxTokens));
+  if (estimateTokens(content) <= maxTokens) return content;
 
   const HEAD_LINES = 8;
   const ELLIPSIS = "\n... [profile middle elided] ...\n";
@@ -160,9 +184,15 @@ function formatListing(headerUri, entries, budgetTokens) {
   // agent can reconstruct each leaf's full URI by concatenation while the
   // listing itself stays compact.
   const header = `  ${headerUri}/`;
+  const headerTokens = estimateTokens(header);
+  // If the header alone busts the budget, emit just a one-line stub instead
+  // of silently violating the cap (Copilot review point).
+  if (headerTokens > budgetTokens) {
+    const stub = `  ${headerUri}/  (${entries.length} entries, budget too tight; use \`memory_recall\`)`;
+    return { lines: [stub], used: estimateTokens(stub), dropped: entries.length };
+  }
   const lines = [header];
-  let used = estimateTokens(header);
-  let included = 0;
+  let used = headerTokens;
   for (let i = 0; i < entries.length; i++) {
     const e = entries[i];
     const desc = e.abstract
@@ -170,15 +200,20 @@ function formatListing(headerUri, entries, budgetTokens) {
       : "";
     const line = `    - ${e.name}${desc}`;
     const tokens = estimateTokens(line);
-    if (used + tokens > budgetTokens && included > 0) {
+    if (used + tokens > budgetTokens) {
       const remaining = entries.length - i;
       const tail = `    ... +${remaining} more, use \`memory_recall\``;
-      lines.push(tail);
-      return { lines, used: used + estimateTokens(tail), dropped: remaining };
+      const tailTokens = estimateTokens(tail);
+      // Only emit the tail if it fits; otherwise the listing closes silently
+      // rather than violating the cap to advertise its own truncation.
+      if (used + tailTokens <= budgetTokens) {
+        lines.push(tail);
+        return { lines, used: used + tailTokens, dropped: remaining };
+      }
+      return { lines, used, dropped: remaining };
     }
     lines.push(line);
     used += tokens;
-    included++;
   }
   return { lines, used, dropped: 0 };
 }
@@ -194,7 +229,7 @@ function formatListing(headerUri, entries, budgetTokens) {
  * @param {number} totalBudgetTokens  chars/4 budget, total for the whole block
  * @returns {Promise<null | {
  *   block: string, chars: number, tokens: number, profileUri: string,
- *   profileBytes: number, prefCount: number, entCount: number,
+ *   profileChars: number, prefCount: number, entCount: number,
  *   droppedPref: number, droppedEnt: number,
  * }>}
  */
@@ -243,7 +278,7 @@ export async function buildProfileBlock(fetchJSON, totalBudgetTokens) {
     chars: block.length,
     tokens: estimateTokens(block),
     profileUri,
-    profileBytes: profile?.length ?? 0,
+    profileChars: profile?.length ?? 0,
     prefCount: prefs.length,
     entCount: ents.length,
     droppedPref: prefBlock.dropped,
