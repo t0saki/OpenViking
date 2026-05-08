@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Literal, Optional
 from fastapi import APIRouter, Body, Depends, Path, Query, Request
 from pydantic import BaseModel, Field, model_validator
 
+from openviking.core.path_variables import resolve_path_variables
 from openviking.message.part import TextPart, part_from_dict
 from openviking.server.auth import get_request_context
 from openviking.server.dependencies import get_service
@@ -104,21 +105,6 @@ def _request_auth_mode(request: Request) -> AuthMode:
     if config is not None and hasattr(config, "get_effective_auth_mode"):
         return config.get_effective_auth_mode()
     return AuthMode.API_KEY
-
-
-def _resolve_message_role_id(
-    http_request: Request,
-    request: AddMessageRequest,
-    ctx: RequestContext,
-) -> Optional[str]:
-    if request.role not in {"user", "assistant"}:
-        return request.role_id
-
-    role_id = request.role_id
-    if not role_id:
-        role_id = ctx.user.user_id if request.role == "user" else ctx.user.agent_id
-
-    return role_id
 
 
 @router.post("")
@@ -286,7 +272,6 @@ async def extract_session(
 @router.post("/{session_id}/messages")
 async def add_message(
     request: AddMessageRequest,
-    http_request: Request,
     session_id: str = Path(..., description="Session ID"),
     _ctx: RequestContext = Depends(get_request_context),
 ):
@@ -307,10 +292,24 @@ async def add_message(
     """
     service = get_service()
     session = await service.sessions.get(session_id, _ctx, auto_create=True)
-    role_id = _resolve_message_role_id(http_request, request, _ctx)
+    role_id = _ctx.resolve_role_id(request.role, request.role_id)
 
     if request.parts is not None:
-        parts = [part_from_dict(p) for p in request.parts]
+        # Resolve path variables in URIs within parts
+        resolved_parts = []
+        for p in request.parts:
+            part_copy = dict(p)
+            # Resolve uri in context parts
+            if part_copy.get("type") == "context" and "uri" in part_copy:
+                part_copy["uri"] = resolve_path_variables(part_copy["uri"])
+            # Resolve tool_uri and skill_uri in tool parts
+            if part_copy.get("type") == "tool":
+                if "tool_uri" in part_copy:
+                    part_copy["tool_uri"] = resolve_path_variables(part_copy["tool_uri"])
+                if "skill_uri" in part_copy:
+                    part_copy["skill_uri"] = resolve_path_variables(part_copy["skill_uri"])
+            resolved_parts.append(part_copy)
+        parts = [part_from_dict(p) for p in resolved_parts]
     else:
         parts = [TextPart(text=request.content or "")]
 
@@ -340,7 +339,19 @@ async def record_used(
     service = get_service()
     session = service.sessions.session(_ctx, session_id)
     await session.load()
-    session.used(contexts=request.contexts, skill=request.skill)
+
+    # Resolve path variables in contexts
+    resolved_contexts = None
+    if request.contexts is not None:
+        resolved_contexts = [resolve_path_variables(uri) for uri in request.contexts]
+
+    # Resolve path variables in skill URI if present
+    resolved_skill = request.skill
+    if resolved_skill is not None and "uri" in resolved_skill:
+        resolved_skill = dict(resolved_skill)
+        resolved_skill["uri"] = resolve_path_variables(resolved_skill["uri"])
+
+    session.used(contexts=resolved_contexts, skill=resolved_skill)
     return Response(
         status="ok",
         result={

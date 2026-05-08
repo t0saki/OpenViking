@@ -4,6 +4,7 @@
 
 import asyncio
 import logging
+import os
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -32,7 +33,6 @@ from openviking.server.routers import (
     content_router,
     debug_router,
     filesystem_router,
-    maintenance_router,
     metrics_router,
     observer_router,
     pack_router,
@@ -54,6 +54,22 @@ from openviking_cli.utils.config import get_openviking_config
 from openviking_cli.utils.logger import init_otel_log_handler_from_server_config
 
 logger = get_logger(__name__)
+
+
+def _on_deferred_init_done(task):
+    if task.cancelled():
+        logger.warning("Deferred initialization cancelled")
+        return
+
+    exc = task.exception()
+    if exc is None:
+        return
+
+    logger.error(
+        "Deferred initialization failed, exiting",
+        exc_info=(type(exc), exc, exc.__traceback__),
+    )
+    os._exit(1)
 
 
 def _format_error_location(loc: object) -> str:
@@ -245,13 +261,7 @@ def create_app(
             # Start heavy initialization as background task after yield
             if service is not None:
                 deferred_task = asyncio.create_task(_deferred_init(service, app, config))
-                deferred_task.add_done_callback(
-                    lambda t: (
-                        logger.error("Deferred initialization failed", exc_info=t.exception())
-                        if t.exception()
-                        else None
-                    )
-                )
+                deferred_task.add_done_callback(_on_deferred_init_done)
             yield
 
         # Wait for deferred initialization to complete before shutdown
@@ -473,7 +483,6 @@ def create_app(
     app.include_router(metrics_router)
     app.include_router(tasks_router)
     app.include_router(webdav_router)
-    app.include_router(maintenance_router)
     app.include_router(bot_router, prefix="/bot/v1")
 
     # OAuth 2.1: when enabled, mount the official MCP SDK auth routes
