@@ -162,7 +162,7 @@ This plugin **complements** Claude Code's native memory system, it doesn't repla
 |-----------------------|--------------------------------------------|---------------------------------------------------------------------------------------------------|
 | `UserPromptSubmit`    | Each user turn                             | Search OV → rank → inject `<openviking-context>` block within a token budget                      |
 | `Stop`                | Claude finishes a response                 | Parse transcript → push new user turns to OV session → commit when pending tokens cross threshold |
-| `SessionStart`        | New / resumed / post-compact session       | On `resume`/`compact`, fetch the latest archive overview and inject it as additional context      |
+| `SessionStart`        | New / resumed / post-compact session       | Every source (startup/clear/resume/compact): inject the user's `profile.md` and an annotated listing of `preferences/` + `entities/`, capped by `OPENVIKING_PROFILE_TOKEN_BUDGET` (default `10000` tokens, CJK-aware; set `OPENVIKING_NO_AUTO_INJECT=1` to skip). On `resume`/`compact` additionally fetch the persistent session's latest archive overview + pre-archive abstracts. Both halves compose into a single `<openviking-context>` envelope. |
 | `PreCompact`          | Before Claude Code rewrites the transcript | Commit pending messages so they become an archive before CC mutates the transcript                |
 | `SessionEnd`          | Claude Code session closes                 | Final commit so the last window is archived                                                       |
 | `SubagentStart`       | Parent spawns a subagent via Task tool     | Derive an isolated OV session ID for the subagent, persist start state                            |
@@ -171,6 +171,15 @@ This plugin **complements** Claude Code's native memory system, it doesn't repla
 `Stop`, `SessionEnd`, and `SubagentStop` use a detached-worker pattern so the user never waits for OpenViking. Disable with `OPENVIKING_WRITE_PATH_ASYNC=false` if you need deterministic ordering.
 
 `auto-capture` strips `<openviking-context>`, `<system-reminder>`, `<relevant-memories>`, and `[Subagent Context]` blocks before pushing to OV — without this, the recall context the plugin injects this turn would be captured back as part of the user's message next turn.
+
+### OV session ID derivation
+
+The OV session ID embeds the CC `session_id` verbatim, so you can map between the two by eye:
+
+- Parent: `cc-<ccSessionId>`, e.g. `cc-7d978bb3-cd9c-4ac6-828d-20965d66b783`
+- Subagent: `cc-<ccSessionId>__agent-<agentId>`, e.g. `cc-7d978bb3-cd9c-4ac6-828d-20965d66b783__agent-abc123`
+
+`~/.openviking/state/last-capture.json` shows the live `cc_session_id` and `ov_session_id` for the current session; the CC side's session ID is also the filename of `~/.claude/projects/<encoded-cwd>/<session_id>.jsonl`.
 
 ## Troubleshooting
 

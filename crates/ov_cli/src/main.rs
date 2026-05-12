@@ -1,3 +1,4 @@
+mod base_client;
 mod client;
 mod commands;
 mod config;
@@ -8,10 +9,10 @@ mod tui;
 mod utils;
 
 use clap::{ArgAction, Parser, Subcommand};
-use std::ffi::OsString;
 use config::Config;
 use error::Result;
 use output::OutputFormat;
+use std::ffi::OsString;
 
 /// CLI context shared across commands
 #[derive(Debug, Clone)]
@@ -184,6 +185,9 @@ enum Commands {
         /// Target parent URI (must already exist and be a directory) (cannot be used with --to)
         #[arg(long)]
         parent: Option<String>,
+        /// Target parent URI (create parent directory if it does not exist) (cannot be used with --to or --parent)
+        #[arg(short = 'p', long = "parent-auto-create")]
+        parent_auto_create: Option<String>,
         /// Reason for import
         #[arg(long, default_value = "")]
         reason: String,
@@ -374,6 +378,9 @@ enum Commands {
         /// Only include results on or before this time (e.g. 24h, 2026-03-15, ISO-8601)
         #[arg(long = "before")]
         before: Option<String>,
+        /// Only include results with specific level(s) (e.g. 0, 1, 2 or 0,1,2)
+        #[arg(short = 'L', long = "level")]
+        level: Option<String>,
     },
     /// [Experimental][Data] Run context-aware retrieval
     Search {
@@ -402,6 +409,9 @@ enum Commands {
         /// Only include results on or before this time (e.g. 24h, 2026-03-15, ISO-8601)
         #[arg(long = "before")]
         before: Option<String>,
+        /// Only include results with specific level(s) (e.g. 0, 1, 2 or 0,1,2)
+        #[arg(short = 'L', long = "level")]
+        level: Option<String>,
     },
     /// [Data] Run content pattern search
     Grep {
@@ -489,6 +499,17 @@ enum Commands {
         uri: String,
         /// Output .ovpack file path
         to: String,
+        /// Include dense vector snapshot when compatible metadata is available
+        #[arg(long, default_value_t = false)]
+        include_vectors: bool,
+    },
+    /// [Data] Back up public OpenViking scopes as a restore-only .ovpack
+    Backup {
+        /// Output .ovpack file path
+        to: String,
+        /// Include dense vector snapshot when compatible metadata is available
+        #[arg(long, default_value_t = false)]
+        include_vectors: bool,
     },
     /// [Data] Import .ovpack into target URI
     Import {
@@ -496,12 +517,23 @@ enum Commands {
         file_path: String,
         /// Target parent URI
         target_uri: String,
-        /// Overwrite when conflicts exist
-        #[arg(long)]
-        force: bool,
-        /// Disable vectorization after import
-        #[arg(long)]
-        no_vectorize: bool,
+        /// Conflict policy: fail, overwrite, or skip
+        #[arg(long, value_parser = ["fail", "overwrite", "skip"])]
+        on_conflict: Option<String>,
+        /// Vector handling: auto restores compatible snapshots, recompute ignores them, require fails if unavailable
+        #[arg(long, value_parser = ["auto", "recompute", "require"])]
+        vector_mode: Option<String>,
+    },
+    /// [Data] Restore a backup .ovpack to original public scope roots
+    Restore {
+        /// Input backup .ovpack file path
+        file_path: String,
+        /// Conflict policy: fail, overwrite, or skip
+        #[arg(long, value_parser = ["fail", "overwrite", "skip"])]
+        on_conflict: Option<String>,
+        /// Vector handling: auto restores compatible snapshots, recompute ignores them, require fails if unavailable
+        #[arg(long, value_parser = ["auto", "recompute", "require"])]
+        vector_mode: Option<String>,
     },
     // --- Interactive Tools ---
     /// [Interactive] Interactive TUI file explorer
@@ -539,6 +571,11 @@ enum Commands {
         #[arg(long)]
         timeout: Option<f64>,
     },
+    /// [Status] Track async resource processing tasks
+    Task {
+        #[command(subcommand)]
+        action: TaskCommands,
+    },
     /// [Status] All OpenViking Server components status
     Status,
     /// [Status] Observe OpenViking Server components status
@@ -567,15 +604,15 @@ enum Commands {
         #[command(subcommand)]
         action: SystemCommands,
     },
-    /// [Admin] Reindex content at URI (regenerates .abstract.md and .overview.md)
+    /// [Admin] Reindex semantic/vector artifacts for a URI
     Reindex {
         /// Viking URI
         uri: String,
-        /// Force regenerate summaries even if they exist
-        #[arg(short, long)]
-        regenerate: bool,
+        /// Reindex mode
+        #[arg(long, default_value = "vectors_only")]
+        mode: String,
         /// Wait for reindex to complete
-        #[arg(long, default_value = "true")]
+        #[arg(long, default_value_t = true, action = ArgAction::Set)]
         wait: bool,
     },
 }
@@ -584,12 +621,28 @@ impl Commands {
     /// Returns true if this is an admin command that supports --sudo
     fn is_admin_command(&self) -> bool {
         match self {
-            Self::Admin { .. }
-            | Self::System { .. }
-            | Self::Reindex { .. } => true,
+            Self::Admin { .. } | Self::System { .. } | Self::Reindex { .. } => true,
             _ => false,
         }
     }
+}
+
+#[derive(Subcommand)]
+enum TaskCommands {
+    /// Show status of a specific task
+    Status {
+        /// Task ID returned by add-resource/add-skill
+        task_id: String,
+    },
+    /// List all tracked tasks
+    List {
+        /// Filter by task type (e.g. add_resource, add_skill, session_commit, reindex)
+        #[arg(long)]
+        task_type: Option<String>,
+        /// Filter by status (pending, running, completed, failed)
+        #[arg(long)]
+        status: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -604,6 +657,11 @@ enum SystemCommands {
     Status,
     /// Quick health check
     Health,
+    /// Check filesystem and vector-index consistency for a URI subtree
+    Consistency {
+        /// Viking URI to check
+        uri: String,
+    },
     /// Cryptographic key management commands
     Crypto {
         #[command(subcommand)]
@@ -818,6 +876,10 @@ enum ConfigCommands {
     Show,
     /// Validate configuration file
     Validate,
+    /// Interactive setup to configure CLI
+    SetupCli,
+    /// Switch between saved configurations
+    Switch,
 }
 
 fn find_command_index(args: &[OsString]) -> Option<usize> {
@@ -876,7 +938,11 @@ fn preprocess_privacy_upsert_key_flags(args: Vec<OsString>) -> Vec<OsString> {
     if args[cmd_idx].to_string_lossy() != "privacy" {
         return args;
     }
-    if args.get(cmd_idx + 1).map(|s| s.to_string_lossy().to_string()) != Some("upsert".to_string()) {
+    if args
+        .get(cmd_idx + 1)
+        .map(|s| s.to_string_lossy().to_string())
+        != Some("upsert".to_string())
+    {
         return args;
     }
 
@@ -968,7 +1034,9 @@ async fn main() {
 
     // Check if --sudo is used but root_api_key is not configured
     if ctx.sudo && ctx.config.root_api_key.is_none() {
-        eprintln!("Error: --sudo requires root_api_key to be configured in ~/.openviking/ovcli.conf");
+        eprintln!(
+            "Error: --sudo requires root_api_key to be configured in ~/.openviking/ovcli.conf"
+        );
         std::process::exit(2);
     }
 
@@ -983,6 +1051,7 @@ async fn main() {
             path,
             to,
             parent,
+            parent_auto_create,
             reason,
             instruction,
             wait,
@@ -998,6 +1067,7 @@ async fn main() {
                 path,
                 to,
                 parent,
+                parent_auto_create,
                 reason,
                 instruction,
                 wait,
@@ -1023,18 +1093,50 @@ async fn main() {
             to_uris,
             reason,
         } => handlers::handle_link(from_uri, to_uris, reason, ctx).await,
-        Commands::Unlink { from_uri, to_uri } => handlers::handle_unlink(from_uri, to_uri, ctx).await,
-        Commands::Export { uri, to } => handlers::handle_export(uri, to, ctx).await,
+        Commands::Unlink { from_uri, to_uri } => {
+            handlers::handle_unlink(from_uri, to_uri, ctx).await
+        }
+        Commands::Export {
+            uri,
+            to,
+            include_vectors,
+        } => handlers::handle_export(uri, to, include_vectors, ctx).await,
+        Commands::Backup {
+            to,
+            include_vectors,
+        } => handlers::handle_backup(to, include_vectors, ctx).await,
         Commands::Import {
             file_path,
             target_uri,
-            force,
-            no_vectorize,
-        } => handlers::handle_import(file_path, target_uri, force, no_vectorize, ctx).await,
+            on_conflict,
+            vector_mode,
+        } => handlers::handle_import(file_path, target_uri, on_conflict, vector_mode, ctx).await,
+        Commands::Restore {
+            file_path,
+            on_conflict,
+            vector_mode,
+        } => handlers::handle_restore(file_path, on_conflict, vector_mode, ctx).await,
         Commands::Wait { timeout } => {
             let client = ctx.get_client();
             commands::system::wait(&client, timeout, ctx.output_format, ctx.compact).await
         }
+        Commands::Task { action } => match action {
+            TaskCommands::Status { task_id } => {
+                let client = ctx.get_client();
+                commands::task::status(&client, &task_id, ctx.output_format, ctx.compact).await
+            }
+            TaskCommands::List { task_type, status } => {
+                let client = ctx.get_client();
+                commands::task::list(
+                    &client,
+                    task_type.as_deref(),
+                    status.as_deref(),
+                    ctx.output_format,
+                    ctx.compact,
+                )
+                .await
+            }
+        },
         Commands::Status => {
             let client = ctx.get_client();
             commands::observer::system(&client, ctx.output_format, ctx.compact).await
@@ -1136,13 +1238,12 @@ async fn main() {
             } else {
                 "replace".to_string()
             };
-            handlers::handle_write(uri, content, from_file, effective_mode, wait, timeout, ctx).await
+            handlers::handle_write(uri, content, from_file, effective_mode, wait, timeout, ctx)
+                .await
         }
-        Commands::Reindex {
-            uri,
-            regenerate,
-            wait,
-        } => handlers::handle_reindex(uri, regenerate, wait, ctx).await,
+        Commands::Reindex { uri, mode, wait } => {
+            handlers::handle_reindex(uri, mode, wait, ctx).await
+        }
         Commands::Get { uri, local_path } => handlers::handle_get(uri, local_path, ctx).await,
         Commands::Find {
             query,
@@ -1151,7 +1252,8 @@ async fn main() {
             threshold,
             after,
             before,
-        } => handlers::handle_find(query, uri, node_limit, threshold, after, before, ctx).await,
+            level,
+        } => handlers::handle_find(query, uri, node_limit, threshold, after, before, level, ctx).await,
         Commands::Search {
             query,
             uri,
@@ -1160,9 +1262,10 @@ async fn main() {
             threshold,
             after,
             before,
+            level,
         } => {
             handlers::handle_search(
-                query, uri, session_id, node_limit, threshold, after, before, ctx,
+                query, uri, session_id, node_limit, threshold, after, before, level, ctx,
             )
             .await
         }
@@ -1324,6 +1427,52 @@ mod tests {
         ]);
 
         assert!(result.is_err(), "removed write flags should not parse");
+    }
+
+    #[test]
+    fn cli_import_rejects_removed_vectorize_flag() {
+        let result = Cli::try_parse_from([
+            "ov",
+            "import",
+            "./exports/demo.ovpack",
+            "viking://resources/imported/",
+            "--no-vectorize",
+        ]);
+
+        assert!(
+            result.is_err(),
+            "removed import vectorize flag should not parse"
+        );
+    }
+
+    #[test]
+    fn cli_import_rejects_removed_force_flag() {
+        let result = Cli::try_parse_from([
+            "ov",
+            "import",
+            "./exports/demo.ovpack",
+            "viking://resources/imported/",
+            "--force",
+        ]);
+
+        assert!(
+            result.is_err(),
+            "removed import force flag should not parse"
+        );
+    }
+
+    #[test]
+    fn cli_parses_reindex_command() {
+        let result = Cli::try_parse_from([
+            "ov",
+            "reindex",
+            "viking://resources/demo",
+            "--mode",
+            "semantic_and_vectors",
+            "--wait=false",
+        ]);
+
+        assert!(result.is_ok(), "reindex command should parse");
     }
 
     #[test]
