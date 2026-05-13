@@ -14,7 +14,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/main/e
 
 脚本会检查 `codex`、`git`、Node.js 22+；首次运行时把 OpenViking 仓库 clone 到 `~/.openviking/openviking-repo`，已存在则自动 `git fetch + reset --hard` 到 main；注册本地 `openviking-plugins-local` marketplace、启用 `openviking-memory@openviking-plugins-local`、把 `features.plugin_hooks = true` 写入 `~/.codex/config.toml`，并预填 Codex 的 plugin 缓存让插件立即解析到。每一步幂等，反复执行安全。
 
-存在 `~/.openviking/ovcli.conf` 时直接读它，把 `/mcp` URL 渲染进缓存里的 `.mcp.json`；同时往你的 shell rc 追加一个 `codex()` 函数包装，每次调用 codex 时从 ovcli.conf 把 `OPENVIKING_API_KEY` / `_ACCOUNT` / `_USER` 注入到环境变量。API key 只留在 `ovcli.conf` 里，**`.mcp.json` 磁盘文件里只通过 `bearer_token_env_var` 引用变量名，永远不会包含 key 明文**。
+存在 `~/.openviking/ovcli.conf` 时直接读它，把 `/mcp` URL 渲染进缓存里的 `.mcp.json`；同时往你的 shell rc 追加一个 `codex()` 函数包装，每次调用 codex 时从 ovcli.conf 把 `OPENVIKING_API_KEY` / `OPENVIKING_ACCOUNT` / `OPENVIKING_USER` / `OPENVIKING_AGENT_ID` 注入到环境变量。API key 只留在 `ovcli.conf` 里，**`.mcp.json` 磁盘文件里只通过 `bearer_token_env_var` 引用变量名，永远不会包含 key 明文**。
 
 安装完成后启动 Codex：
 
@@ -35,18 +35,33 @@ codex features list | grep codex_hooks
 
 installer 替你做的三件事，你也可以自己手动做：
 
-1. **shell 函数包装**追加到 `~/.zshrc` / `~/.bashrc`，把 ovcli.conf 提升成环境变量后再 exec codex：
+1. **shell 函数包装**追加到 `~/.zshrc` / `~/.bashrc`，把 ovcli.conf 提升成环境变量后再 exec codex（用 `node` 而不是 `jq` 解析 conf —— 这样在没装 `jq` 的机器上也能跑，Codex 本身已经强依赖 Node 22+）：
 
    ```bash
    codex() {
      local _ov_conf="${OPENVIKING_CLI_CONFIG_FILE:-$HOME/.openviking/ovcli.conf}"
-     if [ -f "$_ov_conf" ] && command -v jq >/dev/null 2>&1; then
-       OPENVIKING_URL="${OPENVIKING_URL:-$(jq -r '.url // empty' "$_ov_conf")}" \
-       OPENVIKING_API_KEY="${OPENVIKING_API_KEY:-$(jq -r '.api_key // empty' "$_ov_conf")}" \
-       OPENVIKING_ACCOUNT="${OPENVIKING_ACCOUNT:-$(jq -r '.account // empty' "$_ov_conf")}" \
-       OPENVIKING_USER="${OPENVIKING_USER:-$(jq -r '.user // empty' "$_ov_conf")}" \
+     if [ -f "$_ov_conf" ] && command -v node >/dev/null 2>&1; then
+       local _ov_env
+       _ov_env=$(node -e '
+         try {
+           const c = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
+           const out = (k, v) => v ? `${k}=${JSON.stringify(String(v))}\n` : "";
+           process.stdout.write(
+             out("OV_URL", c.url) +
+             out("OV_KEY", c.api_key) +
+             out("OV_ACCOUNT", c.account) +
+             out("OV_USER", c.user)
+           );
+         } catch {}
+       ' "$_ov_conf" 2>/dev/null)
+       eval "$_ov_env"
+       OPENVIKING_URL="${OPENVIKING_URL:-${OV_URL:-}}" \
+       OPENVIKING_API_KEY="${OPENVIKING_API_KEY:-${OV_KEY:-}}" \
+       OPENVIKING_ACCOUNT="${OPENVIKING_ACCOUNT:-${OV_ACCOUNT:-}}" \
+       OPENVIKING_USER="${OPENVIKING_USER:-${OV_USER:-}}" \
        OPENVIKING_AGENT_ID="${OPENVIKING_AGENT_ID:-codex}" \
          command codex "$@"
+       unset OV_URL OV_KEY OV_ACCOUNT OV_USER
      else
        command codex "$@"
      fi

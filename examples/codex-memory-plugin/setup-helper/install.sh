@@ -221,58 +221,81 @@ case "${SHELL:-}" in
     ;;
 esac
 
+# The wrapper uses `node` (already a hard requirement of this installer) to
+# parse ovcli.conf instead of `jq`. This avoids a silent-auth-loss failure
+# mode where `jq` is missing on the user's machine, the wrapper's
+# `command -v jq` check fails, and codex starts with no Bearer token →
+# OpenViking returns 401 → Codex falls back to OAuth.
+read -r -d '' WRAPPER_BODY <<'WRAPPER' || true
+codex() {
+  local _ov_conf="${OPENVIKING_CLI_CONFIG_FILE:-$HOME/.openviking/ovcli.conf}"
+  if [ -f "$_ov_conf" ] && command -v node >/dev/null 2>&1; then
+    local _ov_env
+    _ov_env=$(node -e '
+      try {
+        const c = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
+        const out = (k, v) => v ? `${k}=${JSON.stringify(String(v))}\n` : "";
+        process.stdout.write(
+          out("OV_URL", c.url) +
+          out("OV_KEY", c.api_key) +
+          out("OV_ACCOUNT", c.account) +
+          out("OV_USER", c.user)
+        );
+      } catch {}
+    ' "$_ov_conf" 2>/dev/null)
+    eval "$_ov_env"
+    OPENVIKING_URL="${OPENVIKING_URL:-${OV_URL:-}}" \
+    OPENVIKING_API_KEY="${OPENVIKING_API_KEY:-${OV_KEY:-}}" \
+    OPENVIKING_ACCOUNT="${OPENVIKING_ACCOUNT:-${OV_ACCOUNT:-}}" \
+    OPENVIKING_USER="${OPENVIKING_USER:-${OV_USER:-}}" \
+    OPENVIKING_AGENT_ID="${OPENVIKING_AGENT_ID:-codex}" \
+      command codex "$@"
+    unset OV_URL OV_KEY OV_ACCOUNT OV_USER
+  else
+    command codex "$@"
+  fi
+}
+WRAPPER
+
+# Wrap the function body with marker lines.
+WRAPPER_BLOCK="$WRAPPER_MARKER_BEGIN
+$WRAPPER_BODY
+$WRAPPER_MARKER_END"
+
 if [ -z "$RC" ]; then
   cat >&2 <<EOF
 
 Note: could not detect a shell rc to install the codex() wrapper into.
 Add this snippet to your rc manually so OPENVIKING_API_KEY reaches codex:
 
-$WRAPPER_MARKER_BEGIN
-codex() {
-  local _ov_conf="\${OPENVIKING_CLI_CONFIG_FILE:-\$HOME/.openviking/ovcli.conf}"
-  if [ -f "\$_ov_conf" ] && command -v jq >/dev/null 2>&1; then
-    OPENVIKING_URL="\${OPENVIKING_URL:-\$(jq -r '.url // empty' "\$_ov_conf" 2>/dev/null)}" \\
-    OPENVIKING_API_KEY="\${OPENVIKING_API_KEY:-\$(jq -r '.api_key // empty' "\$_ov_conf" 2>/dev/null)}" \\
-    OPENVIKING_ACCOUNT="\${OPENVIKING_ACCOUNT:-\$(jq -r '.account // empty' "\$_ov_conf" 2>/dev/null)}" \\
-    OPENVIKING_USER="\${OPENVIKING_USER:-\$(jq -r '.user // empty' "\$_ov_conf" 2>/dev/null)}" \\
-    OPENVIKING_AGENT_ID="\${OPENVIKING_AGENT_ID:-codex}" \\
-      command codex "\$@"
-  else
-    command codex "\$@"
-  fi
-}
-$WRAPPER_MARKER_END
+$WRAPPER_BLOCK
 EOF
 else
   touch "$RC"
   if grep -qF "$WRAPPER_MARKER_BEGIN" "$RC"; then
-    echo "Replacing existing openviking codex() wrapper in $RC"
-    awk -v b="$WRAPPER_MARKER_BEGIN" -v e="$WRAPPER_MARKER_END" '
-      $0 == b {skip=1; next}
-      $0 == e {skip=0; next}
-      !skip
-    ' "$RC" > "$RC.tmp" && mv "$RC.tmp" "$RC"
+    # Replace existing block in place — only if BOTH markers are present, so
+    # a corrupted rc (manual edit that lost the END marker) cannot cause us
+    # to drop everything from the BEGIN marker to EOF. Otherwise leave the
+    # file untouched and append a fresh block, so the user can inspect what
+    # they have and clean up themselves.
+    if grep -qF "$WRAPPER_MARKER_END" "$RC"; then
+      echo "Replacing existing openviking codex() wrapper in $RC"
+      awk -v b="$WRAPPER_MARKER_BEGIN" -v e="$WRAPPER_MARKER_END" '
+        $0 == b {skip=1; next}
+        $0 == e {skip=0; next}
+        !skip
+      ' "$RC" > "$RC.tmp" && mv "$RC.tmp" "$RC"
+    else
+      cat >&2 <<EOF
+Warning: $WRAPPER_MARKER_BEGIN found in $RC but $WRAPPER_MARKER_END is missing.
+Refusing to in-place rewrite; appending a fresh block instead. Please
+remove the stray begin marker manually.
+EOF
+    fi
   else
     echo "Appending codex() wrapper to $RC"
   fi
-  cat >> "$RC" <<EOF
-
-$WRAPPER_MARKER_BEGIN
-codex() {
-  local _ov_conf="\${OPENVIKING_CLI_CONFIG_FILE:-\$HOME/.openviking/ovcli.conf}"
-  if [ -f "\$_ov_conf" ] && command -v jq >/dev/null 2>&1; then
-    OPENVIKING_URL="\${OPENVIKING_URL:-\$(jq -r '.url // empty' "\$_ov_conf" 2>/dev/null)}" \\
-    OPENVIKING_API_KEY="\${OPENVIKING_API_KEY:-\$(jq -r '.api_key // empty' "\$_ov_conf" 2>/dev/null)}" \\
-    OPENVIKING_ACCOUNT="\${OPENVIKING_ACCOUNT:-\$(jq -r '.account // empty' "\$_ov_conf" 2>/dev/null)}" \\
-    OPENVIKING_USER="\${OPENVIKING_USER:-\$(jq -r '.user // empty' "\$_ov_conf" 2>/dev/null)}" \\
-    OPENVIKING_AGENT_ID="\${OPENVIKING_AGENT_ID:-codex}" \\
-      command codex "\$@"
-  else
-    command codex "\$@"
-  fi
-}
-$WRAPPER_MARKER_END
-EOF
+  printf '\n%s\n' "$WRAPPER_BLOCK" >> "$RC"
 fi
 
 if [ ! -f "$OVCLI_CONF" ]; then
@@ -293,6 +316,10 @@ Plugin cache: $CACHE_DIR
 MCP endpoint: $MCP_URL
 
 Next:
-  source $RC      # pick up the codex() wrapper
-  codex           # restart codex; review /hooks if prompted
 EOF
+if [ -n "$RC" ]; then
+  echo "  source $RC      # pick up the codex() wrapper"
+else
+  echo "  (paste the codex() snippet printed above into your shell rc, then restart your shell)"
+fi
+echo "  codex           # restart codex; review /hooks if prompted"

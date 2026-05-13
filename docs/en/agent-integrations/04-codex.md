@@ -14,7 +14,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/main/e
 
 The installer checks `codex`, `git`, and Node.js 22+, refreshes (or clones on first run) `~/.openviking/openviking-repo`, registers a local `openviking-plugins-local` marketplace, enables `openviking-memory@openviking-plugins-local`, sets `features.plugin_hooks = true`, and pre-populates Codex's plugin cache so the plugin resolves immediately. Rerunning the installer is idempotent — it always pulls latest before installing.
 
-It reads `~/.openviking/ovcli.conf` for the OpenViking URL, renders the `/mcp` endpoint into the cached `.mcp.json`, and appends a `codex()` shell function to your rc that pulls `OPENVIKING_API_KEY` (and `_ACCOUNT` / `_USER`) from ovcli.conf at every codex invocation. The API key stays in `ovcli.conf`; the `.mcp.json` on disk only references `OPENVIKING_API_KEY` via `bearer_token_env_var`, never embeds it.
+It reads `~/.openviking/ovcli.conf` for the OpenViking URL, renders the `/mcp` endpoint into the cached `.mcp.json`, and appends a `codex()` shell function to your rc that pulls `OPENVIKING_API_KEY` / `OPENVIKING_ACCOUNT` / `OPENVIKING_USER` / `OPENVIKING_AGENT_ID` from ovcli.conf at every codex invocation. The API key stays in `ovcli.conf`; the `.mcp.json` on disk only references `OPENVIKING_API_KEY` via `bearer_token_env_var`, never embeds it.
 
 After install:
 
@@ -35,18 +35,33 @@ codex features list | grep codex_hooks
 
 Three steps the installer does for you, that you can do manually:
 
-1. **Shell function wrapper** in `~/.zshrc` / `~/.bashrc` that promotes ovcli.conf into env vars before exec'ing codex:
+1. **Shell function wrapper** in `~/.zshrc` / `~/.bashrc` that promotes ovcli.conf into env vars before exec'ing codex (uses `node` rather than `jq` to avoid a silent fallback to OAuth when `jq` is missing — Codex already requires Node 22+):
 
    ```bash
    codex() {
      local _ov_conf="${OPENVIKING_CLI_CONFIG_FILE:-$HOME/.openviking/ovcli.conf}"
-     if [ -f "$_ov_conf" ] && command -v jq >/dev/null 2>&1; then
-       OPENVIKING_URL="${OPENVIKING_URL:-$(jq -r '.url // empty' "$_ov_conf")}" \
-       OPENVIKING_API_KEY="${OPENVIKING_API_KEY:-$(jq -r '.api_key // empty' "$_ov_conf")}" \
-       OPENVIKING_ACCOUNT="${OPENVIKING_ACCOUNT:-$(jq -r '.account // empty' "$_ov_conf")}" \
-       OPENVIKING_USER="${OPENVIKING_USER:-$(jq -r '.user // empty' "$_ov_conf")}" \
+     if [ -f "$_ov_conf" ] && command -v node >/dev/null 2>&1; then
+       local _ov_env
+       _ov_env=$(node -e '
+         try {
+           const c = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
+           const out = (k, v) => v ? `${k}=${JSON.stringify(String(v))}\n` : "";
+           process.stdout.write(
+             out("OV_URL", c.url) +
+             out("OV_KEY", c.api_key) +
+             out("OV_ACCOUNT", c.account) +
+             out("OV_USER", c.user)
+           );
+         } catch {}
+       ' "$_ov_conf" 2>/dev/null)
+       eval "$_ov_env"
+       OPENVIKING_URL="${OPENVIKING_URL:-${OV_URL:-}}" \
+       OPENVIKING_API_KEY="${OPENVIKING_API_KEY:-${OV_KEY:-}}" \
+       OPENVIKING_ACCOUNT="${OPENVIKING_ACCOUNT:-${OV_ACCOUNT:-}}" \
+       OPENVIKING_USER="${OPENVIKING_USER:-${OV_USER:-}}" \
        OPENVIKING_AGENT_ID="${OPENVIKING_AGENT_ID:-codex}" \
          command codex "$@"
+       unset OV_URL OV_KEY OV_ACCOUNT OV_USER
      else
        command codex "$@"
      fi

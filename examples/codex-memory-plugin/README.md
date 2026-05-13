@@ -39,18 +39,33 @@ codex             # first run: review /hooks once
 
 If you don't want the installer touching your rc, do these three things yourself:
 
-1. **Wire a `codex()` shell function** that injects OpenViking creds at invocation time. Add to `~/.zshrc` / `~/.bashrc`:
+1. **Wire a `codex()` shell function** that injects OpenViking creds at invocation time. Add to `~/.zshrc` / `~/.bashrc` (uses `node` rather than `jq` so it works on any machine that already has Codex — Codex requires Node 22+):
 
    ```bash
    codex() {
      local _ov_conf="${OPENVIKING_CLI_CONFIG_FILE:-$HOME/.openviking/ovcli.conf}"
-     if [ -f "$_ov_conf" ] && command -v jq >/dev/null 2>&1; then
-       OPENVIKING_URL="${OPENVIKING_URL:-$(jq -r '.url // empty' "$_ov_conf")}" \
-       OPENVIKING_API_KEY="${OPENVIKING_API_KEY:-$(jq -r '.api_key // empty' "$_ov_conf")}" \
-       OPENVIKING_ACCOUNT="${OPENVIKING_ACCOUNT:-$(jq -r '.account // empty' "$_ov_conf")}" \
-       OPENVIKING_USER="${OPENVIKING_USER:-$(jq -r '.user // empty' "$_ov_conf")}" \
+     if [ -f "$_ov_conf" ] && command -v node >/dev/null 2>&1; then
+       local _ov_env
+       _ov_env=$(node -e '
+         try {
+           const c = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
+           const out = (k, v) => v ? `${k}=${JSON.stringify(String(v))}\n` : "";
+           process.stdout.write(
+             out("OV_URL", c.url) +
+             out("OV_KEY", c.api_key) +
+             out("OV_ACCOUNT", c.account) +
+             out("OV_USER", c.user)
+           );
+         } catch {}
+       ' "$_ov_conf" 2>/dev/null)
+       eval "$_ov_env"
+       OPENVIKING_URL="${OPENVIKING_URL:-${OV_URL:-}}" \
+       OPENVIKING_API_KEY="${OPENVIKING_API_KEY:-${OV_KEY:-}}" \
+       OPENVIKING_ACCOUNT="${OPENVIKING_ACCOUNT:-${OV_ACCOUNT:-}}" \
+       OPENVIKING_USER="${OPENVIKING_USER:-${OV_USER:-}}" \
        OPENVIKING_AGENT_ID="${OPENVIKING_AGENT_ID:-codex}" \
          command codex "$@"
+       unset OV_URL OV_KEY OV_ACCOUNT OV_USER
      else
        command codex "$@"
      fi
