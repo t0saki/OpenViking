@@ -254,15 +254,32 @@ case "${SHELL:-}" in
     ;;
 esac
 
-# The wrapper uses `node` (already a hard requirement of this installer) to
-# parse ovcli.conf instead of `jq`. This avoids a silent-auth-loss failure
-# mode where `jq` is missing on the user's machine, the wrapper's
-# `command -v jq` check fails, and codex starts with no Bearer token →
-# OpenViking returns 401 → Codex falls back to OAuth.
+# The wrapper uses `node` (already a hard requirement of this installer)
+# instead of `jq` so a missing-jq machine doesn't silently lose auth.
+#
+# It also re-renders the cached .mcp.json's bearer_token_env_var field on
+# every codex launch, based on whichever ovcli.conf the user pointed
+# OPENVIKING_CLI_CONFIG_FILE at this time. That lets a single install
+# handle both authenticated and unauthenticated configs without forcing
+# a re-install when the user swaps configs (e.g. to isolate a benchmark
+# run from production memory).
+#
+# Codex 0.130 hard-fails MCP startup when bearer_token_env_var points at
+# an EMPTY env var ("Environment variable ... is empty"), and also when
+# bearer_token_env_var is present but the env var is unset. So when the
+# resolved api_key is empty, we both drop the field from .mcp.json AND
+# omit OPENVIKING_API_KEY from the env passed to codex.
 read -r -d '' WRAPPER_BODY <<'WRAPPER' || true
 codex() {
   local _ov_conf="${OPENVIKING_CLI_CONFIG_FILE:-$HOME/.openviking/ovcli.conf}"
-  if [ -f "$_ov_conf" ] && command -v node >/dev/null 2>&1; then
+  if ! command -v node >/dev/null 2>&1; then
+    command codex "$@"
+    return
+  fi
+
+  # Resolve OV connection settings: existing env > ovcli.conf > nothing.
+  local _ov_url _ov_key _ov_account _ov_user
+  if [ -f "$_ov_conf" ]; then
     local _ov_env
     _ov_env=$(node -e '
       try {
@@ -277,16 +294,50 @@ codex() {
       } catch {}
     ' "$_ov_conf" 2>/dev/null)
     eval "$_ov_env"
-    OPENVIKING_URL="${OPENVIKING_URL:-${OV_URL:-}}" \
-    OPENVIKING_API_KEY="${OPENVIKING_API_KEY:-${OV_KEY:-}}" \
-    OPENVIKING_ACCOUNT="${OPENVIKING_ACCOUNT:-${OV_ACCOUNT:-}}" \
-    OPENVIKING_USER="${OPENVIKING_USER:-${OV_USER:-}}" \
-    OPENVIKING_AGENT_ID="${OPENVIKING_AGENT_ID:-codex}" \
-      command codex "$@"
-    unset OV_URL OV_KEY OV_ACCOUNT OV_USER
-  else
-    command codex "$@"
   fi
+  _ov_url="${OPENVIKING_URL:-${OV_URL:-}}"
+  _ov_key="${OPENVIKING_API_KEY:-${OV_KEY:-}}"
+  _ov_account="${OPENVIKING_ACCOUNT:-${OV_ACCOUNT:-}}"
+  _ov_user="${OPENVIKING_USER:-${OV_USER:-}}"
+  unset OV_URL OV_KEY OV_ACCOUNT OV_USER
+
+  # Sync cache .mcp.json bearer_token_env_var to current key state. Only
+  # rewrites when state has actually changed (idempotent fast-path).
+  local _has_key
+  if [ -n "$_ov_key" ]; then _has_key=1; else _has_key=0; fi
+  local _cache_mcp
+  for _cache_mcp in "$HOME"/.codex/plugins/cache/openviking-plugins-local/openviking-memory/*/.mcp.json; do
+    [ -f "$_cache_mcp" ] || continue
+    node -e '
+      const fs = require("node:fs");
+      // node -e: argv is [node, file, hasKey] — no [eval] placeholder.
+      const file = process.argv[1];
+      const hasKey = process.argv[2];
+      const j = JSON.parse(fs.readFileSync(file, "utf8"));
+      const s = j.mcpServers && j.mcpServers["openviking-memory"];
+      if (s) {
+        const cur = s.bearer_token_env_var || "";
+        if (hasKey === "1" && cur !== "OPENVIKING_API_KEY") {
+          s.bearer_token_env_var = "OPENVIKING_API_KEY";
+          fs.writeFileSync(file, JSON.stringify(j, null, 2) + "\n");
+        } else if (hasKey !== "1" && cur) {
+          delete s.bearer_token_env_var;
+          fs.writeFileSync(file, JSON.stringify(j, null, 2) + "\n");
+        }
+      }
+    ' "$_cache_mcp" "$_has_key" 2>/dev/null || true
+  done
+
+  # Build env-prefix dynamically so empty values are NOT exported as empty
+  # strings — Codex hard-fails on empty bearer_token_env_var targets.
+  local -a _env_args=()
+  [ -n "$_ov_url" ]     && _env_args+=("OPENVIKING_URL=$_ov_url")
+  [ -n "$_ov_key" ]     && _env_args+=("OPENVIKING_API_KEY=$_ov_key")
+  [ -n "$_ov_account" ] && _env_args+=("OPENVIKING_ACCOUNT=$_ov_account")
+  [ -n "$_ov_user" ]    && _env_args+=("OPENVIKING_USER=$_ov_user")
+  _env_args+=("OPENVIKING_AGENT_ID=${OPENVIKING_AGENT_ID:-codex}")
+
+  env "${_env_args[@]}" codex "$@"
 }
 WRAPPER
 
