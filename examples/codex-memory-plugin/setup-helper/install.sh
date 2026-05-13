@@ -301,31 +301,55 @@ codex() {
   _ov_user="${OPENVIKING_USER:-${OV_USER:-}}"
   unset OV_URL OV_KEY OV_ACCOUNT OV_USER
 
-  # Sync cache .mcp.json bearer_token_env_var to current key state. Only
-  # rewrites when state has actually changed (idempotent fast-path).
-  local _has_key
+  # Sync cache .mcp.json to current OV connection state: rewrite both the
+  # URL (so OPENVIKING_CLI_CONFIG_FILE swaps actually change the target)
+  # and the bearer_token_env_var field (Codex 0.130 hard-fails on empty
+  # bearer env vars, so the field must be absent in no-auth mode). The
+  # node script writes only when something actually changes — idempotent
+  # fast-path so we don't bump file mtime on every codex launch.
+  local _has_key _mcp_url_from_conf
   if [ -n "$_ov_key" ]; then _has_key=1; else _has_key=0; fi
+  if [ -n "$_ov_url" ]; then
+    # Strip trailing slashes then append /mcp (matching the install-time
+    # resolve_mcp_url logic). OPENVIKING_MCP_URL env can fully override.
+    if [ -n "${OPENVIKING_MCP_URL:-}" ]; then
+      _mcp_url_from_conf="$OPENVIKING_MCP_URL"
+    else
+      _mcp_url_from_conf="${_ov_url%/}/mcp"
+    fi
+  else
+    _mcp_url_from_conf=""
+  fi
   local _cache_mcp
   for _cache_mcp in "$HOME"/.codex/plugins/cache/openviking-plugins-local/openviking-memory/*/.mcp.json; do
     [ -f "$_cache_mcp" ] || continue
     node -e '
       const fs = require("node:fs");
-      // node -e: argv is [node, file, hasKey] — no [eval] placeholder.
+      // node -e: argv is [node, file, hasKey, url] — no [eval] placeholder.
       const file = process.argv[1];
       const hasKey = process.argv[2];
+      const url = process.argv[3] || "";
       const j = JSON.parse(fs.readFileSync(file, "utf8"));
       const s = j.mcpServers && j.mcpServers["openviking-memory"];
       if (s) {
+        let changed = false;
+        if (url && s.url !== url) {
+          s.url = url;
+          changed = true;
+        }
         const cur = s.bearer_token_env_var || "";
         if (hasKey === "1" && cur !== "OPENVIKING_API_KEY") {
           s.bearer_token_env_var = "OPENVIKING_API_KEY";
-          fs.writeFileSync(file, JSON.stringify(j, null, 2) + "\n");
+          changed = true;
         } else if (hasKey !== "1" && cur) {
           delete s.bearer_token_env_var;
+          changed = true;
+        }
+        if (changed) {
           fs.writeFileSync(file, JSON.stringify(j, null, 2) + "\n");
         }
       }
-    ' "$_cache_mcp" "$_has_key" 2>/dev/null || true
+    ' "$_cache_mcp" "$_has_key" "$_mcp_url_from_conf" 2>/dev/null || true
   done
 
   # Build env-prefix dynamically so empty values are NOT exported as empty
