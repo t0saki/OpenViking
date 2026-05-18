@@ -4,15 +4,28 @@ name: Fork GHCR Build
 # Lives only on the fork (main of t0saki/OpenViking diverges from
 # volcengine/OpenViking by this file alone). The `if:` guard makes this
 # workflow a no-op if it ever lands in upstream.
+#
+# Triggers:
+# - Auto: push to any branch that has this file in its tree
+# - Manual: `gh workflow run "Fork GHCR Build" --ref main -f target_ref=<branch>`
+#   Dispatches always read THIS file from --ref (which must be main), but the
+#   build itself checks out and builds `target_ref`. This is how feature
+#   branches without the workflow file get built without polluting their diff.
 
 on:
   push:
     branches:
       - '**'
   workflow_dispatch:
+    inputs:
+      target_ref:
+        description: "Branch or tag to check out and build (empty = current ref)"
+        required: false
+        type: string
+        default: ""
 
 concurrency:
-  group: fork-ghcr-${{ github.ref }}
+  group: fork-ghcr-${{ inputs.target_ref || github.ref }}
   cancel-in-progress: true
 
 env:
@@ -37,9 +50,19 @@ jobs:
       packages: write
 
     steps:
-      - name: Checkout
+      - name: Resolve target ref
+        id: ref
+        run: |
+          target="${{ inputs.target_ref }}"
+          if [ -z "$target" ]; then
+            target="${GITHUB_REF_NAME}"
+          fi
+          echo "name=${target}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout target branch
         uses: actions/checkout@v6
         with:
+          ref: ${{ steps.ref.outputs.name }}
           fetch-depth: 0
           submodules: recursive
 
@@ -50,15 +73,20 @@ jobs:
         run: |
           echo "name=$(echo "$RAW" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
 
-      - name: Compute short SHA + branch slug
-        id: refs
+      - name: Compute version + tags
+        id: tags
         run: |
-          short_sha="${GITHUB_SHA::7}"
-          # Slugify branch: lowercase, replace non-alphanumerics with '-'
-          slug=$(echo "${GITHUB_REF_NAME}" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9._-]/-/g')
-          echo "short_sha=${short_sha}" >> "$GITHUB_OUTPUT"
-          echo "slug=${slug}" >> "$GITHUB_OUTPUT"
-          echo "version=${slug}-${short_sha}" >> "$GITHUB_OUTPUT"
+          short_sha=$(git rev-parse --short=7 HEAD)
+          # Docker tag slug: lowercase, hyphens allowed
+          tag_slug=$(echo "${{ steps.ref.outputs.name }}" | tr '[:upper:]' '[:lower:]' | sed 's#[^a-z0-9._-]#-#g')
+          # PEP 440 local-version slug: lowercase, dots only (no hyphens / slashes inside local segment)
+          pep_slug=$(echo "${{ steps.ref.outputs.name }}" | tr '[:upper:]' '[:lower:]' | sed 's#[^a-z0-9]#.#g')
+          {
+            echo "short_sha=${short_sha}"
+            echo "tag_slug=${tag_slug}"
+            echo "sha_tag=${tag_slug}-${short_sha}"
+            echo "version=0.0.0+${pep_slug}.${short_sha}"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Log in to GHCR
         uses: docker/login-action@v4
@@ -79,7 +107,7 @@ jobs:
           outputs: |
             type=image,name=${{ env.REGISTRY }}/${{ steps.image.outputs.name }},push-by-digest=true,name-canonical=true,push=true
           build-args: |
-            OPENVIKING_VERSION=${{ steps.refs.outputs.version }}
+            OPENVIKING_VERSION=${{ steps.tags.outputs.version }}
           cache-from: type=gha,scope=fork-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=fork-${{ matrix.arch }}
 
@@ -105,6 +133,15 @@ jobs:
       packages: write
 
     steps:
+      - name: Resolve target ref
+        id: ref
+        run: |
+          target="${{ inputs.target_ref }}"
+          if [ -z "$target" ]; then
+            target="${GITHUB_REF_NAME}"
+          fi
+          echo "name=${target}" >> "$GITHUB_OUTPUT"
+
       - name: Normalize image name
         id: image
         env:
@@ -112,13 +149,21 @@ jobs:
         run: |
           echo "name=$(echo "$RAW" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
 
+      - name: Checkout for SHA resolution
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ steps.ref.outputs.name }}
+          fetch-depth: 1
+
       - name: Compute tags
-        id: refs
+        id: tags
         run: |
-          short_sha="${GITHUB_SHA::7}"
-          slug=$(echo "${GITHUB_REF_NAME}" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9._-]/-/g')
-          echo "slug=${slug}" >> "$GITHUB_OUTPUT"
-          echo "sha_tag=${slug}-${short_sha}" >> "$GITHUB_OUTPUT"
+          short_sha=$(git rev-parse --short=7 HEAD)
+          tag_slug=$(echo "${{ steps.ref.outputs.name }}" | tr '[:upper:]' '[:lower:]' | sed 's#[^a-z0-9._-]#-#g')
+          {
+            echo "tag_slug=${tag_slug}"
+            echo "sha_tag=${tag_slug}-${short_sha}"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Log in to GHCR
         uses: docker/login-action@v4
@@ -149,6 +194,6 @@ jobs:
           done
           [ ${#refs[@]} -gt 0 ] || { echo "no digests"; exit 1; }
           docker buildx imagetools create \
-            --tag "${image}:${{ steps.refs.outputs.slug }}" \
-            --tag "${image}:${{ steps.refs.outputs.sha_tag }}" \
+            --tag "${image}:${{ steps.tags.outputs.tag_slug }}" \
+            --tag "${image}:${{ steps.tags.outputs.sha_tag }}" \
             "${refs[@]}"
