@@ -5,12 +5,13 @@ exercising a different way of giving Claude Code long-term memory.
 
 | Mode | Ingest path | OV namespace | Entry point |
 |---|---|---|---|
-| **Prompted** | `claude -p` per session, CC writes `MEMORY.md` | — (no OpenViking) | `run_prompted.sh` |
+| **Prompted** | `claude -p` per session, CC writes per-sample `MEMORY.md` | — (no OpenViking) | `run_prompted.sh` |
+| **Prompted no-iso** | same as Prompted, but all 10 samples share one cwd / `MEMORY.md` | — (no OpenViking) | `run_prompted_noiso.sh` |
 | **SDK iso** | OpenViking Python SDK direct import | per-sample `agent_id` | `run_sdk_iso.sh` |
 | **SDK no-iso** | OpenViking Python SDK direct import | shared (default) | `run_sdk_noiso.sh` |
 | **e2e** | `claude -p` stream-json multi-turn, auto-capture into OV | shared | `run_e2e.sh` |
 
-All four use the same QA / judge / stats pipeline (`eval.py` → `judge.py` →
+All five use the same QA / judge / stats pipeline (`eval.py` → `judge.py` →
 `stat_judge_result.py`) so accuracy numbers are directly comparable.
 
 ## Prerequisites
@@ -51,20 +52,30 @@ All four use the same QA / judge / stats pipeline (`eval.py` → `judge.py` →
 Single-sample smoke test (any mode, any conv id):
 
 ```bash
-./run_prompted.sh   conv-26
-./run_sdk_iso.sh    conv-26
-./run_sdk_noiso.sh  conv-26
-./run_e2e.sh        conv-26
+./run_prompted.sh        conv-26
+./run_prompted_noiso.sh  conv-26
+./run_sdk_iso.sh         conv-26
+./run_sdk_noiso.sh       conv-26
+./run_e2e.sh             conv-26
 ```
 
 Full 10-conv run — omit the conv id:
 
 ```bash
 ./run_prompted.sh
+./run_prompted_noiso.sh
 ./run_sdk_iso.sh
 ./run_sdk_noiso.sh
 ./run_e2e.sh
 ```
+
+The two "no-iso" runners (and `run_e2e.sh`) snapshot the post-ingest state
+once, then restore it before each conv's QA so that QA-time writes don't
+leak across samples. `run_prompted_noiso.sh` defaults `WORK_ROOT` to
+`/tmp/locomo-prompted-noiso` — *outside* this git tree on purpose, since
+CC's SDK injects the current `git status` into every `claude -p` system
+prompt and code-fine-tuned models will happily run `git commit` against
+the host repo if cwd looks like a working tree.
 
 Each script ends with the result of `stat_judge_result.py` printed to stdout
 and saved to `.tmp/result-<mode>/summary.txt`. Per-question CSVs land in
@@ -93,11 +104,12 @@ and saved to `.tmp/result-<mode>/summary.txt`. Per-question CSVs land in
 ```
 benchmark/locomo/claudecode/
 ├── README.md
-├── run_prompted.sh                # 4 entry points, one per published mode
+├── run_prompted.sh                # 5 entry points, one per published mode
+├── run_prompted_noiso.sh
 ├── run_sdk_iso.sh
 ├── run_sdk_noiso.sh
 ├── run_e2e.sh
-├── ingest.py                      # Prompted ingest
+├── ingest.py                      # Prompted ingest (iso + no-iso)
 ├── ingest_e2e.py                  # e2e stream-json ingest
 ├── import_to_ov.py                # SDK pre-ingest (iso + no-iso)
 ├── eval.py

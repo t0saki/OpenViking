@@ -403,6 +403,18 @@ def main():
         help="Optional prefix prepended before each session's conversation text "
         "(e.g. to nudge auto-memory). Default: empty (bare conversation).",
     )
+    parser.add_argument(
+        "--shared-project-dir",
+        action="store_true",
+        help="Use --project-root directly as the cwd for every sample (no per-sample "
+        "subdir). Lets CC accumulate one MEMORY.md across all samples.",
+    )
+    parser.add_argument(
+        "--max-sessions",
+        type=int,
+        default=None,
+        help="Per-sample cap on number of sessions to ingest (for smoke tests).",
+    )
     args = parser.parse_args()
 
     api_key = args.api_key or os.environ.get("ANTHROPIC_API_KEY", "")
@@ -444,9 +456,13 @@ def main():
     for item in samples:
         sample_id = item["sample_id"]
         sessions = build_session_messages(item)
+        if args.max_sessions is not None:
+            sessions = sessions[: args.max_sessions]
 
-        # All samples share one project dir so memories accumulate together
-        project_dir = os.path.join(args.project_root, sample_id)
+        if args.shared_project_dir:
+            project_dir = args.project_root
+        else:
+            project_dir = os.path.join(args.project_root, sample_id)
         os.makedirs(project_dir, exist_ok=True)
 
         print(f"\n=== Sample {sample_id} ({len(sessions)} sessions) ===", file=sys.stderr)
@@ -537,9 +553,13 @@ def main():
     mapping = {}
     for item in samples:
         sid = item["sample_id"]
+        if args.shared_project_dir:
+            project_dir_for_mapping = args.project_root
+        else:
+            project_dir_for_mapping = os.path.join(args.project_root, sid)
         mapping[sid] = {
             "sample_id": sid,
-            "project_dir": os.path.join(args.project_root, sid),
+            "project_dir": project_dir_for_mapping,
         }
     with open(mapping_path, "w", encoding="utf-8") as f:
         json.dump(mapping, f, indent=2, ensure_ascii=False)

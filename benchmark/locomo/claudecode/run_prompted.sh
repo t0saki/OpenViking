@@ -26,6 +26,11 @@ mkdir -p "$RESULT_DIR"
 SAMPLE_ARG=()
 [ $# -ge 1 ] && SAMPLE_ARG=(--sample "$1")
 
+# Trigger phrase that makes CC actually write topic notes / MEMORY.md to the
+# isolated HOME's memory dir. Without it CC just acknowledges and does nothing,
+# leaving QA with zero context. Same wording as the 67.60% iso baseline.
+PROMPT_PREFIX="${PROMPT_PREFIX:-Please remember the following conversation using auto-memory.}"
+
 echo "[1/4] ingest into CC auto-memory..."
 uv run python "$SCRIPT_DIR/ingest.py" \
   --input "$INPUT" \
@@ -34,6 +39,7 @@ uv run python "$SCRIPT_DIR/ingest.py" \
   --record "$RESULT_DIR/.ingest_record.json" \
   --success-csv "$RESULT_DIR/ingest_success.csv" \
   --error-log "$RESULT_DIR/ingest_errors.log" \
+  --prompt-prefix "$PROMPT_PREFIX" \
   "${SAMPLE_ARG[@]}"
 
 echo "[2/4] running QA..."
