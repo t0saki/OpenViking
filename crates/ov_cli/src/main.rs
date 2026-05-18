@@ -615,6 +615,11 @@ enum Commands {
         #[arg(long, default_value_t = true, action = ArgAction::Set)]
         wait: bool,
     },
+    /// [Data] Watch task management (auto-refresh subscriptions)
+    Watch {
+        #[command(subcommand)]
+        action: WatchCommands,
+    },
 }
 
 impl Commands {
@@ -733,6 +738,48 @@ enum SessionCommands {
     Commit {
         /// Session ID
         session_id: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum WatchCommands {
+    /// List watch tasks (auto-refresh subscriptions)
+    Ls {
+        /// Only show active (non-paused) tasks
+        #[arg(long, default_value_t = false)]
+        active_only: bool,
+    },
+    /// Show details of a single watch task
+    Show {
+        /// task_id (UUID) or to_uri (viking:// URI)
+        key: String,
+    },
+    /// Delete a watch task
+    Rm {
+        /// task_id (UUID) or to_uri (viking:// URI)
+        key: String,
+    },
+    /// Pause a watch task (preserves cadence, stops scheduling)
+    Pause {
+        /// task_id (UUID) or to_uri (viking:// URI)
+        key: String,
+    },
+    /// Resume a paused watch task
+    Resume {
+        /// task_id (UUID) or to_uri (viking:// URI)
+        key: String,
+    },
+    /// Change the refresh interval (minutes) of a watch task
+    SetInterval {
+        /// task_id (UUID) or to_uri (viking:// URI)
+        key: String,
+        /// New refresh interval in minutes (must be > 0)
+        minutes: f64,
+    },
+    /// Trigger an immediate refresh, bypassing the schedule
+    Trigger {
+        /// task_id (UUID) or to_uri (viking:// URI)
+        key: String,
     },
 }
 
@@ -1139,6 +1186,39 @@ async fn main() {
                 .await
             }
         },
+        Commands::Watch { action } => {
+            let client = ctx.get_client();
+            match action {
+                WatchCommands::Ls { active_only } => {
+                    commands::watch::ls(&client, active_only, ctx.output_format, ctx.compact).await
+                }
+                WatchCommands::Show { key } => {
+                    commands::watch::show(&client, &key, ctx.output_format, ctx.compact).await
+                }
+                WatchCommands::Rm { key } => {
+                    commands::watch::rm(&client, &key, ctx.output_format, ctx.compact).await
+                }
+                WatchCommands::Pause { key } => {
+                    commands::watch::pause(&client, &key, ctx.output_format, ctx.compact).await
+                }
+                WatchCommands::Resume { key } => {
+                    commands::watch::resume(&client, &key, ctx.output_format, ctx.compact).await
+                }
+                WatchCommands::SetInterval { key, minutes } => {
+                    commands::watch::set_interval(
+                        &client,
+                        &key,
+                        minutes,
+                        ctx.output_format,
+                        ctx.compact,
+                    )
+                    .await
+                }
+                WatchCommands::Trigger { key } => {
+                    commands::watch::trigger(&client, &key, ctx.output_format, ctx.compact).await
+                }
+            }
+        }
         Commands::Status => {
             let client = ctx.get_client();
             commands::observer::system(&client, ctx.output_format, ctx.compact).await
