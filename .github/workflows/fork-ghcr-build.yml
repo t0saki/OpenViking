@@ -113,8 +113,13 @@ jobs:
 
       - name: Export digest
         run: |
+          # actions/upload-artifact rejects filenames containing ':' (Windows
+          # filesystems can't store them), so strip the "sha256:" prefix here
+          # and reattach it on the manifest side. Mirrors the official
+          # docker/build-push-action multi-arch example.
+          digest="${{ steps.build.outputs.digest }}"
           mkdir -p /tmp/digests
-          touch "/tmp/digests/${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
 
       - name: Upload digest artifact
         uses: actions/upload-artifact@v7
@@ -187,10 +192,11 @@ jobs:
           set -euo pipefail
           image="${{ env.REGISTRY }}/${{ steps.image.outputs.name }}"
           refs=()
-          for f in /tmp/digests/sha256:*; do
+          # Build job stripped the "sha256:" prefix; reattach it here.
+          for f in /tmp/digests/*; do
             [ -e "$f" ] || continue
             digest=$(basename "$f")
-            refs+=("${image}@${digest}")
+            refs+=("${image}@sha256:${digest}")
           done
           [ ${#refs[@]} -gt 0 ] || { echo "no digests"; exit 1; }
           docker buildx imagetools create \
