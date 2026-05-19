@@ -108,7 +108,7 @@ Resource incremental updates are implemented via the **Watch Task** mechanism:
 
 ### add_resource
 
-Add a resource to the knowledge base. Supports local files/directories, URLs, and other sources.
+Add a resource to the knowledge base. The SDK supports local files/directories, URLs, and other sources. Raw HTTP calls accept remote URLs through `path` or uploaded local files through `temp_file_id`.
 
 #### 1. API Implementation Overview
 
@@ -138,6 +138,7 @@ This endpoint is the core entry point for resource management, supporting adding
 | temp_file_id | string | No | - | Temporary upload file ID. Mutually exclusive with `path` |
 | to | string | No | - | Target Viking URI (exact location). Mutually exclusive with `parent` |
 | parent | string | No | - | Parent Viking URI (resource placed under this directory). Mutually exclusive with `to` |
+| create_parent | bool | No | False | Automatically create parent directory if it does not exist (server-side flag) |
 | reason | string | No | "" | Reason for adding the resource (for documentation and relevance improvement, experimental feature) |
 | instruction | string | No | "" | Processing instructions for semantic extraction (experimental feature) |
 | wait | bool | No | False | Whether to wait for semantic processing and vectorization to complete before returning |
@@ -152,12 +153,13 @@ This endpoint is the core entry point for resource management, supporting adding
 | telemetry | TelemetryRequest | No | False | Whether to return telemetry data |
 
 **Additional Notes**:
-- `to` and `parent` cannot be specified together
+- `to` and `parent` cannot be specified together. Use `create_parent=true` with `parent` when the parent directory should be created automatically.
 - `path` and `temp_file_id` cannot be specified together
 - Raw HTTP calls for local files require first uploading via [temp_upload](#temp_upload) to obtain `temp_file_id`
 - When `to` is specified and the target already exists, triggers incremental update
 - `watch_interval` only takes effect when `to` is provided
 - For local directory inputs, scanning respects `.gitignore` files (root and nested) with standard Git semantics; `ignore_dirs`, `include`, and `exclude` further refine what is ingested.
+- To create or update plain text directly, use [content/write](03-filesystem.md#write) instead of `add_resource`. Semantic processing and embeddings are refreshed automatically after resource ingestion and content writes.
 
 #### 3. Usage Examples
 
@@ -252,6 +254,17 @@ ov add-resource https://github.com/example/repo.git --to viking://resources/guid
 
 # Cancel scheduled updates
 ov add-resource https://github.com/example/repo.git --to viking://resources/guide.md --watch-interval 0
+
+# Add with parent directory (parent must exist)
+ov add-resource ./documents/guide.md --parent viking://resources/docs
+
+# Add with parent directory (auto-create parent if it doesn't exist)
+ov add-resource ./documents/guide.md -p viking://resources/docs/2026/05/07
+# Or using full flag
+ov add-resource ./documents/guide.md --parent-auto-create viking://resources/docs/2026/05/07
+
+# Using path variables with auto-create
+ov add-resource ./documents/guide.md -p viking://resources/docs/{calendar:today}
 ```
 
 **Response Example**
@@ -485,12 +498,12 @@ Upload a temporary file for subsequent importing of local files via [add_resourc
 
 #### 1. API Implementation Overview
 
-This endpoint is used to upload local files to server temporary storage, returning a `temp_file_id` for use with subsequent API calls. This is a helper endpoint typically not called directly but used automatically via the SDK or CLI.
+This endpoint uploads a local file into temporary server-managed storage and returns a `temp_file_id` for subsequent API calls. This is a helper endpoint typically not called directly but used automatically via the SDK or CLI.
 
 **Processing Flow**:
 1. Receive uploaded file
-2. Clean up expired temporary files
-3. Save to temporary directory and record original filename
+2. Choose temporary upload backend based on `upload_mode`
+3. Save the file and record original filename
 4. Return temporary file ID
 
 **Code Entry Points**:
@@ -505,6 +518,14 @@ This endpoint is used to upload local files to server temporary storage, returni
 |-----------|------|----------|---------|-------------|
 | file | UploadFile | Yes | - | Uploaded file (multipart/form-data) |
 | telemetry | bool | No | False | Whether to return telemetry data |
+| upload_mode | string | No | `"local"` | Temporary upload mode. `local` keeps the existing single-node behavior. `shared` uploads to shared temporary storage for distributed deployments. |
+
+Notes:
+
+- The default is `local`, so existing clients keep the original behavior unless they explicitly opt into `shared`.
+- Use `upload_mode=shared` only when you explicitly want distributed shared temporary uploads.
+- `shared` mode returns a one-time `temp_file_id` in the `shared_<upload_id>` form.
+- Shared upload objects live under the internal `viking://upload/...` namespace and are not part of the normal filesystem browsing surface.
 
 #### 3. Usage Examples
 
@@ -521,9 +542,18 @@ curl -X POST http://localhost:1933/api/v1/resources/temp_upload \
   -F "file=@./documents/guide.md"
 ```
 
+Distributed / shared upload:
+
+```bash
+curl -X POST http://localhost:1933/api/v1/resources/temp_upload \
+  -H "X-API-Key: your-key" \
+  -F "file=@./documents/guide.md" \
+  -F "upload_mode=shared"
+```
+
 **Python SDK**
 
-The `add_resource`, `add_skill` and other endpoints in the Python SDK automatically handle local file uploads, no need to call this endpoint manually.
+The `add_resource`, `add_skill` and other endpoints in the Python SDK automatically handle local file uploads, no need to call this endpoint manually. To opt into distributed shared temporary uploads in HTTP client mode, set `upload.mode` to `"shared"` in `ovcli.conf`.
 
 **CLI**
 
@@ -539,6 +569,17 @@ CLI commands also automatically handle local file uploads, no need to call this 
   },
   "telemetry": {
     "operation_id": "550e8400-e29b-41d4-a716-446655440000"
+  }
+}
+```
+
+Possible shared response:
+
+```json
+{
+  "status": "ok",
+  "result": {
+    "temp_file_id": "shared_7f3c1b8d4f2e4b1bb0f6e8b2d9a4c123"
   }
 }
 ```

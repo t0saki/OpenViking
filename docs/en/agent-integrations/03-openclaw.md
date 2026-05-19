@@ -30,7 +30,7 @@ openclaw --version
 ## Install via ClawHub (recommended)
 
 ```bash
-openclaw plugins install clawhub:@openclaw/openviking
+openclaw plugins install clawhub:@openviking/openclaw-plugin
 ```
 
 Then run the interactive setup wizard:
@@ -79,7 +79,9 @@ npm install -g openclaw-openviking-setup-helper@latest && ov-install -y
 | `--workdir PATH`           | Target OpenClaw data directory                                     |
 | `--version VER`            | Set plugin version (e.g. `0.2.9` → plugin `v0.2.9`)                |
 | `--current-version`        | Print the currently installed plugin version                       |
-| `--plugin-version REF`     | Set plugin version only — supports tag, branch, or commit          |
+| `--plugin-version REF`     | Set plugin version — auto-detected: npm version (e.g. `2026.5.8`) or npm dist-tag (e.g. `dev`) resolves via npm; other refs (e.g. `v0.3.16`, `main`) resolve via the GitHub repo; default `npm latest` |
+| `--plugin-source=npm\|github` | Plugin download source (default `npm`)                            |
+| `--plugin-package=NAME`    | npm plugin package name (default `@openviking/openclaw-plugin`)    |
 | `--github-repo owner/repo` | Use a different GitHub repo for plugin files (default `volcengine/OpenViking`) |
 | `--update`                 | Upgrade only the plugin                                            |
 | `-y`                       | Non-interactive mode, use default values                           |
@@ -108,7 +110,15 @@ openclaw config set plugins.entries.openviking.config.agent_prefix your-prefix
 
 ## Verify
 
-Check that the plugin owns the `contextEngine` slot:
+For a one-shot health check covering plugin registration, server connectivity, and version compatibility, run:
+
+```bash
+openclaw openviking status
+```
+
+For automation, append `--json` to `openclaw openviking status` to get a machine-readable result. `openclaw openviking setup` also supports `--json` when used with `--base-url`.
+
+Or check the underlying signals manually. The plugin owns the `contextEngine` slot:
 
 ```bash
 openclaw config get plugins.slots.contextEngine

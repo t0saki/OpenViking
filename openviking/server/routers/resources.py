@@ -2,30 +2,24 @@
 # SPDX-License-Identifier: AGPL-3.0
 """Resource endpoints for OpenViking HTTP Server."""
 
-import time
-import uuid
-from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel, ConfigDict, model_validator
 
+from openviking.core.path_variables import resolve_path_variables
 from openviking.server.auth import get_request_context
 from openviking.server.config import ServerConfig
 from openviking.server.dependencies import get_service
-from openviking.server.identity import RequestContext
-from openviking.server.local_input_guard import (
-    TEMP_FILE_ID_RE,
-    _is_safe_namespace_component,
-    require_remote_resource_source,
-    resolve_uploaded_temp_file_id,
-)
+from openviking.server.identity import AccountNamespacePolicy, RequestContext, Role
+from openviking.server.local_input_guard import require_remote_resource_source
 from openviking.server.responses import response_from_result
 from openviking.server.telemetry import run_operation
+from openviking.server.temp_upload_store import TempUploadStore
 from openviking.server.upload_token_store import UploadTokenError, upload_token_store
 from openviking.telemetry import TelemetryRequest
 from openviking_cli.exceptions import InvalidArgumentError
-from openviking_cli.utils.config.open_viking_config import get_openviking_config
+from openviking_cli.session.user_id import UserIdentifier
 
 router = APIRouter(prefix="/api/v1", tags=["resources"])
 
@@ -42,6 +36,8 @@ class AddResourceRequest(BaseModel):
             If not specified, an auto-generated URI will be used.
         parent: Parent URI under which the resource will be stored.
             Cannot be used together with 'to'.
+        create_parent: Whether to automatically create the parent directory if it doesn't exist.
+            Default is False.
         reason: Reason for adding the resource. Used for documentation and monitoring.
         instruction: Processing instruction for semantic extraction.
             Provides hints for how the resource should be processed.
@@ -73,6 +69,7 @@ class AddResourceRequest(BaseModel):
     temp_file_id: Optional[str] = None
     to: Optional[str] = None
     parent: Optional[str] = None
+    create_parent: bool = False
     reason: str = ""
     instruction: str = ""
     wait: bool = False
@@ -120,97 +117,20 @@ class AddSkillRequest(BaseModel):
         return self
 
 
-def _resolve_temp_or_path(
-    *,
-    path: Optional[str],
-    temp_file_id: Optional[str],
-    upload_temp_dir: Path,
-    account_id: Optional[str] = None,
-    user_id: Optional[str] = None,
-) -> tuple[str, bool, Optional[str]]:
-    """Resolve add_resource's source argument to a concrete path string.
-
-    Returns (resolved_path, allow_local_path_resolution, original_filename). Raises
-    InvalidArgumentError when neither argument is supplied.
-    """
-    if temp_file_id:
-        resolved, original = resolve_uploaded_temp_file_id(
-            temp_file_id,
-            upload_temp_dir,
-            account_id=account_id,
-            user_id=user_id,
-        )
-        return resolved, True, original
-    if path is None:
-        raise InvalidArgumentError("Either 'path' or 'temp_file_id' must be provided.")
-    return require_remote_resource_source(path), False, None
-
-
-def _cleanup_temp_files(temp_dir: Path, max_age_hours: int = 1):
-    """Clean up temporary files older than max_age_hours.
-
-    Recurses into per-tenant subdirectories produced by the signed-upload route
-    (``{temp_dir}/{account_id}/{user_id}/{temp_file_id}``) as well as the legacy
-    flat layout used by ``POST /api/v1/resources/temp_upload``.
-    """
-    if not temp_dir.exists():
-        return
-
-    now = time.time()
-    max_age_seconds = max_age_hours * 3600
-
-    for file_path in temp_dir.rglob("*"):
-        if not file_path.is_file():
-            continue
-        try:
-            file_age = now - file_path.stat().st_mtime
-        except OSError:
-            continue
-        if file_age <= max_age_seconds:
-            continue
-        file_path.unlink(missing_ok=True)
-        if not file_path.name.endswith(".ov_upload.meta"):
-            meta_path = file_path.parent / f"{file_path.name}.ov_upload.meta"
-            if meta_path.exists():
-                meta_path.unlink(missing_ok=True)
-
-
 @router.post("/resources/temp_upload")
 async def temp_upload(
+    request: Request,
     file: UploadFile = File(...),
     telemetry: bool = Form(False),
+    upload_mode: str = Form("local"),
     _ctx: RequestContext = Depends(get_request_context),
 ):
     """Upload a temporary file for add_resource or import_ovpack."""
 
     async def _upload() -> dict[str, str]:
-        import json
-
-        config = get_openviking_config()
-        temp_dir = config.storage.get_upload_temp_dir()
-
-        # Clean up old temporary files
-        _cleanup_temp_files(temp_dir)
-
-        # Save the uploaded file
-        file_ext = Path(file.filename).suffix if file.filename else ".tmp"
-        temp_filename = f"upload_{uuid.uuid4().hex}{file_ext}"
-        temp_file_path = temp_dir / temp_filename
-
-        with open(temp_file_path, "wb") as f:
-            f.write(await file.read())
-
-        # Save metadata with original filename
-        if file.filename:
-            meta_path = temp_dir / f"{temp_filename}.ov_upload.meta"
-            meta = {
-                "original_filename": file.filename,
-                "upload_time": time.time(),
-            }
-            with open(meta_path, "w") as f:
-                json.dump(meta, f)
-
-        return {"temp_file_id": temp_filename}
+        store = TempUploadStore.build(request.app.state.config)
+        temp_file_id = await store.save_upload(file, upload_mode, _ctx)
+        return {"temp_file_id": temp_file_id}
 
     execution = await run_operation(
         operation="resources.temp_upload",
@@ -235,19 +155,18 @@ async def temp_upload_signed(
     request: Request,
     file: UploadFile = File(...),
     token: str = Query(..., min_length=1),
-    temp_file_id: str = Query(..., min_length=1),
+    upload_mode: str = Query("local"),
 ):
     """Upload via short-lived signed token. Used by the MCP progressive-upload flow.
 
     No identity headers required — the token (issued by ``add_resource`` MCP for local-file
-    paths) carries the bound (account_id, user_id, temp_file_id). The token is consumed on
-    first use; subsequent attempts return 401.
+    paths) carries the bound (account_id, user_id, agent_id). The token is consumed on first
+    use; subsequent attempts return 401. The server mints the ``temp_file_id`` at write time
+    and returns it in the response body; the agent then calls ``add_resource`` with that id.
+
+    Persistence flows through :class:`TempUploadStore`, so the same local/shared upload modes
+    used by the auth'd ``/temp_upload`` route apply here too.
     """
-    import json
-
-    if not TEMP_FILE_ID_RE.match(temp_file_id):
-        raise HTTPException(status_code=400, detail="invalid temp_file_id")
-
     max_bytes = _resolve_upload_max_bytes(request)
     content_length_hdr = request.headers.get("content-length")
     if content_length_hdr is not None:
@@ -255,55 +174,34 @@ async def temp_upload_signed(
             if int(content_length_hdr) > max_bytes:
                 raise HTTPException(status_code=413, detail="upload exceeds max_bytes")
         except ValueError:
-            pass  # malformed header — let the streaming check catch oversize
+            pass
 
     try:
-        account_id, user_id = upload_token_store.consume(token, temp_file_id)
+        account_id, user_id, agent_id = upload_token_store.consume(token)
     except UploadTokenError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
 
-    # Defense-in-depth: tokens currently only carry server-controlled identity, but
-    # validate anyway so a future code path that mints tokens from less-trusted input
-    # cannot escape the per-tenant directory.
-    if not (_is_safe_namespace_component(account_id) and _is_safe_namespace_component(user_id)):
-        raise HTTPException(status_code=400, detail="invalid namespace component")
-
-    upload_temp_dir = get_openviking_config().storage.get_upload_temp_dir()
-    target_dir = upload_temp_dir / account_id / user_id
-    target_dir.mkdir(parents=True, exist_ok=True)
-    target_path = target_dir / temp_file_id
-
-    bytes_written = 0
-    success = False
     try:
-        with open(target_path, "wb") as out:
-            while True:
-                chunk = await file.read(64 * 1024)
-                if not chunk:
-                    break
-                bytes_written += len(chunk)
-                if bytes_written > max_bytes:
-                    raise HTTPException(status_code=413, detail="upload exceeds max_bytes")
-                out.write(chunk)
-        success = True
-    finally:
-        if not success:
-            target_path.unlink(missing_ok=True)
+        ctx = RequestContext(
+            user=UserIdentifier(account_id, user_id, agent_id),
+            role=Role.USER,
+            namespace_policy=AccountNamespacePolicy(),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"invalid identity in token: {exc}") from exc
 
-    if file.filename:
-        meta_path = target_dir / f"{temp_file_id}.ov_upload.meta"
-        meta = {"original_filename": file.filename, "upload_time": time.time()}
-        with open(meta_path, "w") as meta_f:
-            json.dump(meta, meta_f)
+    store = TempUploadStore.build(request.app.state.config)
+    try:
+        temp_file_id = await store.save_upload(file, upload_mode, ctx)
+    except InvalidArgumentError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    # Scope cleanup to this tenant's subdir to bound the scan; the legacy flat
-    # /temp_upload route still cleans the root level on its own calls.
-    _cleanup_temp_files(target_dir)
     return {"temp_file_id": temp_file_id}
 
 
 @router.post("/resources")
 async def add_resource(
+    http_request: Request,
     request: AddResourceRequest,
     _ctx: RequestContext = Depends(get_request_context),
 ):
@@ -312,14 +210,20 @@ async def add_resource(
     if request.to and request.parent:
         raise InvalidArgumentError("Cannot specify both 'to' and 'parent' at the same time.")
 
-    upload_temp_dir = get_openviking_config().storage.get_upload_temp_dir()
-    path, allow_local_path_resolution, original_filename = _resolve_temp_or_path(
-        path=request.path,
-        temp_file_id=request.temp_file_id,
-        upload_temp_dir=upload_temp_dir,
-        account_id=_ctx.user.account_id,
-        user_id=_ctx.user.user_id,
-    )
+    path = request.path
+    allow_local_path_resolution = False
+    original_filename = None
+    resolved = None
+    if request.temp_file_id:
+        store = TempUploadStore.build(http_request.app.state.config)
+        resolved = await store.resolve_for_consume(request.temp_file_id, _ctx)
+        path = resolved.local_path
+        original_filename = resolved.original_filename
+        allow_local_path_resolution = True
+    elif path is not None:
+        path = require_remote_resource_source(path)
+    if path is None:
+        raise InvalidArgumentError("Either 'path' or 'temp_file_id' must be provided.")
 
     # Use original_filename from upload if source_name not explicitly provided
     source_name = request.source_name
@@ -334,53 +238,95 @@ async def add_resource(
         "exclude": request.exclude,
         "directly_upload_media": request.directly_upload_media,
         "watch_interval": request.watch_interval,
+        "create_parent": request.create_parent,
     }
     if request.preserve_structure is not None:
         kwargs["preserve_structure"] = request.preserve_structure
 
+    # Resolve path variables before passing to service
+    to = resolve_path_variables(request.to) if request.to else None
+    parent = resolve_path_variables(request.parent) if request.parent else None
+
+    store = TempUploadStore.build(http_request.app.state.config) if resolved else None
+
+    async def _add() -> dict[str, Any]:
+        try:
+            result = await service.resources.add_resource(
+                path=path,
+                ctx=_ctx,
+                to=to,
+                parent=parent,
+                reason=request.reason,
+                instruction=request.instruction,
+                wait=request.wait,
+                timeout=request.timeout,
+                allow_local_path_resolution=allow_local_path_resolution,
+                enforce_public_remote_targets=True,
+                **kwargs,
+            )
+        except Exception:
+            if resolved and store:
+                await store.mark_failed(resolved, _ctx)
+            raise
+        else:
+            if resolved and store:
+                await store.mark_consumed(resolved, _ctx)
+            return result
+        finally:
+            if resolved:
+                await resolved.cleanup()
+
     execution = await run_operation(
         operation="resources.add_resource",
         telemetry=request.telemetry,
-        fn=lambda: service.resources.add_resource(
-            path=path,
-            ctx=_ctx,
-            to=request.to,
-            parent=request.parent,
-            reason=request.reason,
-            instruction=request.instruction,
-            wait=request.wait,
-            timeout=request.timeout,
-            allow_local_path_resolution=allow_local_path_resolution,
-            enforce_public_remote_targets=True,
-            **kwargs,
-        ),
+        fn=_add,
     )
     return response_from_result(execution.result, telemetry=execution.telemetry)
 
 
 @router.post("/skills")
 async def add_skill(
+    http_request: Request,
     request: AddSkillRequest,
     _ctx: RequestContext = Depends(get_request_context),
 ):
     """Add skill to OpenViking."""
     service = get_service()
-    upload_temp_dir = get_openviking_config().storage.get_upload_temp_dir()
     data = request.data
     allow_local_path_resolution = False
+    resolved = None
     if request.temp_file_id:
-        data, _ = resolve_uploaded_temp_file_id(request.temp_file_id, upload_temp_dir)
+        store = TempUploadStore.build(http_request.app.state.config)
+        resolved = await store.resolve_for_consume(request.temp_file_id, _ctx)
+        data = resolved.local_path
         allow_local_path_resolution = True
+
+    store = TempUploadStore.build(http_request.app.state.config) if resolved else None
+
+    async def _add() -> dict[str, Any]:
+        try:
+            result = await service.resources.add_skill(
+                data=data,
+                ctx=_ctx,
+                wait=request.wait,
+                timeout=request.timeout,
+                allow_local_path_resolution=allow_local_path_resolution,
+            )
+        except Exception:
+            if resolved and store:
+                await store.mark_failed(resolved, _ctx)
+            raise
+        else:
+            if resolved and store:
+                await store.mark_consumed(resolved, _ctx)
+            return result
+        finally:
+            if resolved:
+                await resolved.cleanup()
 
     execution = await run_operation(
         operation="resources.add_skill",
         telemetry=request.telemetry,
-        fn=lambda: service.resources.add_skill(
-            data=data,
-            ctx=_ctx,
-            wait=request.wait,
-            timeout=request.timeout,
-            allow_local_path_resolution=allow_local_path_resolution,
-        ),
+        fn=_add,
     )
     return response_from_result(execution.result, telemetry=execution.telemetry)
