@@ -57,6 +57,13 @@ class MemoryTypeRegistry:
             )
         logger.info(f"Loaded {loaded} memory schemas from templates: {memory_templates_dir}")
 
+        # Load vaka templates if enabled (overrides default for matching memory_types)
+        if config.memory.enable_vaka_template:
+            vaka_dir = str(Path(memory_templates_dir) / "vaka")
+            if os.path.exists(vaka_dir):
+                vaka_loaded = self.load_from_directory(vaka_dir, replace=True)
+                logger.info(f"Loaded {vaka_loaded} vaka memory schemas from: {vaka_dir}")
+
         if custom_dir:
             custom_dir_expanded = os.path.expanduser(custom_dir)
             if os.path.exists(custom_dir_expanded):
@@ -202,6 +209,7 @@ class MemoryTypeRegistry:
                 description=field_data.get("description", ""),
                 merge_op=MergeOp(field_data.get("merge_op", "patch")),
                 init_value=field_data.get("init_value"),
+                searchable=field_data.get("searchable", False),
             )
             fields.append(field)
 
@@ -283,16 +291,16 @@ class MemoryTypeRegistry:
                 pass
 
             # Add MEMORY_FIELDS comment with field metadata
-            # Template rendering is handled inside serialize_with_metadata
-            from openviking.session.memory.utils.content import serialize_with_metadata
+            from openviking.session.memory.dataclass import MemoryFile
+            from openviking.session.memory.utils.memory_file_utils import MemoryFileUtils
 
-            metadata = {
-                "memory_type": schema.memory_type,
-                **fields_with_init,
-                "content": "",  # content will come from content_template rendering
-            }
-            full_content = serialize_with_metadata(
-                metadata,
+            mf = MemoryFile(
+                uri=file_uri,
+                memory_type=schema.memory_type,
+                extra_fields=fields_with_init,
+            )
+            full_content = MemoryFileUtils.write(
+                mf,
                 content_template=schema.content_template,
             )
 

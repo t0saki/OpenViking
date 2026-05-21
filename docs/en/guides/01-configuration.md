@@ -580,7 +580,8 @@ Vision Language Model for semantic extraction (L0/L1 generation).
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `api_key` | str | API key. Optional for `openai-codex` when Codex OAuth is available |
+| `api_key` | str | API key. Optional for `openai-codex` when Codex OAuth is available, and optional for `litellm` routes that use provider-native credentials |
+| `forward_api_key` | bool | LiteLLM only. Overrides whether `api_key` is forwarded to LiteLLM. By default, OpenViking does not forward placeholder keys for native AWS/GCP routes such as `bedrock/`, `sagemaker/`, and `vertex_ai/`; set to `true` when intentionally using a LiteLLM API-key route such as Bedrock bearer-token auth |
 | `model` | str | Model name |
 | `api_base` | str | API endpoint (optional) |
 | `thinking` | bool | Enable thinking mode for VolcEngine models (default: `false`) |
@@ -614,8 +615,15 @@ If VLM is not configured, L0/L1 will be generated from content directly (less se
 - `openai-codex`: Codex VLM via ChatGPT/Codex OAuth
 - `kimi`: Kimi Coding subscription endpoint with built-in provider defaults
 - `glm`: Z.AI GLM Coding Plan endpoint with OpenAI-compatible requests
+- `litellm`: LiteLLM VLM API, including explicit LiteLLM routes such as `bedrock/`, `sagemaker/`, `vertex_ai/`, and `azure/`
 
 For `openai-codex`, authenticate through `openviking-server init`, then verify with `openviking-server doctor`.
+
+For `litellm`, `api_key` can be omitted when the underlying route authenticates through
+environment or provider-native credentials, such as AWS IAM/IRSA for Bedrock and
+SageMaker or ADC/service-account credentials for Vertex AI. Azure routes still use
+`api_key` normally. If you intentionally use LiteLLM's Bedrock bearer-token API-key
+auth, set `forward_api_key` to `true`.
 
 **Custom HTTP Headers**
 
@@ -1160,6 +1168,8 @@ When running OpenViking as an HTTP service, add a `server` section to `ov.conf`:
     "auth_mode": "api_key",
     "root_api_key": "your-secret-root-key",
     "cors_origins": ["*"],
+    "public_base_url": "https://ov.example.com",
+    "upload_signed_ttl_seconds": 600,
     "temp_upload": {
       "default_mode": "local",
       "shared_max_size_bytes": 536870912,
@@ -1176,6 +1186,8 @@ When running OpenViking as an HTTP service, add a `server` section to `ov.conf`:
 | `auth_mode` | str | Authentication mode: `"api_key"` or `"trusted"`. Default is `"api_key"` | `"api_key"` |
 | `root_api_key` | str | Root API key for multi-tenant auth in `api_key` mode. In `trusted` mode it is optional on localhost, but required for any non-localhost deployment; it does not become the source of user identity | `null` |
 | `cors_origins` | list | Allowed CORS origins | `["*"]` |
+| `public_base_url` | str | Public-facing base URL emitted in MCP-issued upload instructions. Resolution order: env var `OPENVIKING_PUBLIC_BASE_URL` → this field → `X-Forwarded-Host`/`X-Forwarded-Proto` request headers → `Host` request header → listen-address fallback. Set this (or the env var) when the server runs behind a reverse proxy that does not forward `X-Forwarded-*` headers. | `null` |
+| `upload_signed_ttl_seconds` | int | TTL in seconds for one-shot tokens minted by the MCP `add_resource` tool for local-file uploads via the signed `POST /api/v1/resources/temp_upload_signed` endpoint. | `600` (10 minutes) |
 | `temp_upload.default_mode` | str | Server-side default for `POST /api/v1/resources/temp_upload` when the client does not send `upload_mode`: `"local"` (per-instance disk, current single-node behavior) or `"shared"` (distributed shared store usable across replicas). | `"local"` |
 | `temp_upload.shared_max_size_bytes` | int | Maximum size accepted in `shared` mode, in bytes. Requests above this size are rejected before object-store write. | `536870912` (512 MiB) |
 | `temp_upload.shared_prefix` | str | URI prefix used when allocating shared `temp_file_id` objects. | `"viking://upload"` |
