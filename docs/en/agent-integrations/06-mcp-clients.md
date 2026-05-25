@@ -19,7 +19,7 @@ Most MCP clients use the standard `mcpServers` format:
 }
 ```
 
-No authentication is needed when connecting to a local server on `localhost`.
+No authentication is needed when connecting to a local server without `root_api_key` configured (dev mode).
 
 ## Platform-specific notes
 

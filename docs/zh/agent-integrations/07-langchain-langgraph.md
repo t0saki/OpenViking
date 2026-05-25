@@ -48,6 +48,7 @@ docs = retriever.invoke("用户之前对部署方案做了什么决定？")
 ### Context backend
 
 ```python
+from langchain_core.messages import AIMessage
 from langchain_core.runnables import RunnableLambda
 from openviking.integrations.langchain import with_openviking_context
 
