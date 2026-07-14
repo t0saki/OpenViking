@@ -112,3 +112,88 @@ async def test_parallel_search_preserves_type_order():
 
     assert [entry.type for entry in result.entries] == ["events", "entities"]
     assert [entry.rank for entry in result.entries] == [1, 1]
+
+
+async def test_reads_run_concurrently_but_rendering_stays_ranked():
+    reads_started: list[str] = []
+    both_started = asyncio.Event()
+
+    async def fake_find(**kwargs):
+        target = kwargs["target_uri"]
+        if "/peers/" in target:
+            return _FakeFindResult()
+        return _FakeFindResult(
+            [
+                {"uri": f"{target}/one.md", "score": 0.9, "abstract": "one"},
+                {"uri": f"{target}/two.md", "score": 0.8, "abstract": "two"},
+            ]
+        )
+
+    async def fake_read(uri, **kwargs):
+        del kwargs
+        reads_started.append(uri)
+        if len(reads_started) == 2:
+            both_started.set()
+        await both_started.wait()
+        return f"content for {uri}"
+
+    service = SimpleNamespace(
+        search=SimpleNamespace(find=fake_find),
+        fs=SimpleNamespace(read=fake_read),
+    )
+    ctx = RequestContext(
+        user=UserIdentifier.the_default_user("test_user"),
+        role=Role.USER,
+        actor_peer_id="current",
+    )
+    result = await asyncio.wait_for(
+        search_type_quota_recall(
+            service=service,
+            ctx=ctx,
+            query="parallel reads",
+            peer_scope="actor",
+            quotas={"events": 2, "entities": 0, "preferences": 0, "experiences": 0},
+        ),
+        timeout=1,
+    )
+    assert len(reads_started) == 2
+    assert [entry.uri.rsplit("/", 1)[-1] for entry in result.entries] == ["one.md", "two.md"]
+
+
+async def test_compact_render_and_exclude_uris():
+    excluded = "viking://user/test_user/memories/entities/old.md"
+    kept = "viking://user/test_user/memories/entities/new.md"
+
+    async def fake_find(**kwargs):
+        if kwargs["target_uri"].endswith("/entities"):
+            return _FakeFindResult(
+                [
+                    {"uri": excluded, "score": 0.99, "abstract": "old abstract"},
+                    {"uri": kept, "score": 0.9, "abstract": "new abstract"},
+                ]
+            )
+        return _FakeFindResult()
+
+    async def fake_read(uri, **kwargs):
+        del uri, kwargs
+        raise AssertionError("compact entity rendering should use the abstract")
+
+    service = SimpleNamespace(
+        search=SimpleNamespace(find=fake_find),
+        fs=SimpleNamespace(read=fake_read),
+    )
+    ctx = RequestContext(user=UserIdentifier.the_default_user("test_user"), role=Role.USER)
+    result = await search_type_quota_recall(
+        service=service,
+        ctx=ctx,
+        query="compact",
+        peer_scope="actor",
+        quotas={"events": 0, "entities": 2, "preferences": 0, "experiences": 0},
+        render="compact",
+        exclude_uris=[excluded],
+    )
+    assert [entry.uri for entry in result.entries] == [kept]
+    assert result.entries[0].mode == "summary"
+    assert result.entries[0].content == ""
+    assert result.stats["excluded"] == 1
+    assert result.stats["render_mode"] == "compact"

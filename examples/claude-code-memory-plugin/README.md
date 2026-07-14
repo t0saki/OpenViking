@@ -148,11 +148,16 @@ By default the plugin derives a peer from the workspace path using Claude's proj
 | `OPENVIKING_RECALL_MAX_CONTENT_CHARS`  | `500`        | Per-item content cap                                                     |
 | `OPENVIKING_RECALL_PREFER_ABSTRACT`    | `true`       | Prefer abstract over full body when available                            |
 | `OPENVIKING_RECALL_PEER_SCOPE`          | `all`        | `all` can recall other project memories with a score penalty; `actor` only sees global plus the current project |
+| `OPENVIKING_RECALL_REWRITE`             | `off`        | `off`, `client`, `server`, or `auto`; client uses `claude -p --model haiku` |
+| `OPENVIKING_RECALL_MAX_CHARS`           | `6500`       | Normal compact render/injection budget                                   |
+| `OPENVIKING_RECALL_SESSION_CONTEXT`     | `off`        | Set `auto` to enable session-aware query expansion                        |
+| `OPENVIKING_RECALL_DEDUP_TURNS`         | `5`          | URI cooldown in recall turns; `0` disables it                             |
+| `OPENVIKING_RECALL_COMPRESS_TIMEOUT_MS` | `45000`      | Client compressor deadline before deterministic fallback                  |
 | `OPENVIKING_SCORE_THRESHOLD`           | `0.35`       | Min relevance score (0–1)                                                |
 | `OPENVIKING_MIN_QUERY_LENGTH`          | `3`          | Skip recall for very short queries                                       |
+| `OPENVIKING_LOG_RANKING_DETAILS`       | `false`      | Per-candidate scoring logs (verbose)                                     |
 
 Recall defaults to the broad mode: global memory, the current workspace, and other workspace memories can all be recalled, with other workspaces penalized and rendered later. Set `OPENVIKING_RECALL_PEER_SCOPE=actor` for the isolation mode, which only sees global memory plus the current workspace. In deployments where one bot serves multiple real people, such as zouk, vikingbot, or AstrBot, use the isolation mode with an explicit actor peer so one person's memories are not recalled into another person's session.
-| `OPENVIKING_LOG_RANKING_DETAILS`       | `false`      | Per-candidate scoring logs (verbose)                                     |
 
 #### Capture tuning
 
@@ -170,6 +175,7 @@ Recall defaults to the broad mode: global memory, the current workspace, and oth
 | Env Var                                | Default      | Description                                                              |
 |----------------------------------------|--------------|--------------------------------------------------------------------------|
 | `OPENVIKING_TIMEOUT_MS`                | `15000`      | HTTP timeout for recall + general requests (ms)                          |
+| `OPENVIKING_RECALL_TIMEOUT_MS`         | `60000`      | Whole UserPromptSubmit deadline; the outer hook timeout is 120s          |
 | `OPENVIKING_CAPTURE_TIMEOUT_MS`        | `30000`      | HTTP timeout for capture path (must stay under the `Stop` hook timeout)  |
 | `OPENVIKING_WRITE_PATH_ASYNC`          | `true`       | Detach write hooks into a background worker so CC isn't blocked on commit RTT |
 | `OPENVIKING_BYPASS_SESSION`            | `false`      | One-shot: `1`/`true` skips every hook in the current process             |
@@ -223,7 +229,7 @@ Defaults in `hooks/hooks.json`:
 | Hook                | Timeout | Notes                                                                                                  |
 |---------------------|---------|--------------------------------------------------------------------------------------------------------|
 | `SessionStart`      | `120s`  | Generous because resume/compact may pull a large archive overview                                      |
-| `UserPromptSubmit`  | `8s`    | Auto-recall must stay fast so prompt submission never feels blocked                                    |
+| `UserPromptSubmit`  | `120s`  | Outer safety limit; the hook's internal deadline defaults to 60s and degrades gracefully                |
 | `Stop`              | `45s`   | Auto-capture parses transcript + pushes turns; async detach makes the user-perceived time near-zero    |
 | `PreCompact`        | `30s`   | Synchronous commit before Claude Code mutates the transcript                                           |
 | `SessionEnd`        | `30s`   | Final commit; async-detached                                                                           |

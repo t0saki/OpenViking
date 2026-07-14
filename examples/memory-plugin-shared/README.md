@@ -33,6 +33,12 @@ is the isolation mode: recall only sees global memory plus the current
 workspace. If an older server rejects that field with 400 or 422, `postRecall`
 removes `peer_scope` and retries once.
 
+Auto-recall v2 keeps LLM work opt-in. `recallRewrite=off` (the default) sends
+`render="compact"` with `recallMaxChars=6500`. `client`, `server`, and `auto`
+enable a client compressor, the server rewrite endpoint, or client-first
+selection respectively. New request fields are stripped together on a single
+400/422 compatibility retry. Injected URIs use a five-turn cooldown by default.
+
 For deployments where one bot serves multiple real people, such as zouk,
 vikingbot, or AstrBot, configure an explicit actor peer and use the isolation
 mode so one person's memories are not recalled into another person's session.

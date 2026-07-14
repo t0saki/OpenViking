@@ -199,6 +199,9 @@ async function main() {
       ? ` (${recall.top_score.toFixed(2)})`
       : "";
     const seg = `↩ ${recall.count} mem${top}`
+      + (typeof recall.memory_hit_count === "number" && Array.isArray(recall.uris) && recall.uris.length
+        ? ` · hit ${recall.memory_hit_count}/${recall.uris.length}`
+        : "")
       + (typeof recall.latency_ms === "number" ? ` · ${recall.latency_ms}ms` : "");
     parts.push(dim(seg));
   }

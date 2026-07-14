@@ -219,7 +219,7 @@ bypass 命中时所有 hook 直接放行，不联系 OpenViking。
 | Hook                | 超时   | 备注                                                                                          |
 |---------------------|--------|----------------------------------------------------------------------------------------------|
 | `SessionStart`      | `120s` | 充裕，因为 resume / compact 可能拉一个较大的 archive overview                                |
-| `UserPromptSubmit`  | `8s`   | 自动召回必须快，prompt 提交不能被 hook 阻塞                                                  |
+| `UserPromptSubmit`  | `120s` | 外层保险；插件内部默认 60s 截止并自动降级                                                    |
 | `Stop`              | `45s`  | 自动捕获要解析 transcript + 推 turn；async detach 让用户感知接近 0                          |
 | `PreCompact`        | `30s`  | 同步 commit，CC 紧接着会改 transcript                                                        |
 | `SessionEnd`        | `30s`  | 最终 commit；async detach                                                                    |

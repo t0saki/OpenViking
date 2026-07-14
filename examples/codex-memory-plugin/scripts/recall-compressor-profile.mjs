@@ -5,7 +5,8 @@ import { mkdir, rename, writeFile } from "node:fs/promises";
 import { getStateDir } from "./session-state.mjs";
 
 const DEFAULT_PRIMARY = { model: "gpt-5.3-codex-spark", thinking: "default", source: "default_primary" };
-const DEFAULT_FALLBACK = { model: "gpt-5.5", thinking: "low", source: "default_fallback" };
+const DEFAULT_LUNA = { model: "gpt-5.6-luna", thinking: "default", source: "default_luna" };
+const DEFAULT_CLI_MODEL = { model: "", thinking: "default", source: "default_cli" };
 const PROFILE_SCHEMA_VERSION = 2;
 const DEFAULT_CODEX_HOME = join(homedir(), ".codex");
 
@@ -62,7 +63,7 @@ export function buildRecallCompressorCandidates(cfg) {
     });
   }
 
-  candidates.push(DEFAULT_PRIMARY, DEFAULT_FALLBACK);
+  candidates.push(DEFAULT_PRIMARY, DEFAULT_LUNA, DEFAULT_CLI_MODEL);
 
   const seen = new Set();
   return candidates.filter((candidate) => {

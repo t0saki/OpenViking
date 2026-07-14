@@ -178,6 +178,13 @@ export function loadConfig() {
     str(cc.recallPeerScope, "all"),
   );
   const recallPeerScope = recallPeerScopeRaw === "actor" ? "actor" : "all";
+  const recallRewriteRaw = str(
+    process.env.OPENVIKING_RECALL_REWRITE,
+    str(cc.recallRewrite, "off"),
+  ).toLowerCase();
+  const recallRewrite = ["client", "server", "auto"].includes(recallRewriteRaw)
+    ? recallRewriteRaw
+    : "off";
 
   // Each tuning field follows env > ovcli.conf is N/A (CLI doesn't carry tuning) >
   // ov.conf cc.* > built-in default. Env var names are flat OPENVIKING_* (no CC
@@ -195,6 +202,10 @@ export function loadConfig() {
   const captureTimeoutMs = Math.max(1000, Math.floor(num(
     process.env.OPENVIKING_CAPTURE_TIMEOUT_MS,
     num(cc.captureTimeoutMs, Math.max(timeoutMs * 2, 30000)),
+  )));
+  const recallTimeoutMs = Math.max(1000, Math.floor(num(
+    process.env.OPENVIKING_RECALL_TIMEOUT_MS,
+    num(cc.recallTimeoutMs, 60000),
   )));
 
   // captureMode whitelist: env or cc, only "keyword" flips it; anything else → "semantic"
@@ -218,6 +229,7 @@ export function loadConfig() {
     peerId,
     workspacePeer,
     timeoutMs,
+    recallTimeoutMs,
 
     // Recall
     autoRecall: envBool("OPENVIKING_AUTO_RECALL") ?? (cc.autoRecall !== false),
@@ -246,6 +258,40 @@ export function loadConfig() {
     ))),
     recallPreferAbstract: envBool("OPENVIKING_RECALL_PREFER_ABSTRACT") ?? (cc.recallPreferAbstract !== false),
     recallPeerScope,
+    recallRewrite,
+    recallMaxChars: Math.max(1000, Math.floor(num(
+      process.env.OPENVIKING_RECALL_MAX_CHARS,
+      num(cc.recallMaxChars, 6500),
+    ))),
+    recallSessionContext: str(
+      process.env.OPENVIKING_RECALL_SESSION_CONTEXT,
+      str(cc.recallSessionContext, "off"),
+    ),
+    recallDedupTurns: Math.max(0, Math.floor(num(
+      process.env.OPENVIKING_RECALL_DEDUP_TURNS,
+      num(cc.recallDedupTurns, 5),
+    ))),
+    recallCompress: recallRewrite === "client" || recallRewrite === "auto",
+    recallCompressTimeoutMs: Math.max(1000, Math.floor(num(
+      process.env.OPENVIKING_RECALL_COMPRESS_TIMEOUT_MS,
+      num(cc.recallCompressTimeoutMs, 45000),
+    ))),
+    recallCompressModel: str(
+      process.env.OPENVIKING_RECALL_COMPRESS_MODEL,
+      str(cc.recallCompressModel, ""),
+    ),
+    recallCompressMaxInputChars: Math.max(1000, Math.floor(num(
+      process.env.OPENVIKING_RECALL_COMPRESS_MAX_INPUT_CHARS,
+      num(cc.recallCompressMaxInputChars, 18000),
+    ))),
+    recallCompressMinInputChars: Math.max(0, Math.floor(num(
+      process.env.OPENVIKING_RECALL_COMPRESS_MIN_INPUT_CHARS,
+      num(cc.recallCompressMinInputChars, 1500),
+    ))),
+    recallCompressMaxBullets: Math.max(1, Math.floor(num(
+      process.env.OPENVIKING_RECALL_COMPRESS_MAX_BULLETS,
+      num(cc.recallCompressMaxBullets, 6),
+    ))),
 
     // Capture
     autoCapture: envBool("OPENVIKING_AUTO_CAPTURE") ?? (cc.autoCapture !== false),

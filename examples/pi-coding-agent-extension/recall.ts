@@ -17,7 +17,7 @@ export class RecallManager {
     this.config = config;
   }
 
-  async searchAndCache(userQuery: string): Promise<string | null> {
+  async searchAndCache(userQuery: string, sessionId = ""): Promise<string | null> {
     if (userQuery.trim().length < this.config.minQueryLength) {
       return null;
     }
@@ -26,7 +26,7 @@ export class RecallManager {
       (path: string, init?: any, options?: any) => this.client.fetchJSON(path, init, 10000),
       this.config as any,
       userQuery,
-      { actorPeerId: this.config.peerId },
+      { actorPeerId: this.config.peerId, sessionId, dedupKey: sessionId },
     );
     this.cache = { block, promptText: userQuery };
     return block;

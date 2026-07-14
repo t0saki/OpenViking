@@ -239,6 +239,27 @@ def test_retriever_initializes_rerank_client(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_fast_default_search_mode_skips_configured_reranker(monkeypatch):
+    fake_client = FakeRerankClient([0.9, 0.1])
+    monkeypatch.setattr(
+        "openviking.retrieve.hierarchical_retriever.RerankClient.from_config",
+        lambda config: fake_client,
+    )
+    storage = DummyStorage()
+    retriever = HierarchicalRetriever(
+        storage=storage,
+        embedder=DummyEmbedder(),
+        rerank_config=_config(),
+        default_search_mode="fast",
+    )
+
+    await retriever.retrieve(_query(), ctx=_ctx(), limit=2)
+
+    assert fake_client.calls == []
+    assert len(storage.search_calls) == 1
+
+
+@pytest.mark.asyncio
 async def test_retrieve_uses_rerank_scores_in_thinking_mode(monkeypatch):
     fake_client = FakeRerankClient([0.95, 0.05, 0.11, 0.95])
     monkeypatch.setattr(

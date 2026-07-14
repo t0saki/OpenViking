@@ -36,6 +36,7 @@ import { replayPending } from "./lib/pending-queue.mjs";
 import { buildProfileBlock, estimateTokens } from "./lib/profile-inject.mjs";
 import { writeJsonState } from "./lib/state.mjs";
 import { getEffectivePeerId } from "./lib/workspace-peer.mjs";
+import { detectRecallCompressorProfile } from "./recall-compressor-profile.mjs";
 
 if (!isPluginEnabled()) {
   process.stdout.write(JSON.stringify({ decision: "approve" }) + "\n");
@@ -108,6 +109,14 @@ async function main() {
   const cwd = input.cwd;
   const effectivePeer = getEffectivePeerId(cfg, { sessionId, cwd });
   log("start", { source, sessionId, peerSource: effectivePeer.source });
+
+  if (cfg.recallCompress) {
+    try {
+      await detectRecallCompressorProfile(cfg, { log });
+    } catch (err) {
+      logError("compress_profile", err);
+    }
+  }
 
   if (isBypassed(cfg, { sessionId, cwd })) {
     log("skip", { reason: "bypass_session_pattern" });

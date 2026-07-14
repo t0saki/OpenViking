@@ -125,6 +125,10 @@ Create `~/.config/opencode/openviking-config.json`:
     "tokenBudget": 2000,
     "minQueryLength": 3
   },
+  "recallRewrite": "off",
+  "recallMaxChars": 6500,
+  "recallSessionContext": "off",
+  "recallDedupTurns": 5,
   "commitTokenThreshold": 20000,
   "commitKeepRecentCount": 10,
   "profileTokenBudget": 10000,
@@ -152,6 +156,16 @@ global memory plus the current workspace. In deployments where one bot serves
 multiple real people, such as zouk, vikingbot, or AstrBot, use the isolation mode
 with an explicit actor peer so one person's memories are not recalled into
 another person's session.
+
+Recall rewrite is opt-in. `recallRewrite="server"` asks OpenViking's configured
+query-planner model to produce a cited digest; `"auto"` also selects the server
+because OpenCode has no client compressor process. The default `"off"` path uses
+compact rendering with the `recallMaxChars` budget and no LLM. Set
+`recallSessionContext="auto"` to send the OpenCode session id for query
+expansion. `recallDedupTurns` controls the URI cooldown (`0` disables it).
+The corresponding environment variables are `OPENVIKING_RECALL_REWRITE`,
+`OPENVIKING_RECALL_MAX_CHARS`, `OPENVIKING_RECALL_SESSION_CONTEXT`, and
+`OPENVIKING_RECALL_DEDUP_TURNS`.
 
 `OPENVIKING_API_KEY`, `OPENVIKING_ACCOUNT`, `OPENVIKING_USER`,
 and `OPENVIKING_PEER_ID` take precedence over values in this file.

@@ -21,12 +21,14 @@ import { loadConfig } from "./config.mjs";
 import { createLogger } from "./debug-log.mjs";
 import {
   buildCodexExecArgs,
+  buildRecallCompressorCandidates,
   fallbackRecallCompressorProfile,
   loadCachedRecallCompressorProfile,
   markRecallCompressorRuntimeFailed,
 } from "./recall-compressor-profile.mjs";
-import { deriveOvSessionId } from "./session-state.mjs";
-import { postRecall } from "./shared/recall-core.mjs";
+import { deriveOvSessionId, getStateDir } from "./session-state.mjs";
+import { compressRecallContext } from "./shared/recall-compress-core.mjs";
+import { buildRecallBlock, postRecall } from "./shared/recall-core.mjs";
 import { resolveEffectivePeerId } from "./shared/workspace-peer.mjs";
 
 const cfg = loadConfig();
@@ -73,6 +75,19 @@ function emit(additionalContext) {
     hookSpecificOutput: {
       hookEventName: "UserPromptSubmit",
       additionalContext: wrappedContext,
+    },
+  });
+}
+
+function emitPreparedBlock(additionalContext) {
+  if (!additionalContext) {
+    output({});
+    return;
+  }
+  output({
+    hookSpecificOutput: {
+      hookEventName: "UserPromptSubmit",
+      additionalContext: String(additionalContext),
     },
   });
 }
@@ -398,29 +413,19 @@ async function runCodexCompressor(prompt, profile) {
         OPENVIKING_AUTO_RECALL: "0",
         OPENVIKING_AUTO_CAPTURE: "0",
         OPENVIKING_RECALL_COMPRESS: "0",
+        OPENVIKING_MEMORY_ENABLED: "0",
       };
       let done = false;
       let timedOut = false;
       let stderr = "";
       const child = spawn("codex", args, { env, stdio: ["pipe", "ignore", "pipe"] });
       activeCompressor = child;
-      const finish = (value, { runtimeFailed = false } = {}) => {
+      const finish = (value, kind = "") => {
         if (done) return;
         done = true;
         if (activeCompressor === child) activeCompressor = null;
         clearTimeout(timer);
-        if (runtimeFailed) {
-          // Mark the profile as runtime_failed so subsequent UPS calls in
-          // this same codex session skip compress (avoids burning
-          // ~recallCompressTimeoutMs per turn on a guaranteed-to-fail
-          // spawn). Next SessionStart's cache-first detect treats this
-          // marker as a cache miss and re-resolves against the current
-          // catalogue, so a transient failure self-recovers across codex
-          // restarts. Best-effort write; failure is non-fatal.
-          markRecallCompressorRuntimeFailed(cfg, { failedModel: profile.model || "" })
-            .catch(() => {});
-        }
-        resolve(value);
+        resolve({ text: value, kind });
       };
       const timer = setTimeout(() => {
         timedOut = true;
@@ -436,11 +441,11 @@ async function runCodexCompressor(prompt, profile) {
       });
       child.on("error", (err) => {
         logError("compress_spawn", err);
-        finish(null, { runtimeFailed: true });
+        finish(null, "runtime_failed");
       });
       child.on("close", async (code) => {
         if (timedOut) {
-          finish(null, { runtimeFailed: true });
+          finish(null, "runtime_failed");
           return;
         }
         if (code !== 0) {
@@ -448,14 +453,15 @@ async function runCodexCompressor(prompt, profile) {
             profile,
             error: stderr.trim().slice(-1000) || `codex exited ${code}`,
           });
-          finish(null, { runtimeFailed: true });
+          const modelRejected = /(?:not supported|requires a newer|status(?: code)?\s*400|http\s*400)/i.test(stderr);
+          finish(null, modelRejected ? "model_failed" : "runtime_failed");
           return;
         }
         try {
           finish(await readFile(outputPath, "utf-8"));
         } catch (err) {
           logError("compress_read", err);
-          finish(null, { runtimeFailed: true });
+          finish(null, "runtime_failed");
         }
       });
       child.stdin.end(prompt);
@@ -463,6 +469,28 @@ async function runCodexCompressor(prompt, profile) {
   } finally {
     await rm(tmp, { recursive: true, force: true }).catch(() => {});
   }
+}
+
+async function runCodexCompressorWithFallback(prompt) {
+  const initial = await getRecallCompressorProfile();
+  if (!initial.enabled) return null;
+  const candidates = [initial, ...buildRecallCompressorCandidates(cfg)];
+  const seen = new Set();
+  for (const profile of candidates) {
+    const key = `${profile.model || "<default>"}\n${profile.thinking || "default"}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const result = await runCodexCompressor(prompt, profile);
+    if (result.text != null) return result.text;
+    if (result.kind === "model_failed") {
+      log("compress_model_failed", { model: profile.model || "<default>" });
+      continue;
+    }
+    await markRecallCompressorRuntimeFailed(cfg, { failedModel: profile.model || "" });
+    return null;
+  }
+  await markRecallCompressorRuntimeFailed(cfg, { failedModel: "all_candidates" });
+  return null;
 }
 
 async function compressMemoryContext(userPrompt, items) {
@@ -500,9 +528,9 @@ Task:
 Input JSON:
 ${JSON.stringify(payload, null, 2)}
 `;
-  const raw = await runCodexCompressor(prompt, profile);
-  if (raw === null) return null;
-  const compressed = normalizeCompressedContext(raw);
+  const result = await runCodexCompressor(prompt, profile);
+  if (result.text === null) return null;
+  const compressed = normalizeCompressedContext(result.text);
   log("compressed", { inputCount: items.length, chars: compressed.length, profile });
   return compressed;
 }
@@ -554,74 +582,34 @@ async function main() {
     return;
   }
 
-  const endpointRecall = await recallViaTypeQuotaEndpoint(userPrompt);
-  if (endpointRecall !== null) {
-    if (!endpointRecall) {
-      log("skip", { stage: "recall_endpoint", reason: "no results" });
-      emit();
-      return;
-    }
-    log("recall_endpoint", { chars: endpointRecall.length });
-    emit(endpointRecall);
-    return;
-  }
-
-  const candidateLimit = Math.max(cfg.recallLimit * 4, 20);
-  const allMemories = await searchAll(userPrompt, candidateLimit, recallSessionId);
-  if (allMemories.length === 0) {
-    log("skip", { stage: "search", reason: "no results" });
-    emit();
-    return;
-  }
-
-  const processed = postProcess(allMemories, candidateLimit, cfg.scoreThreshold);
-  log("post_process", { beforeCount: allMemories.length, afterCount: processed.length });
-
-  const profile = buildQueryProfile(userPrompt);
-  const ranked = [...processed]
-    .map((item) => ({ item, breakdown: getRankingBreakdown(item, profile) }))
-    .sort((a, b) => b.breakdown.finalScore - a.breakdown.finalScore);
-
-  if (cfg.logRankingDetails) {
-    for (const entry of ranked) {
-      log("ranking_detail", { uri: entry.item.uri, ...entry.breakdown });
-    }
-  } else {
-    log("ranking_summary", {
-      candidateCount: processed.length,
-      topCandidates: ranked.slice(0, 5).map((entry) => ({ uri: entry.item.uri, finalScore: entry.breakdown.finalScore })),
-    });
-  }
-
-  const memories = pickMemories(processed, cfg.recallLimit, userPrompt);
-  if (memories.length === 0) {
-    log("skip", { stage: "pick", reason: "no memories survived ranking" });
-    emit();
-    return;
-  }
-
-  log("picked", { pickedCount: memories.length, uris: memories.map((m) => m.uri) });
-
-  const memoryItems = await Promise.all(
-    memories.map(async (item) => {
-      let text = (item.abstract || item.overview || item.uri).trim();
-      if (item.level === 2) {
-        const content = await readMemoryContent(item.uri);
-        if (content) text = content;
+  const compressor = cfg.recallCompress
+    ? async (rendered, { query, entries }) => {
+        return compressRecallContext({
+          query,
+          rendered,
+          entries,
+          cfg,
+          cachePath: join(getStateDir(), `recall-digest-${codexSessionId.replace(/[^a-zA-Z0-9_-]/g, "_")}.json`),
+          runCompressor: runCodexCompressorWithFallback,
+        });
       }
-      return {
-        uri: item.uri,
-        category: item.category || "memory",
-        score: clampScore(item.score),
-        text,
-      };
-    }),
-  );
-
-  const compressedContext = await compressMemoryContext(userPrompt, memoryItems);
-  const memoryContext = compressedContext === null ? fallbackDigest(memoryItems) : compressedContext;
-
-  emit(memoryContext);
+    : undefined;
+  const block = await buildRecallBlock(fetchJSON, cfg, userPrompt, {
+    actorPeerId: effectivePeer.peerId,
+    sessionId: recallSessionId,
+    dedupKey: codexSessionId,
+    historyPath: join(getStateDir(), `recall-history-${codexSessionId.replace(/[^a-zA-Z0-9_-]/g, "_")}.json`),
+    legacyCachePath: join(getStateDir(), "recall-legacy-server.json"),
+    compress: compressor,
+    log,
+  });
+  if (!block) {
+    log("skip", { stage: "recall", reason: "no results" });
+    emit();
+    return;
+  }
+  log("recall", { chars: block.length });
+  emitPreparedBlock(block);
 }
 
 main().catch((err) => { logError("uncaught", err); emit(); });

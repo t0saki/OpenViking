@@ -15,6 +15,10 @@ async function withConfigFile(body, fn, env = {}) {
     OPENVIKING_PEER_ID: process.env.OPENVIKING_PEER_ID,
     OPENVIKING_WORKSPACE_PEER: process.env.OPENVIKING_WORKSPACE_PEER,
     OPENVIKING_RECALL_PEER_SCOPE: process.env.OPENVIKING_RECALL_PEER_SCOPE,
+    OPENVIKING_RECALL_REWRITE: process.env.OPENVIKING_RECALL_REWRITE,
+    OPENVIKING_RECALL_MAX_CHARS: process.env.OPENVIKING_RECALL_MAX_CHARS,
+    OPENVIKING_RECALL_SESSION_CONTEXT: process.env.OPENVIKING_RECALL_SESSION_CONTEXT,
+    OPENVIKING_RECALL_DEDUP_TURNS: process.env.OPENVIKING_RECALL_DEDUP_TURNS,
     OPENVIKING_CREDENTIAL_SOURCE: process.env.OPENVIKING_CREDENTIAL_SOURCE,
     OPENVIKING_CLI_CONFIG_FILE: process.env.OPENVIKING_CLI_CONFIG_FILE,
     OPENVIKING_CONFIG_FILE: process.env.OPENVIKING_CONFIG_FILE,
@@ -27,6 +31,10 @@ async function withConfigFile(body, fn, env = {}) {
   delete process.env.OPENVIKING_PEER_ID;
   delete process.env.OPENVIKING_WORKSPACE_PEER;
   delete process.env.OPENVIKING_RECALL_PEER_SCOPE;
+  delete process.env.OPENVIKING_RECALL_REWRITE;
+  delete process.env.OPENVIKING_RECALL_MAX_CHARS;
+  delete process.env.OPENVIKING_RECALL_SESSION_CONTEXT;
+  delete process.env.OPENVIKING_RECALL_DEDUP_TURNS;
   delete process.env.OPENVIKING_CLI_CONFIG_FILE;
   delete process.env.OPENVIKING_CONFIG_FILE;
   for (const [key, value] of Object.entries(env)) {
@@ -54,6 +62,29 @@ test("loadConfig defaults takeover on", async () => {
     assert.equal(cfg.takeoverOverviewBudget, 3000);
     assert.equal(cfg.takeoverOverviewPollMs, 2000);
     assert.equal(cfg.takeoverOverviewPollMax, 15);
+  });
+});
+
+test("loadConfig defaults recall v2 to compatible opt-in behavior", async () => {
+  await withConfigFile({}, (cfg) => {
+    assert.equal(cfg.recallRewrite, "off");
+    assert.equal(cfg.recallMaxChars, 6500);
+    assert.equal(cfg.recallSessionContext, "off");
+    assert.equal(cfg.recallDedupTurns, 5);
+  });
+});
+
+test("loadConfig applies recall v2 environment overrides", async () => {
+  await withConfigFile({}, (cfg) => {
+    assert.equal(cfg.recallRewrite, "server");
+    assert.equal(cfg.recallMaxChars, 9000);
+    assert.equal(cfg.recallSessionContext, "auto");
+    assert.equal(cfg.recallDedupTurns, 8);
+  }, {
+    OPENVIKING_RECALL_REWRITE: "server",
+    OPENVIKING_RECALL_MAX_CHARS: "9000",
+    OPENVIKING_RECALL_SESSION_CONTEXT: "auto",
+    OPENVIKING_RECALL_DEDUP_TURNS: "8",
   });
 });
 

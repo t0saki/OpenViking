@@ -169,6 +169,7 @@ def init_viking_fs(
     rerank_config: Optional["RerankConfig"] = None,
     vector_store: Optional["VikingVectorIndexBackend"] = None,
     retrieval_config: Optional["RetrievalConfig"] = None,
+    default_search_mode: str = "thinking",
     grep_config: Optional["GrepConfig"] = None,
     timeout: int = 10,
     enable_recorder: bool = False,
@@ -194,6 +195,7 @@ def init_viking_fs(
         rerank_config=rerank_config,
         vector_store=vector_store,
         retrieval_config=retrieval_config,
+        default_search_mode=default_search_mode,
         grep_config=grep_config,
         encryptor=encryptor,
     )
@@ -267,6 +269,7 @@ class VikingFS:
         rerank_config: Optional["RerankConfig"] = None,
         vector_store: Optional["VikingVectorIndexBackend"] = None,
         retrieval_config: Optional["RetrievalConfig"] = None,
+        default_search_mode: str = "thinking",
         grep_config: Optional["GrepConfig"] = None,
         timeout: int = 10,
         encryptor: Optional[Any] = None,
@@ -277,6 +280,7 @@ class VikingFS:
         self.rerank_config = rerank_config
         self.vector_store = vector_store
         self.retrieval_config = retrieval_config
+        self.default_search_mode = "fast" if default_search_mode == "fast" else "thinking"
         self.grep_config = grep_config
         self._encryptor = encryptor
         self._count_cache: Dict[str, tuple] = {}  # cache_key → (count, timestamp)
@@ -2029,6 +2033,7 @@ class VikingFS:
             embedder=embedder,
             rerank_config=self.rerank_config,
             retrieval_config=self.retrieval_config,
+            default_search_mode=self.default_search_mode,
         )
 
         typed_query = TypedQuery(
@@ -2177,6 +2182,7 @@ class VikingFS:
             embedder=embedder,
             rerank_config=self.rerank_config,
             retrieval_config=self.retrieval_config,
+            default_search_mode=self.default_search_mode,
         )
 
         async def _execute(tq: TypedQuery):

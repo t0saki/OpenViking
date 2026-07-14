@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import re
 from dataclasses import dataclass, field, replace
-from typing import Any, Mapping
+from typing import Any, Literal, Mapping, Sequence
 
 from openviking.core.namespace import canonical_user_root
 from openviking.server.identity import RequestContext
@@ -73,12 +73,14 @@ class RecallEntry:
 class RecallResult:
     entries: list[RecallEntry] = field(default_factory=list)
     rendered: str = ""
+    digest: str = ""
     stats: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "entries": [entry.to_dict() for entry in self.entries],
             "rendered": self.rendered,
+            "digest": self.digest,
             "stats": self.stats,
         }
 
@@ -177,14 +179,17 @@ def _extract_memories(result: Any) -> list[Any]:
 
 
 def _dedupe(items: list[Any]) -> list[Any]:
-    seen: set[str] = set()
+    positions: dict[str, int] = {}
     out: list[Any] = []
     for item in items:
         uri = _uri(item)
-        if not uri or uri in seen:
+        if not uri:
             continue
-        seen.add(uri)
-        out.append(item)
+        if uri not in positions:
+            positions[uri] = len(out)
+            out.append(item)
+        elif _score(item) > _score(out[positions[uri]]):
+            out[positions[uri]] = item
     return out
 
 
@@ -294,9 +299,12 @@ async def search_type_quota_recall(
     quotas: Mapping[str, Any] | None = None,
     max_chars: int = DEFAULT_MAX_CHARS,
     min_score: float = DEFAULT_MIN_SCORE,
-    render: bool = True,
+    render: bool | Literal["full", "compact"] = True,
     peer_scope: str = "all",
     other_peer_penalty: Any = None,
+    exclude_uris: Sequence[str] | None = None,
+    queries: Sequence[str] | None = None,
+    query_expansion: str = "off",
 ) -> RecallResult:
     normalized_quotas = normalize_quotas(quotas)
     normalized_penalties = normalize_penalties(other_peer_penalty)
@@ -306,40 +314,55 @@ async def search_type_quota_recall(
     open_ctx = replace(ctx, actor_peer_id=None, legacy_agent_id=None)
     raw_by_type: dict[str, list[Any]] = {memory_type: [] for memory_type in TYPE_ORDER}
     selected: list[tuple[str, Any, int, str, RequestContext]] = []
+    excluded_set = {str(uri).strip() for uri in (exclude_uris or [])[:200] if str(uri).strip()}
+    planned_queries = list(
+        dict.fromkeys(str(item).strip() for item in (queries or [query]) if str(item).strip())
+    )[:3]
+    if not planned_queries:
+        planned_queries = [query]
+    excluded_count = 0
 
     async def search_type(memory_type: str, quota: int) -> list[Any]:
-        searches = [
-            service.search.find(
-                query=query,
-                ctx=ctx,
-                target_uri=_type_target(root, memory_type),
-                limit=quota,
-                score_threshold=min_score,
-                level=None,
-            )
-            for root in roots
-        ]
-        if peer_scope == "all":
-            searches.append(
+        searches = []
+        for planned_query in planned_queries:
+            searches.extend(
                 service.search.find(
-                    query=query,
-                    ctx=open_ctx,
-                    target_uri=f"{user_root}/peers",
-                    limit=max(quota * OTHER_PEER_OVERFETCH, quota),
+                    query=planned_query,
+                    ctx=ctx,
+                    target_uri=_type_target(root, memory_type),
+                    limit=quota,
                     score_threshold=min_score,
                     level=None,
                 )
+                for root in roots
             )
+            if peer_scope == "all":
+                searches.append(
+                    service.search.find(
+                        query=planned_query,
+                        ctx=open_ctx,
+                        target_uri=f"{user_root}/peers",
+                        limit=max(quota * OTHER_PEER_OVERFETCH, quota),
+                        score_threshold=min_score,
+                        level=None,
+                    )
+                )
 
         results = await asyncio.gather(*searches)
-        found = [item for result in results[: len(roots)] for item in _extract_memories(result)]
-        if peer_scope == "all":
+        found: list[Any] = []
+        stride = len(roots) + (1 if peer_scope == "all" else 0)
+        for offset in range(0, len(results), stride):
+            chunk = results[offset : offset + stride]
             found.extend(
-                item
-                for item in _extract_memories(results[-1])
-                if f"/memories/{memory_type}/" in _uri(item)
-                and _origin_for_uri(_uri(item), ctx.actor_peer_id, user_root) == "other_peer"
+                item for result in chunk[: len(roots)] for item in _extract_memories(result)
             )
+            if peer_scope == "all" and len(chunk) > len(roots):
+                found.extend(
+                    item
+                    for item in _extract_memories(chunk[-1])
+                    if f"/memories/{memory_type}/" in _uri(item)
+                    and _origin_for_uri(_uri(item), ctx.actor_peer_id, user_root) == "other_peer"
+                )
         return found
 
     active_types = [
@@ -352,8 +375,11 @@ async def search_type_quota_recall(
     )
 
     for (memory_type, quota), found in zip(active_types, found_by_type, strict=True):
+        found = _dedupe(found)
+        before_exclude = len(found)
+        found = [item for item in found if _uri(item) not in excluded_set]
+        excluded_count += before_exclude - len(found)
         if peer_scope == "all":
-            found = _dedupe(found)
             raw_by_type[memory_type] = found
             ranked = _limit_with_peer_penalties(
                 found,
@@ -364,7 +390,7 @@ async def search_type_quota_recall(
                 user_root=user_root,
             )
         else:
-            found = _limit(_dedupe(found), quota)
+            found = _limit(found, quota)
             raw_by_type[memory_type] = found
             ranked = [
                 (item, _origin_for_uri(_uri(item), ctx.actor_peer_id, user_root)) for item in found
@@ -390,19 +416,38 @@ async def search_type_quota_recall(
     preference_full_count = 0
     dropped = 0
     seen_content: set[int] = set()
+    render_mode = "compact" if render == "compact" else "full"
 
-    for index, (memory_type, item, rank, origin, read_ctx) in enumerate(selected, start=1):
+    read_semaphore = asyncio.Semaphore(8)
+
+    async def read_selected(memory_type: str, item: Any, read_ctx: RequestContext) -> str:
+        uri = _uri(item)
+        if not uri or uri.rstrip("/").endswith("/profile.md"):
+            return ""
+        if render_mode == "compact" and memory_type != "events":
+            return ""
+        try:
+            async with read_semaphore:
+                return await service.fs.read(uri, ctx=read_ctx)
+        except Exception:
+            return ""
+
+    contents = await asyncio.gather(
+        *(
+            read_selected(memory_type, item, read_ctx)
+            for memory_type, item, _, _, read_ctx in selected
+        )
+    )
+
+    for index, ((memory_type, item, rank, origin, read_ctx), content) in enumerate(
+        zip(selected, contents, strict=True), start=1
+    ):
+        del read_ctx
         uri = _uri(item)
         if not uri or uri.rstrip("/").endswith("/profile.md"):
             continue
         score = _score(item)
         abstract = _abstract(item)
-        content = ""
-        try:
-            content = await service.fs.read(uri, ctx=read_ctx)
-        except Exception:
-            content = ""
-
         content_key = content or abstract or uri
         if content_key:
             content_hash = hash(content_key)
@@ -415,7 +460,16 @@ async def search_type_quota_recall(
         entry_content = ""
         fragment = _uri_fragment(index, uri, score)
 
-        if content:
+        if render_mode == "compact":
+            summary = (
+                _extract_event_summary(content, fallback=abstract)
+                if memory_type == "events"
+                else abstract.strip()
+            )
+            if summary:
+                mode = "summary"
+                fragment = _summary_fragment(index, uri, score, summary)
+        elif content:
             full = _full_fragment(index, uri, score, content)
             full_chars = len(full) + (1 if total_chars else 0)
             can_try_full = memory_type in budgets
@@ -510,5 +564,9 @@ async def search_type_quota_recall(
             "peer_scope": peer_scope,
             "other_peer_penalties": normalized_penalties,
             "origins": origins,
+            "excluded": excluded_count,
+            "query_expansion": query_expansion,
+            "planned_queries": planned_queries,
+            "render_mode": render_mode,
         },
     )

@@ -12,6 +12,12 @@ export interface OVConfig {
   peerId: string;
   workspacePeer: boolean;
   recallPeerScope: "actor" | "all";
+  recallRewrite: "off" | "client" | "server" | "auto";
+  recallMaxChars: number;
+  recallSessionContext: string;
+  recallDedupTurns: number;
+  recallCompressMaxInputChars: number;
+  recallCompressMaxBullets: number;
   syncTurns: boolean;
   recallTokenBudget: number;
   recallMaxContentChars: number;
@@ -47,6 +53,12 @@ const DEFAULT_CONFIG: OVConfig = {
   peerId: "",
   workspacePeer: true,
   recallPeerScope: "all",
+  recallRewrite: "off",
+  recallMaxChars: 6500,
+  recallSessionContext: "off",
+  recallDedupTurns: 5,
+  recallCompressMaxInputChars: 18000,
+  recallCompressMaxBullets: 6,
   syncTurns: true,
   recallTokenBudget: 2000,
   recallMaxContentChars: 500,
@@ -115,9 +127,18 @@ export function loadConfig(extensionDir: string): OVConfig {
   if (process.env.OPENVIKING_RECALL_PEER_SCOPE) {
     config.recallPeerScope = process.env.OPENVIKING_RECALL_PEER_SCOPE === "actor" ? "actor" : "all";
   }
+  if (process.env.OPENVIKING_RECALL_REWRITE) {
+    const mode = process.env.OPENVIKING_RECALL_REWRITE;
+    config.recallRewrite = ["client", "server", "auto"].includes(mode) ? mode as OVConfig["recallRewrite"] : "off";
+  }
+  if (process.env.OPENVIKING_RECALL_MAX_CHARS) config.recallMaxChars = Number(process.env.OPENVIKING_RECALL_MAX_CHARS);
+  if (process.env.OPENVIKING_RECALL_SESSION_CONTEXT) config.recallSessionContext = process.env.OPENVIKING_RECALL_SESSION_CONTEXT;
+  if (process.env.OPENVIKING_RECALL_DEDUP_TURNS) config.recallDedupTurns = Number(process.env.OPENVIKING_RECALL_DEDUP_TURNS);
 
   config.recallLimit = clampInt(config.recallLimit, 1, 50, DEFAULT_CONFIG.recallLimit);
   config.recallMaxContentChars = clampInt(config.recallMaxContentChars, 100, 5000, DEFAULT_CONFIG.recallMaxContentChars);
+  config.recallMaxChars = clampInt(config.recallMaxChars, 1000, 100000, DEFAULT_CONFIG.recallMaxChars);
+  config.recallDedupTurns = clampInt(config.recallDedupTurns, 0, 1000, DEFAULT_CONFIG.recallDedupTurns);
   config.recallTokenBudget = clampInt(config.recallTokenBudget, 200, 50000, DEFAULT_CONFIG.recallTokenBudget);
   config.scoreThreshold = clampNumber(config.scoreThreshold, 0, 1, DEFAULT_CONFIG.scoreThreshold);
   config.minQueryLength = clampInt(config.minQueryLength, 1, 64, DEFAULT_CONFIG.minQueryLength);

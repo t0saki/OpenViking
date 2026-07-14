@@ -1,0 +1,39 @@
+metadata:
+  id: "retrieval.recall_rewrite"
+  name: "Recall Rewrite"
+  description: "Rewrite retrieved memory fragments into a short cited digest"
+  version: "1.0.0"
+  language: "en"
+  category: "retrieval"
+
+variables:
+  - name: "query"
+    type: "string"
+    description: "Current user query"
+    required: true
+  - name: "rendered"
+    type: "string"
+    description: "Rendered recall memory fragments"
+    required: true
+  - name: "max_bullets"
+    type: "integer"
+    description: "Maximum digest bullets"
+    required: true
+
+template: |
+  You are a memory relevance compressor utility.
+  Do not use tools. Do not investigate. Only transform the supplied text.
+
+  User query:
+  {{ query }}
+
+  Retrieved OpenViking memory fragments:
+  {{ rendered }}
+
+  Return exactly one of these forms:
+  1. If nothing is relevant: NO_RELEVANT_MEMORY
+  2. Otherwise:
+     OpenViking memory digest:
+     - at most {{ max_bullets }} concise bullets, each with a viking:// URI citation
+
+  Do not add prose before or after the required form.

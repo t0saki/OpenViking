@@ -12,6 +12,12 @@ const DEFAULT_CONFIG = {
   peerId: "",
   workspacePeer: true,
   recallPeerScope: "all",
+  recallRewrite: "off",
+  recallMaxChars: 6500,
+  recallSessionContext: "off",
+  recallDedupTurns: 5,
+  recallCompressMaxInputChars: 18000,
+  recallCompressMaxBullets: 6,
   enabled: true,
   timeoutMs: 30000,
   runtime: {
@@ -152,6 +158,10 @@ function applyBehaviorConfig(config, fileConfig = {}) {
     "debugLogPath",
     "workspacePeer",
     "recallPeerScope",
+    "recallRewrite",
+    "recallMaxChars",
+    "recallSessionContext",
+    "recallDedupTurns",
   ]) {
     if (fileConfig[key] !== undefined) config[key] = fileConfig[key]
   }
@@ -172,6 +182,10 @@ function applyEnv(config) {
     config.autoRecall.preferAbstract = envBool("OPENVIKING_RECALL_PREFER_ABSTRACT") ?? config.autoRecall.preferAbstract
   }
   if (process.env.OPENVIKING_RECALL_PEER_SCOPE) config.recallPeerScope = process.env.OPENVIKING_RECALL_PEER_SCOPE
+  if (process.env.OPENVIKING_RECALL_REWRITE) config.recallRewrite = process.env.OPENVIKING_RECALL_REWRITE
+  if (process.env.OPENVIKING_RECALL_MAX_CHARS) config.recallMaxChars = process.env.OPENVIKING_RECALL_MAX_CHARS
+  if (process.env.OPENVIKING_RECALL_SESSION_CONTEXT) config.recallSessionContext = process.env.OPENVIKING_RECALL_SESSION_CONTEXT
+  if (process.env.OPENVIKING_RECALL_DEDUP_TURNS) config.recallDedupTurns = process.env.OPENVIKING_RECALL_DEDUP_TURNS
   if (process.env.OPENVIKING_WORKSPACE_PEER !== undefined) {
     config.workspacePeer = envBool("OPENVIKING_WORKSPACE_PEER") ?? config.workspacePeer
   }
@@ -230,6 +244,11 @@ function normalizeConfig(config) {
   config.autoRecall.minQueryLength = Math.max(1, Math.min(64, Math.round(Number(config.autoRecall.minQueryLength) || 3)))
   config.captureMode = config.captureMode === "keyword" ? "keyword" : "semantic"
   config.recallPeerScope = config.recallPeerScope === "actor" ? "actor" : "all"
+  config.recallRewrite = ["client", "server", "auto"].includes(String(config.recallRewrite))
+    ? String(config.recallRewrite)
+    : "off"
+  config.recallMaxChars = normalizeNumber(config.recallMaxChars, 6500, 1000, 100000)
+  config.recallDedupTurns = normalizeNumber(config.recallDedupTurns, 5, 0, 1000)
   config.captureMaxLength = Math.max(200, Math.min(100000, Math.round(Number(config.captureMaxLength) || 24000)))
   config.captureToolMaxChars = Math.max(200, Math.min(20000, Math.round(Number(config.captureToolMaxChars) || 2000)))
   config.commitTokenThreshold = Math.max(1000, Math.round(Number(config.commitTokenThreshold) || 20000))

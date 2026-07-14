@@ -14,6 +14,7 @@ import { join, resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadConfig } from "../scripts/config.mjs";
 import { createLogger } from "../scripts/debug-log.mjs";
+import { statePath } from "../scripts/lib/state.mjs";
 import { createOpenVikingMcpProxy } from "../scripts/shared/mcp-proxy-core.mjs";
 import { resolveEffectivePeerId } from "../scripts/shared/workspace-peer.mjs";
 
@@ -56,6 +57,7 @@ function readProxyConfig() {
       join(homedir(), ".openviking", "ovcli.conf"),
       join(homedir(), ".openviking", "ov.conf"),
     ]),
+    recallTelemetryPath: statePath("last-recall.json"),
   };
 }
 

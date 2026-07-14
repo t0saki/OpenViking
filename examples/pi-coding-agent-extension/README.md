@@ -46,6 +46,10 @@ node ~/.pi/agent/extensions/openviking/scripts/setup.mjs
 {
   "enabled": true,
   "syncTurns": true,
+  "recallRewrite": "off",
+  "recallMaxChars": 6500,
+  "recallSessionContext": "off",
+  "recallDedupTurns": 5,
   "recallTokenBudget": 2000,
   "scoreThreshold": 0.35,
   "minQueryLength": 3,
@@ -74,6 +78,10 @@ Credential environment variables:
 | `OPENVIKING_PEER_ID` | Actor peer id |
 | `OPENVIKING_WORKSPACE_PEER` | Derive an actor peer from the current workspace by default; set `0` to disable |
 | `OPENVIKING_RECALL_PEER_SCOPE` | `all` recalls other project memories with a score penalty; `actor` only sees global plus the current project |
+| `OPENVIKING_RECALL_REWRITE` | `off`, `server`, or `auto`; Pi uses the server rewrite path |
+| `OPENVIKING_RECALL_MAX_CHARS` | Compact render/injection character budget |
+| `OPENVIKING_RECALL_SESSION_CONTEXT` | Set `auto` for session-aware query expansion |
+| `OPENVIKING_RECALL_DEDUP_TURNS` | URI cooldown in recall turns; `0` disables it |
 
 API keys are sent as `Authorization: Bearer ...`. By default the extension derives a peer from the process workspace path using Claude's project-directory naming rule: every non-letter-or-digit character becomes `-`, with no path normalization. For example, `/Users/x/Dev/OpenViking` becomes `-Users-x-Dev-OpenViking`. The effective peer is sent as `X-OpenViking-Actor-Peer` and stored as `peer_id` on captured session messages. `OPENVIKING_PEER_ID` overrides the workspace-derived value.
 
@@ -103,6 +111,10 @@ All fields below live in `config.json`. Defaults are shown.
 | Field                    | Default    | Description                                                              |
 |--------------------------|------------|--------------------------------------------------------------------------|
 | `recallTokenBudget`      | `2000`     | Token budget for inline recall content                                   |
+| `recallRewrite`          | `"off"`    | `off`, `server`, or `auto`; rewrite runs on the OpenViking server         |
+| `recallMaxChars`         | `6500`     | Compact render/injection character budget                                |
+| `recallSessionContext`   | `"off"`    | Set `auto` to enable session-aware query expansion                        |
+| `recallDedupTurns`       | `5`        | URI cooldown in recall turns; `0` disables it                             |
 | `recallMaxContentChars`  | `500`      | Per-item content cap for search results                                  |
 | `recallPreferAbstract`   | `true`     | Prefer L0 abstract over L2 full body when available                      |
 | `recallLimit`            | `6`        | Max memories to inject per prompt                                        |

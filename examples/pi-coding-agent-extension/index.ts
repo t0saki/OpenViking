@@ -138,7 +138,7 @@ export default async function (pi: ExtensionAPI) {
     if (!connected || bypassed) return;
 
     // Synchronous recall
-    await recall.searchAndCache(event.prompt);
+    await recall.searchAndCache(event.prompt, sync.sessionId || ctx.sessionManager.getSessionId());
 
     // Compose system prompt additions
     const parts: string[] = [];

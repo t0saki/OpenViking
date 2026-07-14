@@ -16,10 +16,15 @@
 
 import { isPluginEnabled, loadConfig } from "./config.mjs";
 import { createLogger } from "./debug-log.mjs";
-import { isBypassed, makeFetchJSON } from "./lib/ov-session.mjs";
-import { writeJsonState } from "./lib/state.mjs";
+import { spawn } from "node:child_process";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { deriveOvSessionId, isBypassed, makeFetchJSON } from "./lib/ov-session.mjs";
+import { statePath, writeJsonState } from "./lib/state.mjs";
 import { getEffectivePeerId } from "./lib/workspace-peer.mjs";
-import { postRecall } from "./shared/recall-core.mjs";
+import { loadCachedRecallCompressorProfile, markRecallCompressorRuntimeFailed } from "./recall-compressor-profile.mjs";
+import { compressRecallContext } from "./shared/recall-compress-core.mjs";
+import { buildRecallBlock, postRecall } from "./shared/recall-core.mjs";
 
 if (!isPluginEnabled()) {
   process.stdout.write(JSON.stringify({ decision: "approve" }) + "\n");
@@ -29,8 +34,15 @@ if (!isPluginEnabled()) {
 const cfg = loadConfig();
 const { log, logError } = createLogger("auto-recall");
 const fetchJSON = makeFetchJSON(cfg);
+const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
+let activeCompressor = null;
+let recallDeadline = null;
+let emitted = false;
 
 function output(obj) {
+  if (emitted) return;
+  emitted = true;
+  if (recallDeadline) clearTimeout(recallDeadline);
   process.stdout.write(JSON.stringify(obj) + "\n");
 }
 
@@ -38,6 +50,54 @@ function approve(msg) {
   const out = { decision: "approve" };
   if (msg) out.hookSpecificOutput = { hookEventName: "UserPromptSubmit", additionalContext: msg };
   output(out);
+}
+
+function runClaudeCompressor(prompt, profile) {
+  return new Promise((resolve) => {
+    const args = [
+      "-p", prompt,
+      "--model", profile.model || "haiku",
+      "--strict-mcp-config",
+      "--mcp-config", join(SCRIPT_DIR, "empty-mcp.json"),
+      "--system-prompt", "You are a memory relevance compressor utility. Do not use tools. Do not investigate. Only transform the supplied text and obey the output contract.",
+      "--output-format", "text",
+    ];
+    const env = {
+      ...process.env,
+      OPENVIKING_AUTO_RECALL: "0",
+      OPENVIKING_AUTO_CAPTURE: "0",
+      OPENVIKING_RECALL_COMPRESS: "0",
+      OPENVIKING_MEMORY_ENABLED: "0",
+    };
+    let stdout = "";
+    let stderr = "";
+    let done = false;
+    const child = spawn("claude", args, { env, stdio: ["ignore", "pipe", "pipe"] });
+    activeCompressor = child;
+    const finish = (value, failed = false) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      if (activeCompressor === child) activeCompressor = null;
+      if (failed) markRecallCompressorRuntimeFailed(cfg).catch(() => {});
+      resolve(value);
+    };
+    const timer = setTimeout(() => {
+      logError("compress_timeout", `timed out after ${cfg.recallCompressTimeoutMs}ms`);
+      try { child.kill("SIGKILL"); } catch { /* best effort */ }
+      finish(null, true);
+    }, cfg.recallCompressTimeoutMs);
+    child.stdout.on("data", (chunk) => { stdout += chunk.toString(); });
+    child.stderr.on("data", (chunk) => { stderr = (stderr + chunk.toString()).slice(-4000); });
+    child.on("error", (err) => { logError("compress_spawn", err); finish(null, true); });
+    child.on("close", (code) => {
+      if (code === 0) finish(stdout);
+      else {
+        logError("compress_exit", stderr || `claude exited ${code}`);
+        finish(null, true);
+      }
+    });
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -395,69 +455,63 @@ async function main() {
     return;
   }
 
-  const endpointBlock = await recallViaTypeQuotaEndpoint(userPrompt, effectivePeer.peerId);
-  if (endpointBlock !== null) {
-    if (!endpointBlock) {
-      log("skip", { reason: "recall_endpoint_no_results" });
-      writeRecallState({ count: 0, reason: "no_results", cc_session_id: sessionId });
-      approve();
-      return;
-    }
-    writeRecallState({
-      count: 1,
-      content_items: 1,
-      hint_items: 0,
-      tokens_used: estimateTokens(endpointBlock),
-      tokens_budget: cfg.recallTokenBudget,
-      top_score: 0,
-      cc_session_id: sessionId,
-      reason: "ok",
-    });
-    approve(endpointBlock);
-    return;
-  }
-
-  const perSourceLimit = Math.max(cfg.recallLimit * 2, 8);
-  const raw = await searchAllSources(userPrompt, perSourceLimit, effectivePeer.peerId);
-  if (raw.length === 0) {
-    log("skip", { reason: "no results" });
+  const ovSessionId = sessionId ? deriveOvSessionId(sessionId) : "";
+  const safeSessionId = String(sessionId || "default").replace(/[^a-zA-Z0-9_-]/g, "_");
+  const compressor = cfg.recallCompress
+    ? async (rendered, { query, entries }) => {
+        const profile = await loadCachedRecallCompressorProfile(cfg);
+        if (!profile?.enabled) {
+          log("compress_skip", { reason: "no healthy startup profile" });
+          return null;
+        }
+        return compressRecallContext({
+          query,
+          rendered,
+          entries,
+          cfg,
+          cachePath: statePath(`recall-digest-${safeSessionId}.json`),
+          runCompressor: (prompt) => runClaudeCompressor(prompt, profile),
+        });
+      }
+    : undefined;
+  const recallCfg = { ...cfg, recallMaxChars: Math.min(cfg.recallMaxChars, 9500) };
+  const block = await buildRecallBlock(fetchJSON, recallCfg, userPrompt, {
+    actorPeerId: effectivePeer.peerId,
+    sessionId: ovSessionId,
+    dedupKey: sessionId,
+    historyPath: statePath(`recall-history-${safeSessionId}.json`),
+    legacyCachePath: statePath("recall-legacy-server.json"),
+    compress: compressor,
+    log,
+  });
+  if (!block) {
     writeRecallState({ count: 0, reason: "no_results", cc_session_id: sessionId });
     approve();
     return;
   }
-
-  const profile = buildQueryProfile(userPrompt);
-  const filtered = raw.filter(it => clampScore(it.score) >= cfg.scoreThreshold);
-  filtered.sort((a, b) => rankItem(b, profile) - rankItem(a, profile));
-  const deduped = dedupeItems(filtered);
-  const picked = deduped.slice(0, cfg.recallLimit);
-  log("picked", {
-    rawCount: raw.length,
-    filteredCount: filtered.length,
-    dedupedCount: deduped.length,
-    pickedCount: picked.length,
-    items: picked.map(it => ({ type: it._sourceType, uri: it.uri, score: clampScore(it.score) })),
-  });
-
-  if (picked.length === 0) {
-    writeRecallState({ count: 0, reason: "filtered_out", cc_session_id: sessionId });
-    approve();
-    return;
-  }
-
-  const built = await buildInjectionBlock(picked, effectivePeer.peerId);
-  const topScore = picked.reduce((m, it) => Math.max(m, clampScore(it.score)), 0);
+  const capped = block;
+  const recalledUris = [...new Set(capped.match(/viking:\/\/[^\s<)]+/g) || [])];
   writeRecallState({
-    count: picked.length,
-    content_items: built?.contentCount ?? 0,
-    hint_items: built?.hintCount ?? 0,
-    tokens_used: built?.budgetUsed ?? 0,
+    count: 1,
+    content_items: 1,
+    hint_items: 0,
+    tokens_used: estimateTokens(capped),
     tokens_budget: cfg.recallTokenBudget,
-    top_score: topScore,
+    top_score: 0,
     cc_session_id: sessionId,
     reason: "ok",
+    uris: recalledUris,
+    memory_hit_count: 0,
+    memory_hit_rate: 0,
   });
-  approve(built?.block);
+  approve(capped);
 }
+
+recallDeadline = setTimeout(() => {
+  logError("recall_timeout", `timed out after ${cfg.recallTimeoutMs}ms`);
+  try { activeCompressor?.kill("SIGKILL"); } catch { /* best effort */ }
+  approve();
+}, cfg.recallTimeoutMs);
+recallDeadline.unref?.();
 
 main().catch((err) => { logError("uncaught", err); approve(); });

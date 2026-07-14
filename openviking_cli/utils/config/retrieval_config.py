@@ -26,5 +26,15 @@ class RetrievalConfig(BaseModel):
             "1 uses only the child score."
         ),
     )
+    recall_intent_timeout_s: float = Field(
+        default=5.0,
+        gt=0.0,
+        description="Timeout in seconds for optional recall query expansion.",
+    )
+    recall_rewrite_timeout_s: float = Field(
+        default=8.0,
+        gt=0.0,
+        description="Timeout in seconds for optional recall digest rewriting.",
+    )
 
     model_config = {"extra": "forbid"}

@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Writable } from "node:stream";
 import test from "node:test";
 import { createOpenVikingMcpProxy } from "./mcp-proxy.mjs";
@@ -261,4 +264,31 @@ test("DELETEs the upstream MCP session on close", async () => {
     await proxy.closeSession();
     assert.equal(requests.at(-1).method, "DELETE");
   });
+});
+
+test("records reads of recalled URIs as best-effort memory hits", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "ov-mcp-telemetry-"));
+  const telemetryPath = join(dir, "last-recall.json");
+  const recalled = "viking://user/default/memories/a.md";
+  try {
+    await writeFile(telemetryPath, JSON.stringify({ uris: [recalled, "viking://other"] }));
+    await withServer((_req, res, entry) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify(jsonRpc(entry.body.id, { content: [] })));
+    }, async ({ url }) => {
+      const { proxy } = makeProxy({ url, configOverrides: { recallTelemetryPath: telemetryPath } });
+      await proxy.handleMessage({
+        jsonrpc: "2.0",
+        id: 9,
+        method: "tools/call",
+        params: { name: "openviking_read", arguments: { uri: recalled } },
+      });
+    });
+    const state = JSON.parse(await readFile(telemetryPath, "utf8"));
+    assert.deepEqual(state.memory_hit_uris, [recalled]);
+    assert.equal(state.memory_hit_count, 1);
+    assert.equal(state.memory_hit_rate, 0.5);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });

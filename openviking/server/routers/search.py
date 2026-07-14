@@ -2,14 +2,17 @@
 # SPDX-License-Identifier: AGPL-3.0
 """Search endpoints for OpenViking HTTP Server."""
 
+import asyncio
 import math
 from typing import Any, Dict, List, Literal, Optional, Union
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from openviking.core.path_variables import resolve_path_variables
 from openviking.pyagfs.exceptions import AGFSClientError, AGFSNotFoundError
+from openviking.retrieve.intent_analyzer import IntentAnalyzer
+from openviking.retrieve.recall_rewrite import rewrite_recall, server_rewrite_enabled
 from openviking.retrieve.type_quota_recall import (
     DEFAULT_MAX_CHARS,
     DEFAULT_MIN_SCORE,
@@ -31,6 +34,10 @@ from openviking.utils.search_filters import (
 )
 from openviking.utils.tags import normalize_search_tags
 from openviking_cli.exceptions import InvalidArgumentError, NotFoundError
+from openviking_cli.utils.config import get_openviking_config
+from openviking_cli.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 def _sanitize_floats(obj: Any) -> Any:
@@ -153,8 +160,54 @@ class RecallRequest(BaseModel):
     min_score: float = DEFAULT_MIN_SCORE
     peer_scope: Literal["actor", "all"] = "all"
     other_peer_penalty: Optional[Union[float, Dict[str, float]]] = None
-    render: bool = True
+    render: Union[bool, Literal["full", "compact"]] = True
+    session_id: Optional[str] = None
+    query_expansion: Literal["off", "auto"] = "off"
+    exclude_uris: List[str] = Field(default_factory=list, max_length=200)
+    rewrite: Union[bool, Literal["auto"]] = False
+    rewrite_max_bullets: int = Field(default=6, ge=1, le=20)
     telemetry: TelemetryRequest = False
+
+
+async def _recall_query_plan(
+    *, service: Any, ctx: RequestContext, request: RecallRequest
+) -> tuple[List[str], str]:
+    """Build at most two supplemental queries, failing closed to the original query."""
+    if request.query_expansion != "auto" or not request.session_id:
+        return [request.query], "off"
+    try:
+        session = service.sessions.session(ctx, request.session_id)
+        await session.load()
+        session_info = await session.get_context_for_search(request.query)
+    except Exception as exc:
+        logger.info("Recall session context unavailable; using original query: %s", exc)
+        return [request.query], "off"
+
+    summary = str(session_info.get("latest_archive_overview") or "")
+    messages = session_info.get("current_messages") or []
+    if not summary and not messages:
+        return [request.query], "off"
+    try:
+        analyzer = IntentAnalyzer(max_recent_messages=5)
+        plan = await asyncio.wait_for(
+            analyzer.analyze(
+                compression_summary=summary,
+                messages=messages,
+                current_message=request.query,
+            ),
+            timeout=get_openviking_config().retrieval.recall_intent_timeout_s,
+        )
+        queries = [request.query]
+        for typed_query in plan.queries:
+            planned = str(typed_query.query or "").strip()
+            if planned and planned not in queries:
+                queries.append(planned)
+            if len(queries) >= 3:
+                break
+        return queries, "used"
+    except Exception as exc:
+        logger.warning("Recall query expansion failed; using original query: %s", exc)
+        return [request.query], "failed"
 
 
 class GrepRequest(BaseModel):
@@ -276,6 +329,8 @@ async def recall(
 ):
     """Type-quota memory recall with bounded rendering."""
     service = get_service()
+    queries, expansion_status = await _recall_query_plan(service=service, ctx=_ctx, request=request)
+    should_rewrite = server_rewrite_enabled(request.rewrite)
     execution = await run_operation(
         operation="search.recall",
         telemetry=request.telemetry,
@@ -288,14 +343,25 @@ async def recall(
             min_score=request.min_score,
             render=request.render,
             peer_scope=request.peer_scope,
+            exclude_uris=request.exclude_uris,
+            queries=queries,
+            query_expansion=expansion_status,
             other_peer_penalty=request.other_peer_penalty
             if request.other_peer_penalty is not None
             else DEFAULT_OTHER_PEER_PENALTIES,
         ),
     )
+    result = execution.result
+    result.stats["rewrite"] = "off"
+    if should_rewrite and result.entries:
+        result.digest, result.stats["rewrite"] = await rewrite_recall(
+            query=request.query,
+            rendered=result.rendered,
+            max_bullets=request.rewrite_max_bullets,
+        )
     return Response(
         status="ok",
-        result=_sanitize_floats(execution.result.to_dict()),
+        result=_sanitize_floats(result.to_dict()),
         telemetry=execution.telemetry,
     ).model_dump(exclude_none=True)
 

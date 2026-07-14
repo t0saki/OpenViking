@@ -59,6 +59,7 @@ class HierarchicalRetriever:
         embedder: Optional[Any],
         rerank_config: Optional[RerankConfig] = None,
         retrieval_config: Optional[RetrievalConfig] = None,
+        default_search_mode: str = "thinking",
     ):
         """Initialize hierarchical retriever with rerank_config.
 
@@ -72,6 +73,7 @@ class HierarchicalRetriever:
         self.embedder = embedder
         self.rerank_config = rerank_config
         self.retrieval_config = retrieval_config or RetrievalConfig()
+        self.default_search_mode = "fast" if default_search_mode == "fast" else "thinking"
         self.hotness_alpha = self.retrieval_config.hotness_alpha
         self.score_propagation_alpha = self.retrieval_config.score_propagation_alpha
 
@@ -117,7 +119,11 @@ class HierarchicalRetriever:
         effective_threshold = self._resolve_threshold(score_threshold)
         image_query = bool(getattr(query, "image_query", False))
         if mode is None:
-            mode = RetrieverMode.QUICK if not self._rerank_client else RetrieverMode.THINKING
+            mode = (
+                RetrieverMode.QUICK
+                if self.default_search_mode == "fast" or not self._rerank_client
+                else RetrieverMode.THINKING
+            )
         if image_query:
             mode = RetrieverMode.QUICK
             if level is None:
@@ -144,9 +150,7 @@ class HierarchicalRetriever:
         sparse_query_vector = None
         if self.embedder:
             if image_query and not getattr(self.embedder, "supports_multimodal", False):
-                raise InvalidArgumentError(
-                    "Image search requires a multimodal embedding model."
-                )
+                raise InvalidArgumentError("Image search requires a multimodal embedding model.")
             with telemetry.measure("search.embed_query"):
                 embedding_input = getattr(query, "embedding_input", None) or query.query
                 result: EmbedResult = await embed_compat(
@@ -168,7 +172,9 @@ class HierarchicalRetriever:
             context_type = ContextType.RESOURCE.value
 
         if mode == RetrieverMode.QUICK:
-            search_limit = max(limit * 5, 50) if image_query else max(limit, self.GLOBAL_SEARCH_TOPK)
+            search_limit = (
+                max(limit * 5, 50) if image_query else max(limit, self.GLOBAL_SEARCH_TOPK)
+            )
             with telemetry.measure("search.vector_retrieval"):
                 quick_results = await vector_proxy.search_in_tenant(
                     query_vector=query_vector,

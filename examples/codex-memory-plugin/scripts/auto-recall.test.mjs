@@ -213,12 +213,14 @@ test("auto-recall prefers the server recall endpoint when available", async () =
       );
 
       const output = JSON.parse(result.stdout.trim());
-      assert.match(output.hookSpecificOutput.additionalContext, /OpenViking memory digest/);
+      assert.match(output.hookSpecificOutput.additionalContext, /format="memory"/);
       assert.match(output.hookSpecificOutput.additionalContext, /Launch summary/);
     });
 
     assert.deepEqual(requests.map((request) => request.path), ["/api/v1/search/recall"]);
     assert.equal(requests[0].body.quotas.events, 2);
+    assert.equal(requests[0].body.max_chars, 6500);
+    assert.equal(requests[0].body.render, "compact");
   } finally {
     await rm(stateDir, { recursive: true, force: true });
   }

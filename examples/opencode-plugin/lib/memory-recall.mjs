@@ -22,6 +22,8 @@ export function createMemoryRecall({ config }) {
       query,
       {
         actorPeerId: effectivePeerId(config),
+        sessionId: input.sessionID ?? output.message?.sessionID ?? "",
+        dedupKey: input.sessionID ?? output.message?.sessionID ?? "",
         log: (stage, data) => log("DEBUG", "recall", stage, data),
       },
     )

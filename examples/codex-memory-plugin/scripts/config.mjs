@@ -127,6 +127,15 @@ export function loadConfig() {
       str(cxRecallCompressThinking, ""),
     ),
   );
+  const legacyRecallCompress = envBool("OPENVIKING_RECALL_COMPRESS")
+    ?? (hasOwn(cx, "recallCompress") ? cx.recallCompress === true : undefined);
+  const recallRewriteRaw = str(
+    process.env.OPENVIKING_RECALL_REWRITE,
+    str(cx.recallRewrite, legacyRecallCompress ? "client" : "off"),
+  ).toLowerCase();
+  const recallRewrite = ["client", "server", "auto"].includes(recallRewriteRaw)
+    ? recallRewriteRaw
+    : "off";
 
   return {
     configPath,
@@ -159,7 +168,20 @@ export function loadConfig() {
     ))),
     logRankingDetails: envBool("OPENVIKING_LOG_RANKING_DETAILS") ?? (cx.logRankingDetails === true),
     recallPeerScope,
-    recallCompress: envBool("OPENVIKING_RECALL_COMPRESS") ?? (cx.recallCompress !== false),
+    recallRewrite,
+    recallCompress: recallRewrite === "client" || recallRewrite === "auto",
+    recallMaxChars: Math.max(1000, Math.floor(num(
+      process.env.OPENVIKING_RECALL_MAX_CHARS,
+      num(cx.recallMaxChars, 6500),
+    ))),
+    recallSessionContext: str(
+      process.env.OPENVIKING_RECALL_SESSION_CONTEXT,
+      str(cx.recallSessionContext, "off"),
+    ),
+    recallDedupTurns: Math.max(0, Math.floor(num(
+      process.env.OPENVIKING_RECALL_DEDUP_TURNS,
+      num(cx.recallDedupTurns, 5),
+    ))),
     recallCompressModel,
     recallCompressThinking,
     recallCompressConfigured: Boolean(recallCompressModel || recallCompressThinking),
@@ -176,6 +198,10 @@ export function loadConfig() {
     recallCompressMaxInputChars: Math.max(1000, Math.floor(num(
       process.env.OPENVIKING_RECALL_COMPRESS_MAX_INPUT_CHARS,
       num(cx.recallCompressMaxInputChars, 18000),
+    ))),
+    recallCompressMinInputChars: Math.max(0, Math.floor(num(
+      process.env.OPENVIKING_RECALL_COMPRESS_MIN_INPUT_CHARS,
+      num(cx.recallCompressMinInputChars, 1500),
     ))),
     recallCompressMaxBullets: Math.max(1, Math.floor(num(
       process.env.OPENVIKING_RECALL_COMPRESS_MAX_BULLETS,

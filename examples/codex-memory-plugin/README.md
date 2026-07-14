@@ -118,7 +118,7 @@ All plugin behavior is controlled by `OPENVIKING_*` environment variables. Conne
 ```sh
 # ~/.zshrc — examples
 export OPENVIKING_RECALL_LIMIT=6
-export OPENVIKING_RECALL_COMPRESS=1
+export OPENVIKING_RECALL_REWRITE=client
 export OPENVIKING_RECALL_COMPRESS_MODEL=gpt-5.3-codex-spark
 export OPENVIKING_RECALL_COMPRESS_THINKING=default
 export OPENVIKING_RECALL_TIMEOUT_MS=120000
@@ -198,7 +198,7 @@ On `resume`, the script skips commit/sweep. If local state has no live `ovSessio
 { "hookSpecificOutput": { "hookEventName": "UserPromptSubmit", "additionalContext": "<openviking-context source=\"auto-recall\" format=\"digest\">\nOpenViking memory digest:\n- ...\n</openviking-context>" } }
 ```
 
-Codex injects `additionalContext` into the model turn, so memories arrive without an extra tool call. By default the hook runs a Codex compression pass over recalled candidates before injection, dropping weakly-related memories and preserving only a short digest. If the compressor returns `NO_RELEVANT_MEMORY`, empty text, or non-digest chatter, the hook emits `{}` and injects nothing. The whole hook has its own `OPENVIKING_RECALL_TIMEOUT_MS` deadline (default 120s); the bundled `hooks.json` gives Codex 130s so the script can return `{}` before Codex kills it. Digests may keep `viking://` source URIs and point the model at the OpenViking MCP `read`/`search` tools for details when the inline bullet is intentionally short. The outer `<openviking-context ...>` wrapper is deterministic, not compressor-generated; capture strips it to distinguish recalled context from the user's prompt. Set `OPENVIKING_RECALL_COMPRESS=0` to fall back to deterministic short formatting.
+Codex injects `additionalContext` into the model turn, so memories arrive without an extra tool call. The default `OPENVIKING_RECALL_REWRITE=off` path uses compact server rendering, a 6500-character budget, and no LLM. Set the mode to `client`, `server`, or `auto` to opt into rewriting. `client` uses `codex exec` and subscription quota; `server` uses the configured OpenViking query planner (or primary VLM); `auto` prefers the Codex client. The legacy `OPENVIKING_RECALL_COMPRESS=1` setting maps to `client`. Failed rewrites fall back to complete `</memory>` fragments within the normal injection budget.
 
 The compressor profile is recreated on every `SessionStart` and cached under `OPENVIKING_CODEX_STATE_DIR` so cross-session config changes are picked up but each `UserPromptSubmit` does not probe models. Default fallback order:
 
@@ -211,7 +211,11 @@ Config knobs:
 
 | Env var | Default | Meaning |
 |---|---|---|
-| `OPENVIKING_RECALL_COMPRESS` | `1` | Set `0` / `off` to disable `codex exec` compression. |
+| `OPENVIKING_RECALL_REWRITE` | `off` | `off`, `client`, `server`, or `auto`. |
+| `OPENVIKING_RECALL_MAX_CHARS` | `6500` | Normal render/injection character budget. |
+| `OPENVIKING_RECALL_SESSION_CONTEXT` | `off` | Set `auto` to send the derived session id and enable query expansion. |
+| `OPENVIKING_RECALL_DEDUP_TURNS` | `5` | URI cooldown in recall turns; `0` disables it. |
+| `OPENVIKING_RECALL_COMPRESS` | unset | Legacy alias; explicit `1` maps to `recallRewrite=client`. |
 | `OPENVIKING_RECALL_COMPRESS_MODEL` | unset | Custom first-choice compressor model. Set `off` to disable compression. |
 | `OPENVIKING_RECALL_COMPRESS_THINKING` | unset | Custom `model_reasoning_effort`; `default` omits the Codex config override. Alias: `OPENVIKING_RECALL_COMPRESS_REASONING_EFFORT`. |
 | `OPENVIKING_RECALL_COMPRESS_DETECT_ON_STARTUP` | `1` | Recreate/cache compressor profile in `SessionStart`. |

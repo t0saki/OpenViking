@@ -6,7 +6,8 @@
  * owns only transport, session retry, SSE parsing, and protocol-clean stdio.
  */
 
-import { statSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { createInterface } from "node:readline";
 
 const DEFAULT_PROTOCOL_VERSION = "2025-06-18";
@@ -136,6 +137,17 @@ function cloneMessage(message) {
   return JSON.parse(JSON.stringify(message));
 }
 
+function findVikingUris(value, out = new Set()) {
+  if (typeof value === "string") {
+    for (const match of value.match(/viking:\/\/[^\s"'<>]+/g) || []) out.add(match.replace(/[),.;]+$/, ""));
+  } else if (Array.isArray(value)) {
+    for (const item of value) findVikingUris(item, out);
+  } else if (value && typeof value === "object") {
+    for (const item of Object.values(value)) findVikingUris(item, out);
+  }
+  return out;
+}
+
 export function createOpenVikingMcpProxy({
   stdin = process.stdin,
   stdout = process.stdout,
@@ -199,6 +211,32 @@ export function createOpenVikingMcpProxy({
     if (!snapshotsDiffer(watchedSnapshot, next)) return false;
     reloadConfig(reason);
     return true;
+  }
+
+  function recordRecallHit(message) {
+    const path = proxyConfig.recallTelemetryPath;
+    const toolName = String(message?.params?.name || "").toLowerCase();
+    if (!path || message?.method !== "tools/call" || !/(?:read|recall|search)/.test(toolName)) return;
+    const usedUris = findVikingUris(message?.params?.arguments);
+    if (usedUris.size === 0) return;
+    try {
+      const state = JSON.parse(readFileSync(path, "utf8"));
+      const recalled = new Set(Array.isArray(state.uris) ? state.uris : []);
+      const hits = new Set(Array.isArray(state.memory_hit_uris) ? state.memory_hit_uris : []);
+      for (const uri of usedUris) if (recalled.has(uri)) hits.add(uri);
+      if (hits.size === 0) return;
+      const next = {
+        ...state,
+        memory_hit_uris: [...hits],
+        memory_hit_count: hits.size,
+        memory_hit_rate: recalled.size ? hits.size / recalled.size : 0,
+      };
+      mkdirSync(dirname(path), { recursive: true });
+      const tmp = `${path}.${process.pid}.tmp`;
+      writeFileSync(tmp, JSON.stringify(next));
+      renameSync(tmp, path);
+      log("recall_memory_hit", { hits: hits.size, recalled: recalled.size });
+    } catch { /* telemetry must never affect MCP */ }
   }
 
   function headersForRequest(includeSession = true) {
@@ -371,6 +409,7 @@ export function createOpenVikingMcpProxy({
     }
 
     const expectsResponse = isRequest(message);
+    recordRecallHit(message);
     if (message.method === "initialize") {
       initializeRequest = cloneMessage(message);
       protocolVersion = DEFAULT_PROTOCOL_VERSION;
