@@ -23,7 +23,7 @@ export class RecallManager {
     }
 
     const block = await buildRecallBlock(
-      (path: string, init?: any, options?: any) => this.client.fetchJSON(path, init, 10000),
+      (path: string, init?: any, options?: any) => this.client.fetchJSON(path, init, options?.timeoutMs ?? 10000),
       this.config as any,
       userQuery,
       { actorPeerId: this.config.peerId, sessionId, dedupKey: sessionId },

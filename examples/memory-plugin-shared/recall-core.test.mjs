@@ -137,6 +137,23 @@ test("buildRecallEndpointBody separates injection and rewrite budgets", () => {
   assert.equal(server.max_chars, 18000);
 });
 
+test("postRecall extends the request timeout to cover server-side LLM budgets", async () => {
+  const seenOpts = [];
+  const fetchStub = async (_path, _init, opts) => {
+    seenOpts.push(opts);
+    return { ok: true, status: 200, result: { rendered: "ok" } };
+  };
+
+  await postRecall(fetchStub, { query: "q" });
+  assert.equal(seenOpts[0].timeoutMs, undefined);
+
+  await postRecall(fetchStub, { query: "q", rewrite: "auto" });
+  assert.equal(seenOpts[1].timeoutMs, 35000);
+
+  await postRecall(fetchStub, { query: "q", rewrite: true, session_id: "cx-1", query_expansion: "auto" });
+  assert.equal(seenOpts[2].timeoutMs, 45000);
+});
+
 test("postRecall strips all optional fields when an older server rejects them", async () => {
   const bodies = [];
   const result = await postRecall(async (_path, init) => {

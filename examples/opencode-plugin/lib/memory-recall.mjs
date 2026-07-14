@@ -17,7 +17,7 @@ export function createMemoryRecall({ config }) {
     if (!health.ok) return
 
     const block = await buildRecallBlock(
-      (path, init = {}, options = {}) => fetchJSON(config, path, init, { ...options, timeoutMs: 5000 }),
+      (path, init = {}, options = {}) => fetchJSON(config, path, init, { timeoutMs: 5000, ...options }),
       config,
       query,
       {

@@ -462,6 +462,16 @@ async function recallViaEndpoint(fetchJSON, cfg, query, actorPeerId = "", log = 
   );
 }
 
+export function recallRequestTimeoutMs(body = {}) {
+  // Mirror the server-side LLM fuses (recall_rewrite_timeout_s=20,
+  // recall_intent_timeout_s=10) plus search/network margin so the client
+  // does not abort while the server is still inside its own budget.
+  let extraMs = 0;
+  if (body.rewrite) extraMs += 20000;
+  if (body.query_expansion === "auto") extraMs += 10000;
+  return extraMs ? extraMs + 15000 : 0;
+}
+
 export async function postRecall(fetchJSON, body, opts = {}) {
   const actorPeerId = opts.actorPeerId || "";
   const log = opts.log || (() => {});
@@ -469,10 +479,11 @@ export async function postRecall(fetchJSON, body, opts = {}) {
   const cachePath = String(opts.legacyCachePath || "");
   const isLegacy = await isLegacyServerCached(cacheKey, cachePath);
   const request = isLegacy ? downgradeRecallBody(body) : { ...body };
+  const timeoutMs = recallRequestTimeoutMs(request);
   const res = await fetchJSON("/api/v1/search/recall", {
     method: "POST",
     body: JSON.stringify(request),
-  }, { actorPeerId });
+  }, timeoutMs ? { actorPeerId, timeoutMs } : { actorPeerId });
   if (res.status !== 400 && res.status !== 422) {
     return res;
   }

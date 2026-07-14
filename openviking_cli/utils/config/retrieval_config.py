@@ -27,14 +27,22 @@ class RetrievalConfig(BaseModel):
         ),
     )
     recall_intent_timeout_s: float = Field(
-        default=5.0,
+        default=10.0,
         gt=0.0,
-        description="Timeout in seconds for optional recall query expansion.",
+        description=(
+            "Timeout in seconds for optional recall query expansion. "
+            "On timeout recall silently degrades to the original query; "
+            "tune to your model endpoint latency."
+        ),
     )
     recall_rewrite_timeout_s: float = Field(
-        default=8.0,
+        default=20.0,
         gt=0.0,
-        description="Timeout in seconds for optional recall digest rewriting.",
+        description=(
+            "Timeout in seconds for optional recall digest rewriting. "
+            "On timeout recall returns the unrewritten rendered context; "
+            "sized for a full-scale VLM emitting ~300-500 tokens."
+        ),
     )
 
     model_config = {"extra": "forbid"}
