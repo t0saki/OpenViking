@@ -44,6 +44,7 @@ import { homedir } from "node:os";
 import { join, resolve as resolvePath } from "node:path";
 
 import { buildUserAgent, readManifestVersion } from "./shared/credentials.mjs";
+import { HARNESS_KEYS, loadPluginSettings, normalizeRewriteMode } from "./shared/plugin-config.mjs";
 
 const DEFAULT_OV_CONF_PATH = join(homedir(), ".openviking", "ov.conf");
 const DEFAULT_OVCLI_CONF_PATH = join(homedir(), ".openviking", "ovcli.conf");
@@ -140,7 +141,10 @@ export function loadConfig() {
   const configPath = ovConf?.configPath || cliConf?.configPath || null;
 
   const server = ovFile.server || {};
-  const cc = ovFile.claude_code || {};
+  // ovcli.conf plugin.<harness> overrides plugin.* which overrides ov.conf's
+  // claude_code section, so client-side tuning no longer needs a server config.
+  const pluginSettings = loadPluginSettings(HARNESS_KEYS.claudeCode);
+  const cc = { ...(ovFile.claude_code || {}), ...pluginSettings };
 
   // baseUrl: env → ovcli.url → ov.server.url → http://{host}:{port}
   const envUrl = str(process.env.OPENVIKING_URL, null) || str(process.env.OPENVIKING_BASE_URL, null);
@@ -253,6 +257,38 @@ export function loadConfig() {
     ))),
     recallPreferAbstract: envBool("OPENVIKING_RECALL_PREFER_ABSTRACT") ?? (cc.recallPreferAbstract !== false),
     recallPeerScope,
+
+    // Server-side context assembly (/search mode="context").
+    recallMaxTokens: Math.max(64, Math.floor(num(
+      process.env.OPENVIKING_RECALL_MAX_TOKENS,
+      num(cc.recallMaxTokens, 1600),
+    ))),
+    recallDedupTurns: Math.max(0, Math.floor(num(
+      process.env.OPENVIKING_RECALL_DEDUP_TURNS,
+      num(cc.recallDedupTurns, 5),
+    ))),
+    recallQueryExpansion: str(
+      process.env.OPENVIKING_RECALL_QUERY_EXPANSION,
+      str(cc.recallQueryExpansion, "auto"),
+    ) === "off" ? "off" : "auto",
+    // Digest rewriting is opt-in on both paths: a failed digest always falls
+    // back to the unrewritten context block.
+    recallRewrite: normalizeRewriteMode(
+      process.env.OPENVIKING_RECALL_REWRITE ?? cc.recallRewrite,
+      "off",
+    ),
+    recallCompressMinInputChars: Math.max(0, Math.floor(num(
+      process.env.OPENVIKING_RECALL_COMPRESS_MIN_INPUT_CHARS,
+      num(cc.recallCompressMinInputChars, 1500),
+    ))),
+    recallCompressMaxInputChars: Math.max(1000, Math.floor(num(
+      process.env.OPENVIKING_RECALL_COMPRESS_MAX_INPUT_CHARS,
+      num(cc.recallCompressMaxInputChars, 18000),
+    ))),
+    recallCompressMaxBullets: Math.max(1, Math.floor(num(
+      process.env.OPENVIKING_RECALL_COMPRESS_MAX_BULLETS,
+      num(cc.recallCompressMaxBullets, 6),
+    ))),
 
     // Capture
     autoCapture: envBool("OPENVIKING_AUTO_CAPTURE") ?? (cc.autoCapture !== false),

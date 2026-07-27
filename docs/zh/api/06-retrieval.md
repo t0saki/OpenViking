@@ -595,6 +595,152 @@ openviking search "similar poster" --image ./poster.png --uri "viking://resource
 
 ---
 
+### search(mode="context")
+
+把检索结果直接组装成可注入的上下文块。`mode="list"`（默认）返回排序命中列表，行为与旧版 `search()` 完全一致；`mode="context"` 打开组装面：预算控制、档位降级、跨轮去重和可选的 LLM 摘要都在服务端一次请求内完成。
+
+#### 1. API 实现介绍
+
+Agent 插件每轮注入上下文时，过去需要按类型逐个检索、再逐条回读全文，在客户端拼装。组装收敛到服务端后，插件只发一次请求，所有 Harness 插件共享同一套预算、降级与去重实现。
+
+**处理流程**：
+1. **L1 查询理解**：可选，结合 Session 最近消息做有界意图扩展（最多 3 条查询，超时熔断，失败回退原查询）
+2. **L0 检索**：按 `quotas` 分桶独立检索，或不设配额时全域检索一次
+3. **L2 组装**：token 预算内三轮填充档位（全员摘要 → 升概览 → 高分升全文），超限退档不截断
+4. **L3 重写**：可选，把组装结果压成带 URI 引用的 digest（超时熔断，失败仍返回未重写的 `rendered`）
+
+**代码入口**：
+- `openviking/server/routers/search.py:_search_context()` - HTTP 路由分支
+- `openviking/retrieve/context_assembler/pipeline.py:assemble_context()` - 组装编排
+- `openviking/retrieve/context_assembler/budget.py:plan_entries()` - 预算与档位填充
+- `openviking/retrieve/context_assembler/tiers.py` - 各来源类型的概览档提取
+
+#### 2. 接口和参数说明
+
+**L0 检索域**：`query`、`image_url`、`context_type`、`limit`、`score_threshold`、`filter`、`tags`、`since`/`until` 与 list 模式一致。`target_uri` 在 context 模式下暂不支持（返回 400）；`level` 被忽略，档位由 `detail` 决定。
+
+**L1 查询理解**
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `session_id` | str | None | 提供后才能启用查询扩展与服务端去重 |
+| `query_expansion` | `off` \| `auto` | `auto` | `auto` 时结合 Session 做有界扩展；无 session 或失败时自动回退为原查询 |
+
+**L2 组装**
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `max_tokens` | int | 1600 | 唯一的预算参数，采用感知 CJK 的启发式估算（codepoint ≥ 0x3000 记 1.5 token/字，其余按 chars/4） |
+| `quotas` | object | None | 按类型分桶采样；键取 `events`/`entities`/`preferences`/`experiences`/`resources`/`skills`。启用后 `limit` 被忽略 |
+| `purpose` | `chat` \| `coding` | None | 预设类型配比；仅在未显式传 `quotas` 时生效 |
+| `detail` | `auto` \| `abstract` \| `overview` \| `full` | `auto` | 单条档位上限。`auto` 为预算驱动的先广后深填充 |
+| `full_score_threshold` | float | 0.5 | `auto` 下只有分数不低于该阈值的条目有资格升到全文档 |
+| `dedup_turns` | int | 0 | 跨轮冷却轮数，需要 `session_id`；账本存在 `{session_uri}/.recall_log.json` |
+| `exclude_uris` | string[] | [] | 无状态去重兜底，最多 200 条，与 `dedup_turns` 取并集 |
+| `peer_scope` | `actor` \| `all` | `all` | `actor` 只检索当前 actor peer |
+| `other_peer_penalty` | number \| object | 按类型默认值 | 对其他 peer 结果施加的分数折损 |
+
+**L3 重写**
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `rewrite` | bool \| `auto` | `false` | 服务端 digest 重写；`auto` 时仅在配置了 query_planner 模型时启用 |
+| `rewrite_max_bullets` | int | 6 | digest 条数上限（1–20） |
+
+**档位规则**
+
+- **保底**：每条结果至少给出 `uri` + 摘要档；摘要取自向量索引 payload，不读文件
+- **目录命中**：记忆目录在存储层没有摘要，直接从概览档起步（读 `.overview.md` 侧车），全文档封顶为概览
+- **概览档按来源取骨架**：记忆文件取开头的 `# Summary` 段，代码文件取函数与类签名（复用 `code_outline`），长文档取标题树加首段
+- **单条上限**：`max_tokens ÷ 候选条数 × 2`；某一档超出该上限时退回上一档，不做截断
+- **resources / skills**：`detail="auto"` 下上限为概览档，签名骨架不含函数体；显式传 `detail="full"` 才会注入全文
+
+#### 3. 使用示例
+
+**HTTP API**
+
+```bash
+# 基础上下文组装
+curl -X POST http://localhost:1933/api/v1/search/search \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $OPENVIKING_API_KEY" \
+  -d '{"query":"这个分支改了什么","mode":"context","max_tokens":1600}'
+
+# 会话感知：查询扩展 + 跨轮去重
+curl -X POST http://localhost:1933/api/v1/search/search \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $OPENVIKING_API_KEY" \
+  -d '{
+    "query":"继续刚才的重构",
+    "mode":"context",
+    "session_id":"cc-1a2b3c",
+    "query_expansion":"auto",
+    "dedup_turns":5,
+    "purpose":"coding",
+    "max_tokens":3000
+  }'
+
+# 开启服务端 digest 重写
+curl -X POST http://localhost:1933/api/v1/search/search \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $OPENVIKING_API_KEY" \
+  -d '{"query":"档位设计","mode":"context","max_tokens":3000,"rewrite":true}'
+```
+
+**响应**
+
+```json
+{
+  "status": "ok",
+  "result": {
+    "entries": [
+      {
+        "uri": "viking://user/default/memories/entities/software/openviking_fs.md",
+        "category": "entities",
+        "score": 0.45,
+        "detail": "full",
+        "text": "# OpenViking FS 存储层\n...",
+        "origin": "self"
+      }
+    ],
+    "rendered": "<memory uri=\"viking://user/default/memories/entities/software/openviking_fs.md\" type=\"entities\" score=\"0.45\" detail=\"full\">\n# OpenViking FS 存储层\n...\n</memory>",
+    "digest": "",
+    "stats": {
+      "candidates": 13,
+      "returned": 13,
+      "dropped": 0,
+      "max_tokens": 3000,
+      "used_tokens": 2510,
+      "per_entry_cap": 462,
+      "tier_counts": {"full": 7, "overview": 3, "abstract": 3},
+      "query_expansion": "used",
+      "rewrite": "off",
+      "excluded": 0,
+      "dedup": {"turns": 5, "status": "ok", "cooled": 2, "turn": 34}
+    }
+  }
+}
+```
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `entries[].uri` | string | 条目 URI，任何档位都必然存在，可用 MCP `read` 下钻 |
+| `entries[].category` | string | `events`/`entities`/`preferences`/`experiences`/`resources`/`skills` |
+| `entries[].detail` | string | 实际档位：`full`、`overview`、`abstract` 或 `uri` |
+| `entries[].text` | string | 该档位的正文；`uri` 档为空 |
+| `rendered` | string | 扁平 XML 上下文块，可直接注入 |
+| `digest` | string | 重写成功时的摘要，否则为空字符串 |
+| `stats` | object | 预算用量、档位分布、扩展与重写状态、去重账本状态；某个检索域失败时附带 `retrieval_errors`，用于区分「检索坏了」和「确实没有相关记忆」 |
+
+**校验规则**
+
+- `mode="list"` 下显式携带任何 context 专用参数 → 400
+- `mode="context"` 下传 `target_uri` → 400
+- `quotas` 出现未知键 → 400
+- context 模式下被忽略的字段（`level`、启用配额时的 `limit`）会记录在 `stats.ignored`
+
+---
+
 ### grep()
 
 通过模式（正则表达式）搜索内容。

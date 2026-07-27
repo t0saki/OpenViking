@@ -217,6 +217,21 @@ Config knobs:
 | `OPENVIKING_RECALL_COMPRESS_DETECT_ON_STARTUP` | `1` | Recreate/cache compressor profile in `SessionStart`. |
 | `OPENVIKING_RECALL_COMPRESS_DETECT_TIMEOUT_MS` | `15000` | Per-candidate startup probe timeout. |
 | `OPENVIKING_RECALL_COMPRESS_DETECT_TTL_MS` | `604800000` | Cache TTL used by `UserPromptSubmit` when reading the latest profile. |
+| `OPENVIKING_RECALL_MAX_TOKENS` | `1600` | Token budget the server assembles the context block within. |
+| `OPENVIKING_RECALL_DEDUP_TURNS` | `5` | Cross-turn cooldown: URIs served in the last N turns are skipped. |
+| `OPENVIKING_RECALL_QUERY_EXPANSION` | `auto` | `auto` lets the server widen short prompts using session context; `off` disables it. |
+
+Recall now asks the server to assemble the context block in one request
+(`POST /api/v1/search/search` with `mode="context"`), so budgeting, detail tiers
+and cross-turn dedup are shared with every other harness. Deployments without
+that endpoint fall back to `/api/v1/search/recall`, and that outcome is cached so
+only the first turn pays for the probe. Local `codex exec` compression is
+unchanged and still runs on top of whichever path answered.
+
+Client-side knobs can also live in `~/.openviking/ovcli.conf` under
+`plugin` (shared) or `plugin.codex` (this harness only); resolution order is env
+vars → `plugin.codex` → `plugin` → the legacy `codex` block in `ov.conf` →
+defaults.
 
 ### Stop (turn end → `add_message`, threshold commit)
 

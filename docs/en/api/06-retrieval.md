@@ -593,6 +593,152 @@ openviking search "similar poster" --image ./poster.png --uri "viking://resource
 
 ---
 
+### search(mode="context")
+
+Assemble retrieval results into an injection-ready context block. `mode="list"` (the default) returns the ranked hit list and behaves exactly like the previous `search()`; `mode="context"` opens the assembly face: budgeting, tier degradation, cross-turn dedup and the optional LLM digest all happen server-side in one request.
+
+#### 1. Implementation Overview
+
+Injecting context every turn used to mean searching per type, reading each hit back, and stitching the block together client-side. With assembly on the server, a plugin sends one request and every harness shares one budgeting, degradation and dedup implementation.
+
+**Pipeline**:
+1. **L1 query understanding**: optional bounded intent expansion from the session's recent messages (at most 3 queries, timeout fuse, falls back to the original query)
+2. **L0 retrieval**: bucketed per `quotas`, or a single whole-scope search when quotas are off
+3. **L2 assembly**: three-pass tier filling inside the token budget (everyone at abstract → upgrade to overview → high scores to full); an oversized tier falls back instead of being truncated
+4. **L3 rewrite**: optional digest with URI citations (timeout fuse; on failure the unrewritten `rendered` is still returned)
+
+**Code entry points**:
+- `openviking/server/routers/search.py:_search_context()` - HTTP route branch
+- `openviking/retrieve/context_assembler/pipeline.py:assemble_context()` - assembly orchestration
+- `openviking/retrieve/context_assembler/budget.py:plan_entries()` - budgeting and tier filling
+- `openviking/retrieve/context_assembler/tiers.py` - overview extraction per source type
+
+#### 2. Parameters
+
+**L0 retrieval domain**: `query`, `image_url`, `context_type`, `limit`, `score_threshold`, `filter`, `tags`, `since`/`until` behave as in list mode. `target_uri` is not supported in context mode yet (returns 400); `level` is ignored because `detail` governs tiers.
+
+**L1 query understanding**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `session_id` | str | None | Required to enable query expansion and server-side dedup |
+| `query_expansion` | `off` \| `auto` | `auto` | Bounded session-aware expansion; falls back to the original query without a session or on failure |
+
+**L2 assembly**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `max_tokens` | int | 1600 | The single budget parameter, estimated with a CJK-aware heuristic (codepoint ≥ 0x3000 counts 1.5 tok/char, otherwise chars/4) |
+| `quotas` | object | None | Bucketed sampling; keys are `events`/`entities`/`preferences`/`experiences`/`resources`/`skills`. `limit` is ignored once active |
+| `purpose` | `chat` \| `coding` | None | Preset bucket ratios; applies only when `quotas` is not given |
+| `detail` | `auto` \| `abstract` \| `overview` \| `full` | `auto` | Per-entry tier ceiling. `auto` is the budget-driven breadth-first-then-depth fill |
+| `full_score_threshold` | float | 0.5 | Under `auto`, only entries scoring at or above this may reach the full tier |
+| `dedup_turns` | int | 0 | Cooldown window in turns; needs `session_id`. Ledger lives at `{session_uri}/.recall_log.json` |
+| `exclude_uris` | string[] | [] | Stateless dedup fallback, up to 200 entries, unioned with `dedup_turns` |
+| `peer_scope` | `actor` \| `all` | `all` | `actor` searches only the current actor peer |
+| `other_peer_penalty` | number \| object | per-category defaults | Score penalty applied to other-peer hits |
+
+**L3 rewrite**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `rewrite` | bool \| `auto` | `false` | Server-side digest rewrite; `auto` engages only when a query_planner model is configured |
+| `rewrite_max_bullets` | int | 6 | Digest bullet ceiling (1–20) |
+
+**Tier rules**
+
+- **Floor**: every result carries at least `uri` plus an abstract; the abstract comes from the vector index payload and costs no file read
+- **Directory hits**: memory directories have no stored abstract, so they start at the overview tier (reading the `.overview.md` sidecar) and their full tier is capped at overview
+- **Overview by source type**: memory files use the leading `# Summary` section, code files use class and function signatures (reusing `code_outline`), long documents use the heading tree plus first paragraph
+- **Per-entry cap**: `max_tokens ÷ candidate_count × 2`; a tier exceeding it falls back to the previous tier rather than being truncated
+- **resources / skills**: capped at overview under `detail="auto"` — the signature skeleton carries no function bodies; only an explicit `detail="full"` injects whole files
+
+#### 3. Examples
+
+**HTTP API**
+
+```bash
+# Basic context assembly
+curl -X POST http://localhost:1933/api/v1/search/search \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $OPENVIKING_API_KEY" \
+  -d '{"query":"what changed on this branch","mode":"context","max_tokens":1600}'
+
+# Session-aware: query expansion plus cross-turn dedup
+curl -X POST http://localhost:1933/api/v1/search/search \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $OPENVIKING_API_KEY" \
+  -d '{
+    "query":"continue that refactor",
+    "mode":"context",
+    "session_id":"cc-1a2b3c",
+    "query_expansion":"auto",
+    "dedup_turns":5,
+    "purpose":"coding",
+    "max_tokens":3000
+  }'
+
+# With the server-side digest rewrite
+curl -X POST http://localhost:1933/api/v1/search/search \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $OPENVIKING_API_KEY" \
+  -d '{"query":"tier design","mode":"context","max_tokens":3000,"rewrite":true}'
+```
+
+**Response**
+
+```json
+{
+  "status": "ok",
+  "result": {
+    "entries": [
+      {
+        "uri": "viking://user/default/memories/entities/software/openviking_fs.md",
+        "category": "entities",
+        "score": 0.45,
+        "detail": "full",
+        "text": "# OpenViking FS storage layer\n...",
+        "origin": "self"
+      }
+    ],
+    "rendered": "<memory uri=\"viking://user/default/memories/entities/software/openviking_fs.md\" type=\"entities\" score=\"0.45\" detail=\"full\">\n# OpenViking FS storage layer\n...\n</memory>",
+    "digest": "",
+    "stats": {
+      "candidates": 13,
+      "returned": 13,
+      "dropped": 0,
+      "max_tokens": 3000,
+      "used_tokens": 2510,
+      "per_entry_cap": 462,
+      "tier_counts": {"full": 7, "overview": 3, "abstract": 3},
+      "query_expansion": "used",
+      "rewrite": "off",
+      "excluded": 0,
+      "dedup": {"turns": 5, "status": "ok", "cooled": 2, "turn": 34}
+    }
+  }
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `entries[].uri` | string | Entry URI, always present at every tier, expandable with the MCP `read` tool |
+| `entries[].category` | string | `events`/`entities`/`preferences`/`experiences`/`resources`/`skills` |
+| `entries[].detail` | string | Tier actually served: `full`, `overview`, `abstract` or `uri` |
+| `entries[].text` | string | Body for that tier; empty at the `uri` tier |
+| `rendered` | string | Flat XML context block, ready to inject |
+| `digest` | string | Digest when the rewrite succeeded, empty string otherwise |
+| `stats` | object | Budget usage, tier distribution, expansion and rewrite status, dedup ledger state; carries `retrieval_errors` when a retrieval scope failed, so a broken index is distinguishable from having no relevant memories |
+
+**Validation rules**
+
+- Any context-only parameter sent explicitly under `mode="list"` → 400
+- `target_uri` under `mode="context"` → 400
+- Unknown `quotas` key → 400
+- Fields ignored in context mode (`level`, and `limit` once quotas are active) are reported in `stats.ignored`
+
+---
+
 ### grep()
 
 Search content by pattern (regex).

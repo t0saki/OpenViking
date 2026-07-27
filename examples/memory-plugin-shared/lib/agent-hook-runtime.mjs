@@ -223,10 +223,16 @@ export async function replayAgentPending(fetchJSON, log = () => {}) {
   return replayPending(fetchJSON, log);
 }
 
-export async function recallForPrompt(fetchJSON, cfg, prompt, cwd, log = () => {}) {
+export async function recallForPrompt(fetchJSON, cfg, prompt, cwd, log = () => {}, options = {}) {
   if (!cfg.autoRecall || !String(prompt || "").trim()) return null;
   const peer = resolveEffectivePeerId({ cfg, cwd });
-  return buildRecallBlock(fetchJSON, cfg, prompt, { actorPeerId: peer.peerId, log });
+  return buildRecallBlock(fetchJSON, cfg, prompt, {
+    actorPeerId: peer.peerId,
+    // Passing the OV session id is what turns on server-side query expansion
+    // and the cross-turn dedup ledger for these thin harnesses.
+    sessionId: options.sessionId || "",
+    log,
+  });
 }
 
 export async function buildAgentProfile(fetchJSON, cfg, cwd) {

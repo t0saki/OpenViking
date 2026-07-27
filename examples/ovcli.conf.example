@@ -8,5 +8,19 @@
   "timeout": 60.0,
   "output": "table",
   "echo_command": true,
-  "extra_headers": null
+  "extra_headers": null,
+
+  "plugin": {
+    "recallMaxTokens": 1600,
+    "recallDedupTurns": 5,
+    "recallQueryExpansion": "auto",
+    "recallRewrite": "off",
+
+    "claude_code": {},
+    "codex": {},
+    "opencode": {},
+    "cursor": {},
+    "trae": {},
+    "pi": {}
+  }
 }

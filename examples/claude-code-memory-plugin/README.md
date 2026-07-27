@@ -148,6 +148,11 @@ By default the plugin derives a peer from the workspace path using Claude's proj
 | `OPENVIKING_RECALL_MAX_CONTENT_CHARS`  | `500`        | Per-item content cap                                                     |
 | `OPENVIKING_RECALL_PREFER_ABSTRACT`    | `true`       | Prefer abstract over full body when available                            |
 | `OPENVIKING_RECALL_PEER_SCOPE`          | `all`        | `all` can recall other project memories with a score penalty; `actor` only sees global plus the current project |
+| `OPENVIKING_RECALL_MAX_TOKENS`         | `1600`       | Token budget for the server-assembled context block (CJK-aware estimate)  |
+| `OPENVIKING_RECALL_DEDUP_TURNS`        | `5`          | Cross-turn cooldown: URIs served in the last N turns are skipped          |
+| `OPENVIKING_RECALL_QUERY_EXPANSION`    | `auto`       | `auto` lets the server widen short prompts using session context; `off` disables it |
+| `OPENVIKING_RECALL_REWRITE`            | `off`        | Digest rewriting: `off`, `client` (host CLI), `server`, or `auto` (local first, server fallback) |
+| `OPENVIKING_RECALL_COMPRESS_MAX_BULLETS` | `6`        | Digest bullet ceiling                                                     |
 | `OPENVIKING_SCORE_THRESHOLD`           | `0.35`       | Min relevance score (0–1)                                                |
 | `OPENVIKING_MIN_QUERY_LENGTH`          | `3`          | Skip recall for very short queries                                       |
 
@@ -211,6 +216,27 @@ OPENVIKING_BYPASS_SESSION=1 claude
 ```
 
 When bypass is active, every hook approves immediately without contacting OpenViking.
+
+### Plugin settings in `ovcli.conf`
+
+Client-side tuning belongs in `~/.openviking/ovcli.conf` under a `plugin` section. Shared keys apply to every harness; a per-harness object overrides them:
+
+```json
+{
+  "url": "http://127.0.0.1:1933",
+  "plugin": {
+    "recallMaxTokens": 1600,
+    "recallDedupTurns": 5,
+    "claude_code": { "recallRewrite": "auto" }
+  }
+}
+```
+
+Resolution order: env vars → `plugin.claude_code` → `plugin` → the legacy `claude_code` block in `ov.conf` → built-in defaults.
+
+### Digest rewriting
+
+`recallRewrite` decides where the optional digest is produced. `client` always compresses locally through `claude -p` (Sonnet with low effort by default — Haiku ignores the effort knob, so its latency is unbounded), keeping the token cost on your own subscription. `server` asks OpenViking for the digest. `auto` prefers local and falls back to the server when no healthy host CLI is found. Every path is opt-in and fails back to the unrewritten context block, and the compressor subprocess runs with all OpenViking hooks disabled so it cannot recurse.
 
 ### Legacy `claude_code` block in `ov.conf`
 

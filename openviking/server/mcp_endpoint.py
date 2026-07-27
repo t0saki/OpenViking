@@ -38,11 +38,11 @@ from openviking.parse.parsers.code.ast.code_tools import (
     outline_file,
     search_symbols,
 )
-from openviking.retrieve.type_quota_recall import (
+from openviking.retrieve.context_assembler import assemble_context
+from openviking.retrieve.context_assembler.recall_preset import (
     DEFAULT_MAX_CHARS,
     DEFAULT_MIN_SCORE,
-    DEFAULT_QUOTAS,
-    search_type_quota_recall,
+    fold_recall_request,
 )
 from openviking.server.auth import _extract_api_key, resolve_actor_peer_headers, resolve_identity
 from openviking.server.dependencies import get_server_config, get_service
@@ -339,21 +339,33 @@ async def recall(
     min_score: float = DEFAULT_MIN_SCORE,
     peer_scope: str = "all",
     other_peer_penalty: Optional[Union[float, Dict[str, float]]] = None,
+    session_id: Optional[str] = None,
+    detail: Optional[str] = None,
+    max_tokens: Optional[int] = None,
+    rewrite: Union[bool, str] = False,
 ) -> str:
-    """Type-quota memory recall. Searches events, entities, preferences, and experiences separately, then returns a bounded memory_group block."""
+    """Memory recall assembled server-side. Searches each memory type separately, then returns a token-budgeted block where every entry carries its viking:// URI."""
     service = get_service()
-    effective_peer_scope = "actor" if peer_scope == "actor" else "all"
-    result = await search_type_quota_recall(
-        service=service,
-        ctx=_get_ctx(),
-        query=query,
-        quotas=quotas or DEFAULT_QUOTAS,
-        max_chars=max(1, int(max_chars)),
-        min_score=min_score,
-        peer_scope=effective_peer_scope,
-        other_peer_penalty=other_peer_penalty,
-        render=True,
-    )
+    values: Dict[str, Any] = {
+        "query": query,
+        "quotas": quotas,
+        "max_chars": max(1, int(max_chars)),
+        "min_score": min_score,
+        "peer_scope": "actor" if peer_scope == "actor" else "all",
+        "other_peer_penalty": other_peer_penalty,
+        "session_id": session_id,
+        "detail": detail,
+        "max_tokens": max_tokens,
+        "rewrite": rewrite,
+        "render": True,
+    }
+    provided = {key for key, value in values.items() if value is not None}
+    if quotas is None:
+        provided.discard("quotas")
+    params, _aliases = fold_recall_request(values, provided)
+    result = await assemble_context(service=service, ctx=_get_ctx(), params=params)
+    if result.digest.strip():
+        return result.digest
     if result.rendered.strip():
         return result.rendered
     return "No relevant memories found."

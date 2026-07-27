@@ -41,6 +41,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { resolveOpenVikingCredentials } from "./ov-credentials.mjs";
 import { buildUserAgent, readManifestVersion } from "./shared/credentials.mjs";
+import { HARNESS_KEYS, loadPluginSettings } from "./shared/plugin-config.mjs";
 
 const USER_AGENT = buildUserAgent(
   "codex",
@@ -84,7 +85,9 @@ export function loadConfig() {
   const { cliPath, ovFile, ovPath } = creds;
   const configPath = cliPath || ovPath || null;
 
-  const cx = ovFile.codex || {};
+  // ovcli.conf plugin.<harness> overrides plugin.* which overrides ov.conf's
+  // codex section, so client-side tuning no longer needs a server config.
+  const cx = { ...(ovFile.codex || {}), ...loadPluginSettings(HARNESS_KEYS.codex) };
   const server = ovFile.server || {};
   const explicitAuthMode = normalizeAuthMode(process.env.OPENVIKING_AUTH_MODE)
     || normalizeAuthMode(cx.authMode)
@@ -188,6 +191,20 @@ export function loadConfig() {
       process.env.OPENVIKING_RECALL_COMPRESS_MAX_BULLETS,
       num(cx.recallCompressMaxBullets, 6),
     ))),
+
+    // Server-side context assembly (/search mode="context").
+    recallMaxTokens: Math.max(64, Math.floor(num(
+      process.env.OPENVIKING_RECALL_MAX_TOKENS,
+      num(cx.recallMaxTokens, 1600),
+    ))),
+    recallDedupTurns: Math.max(0, Math.floor(num(
+      process.env.OPENVIKING_RECALL_DEDUP_TURNS,
+      num(cx.recallDedupTurns, 5),
+    ))),
+    recallQueryExpansion: str(
+      process.env.OPENVIKING_RECALL_QUERY_EXPANSION,
+      str(cx.recallQueryExpansion, "auto"),
+    ) === "off" ? "off" : "auto",
 
     autoCapture: envBool("OPENVIKING_AUTO_CAPTURE") ?? (cx.autoCapture !== false),
     captureMode: (str(process.env.OPENVIKING_CAPTURE_MODE, str(cx.captureMode, "semantic")) === "keyword")
