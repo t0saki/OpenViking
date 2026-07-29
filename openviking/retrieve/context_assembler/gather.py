@@ -197,10 +197,10 @@ async def gather_candidates(
     retrieval_errors: List[str] = []
     excluded_count = 0
 
-    def _build(items: Sequence[Any], bucket: Optional[str]) -> List[Candidate]:
+    def _build(items: Sequence[Tuple[Any, Optional[str]]]) -> List[Candidate]:
         nonlocal excluded_count
         built: List[Candidate] = []
-        for item in items:
+        for item, bucket in items:
             uri = _uri(item)
             if not uri:
                 continue
@@ -230,6 +230,15 @@ async def gather_candidates(
             )
         return built
 
+    def _overfetch(want: int) -> int:
+        """Rows to request on top of ``want`` to cover post-retrieval filtering.
+
+        Cooled and caller-excluded URIs are dropped after the search returns, so
+        without this a bucket whose whole top page is cooled comes back empty
+        instead of falling through to the next-best hits.
+        """
+        return want + min(len(excluded), want * 2)
+
     async def gather_bucket(bucket: str, quota: int) -> List[Candidate]:
         targets = category_targets(bucket, ctx)
         searches = [
@@ -239,7 +248,7 @@ async def gather_candidates(
                 query=query,
                 ctx=ctx,
                 target_uri=target,
-                limit=quota,
+                limit=_overfetch(quota),
                 score_threshold=score_threshold,
                 filter=filter,
                 level=None,
@@ -256,7 +265,7 @@ async def gather_candidates(
                     query=query,
                     ctx=open_ctx,
                     target_uri=f"{user_root}/peers",
-                    limit=max(quota * OTHER_PEER_OVERFETCH, quota),
+                    limit=_overfetch(max(quota * OTHER_PEER_OVERFETCH, quota)),
                     score_threshold=score_threshold,
                     filter=filter,
                     level=None,
@@ -277,7 +286,7 @@ async def gather_candidates(
             )
         found = dedupe_keep_best(found)
         searched[bucket] = len(found)
-        candidates = _build(found, bucket)
+        candidates = _build([(item, bucket) for item in found])
         candidates.sort(key=_rank_key, reverse=True)
         return candidates[: max(0, quota)]
 
@@ -289,7 +298,7 @@ async def gather_candidates(
                 query=query,
                 ctx=ctx,
                 target_uri="",
-                limit=limit,
+                limit=_overfetch(limit),
                 score_threshold=score_threshold,
                 filter=filter,
                 image_url=image_url,
@@ -298,13 +307,19 @@ async def gather_candidates(
             for query in planned
         ]
         results = await asyncio.gather(*searches)
+        # Keep each hit's owning bucket: inferring the category from the URI
+        # alone reads viking://resources/backup/memories/events/log.md as an
+        # event, which would lift a large resource past its tier ceiling.
+        buckets: Dict[str, Optional[str]] = {}
         found: List[Any] = []
         for result in results:
             for bucket in ("memories", "resources", "skills"):
-                found.extend(_extract(result, bucket))
+                for item in _extract(result, bucket):
+                    buckets.setdefault(_uri(item), None if bucket == "memories" else bucket)
+                    found.append(item)
         found = dedupe_keep_best(found)
         searched["all"] = len(found)
-        candidates = _build(found, None)
+        candidates = _build([(item, buckets.get(_uri(item))) for item in found])
         candidates.sort(key=_rank_key, reverse=True)
         return candidates[: max(0, limit)]
 

@@ -50,10 +50,10 @@ def test_v1_min_score_folds_and_preset_applies_when_absent():
 
 def test_v1_render_tristate_maps_onto_detail():
     rendered, _ = fold_recall_request({"query": "q", "render": True}, {"render"})
-    assert (rendered.render, rendered.detail) == (True, "auto")
+    assert (rendered.render, rendered.detail) == (True, None)
 
     entries_only, _ = fold_recall_request({"query": "q", "render": False}, {"render"})
-    assert (entries_only.render, entries_only.detail) == (False, "auto")
+    assert (entries_only.render, entries_only.detail) == (False, None)
 
     compact, _ = fold_recall_request({"query": "q", "render": "compact"}, {"render"})
     assert (compact.render, compact.detail) == (True, "abstract")

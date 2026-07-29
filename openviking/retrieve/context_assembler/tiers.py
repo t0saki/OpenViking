@@ -11,12 +11,19 @@ from __future__ import annotations
 
 import asyncio
 import re
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from openviking.parse.parsers.code.ast.code_tools import outline_file
 from openviking.parse.parsers.code.ast.extractor import get_extractor
 from openviking.retrieve.context_assembler.gather import Candidate
-from openviking.retrieve.context_assembler.params import READ_CONCURRENCY, TIER_RANK, Tier
+from openviking.retrieve.context_assembler.params import (
+    DEFAULT_TIER,
+    DEFAULT_TIER_BY_CATEGORY,
+    DEPTH_CEILING_BY_CATEGORY,
+    READ_CONCURRENCY,
+    TIER_RANK,
+    Tier,
+)
 from openviking.session.memory.utils.memory_file_utils import MemoryFileUtils
 
 OVERVIEW_HEADING_LIMIT = 24
@@ -178,15 +185,29 @@ def tier_text(
     return None
 
 
-def floor_tier(candidate: Candidate) -> Tier:
-    """Lowest tier that still carries semantics for this candidate.
-
-    Memory directories have no stored abstract, so they start at overview.
-    """
+def start_tier(candidate: Candidate, pin: Optional[Tier] = None) -> Tier:
+    """Tier this candidate is served at before any leftover budget is spent."""
     if candidate.is_directory:
+        # A directory has no stored abstract, and its "full" body would be the
+        # whole subtree: the .overview.md sidecar is both floor and ceiling.
         return "overview"
-    return "abstract"
+    tier = pin or DEFAULT_TIER_BY_CATEGORY.get(candidate.category, DEFAULT_TIER)
+    if tier == "abstract" and not candidate.abstract.strip():
+        # Resources that never went through semantic processing have no stored
+        # abstract; overview keeps them from degrading to a bare URI.
+        return "overview"
+    return tier
 
 
-def clamp_tier(tier: Tier, ceiling: Tier) -> Tier:
-    return tier if TIER_RANK[tier] <= TIER_RANK[ceiling] else ceiling
+def tier_window(candidate: Candidate, pin: Optional[Tier] = None) -> Tuple[Tier, Tier]:
+    """``(start, ceiling)``: where the candidate starts and how far it may deepen."""
+    start = start_tier(candidate, pin)
+    if pin is not None or candidate.is_directory:
+        return start, start
+    ceiling = DEPTH_CEILING_BY_CATEGORY.get(candidate.category, start)
+    return start, ceiling if TIER_RANK[ceiling] > TIER_RANK[start] else start
+
+
+def needs_content(candidate: Candidate, pin: Optional[Tier] = None) -> bool:
+    """Whether any tier this candidate can reach requires reading its body."""
+    return TIER_RANK[tier_window(candidate, pin)[1]] >= TIER_RANK["overview"]

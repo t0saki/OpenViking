@@ -35,7 +35,9 @@ def server_rewrite_enabled(mode: bool | Literal["auto"]) -> bool:
 def normalize_digest(raw: Any, max_bullets: int = 6) -> str:
     """Accept only the small, cited digest contract emitted by the prompt."""
     text = str(raw or "").strip()
-    if not text or "NO_RELEVANT_MEMORY" in text.upper():
+    # The prompt asks for this token *as the whole output*; a memory body that
+    # merely quotes it must not suppress the digest for that user.
+    if not text or text.upper() == "NO_RELEVANT_MEMORY":
         return ""
 
     bullets: list[str] = []
@@ -43,10 +45,12 @@ def normalize_digest(raw: Any, max_bullets: int = 6) -> str:
         cleaned = line.strip()
         if not re.match(r"^[-*]\s+", cleaned):
             continue
-        cleaned = re.sub(r"^[-*]\s+", "- ", cleaned)
+        cleaned = re.sub(r"^[-*]\s+", "- ", cleaned)[:MAX_BULLET_CHARS].rstrip()
+        # Checked after truncation: the prompt puts the citation last, so a
+        # bullet whose URI was cut off no longer carries one.
         if "viking://" not in cleaned:
             continue
-        bullets.append(cleaned[:MAX_BULLET_CHARS].rstrip())
+        bullets.append(cleaned)
         if len(bullets) >= max(1, max_bullets):
             break
     if not bullets:
@@ -54,12 +58,13 @@ def normalize_digest(raw: Any, max_bullets: int = 6) -> str:
     return f"{DIGEST_HEADER}\n" + "\n".join(bullets)
 
 
-def _usage_snapshot(planner: Any) -> Tuple[int, int]:
+def _usage_snapshot(planner: Any) -> Optional[Tuple[int, int, int]]:
+    """``(prompt, completion, calls)`` from the model instance's usage tracker."""
     try:
-        total = planner.token_tracker.get_total_usage()
-        return int(total.prompt_tokens), int(total.completion_tokens)
+        total = planner.get_vlm_instance().token_tracker.get_total_usage()
+        return int(total.prompt_tokens), int(total.completion_tokens), int(total.call_count)
     except Exception:
-        return 0, 0
+        return None
 
 
 async def rewrite_context(
@@ -95,7 +100,9 @@ async def rewrite_context(
             planner.get_completion_async(prompt),
             timeout=timeout,
         )
-    except TimeoutError:
+    except (asyncio.TimeoutError, TimeoutError):
+        # Separate names before Python 3.11; catching only the builtin there
+        # reports every timeout as a generic failure.
         logger.warning("Context rewrite timed out after %.2fs", timeout)
         return "", "timeout", None
     except Exception as exc:
@@ -104,7 +111,9 @@ async def rewrite_context(
 
     after = _usage_snapshot(planner)
     usage: Optional[Dict[str, int]] = None
-    if after != before:
+    # The tracker is shared by every caller of this model, so the delta is only
+    # attributable to this request when exactly one call landed inside it.
+    if before is not None and after is not None and after[2] - before[2] == 1:
         usage = {
             "prompt_tokens": max(0, after[0] - before[0]),
             "completion_tokens": max(0, after[1] - before[1]),

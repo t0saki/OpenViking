@@ -5,9 +5,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, Literal, Mapping, Optional, Sequence, Tuple
+from typing import Any, Dict, Literal, Mapping, Optional, Sequence, Tuple, Union
 
-Detail = Literal["auto", "abstract", "overview", "full"]
+Detail = Literal["abstract", "overview", "full"]
+# "auto" no longer selects a strategy; it is accepted as a synonym for "unset".
+DetailRequest = Union[Literal["auto", "abstract", "overview", "full"], Dict[str, Detail]]
 Tier = Literal["uri", "abstract", "overview", "full"]
 Purpose = Literal["chat", "coding"]
 
@@ -16,9 +18,9 @@ CATEGORY_KEYS: Tuple[str, ...] = (*MEMORY_CATEGORIES, "resources", "skills")
 
 TIER_ORDER: Tuple[Tier, ...] = ("uri", "abstract", "overview", "full")
 TIER_RANK: Dict[str, int] = {tier: rank for rank, tier in enumerate(TIER_ORDER)}
+PINNABLE_TIERS: Tuple[Detail, ...] = ("abstract", "overview", "full")
 
 DEFAULT_MAX_TOKENS = 1600
-DEFAULT_FULL_SCORE_THRESHOLD = 0.5
 DEFAULT_LIMIT = 10
 MAX_EXCLUDE_URIS = 200
 MAX_PLANNED_QUERIES = 3
@@ -27,9 +29,31 @@ OTHER_PEER_OVERFETCH = 4
 
 ORIGIN_ORDER: Tuple[str, ...] = ("actor_peer", "self", "other_peer")
 
-# Signature-level ceiling under detail="auto" keeps a large resource file or a
-# sensitive skill body out of the injected block; an explicit detail overrides it.
-AUTO_CEILING_BY_CATEGORY: Dict[str, Tier] = {"resources": "overview", "skills": "overview"}
+# Tier a category is served at when the caller does not pin ``detail``.
+#
+# ``events`` is the only memory type whose body is long enough for the
+# ``# Summary`` section to be a real compression, so it is the only one worth a
+# file read. The others sit at ``abstract`` because the memory writer stores the
+# whole stripped body in that scalar (it doubles as the embedding text), which
+# makes ``abstract`` the complete file at zero read cost. Once the writer stores
+# a separate summary scalar, ``events`` moves back to ``abstract`` here and the
+# default path stops reading files altogether.
+# ``resources``/``skills`` stay at their generated 256-char abstract: their
+# bodies are large and may carry credentials, so deepening is opt-in.
+DEFAULT_TIER_BY_CATEGORY: Dict[str, Tier] = {
+    "events": "overview",
+    "entities": "abstract",
+    "preferences": "abstract",
+    "experiences": "abstract",
+    "resources": "abstract",
+    "skills": "abstract",
+}
+DEFAULT_TIER: Tier = "abstract"
+
+# How far leftover budget may raise a category above its default tier. A
+# category absent here never deepens, which is what keeps the default path from
+# reading resource bodies.
+DEPTH_CEILING_BY_CATEGORY: Dict[str, Tier] = {"events": "full"}
 
 # Purpose presets only supply quota ratios; they are overridden by explicit quotas.
 # Defaults await production telemetry, so keep them here as one-line knobs.
@@ -71,8 +95,7 @@ class AssembleParams:
     max_tokens: int = DEFAULT_MAX_TOKENS
     quotas: Optional[Mapping[str, int]] = None
     purpose: Optional[Purpose] = None
-    detail: Detail = "auto"
-    full_score_threshold: float = DEFAULT_FULL_SCORE_THRESHOLD
+    detail: Any = None
     dedup_turns: int = 0
     exclude_uris: Sequence[str] = field(default_factory=tuple)
     peer_scope: Literal["actor", "all"] = "all"
@@ -132,8 +155,36 @@ def normalize_exclude_uris(values: Optional[Sequence[str]]) -> set[str]:
     return {str(uri).strip() for uri in (values or ())[:MAX_EXCLUDE_URIS] if str(uri).strip()}
 
 
-def ceiling_for(category: str, detail: Detail) -> Tier:
-    """Highest tier a candidate of ``category`` may reach under ``detail``."""
-    if detail == "auto":
-        return AUTO_CEILING_BY_CATEGORY.get(category, "full")
-    return detail
+@dataclass(frozen=True)
+class DetailPins:
+    """Resolved ``detail`` request field: an explicit tier per category, if any."""
+
+    scalar: Optional[Detail] = None
+    by_category: Mapping[str, Detail] = field(default_factory=dict)
+
+    def for_category(self, category: str) -> Optional[Detail]:
+        """The pinned tier for ``category``, or ``None`` to use its default."""
+        return self.by_category.get(category, self.scalar)
+
+    def as_stats(self) -> Any:
+        return dict(self.by_category) if self.by_category else self.scalar
+
+
+def normalize_detail(value: Any) -> DetailPins:
+    """Resolve ``detail`` from a scalar, a per-category mapping, or nothing.
+
+    Unknown tiers are dropped rather than raised: the MCP tool signature cannot
+    enforce an enum, and a stray value there must degrade to the defaults
+    instead of failing the whole call.
+    """
+    if isinstance(value, DetailPins):
+        return value
+    if isinstance(value, Mapping):
+        return DetailPins(
+            by_category={
+                key: tier
+                for key, tier in value.items()
+                if key in CATEGORY_KEYS and tier in PINNABLE_TIERS
+            }
+        )
+    return DetailPins(scalar=value if value in PINNABLE_TIERS else None)

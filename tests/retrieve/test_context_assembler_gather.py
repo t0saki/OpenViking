@@ -154,6 +154,46 @@ async def test_flat_mode_merges_all_categories():
     assert stats["candidates"] == 3
 
 
+async def test_flat_mode_keeps_the_owning_bucket_over_the_uri_shape():
+    trap = "viking://resources/backup/memories/events/log.md"
+
+    async def fake_find(**kwargs):
+        del kwargs
+        return _FakeFindResult(resources=[{"uri": trap, "score": 0.5}])
+
+    candidates, _ = await gather_candidates(
+        service=_service(fake_find),
+        ctx=_ctx(),
+        queries=["flat"],
+        quotas=None,
+        limit=10,
+        score_threshold=None,
+    )
+
+    assert [c.category for c in candidates] == ["resources"]
+
+
+async def test_excluded_uris_are_compensated_with_extra_rows():
+    limits: list[int] = []
+
+    async def fake_find(**kwargs):
+        limits.append(kwargs["limit"])
+        return _FakeFindResult()
+
+    await gather_candidates(
+        service=_service(fake_find),
+        ctx=_ctx(),
+        queries=["cooled"],
+        quotas={"events": 4},
+        limit=10,
+        score_threshold=None,
+        peer_scope="actor",
+        excluded={f"viking://cooled/{i}" for i in range(3)},
+    )
+
+    assert limits and all(limit == 7 for limit in limits)
+
+
 async def test_exclude_uris_filtered_and_counted():
     async def fake_find(**kwargs):
         return _FakeFindResult(

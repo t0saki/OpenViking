@@ -16,6 +16,12 @@ from fastapi import FastAPI
 from starlette.routing import Route
 
 import openviking.server.mcp_endpoint as mcp_endpoint
+from openviking.retrieve.context_assembler.params import (
+    DEFAULT_MAX_TOKENS,
+    DEFAULT_QUOTAS,
+    normalize_detail,
+)
+from openviking.retrieve.context_assembler.recall_preset import RECALL_SCORE_THRESHOLD
 from openviking.server.auth.plugins import DevAuthPlugin
 from openviking.server.dependencies import set_service
 from openviking.server.identity import AuthMode, RequestContext, Role
@@ -301,6 +307,46 @@ async def test_recall_tool_returns_assembled_context(service, monkeypatch):
     assert f'<memory uri="{memory_uri}"' in result
     assert 'type="events"' in result
     assert "MCP recall event." in result
+
+
+async def test_recall_tool_zero_arg_profile_matches_the_rest_preset(service, monkeypatch):
+    del service
+    captured = {}
+
+    async def fake_assemble_context(*, service, ctx, params):
+        del service, ctx
+        captured["params"] = params
+        from openviking.retrieve.context_assembler.models import AssembleResult
+
+        return AssembleResult(rendered="<memory uri='viking://a' />")
+
+    monkeypatch.setattr("openviking.server.mcp_endpoint.assemble_context", fake_assemble_context)
+
+    await recall(query="what happened")
+
+    params = captured["params"]
+    assert params.score_threshold == RECALL_SCORE_THRESHOLD
+    assert params.max_tokens == DEFAULT_MAX_TOKENS
+    assert params.quotas == DEFAULT_QUOTAS
+
+
+async def test_recall_tool_survives_a_v1_detail_word(service, monkeypatch):
+    del service
+    captured = {}
+
+    async def fake_assemble_context(*, service, ctx, params):
+        del service, ctx
+        captured["params"] = params
+        from openviking.retrieve.context_assembler.models import AssembleResult
+
+        return AssembleResult(rendered="<memory uri='viking://a' />")
+
+    monkeypatch.setattr("openviking.server.mcp_endpoint.assemble_context", fake_assemble_context)
+
+    result = await recall(query="what happened", detail="summary")
+
+    assert "viking://a" in result
+    assert normalize_detail(captured["params"].detail).for_category("events") is None
 
 
 async def test_mcp_middleware_sets_actor_peer_context():

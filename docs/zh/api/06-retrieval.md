@@ -606,7 +606,7 @@ Agent 插件每轮注入上下文时，过去需要按类型逐个检索、再�
 **处理流程**：
 1. **L1 查询理解**：可选，结合 Session 最近消息做有界意图扩展（最多 3 条查询，超时熔断，失败回退原查询）
 2. **L0 检索**：按 `quotas` 分桶独立检索，或不设配额时全域检索一次
-3. **L2 组装**：token 预算内三轮填充档位（全员摘要 → 升概览 → 高分升全文），超限退档不截断
+3. **L2 组装**：token 预算内填充档位（全员先落到各自类别的默认档，再用剩余预算按分数序加深），超限退档不截断
 4. **L3 重写**：可选，把组装结果压成带 URI 引用的 digest（超时熔断，失败仍返回未重写的 `rendered`）
 
 **代码入口**：
@@ -633,8 +633,7 @@ Agent 插件每轮注入上下文时，过去需要按类型逐个检索、再�
 | `max_tokens` | int | 1600 | 唯一的预算参数，采用感知 CJK 的启发式估算（codepoint ≥ 0x3000 记 1.5 token/字，其余按 chars/4） |
 | `quotas` | object | None | 按类型分桶采样；键取 `events`/`entities`/`preferences`/`experiences`/`resources`/`skills`。启用后 `limit` 被忽略 |
 | `purpose` | `chat` \| `coding` | None | 预设类型配比；仅在未显式传 `quotas` 时生效 |
-| `detail` | `auto` \| `abstract` \| `overview` \| `full` | `auto` | 单条档位上限。`auto` 为预算驱动的先广后深填充 |
-| `full_score_threshold` | float | 0.5 | `auto` 下只有分数不低于该阈值的条目有资格升到全文档 |
+| `detail` | `abstract` \| `overview` \| `full` \| object | None | 把每条结果钉在指定档位。省略时按类别取默认档（见下）。也可传按类别的对象，如 `{"events":"overview","preferences":"abstract"}`，未列出的类别仍取默认档。`"auto"` 是已废弃的写法，等价于省略 |
 | `dedup_turns` | int | 0 | 跨轮冷却轮数，需要 `session_id`；账本存在 `{session_uri}/.recall_log.json` |
 | `exclude_uris` | string[] | [] | 无状态去重兜底，最多 200 条，与 `dedup_turns` 取并集 |
 | `peer_scope` | `actor` \| `all` | `all` | `actor` 只检索当前 actor peer |
@@ -649,11 +648,19 @@ Agent 插件每轮注入上下文时，过去需要按类型逐个检索、再�
 
 **档位规则**
 
-- **保底**：每条结果至少给出 `uri` + 摘要档；摘要取自向量索引 payload，不读文件
-- **目录命中**：记忆目录在存储层没有摘要，直接从概览档起步（读 `.overview.md` 侧车），全文档封顶为概览
+- **按类别的默认档**：省略 `detail` 时，各类别落在下表的档位；只有 `events` 会因此读文件，其余类别零 I/O
+
+  | 类别 | 默认档 | 剩余预算可加深到 | 原因 |
+  |------|--------|------------------|------|
+  | `events` | 概览档 | 全文档 | 唯一正文足够长、`# Summary` 抽取能真正压缩的类型 |
+  | `entities` / `preferences` / `experiences` | 摘要档 | 摘要档 | 正文本身很短，且写入侧把整篇正文存进了摘要标量，摘要档即完整内容 |
+  | `resources` / `skills` | 摘要档 | 摘要档 | 语义处理生成的 256 字符摘要；正文可能很大或含凭据，加深需显式指定 |
+  | 目录命中 | 概览档 | 概览档 | 目录没有摘要，读 `.overview.md` 侧车；全文档对目录无意义 |
+
+- **保底**：每条结果至少给出 `uri`；类别默认档拿不到可用内容时（例如资源尚未跑过语义处理，或摘要本身超出单条上限）自动回落到概览档，而不是退成裸指针
+- **显式 `detail`**：把全部结果钉在该档，既是起点也是上限；装不下的条目仍逐档退档而不截断
 - **概览档按来源取骨架**：记忆文件取开头的 `# Summary` 段，代码文件取函数与类签名（复用 `code_outline`），长文档取标题树加首段
-- **单条上限**：`max_tokens ÷ 候选条数 × 2`；某一档超出该上限时退回上一档，不做截断
-- **resources / skills**：`detail="auto"` 下上限为概览档，签名骨架不含函数体；显式传 `detail="full"` 才会注入全文
+- **单条上限**：`max_tokens ÷ 候选条数 × 2`，对除裸 `uri` 外的所有档位一律生效；某一档超出该上限时退回上一档，不做截断。预算仍有剩余时，最后一轮加深不受该上限约束，只受 `max_tokens` 约束
 
 #### 3. 使用示例
 
@@ -695,26 +702,38 @@ curl -X POST http://localhost:1933/api/v1/search/search \
   "result": {
     "entries": [
       {
-        "uri": "viking://user/default/memories/entities/software/openviking_fs.md",
-        "category": "entities",
+        "uri": "viking://user/default/memories/events/2026/07/14/tier_design.md",
+        "category": "events",
         "score": 0.45,
         "detail": "full",
-        "text": "# OpenViking FS 存储层\n...",
+        "text": "# Summary\n档位模型改为按类别定义默认档\n...",
+        "origin": "self"
+      },
+      {
+        "uri": "viking://user/default/memories/entities/software/openviking_fs.md",
+        "category": "entities",
+        "score": 0.43,
+        "detail": "abstract",
+        "text": "OpenViking FS 存储层……",
         "origin": "self"
       }
     ],
-    "rendered": "<memory uri=\"viking://user/default/memories/entities/software/openviking_fs.md\" type=\"entities\" score=\"0.45\" detail=\"full\">\n# OpenViking FS 存储层\n...\n</memory>",
+    "rendered": "<memory uri=\"viking://user/default/memories/events/2026/07/14/tier_design.md\" type=\"events\" score=\"0.45\" detail=\"full\">\n# Summary\n...\n</memory>",
     "digest": "",
     "stats": {
       "candidates": 13,
       "returned": 13,
       "dropped": 0,
+      "deduped": 0,
       "max_tokens": 3000,
       "used_tokens": 2510,
       "per_entry_cap": 462,
-      "tier_counts": {"full": 7, "overview": 3, "abstract": 3},
+      "detail": null,
+      "tier_counts": {"full": 4, "overview": 2, "abstract": 7},
+      "fill": {"floor_tokens": 1890, "overview_upgrades": 0, "full_upgrades": 4, "spare_upgrades": 0},
       "query_expansion": "used",
       "rewrite": "off",
+      "rewrite_usage": null,
       "excluded": 0,
       "dedup": {"turns": 5, "status": "ok", "cooled": 2, "turn": 34}
     }

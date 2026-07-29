@@ -74,23 +74,36 @@ async def test_rewrite_statuses_fail_closed(monkeypatch):
     assert await rewrite_context(query="q", rendered="") == ("", "empty", None)
 
 
+class _Tracker:
+    """Shape of the tracker the real VLM instance exposes."""
+
+    def __init__(self):
+        self.total = SimpleNamespace(prompt_tokens=10, completion_tokens=2, call_count=1)
+
+    def get_total_usage(self):
+        return self.total
+
+
+class _Planner:
+    """VLMConfig-shaped planner: the tracker lives on the model instance."""
+
+    def __init__(self, extra_calls=0):
+        self._instance = SimpleNamespace(token_tracker=_Tracker())
+        self._extra_calls = extra_calls
+
+    def get_vlm_instance(self):
+        return self._instance
+
+    async def get_completion_async(self, _prompt):
+        calls = 1 + self._extra_calls
+        self._instance.token_tracker.total = SimpleNamespace(
+            prompt_tokens=210, completion_tokens=52, call_count=1 + calls
+        )
+        return "- fact (viking://user/a.md)"
+
+
 async def test_rewrite_reports_usage_delta(monkeypatch):
-    class Tracker:
-        def __init__(self):
-            self.total = SimpleNamespace(prompt_tokens=10, completion_tokens=2)
-
-        def get_total_usage(self):
-            return self.total
-
-    class Planner:
-        def __init__(self):
-            self.token_tracker = Tracker()
-
-        async def get_completion_async(self, _prompt):
-            self.token_tracker.total = SimpleNamespace(prompt_tokens=210, completion_tokens=52)
-            return "- fact (viking://user/a.md)"
-
-    planner = Planner()
+    planner = _Planner()
     monkeypatch.setattr(
         rewrite_module, "get_openviking_config", lambda: _config(lambda: planner, rewrite_timeout=5)
     )
@@ -99,6 +112,31 @@ async def test_rewrite_reports_usage_delta(monkeypatch):
     assert status == "ok"
     assert digest.startswith("OpenViking memory digest:")
     assert usage == {"prompt_tokens": 200, "completion_tokens": 50}
+
+
+async def test_rewrite_usage_is_dropped_when_another_call_shared_the_tracker(monkeypatch):
+    planner = _Planner(extra_calls=1)
+    monkeypatch.setattr(
+        rewrite_module, "get_openviking_config", lambda: _config(lambda: planner, rewrite_timeout=5)
+    )
+
+    _digest, status, usage = await rewrite_context(query="q", rendered="memory")
+    assert status == "ok"
+    assert usage is None
+
+
+async def test_rewrite_usage_is_none_when_the_planner_has_no_tracker(monkeypatch):
+    class Bare:
+        async def get_completion_async(self, _prompt):
+            return "- fact (viking://user/a.md)"
+
+    monkeypatch.setattr(
+        rewrite_module, "get_openviking_config", lambda: _config(lambda: Bare(), rewrite_timeout=5)
+    )
+
+    _digest, status, usage = await rewrite_context(query="q", rendered="memory")
+    assert status == "ok"
+    assert usage is None
 
 
 async def test_expansion_is_off_without_session_or_mode():

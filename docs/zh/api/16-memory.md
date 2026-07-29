@@ -36,12 +36,12 @@
 |---------|--------|------|
 | `max_chars` | `max_tokens = max_chars / 4` | `6500` → `1625`；显式传 `max_tokens` 时以后者为准 |
 | `min_score` | `score_threshold` | 都未提供时取预设值 `0.35` |
-| `render: true` | `detail="auto"` | 默认行为 |
+| `render: true` | 不钉档位 | 默认行为：各类别取自己的默认档 |
 | `render: false` | 只返回 `entries`，`rendered` 为空 | |
-| `render: "compact"` | `detail="abstract"` | 原型期的紧凑模式 |
-| v1 `quotas` 键 | 原样透传 | 键名未变 |
+| `render: "compact"` | `detail="abstract"` | 原型期的紧凑模式；把所有类别钉在摘要档 |
+| v1 `quotas` 键 | 叠加在 v1 分桶默认值之上 | 键名未变；只传一部分键时其余桶保留默认值 |
 
-context 面的参数（`max_tokens`、`detail`、`dedup_turns`、`session_id`、`query_expansion`、`exclude_uris`、`purpose`、`full_score_threshold`、`rewrite`、`rewrite_max_bullets`）在本端点同样接受，便于插件在尚未升级的部署上平滑过渡。
+context 面的参数（`max_tokens`、`detail`、`dedup_turns`、`session_id`、`query_expansion`、`exclude_uris`、`purpose`、`rewrite`、`rewrite_max_bullets`）在本端点同样接受，便于插件在尚未升级的部署上平滑过渡。
 
 **HTTP API**
 

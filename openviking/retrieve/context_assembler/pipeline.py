@@ -11,20 +11,25 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
-from openviking.retrieve.context_assembler.budget import plan_entries
+from openviking.retrieve.context_assembler.budget import (
+    abstract_over_cap,
+    per_entry_cap,
+    plan_entries,
+)
 from openviking.retrieve.context_assembler.expansion import expand_queries
 from openviking.retrieve.context_assembler.gather import gather_candidates
 from openviking.retrieve.context_assembler.ledger import RecallLedger
 from openviking.retrieve.context_assembler.models import AssembleResult
 from openviking.retrieve.context_assembler.params import (
     AssembleParams,
+    normalize_detail,
     normalize_exclude_uris,
     normalize_penalties,
     normalize_quotas,
 )
 from openviking.retrieve.context_assembler.render import render_context
 from openviking.retrieve.context_assembler.rewrite import rewrite_context, server_rewrite_enabled
-from openviking.retrieve.context_assembler.tiers import prefetch_contents
+from openviking.retrieve.context_assembler.tiers import needs_content, prefetch_contents
 from openviking.server.identity import RequestContext
 from openviking_cli.utils.logger import get_logger
 
@@ -87,16 +92,24 @@ async def assemble_context(
         excluded=excluded,
     )
 
+    # Read only the candidates whose planned tier actually needs a body: with
+    # the default tiers that is the events bucket, not every hit.
+    pins = normalize_detail(params.detail)
+    cap = per_entry_cap(params.max_tokens, len(candidates))
+    readable = [
+        c
+        for c in candidates
+        if needs_content(c, pins.for_category(c.category)) or abstract_over_cap(c, cap)
+    ]
     contents: Dict[str, str] = {}
-    if candidates and params.detail != "abstract":
-        contents = await prefetch_contents(service=service, candidates=candidates)
+    if readable:
+        contents = await prefetch_contents(service=service, candidates=readable)
 
     plan = plan_entries(
         candidates,
         contents,
         max_tokens=params.max_tokens,
-        detail=params.detail,
-        full_score_threshold=params.full_score_threshold,
+        detail=pins,
     )
 
     rendered = render_context(plan.entries) if params.render else ""
@@ -112,7 +125,10 @@ async def assemble_context(
         )
 
     if ledger and plan.entries:
-        await ledger.record(plan.entries)
+        try:
+            await ledger.record(plan.entries)
+        except Exception as exc:
+            logger.debug("Recall ledger record failed (%s); dedup stays best-effort", exc)
 
     stats: Dict[str, Any] = {
         **gather_stats,

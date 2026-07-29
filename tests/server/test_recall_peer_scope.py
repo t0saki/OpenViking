@@ -3,7 +3,7 @@
 
 import httpx
 
-from openviking.retrieve.context_assembler.params import normalize_penalties
+from openviking.retrieve.context_assembler.params import DEFAULT_QUOTAS, normalize_penalties
 from openviking.server.dependencies import set_service
 from openviking.server.identity import RequestContext, Role
 from openviking.server.mcp_endpoint import _mcp_ctx
@@ -288,4 +288,4 @@ async def test_mcp_recall_tool_passes_peer_scope_and_penalty(service, monkeypatc
     params = captured["params"]
     assert params.peer_scope == "actor"
     assert params.other_peer_penalty == {"events": 0.5}
-    assert params.quotas == {"events": 1}
+    assert params.quotas == {**DEFAULT_QUOTAS, "events": 1}

@@ -45,7 +45,7 @@ test("buildContextSearchBody declares intent and leaves mechanics to the server"
   const body = buildContextSearchBody({ recallMaxTokens: 1200, scoreThreshold: 0.4 });
   assert.equal(body.mode, "context");
   assert.equal(body.purpose, "coding");
-  assert.equal(body.detail, "auto");
+  assert.equal(body.detail, undefined);
   assert.equal(body.max_tokens, 1200);
   assert.equal(body.score_threshold, 0.4);
   assert.equal(body.quotas, undefined);

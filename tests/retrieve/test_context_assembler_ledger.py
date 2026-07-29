@@ -110,6 +110,50 @@ async def test_corrupt_ledger_starts_empty():
     assert ledger.cooled_uris() == set()
 
 
+async def test_malformed_records_are_skipped_and_overwritten_rather_than_raising():
+    payload = json.dumps(
+        {
+            "entries": {
+                "viking://text-turn": {"turn": "x"},
+                "viking://null-turn": {"turn": None},
+                "viking://not-a-record": "served",
+                "viking://good": {"turn": 9},
+            }
+        }
+    )
+    fs = _FakeVikingFS({LEDGER_URI: payload})
+    service = SimpleNamespace(viking_fs=fs)
+    ledger = await RecallLedger.load(
+        service=service, ctx=_ctx(), session=_session(turn=10), dedup_turns=5
+    )
+
+    assert ledger.cooled_uris() == {"viking://good"}
+
+    await ledger.record([_entry("a.md")])
+    stored = json.loads(fs.files[LEDGER_URI])
+    assert set(stored["entries"]) == {
+        "viking://good",
+        "viking://user/test_user/memories/events/a.md",
+    }
+
+
+async def test_uri_tier_entries_are_not_cooled():
+    payload = json.dumps(
+        {
+            "entries": {
+                "viking://pointer": {"turn": 9, "detail": "uri"},
+                "viking://served": {"turn": 9, "detail": "abstract"},
+            }
+        }
+    )
+    service = SimpleNamespace(viking_fs=_FakeVikingFS({LEDGER_URI: payload}))
+    ledger = await RecallLedger.load(
+        service=service, ctx=_ctx(), session=_session(turn=10), dedup_turns=5
+    )
+
+    assert ledger.cooled_uris() == {"viking://served"}
+
+
 async def test_record_upserts_served_uris_at_current_turn():
     fs = _FakeVikingFS()
     service = SimpleNamespace(viking_fs=fs)
@@ -138,6 +182,19 @@ async def test_record_prunes_entries_beyond_the_cooldown_window():
 
     stored = json.loads(fs.files[LEDGER_URI])
     assert "viking://ancient" not in stored["entries"]
+
+
+async def test_record_prunes_records_left_ahead_of_the_clock():
+    payload = json.dumps({"entries": {"viking://stale": {"turn": 99}}})
+    fs = _FakeVikingFS({LEDGER_URI: payload})
+    service = SimpleNamespace(viking_fs=fs)
+    ledger = await RecallLedger.load(
+        service=service, ctx=_ctx(), session=_session(turn=3), dedup_turns=5
+    )
+    await ledger.record([_entry("new.md")])
+
+    stored = json.loads(fs.files[LEDGER_URI])
+    assert "viking://stale" not in stored["entries"]
 
 
 async def test_write_failure_is_contained():

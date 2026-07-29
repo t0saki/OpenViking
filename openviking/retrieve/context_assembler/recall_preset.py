@@ -66,18 +66,19 @@ def fold_recall_request(
     # "compact" was the abstract-only prototype mode.
     render_value = values.get("render", True)
     render = render_value is not False
+    detail: Any = None
     if _provided(values, provided, "detail"):
         detail = values["detail"]
     elif render_value == "compact":
         detail = "abstract"
-    else:
-        detail = "auto"
 
     # Omitted quotas keep v1's bucket defaults; an explicit null opts into the
-    # purpose preset instead.
+    # purpose preset instead. A partial map overlays the defaults the way v1's
+    # normalize_quotas did — {"events": 5} never meant "drop the other buckets".
     quotas: Optional[Mapping[str, int]]
     if "quotas" in provided:
-        quotas = values.get("quotas")
+        explicit = values.get("quotas")
+        quotas = {**DEFAULT_QUOTAS, **explicit} if isinstance(explicit, Mapping) else explicit
     else:
         quotas = dict(DEFAULT_QUOTAS)
 
@@ -102,11 +103,6 @@ def fold_recall_request(
         quotas=quotas,
         purpose=values.get("purpose") or RECALL_PURPOSE,
         detail=detail,
-        full_score_threshold=float(
-            values.get("full_score_threshold")
-            if values.get("full_score_threshold") is not None
-            else 0.5
-        ),
         dedup_turns=dedup_turns,
         exclude_uris=exclude_uris,
         peer_scope=values.get("peer_scope") or "all",

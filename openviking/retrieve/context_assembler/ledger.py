@@ -23,6 +23,20 @@ LEDGER_VERSION = 1
 MAX_LEDGER_URIS = 500
 
 
+def _record_turn(record: Any) -> Optional[int]:
+    """Turn a stored record was written at, or ``None`` when it is unusable.
+
+    The ledger is a file on disk: a half-written or hand-edited record must
+    degrade to "no dedup for that URI", never fail the request that reads it.
+    """
+    if not isinstance(record, dict):
+        return None
+    try:
+        return int(record.get("turn", 0))
+    except (TypeError, ValueError):
+        return None
+
+
 def _resolve_turn(session: Any) -> int:
     """Monotonic message counter used as the turn clock."""
     meta = getattr(session, "meta", None)
@@ -105,12 +119,14 @@ class RecallLedger:
         """URIs served within the last ``dedup_turns`` turns."""
         cooled: Set[str] = set()
         for uri, record in self._entries().items():
-            try:
-                served_turn = int((record or {}).get("turn", 0))
-            except (TypeError, ValueError):
-                continue
-            if served_turn > self._turn:
+            served_turn = _record_turn(record)
+            if served_turn is None or served_turn > self._turn:
                 # Archive rotation reset the clock; treat the record as expired.
+                continue
+            if record.get("detail") == "uri":
+                # A bare URI carried no content, so the next turn is free to
+                # serve it again — the entry lost to budget pressure, not to
+                # the reader having already seen it.
                 continue
             if self._turn - served_turn < self._dedup_turns:
                 cooled.add(str(uri))
@@ -129,15 +145,16 @@ class RecallLedger:
             stored[uri] = {"turn": self._turn, "detail": getattr(entry, "detail", "")}
 
         keep_from = self._turn - (self._dedup_turns * 4)
+        turns = {uri: _record_turn(record) for uri, record in stored.items()}
+        # A record ahead of the clock survived an archive rotation and can never
+        # expire on its own; drop it here rather than let it hold a slot.
         pruned = {
             uri: record
             for uri, record in stored.items()
-            if int((record or {}).get("turn", 0)) >= keep_from
+            if turns[uri] is not None and keep_from <= turns[uri] <= self._turn
         }
         if len(pruned) > MAX_LEDGER_URIS:
-            ordered = sorted(
-                pruned.items(), key=lambda item: int((item[1] or {}).get("turn", 0)), reverse=True
-            )
+            ordered = sorted(pruned.items(), key=lambda item: turns[item[0]] or 0, reverse=True)
             pruned = dict(ordered[:MAX_LEDGER_URIS])
 
         payload = {

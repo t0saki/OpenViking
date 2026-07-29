@@ -8,10 +8,12 @@ from openviking.retrieve.context_assembler.tiers import (
     content_uri_for,
     doc_overview,
     extract_summary_section,
-    floor_tier,
+    needs_content,
     overview_from_content,
     prefetch_contents,
+    start_tier,
     tier_text,
+    tier_window,
 )
 from openviking.server.identity import RequestContext, Role
 from openviking_cli.session.user_id import UserIdentifier
@@ -83,9 +85,10 @@ def test_directory_overview_is_the_sidecar_body():
     assert overview_from_content(candidate, "  directory overview  ") == "directory overview"
 
 
-def test_directory_floor_is_overview_and_full_is_capped():
+def test_directory_is_pinned_to_overview_whatever_the_request_asks():
     candidate = _candidate("viking://user/test_user/memories/events", is_directory=True, level=0)
-    assert floor_tier(candidate) == "overview"
+    assert tier_window(candidate) == ("overview", "overview")
+    assert tier_window(candidate, "abstract") == ("overview", "overview")
     assert content_uri_for(candidate).endswith("/.overview.md")
 
     contents = {content_uri_for(candidate): "dir overview"}
@@ -93,14 +96,44 @@ def test_directory_floor_is_overview_and_full_is_capped():
     assert tier_text(candidate, "full", contents=contents) is None
 
 
-def test_file_floor_is_abstract_and_missing_abstract_is_unavailable():
-    candidate = _candidate("viking://user/test_user/memories/events/a.md", abstract="short")
-    assert floor_tier(candidate) == "abstract"
-    assert tier_text(candidate, "abstract", contents={}) == "short"
+def test_default_tier_is_per_category_and_only_events_may_deepen():
+    events = _candidate("viking://user/test_user/memories/events/a.md", abstract="short")
+    assert tier_window(events) == ("overview", "full")
 
-    bare = _candidate("viking://user/test_user/memories/events/b.md")
+    for category in ("entities", "preferences", "experiences"):
+        candidate = _candidate(
+            f"viking://user/test_user/memories/{category}/a.md",
+            category=category,
+            abstract="short",
+        )
+        assert tier_window(candidate) == ("abstract", "abstract")
+
+    resource = _candidate("viking://resources/guide.md", category="resources", abstract="short")
+    assert tier_window(resource) == ("abstract", "abstract")
+
+
+def test_explicit_detail_pins_both_ends():
+    candidate = _candidate("viking://user/test_user/memories/events/a.md", abstract="short")
+    assert tier_window(candidate, "abstract") == ("abstract", "abstract")
+    assert tier_window(candidate, "full") == ("full", "full")
+
+
+def test_missing_abstract_starts_at_overview_instead_of_a_bare_uri():
+    bare = _candidate("viking://resources/unprocessed.md", category="resources")
+    assert start_tier(bare) == "overview"
     assert tier_text(bare, "abstract", contents={}) is None
     assert tier_text(bare, "uri", contents={}) == ""
+
+
+def test_only_candidates_that_can_reach_overview_need_a_read():
+    events = _candidate("viking://user/test_user/memories/events/a.md", abstract="short")
+    entities = _candidate(
+        "viking://user/test_user/memories/entities/a.md", category="entities", abstract="short"
+    )
+    assert needs_content(events) is True
+    assert needs_content(entities) is False
+    assert needs_content(entities, "overview") is True
+    assert needs_content(events, "abstract") is False
 
 
 async def test_prefetch_reads_memory_body_without_metadata_and_tolerates_failures():

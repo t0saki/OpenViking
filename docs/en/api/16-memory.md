@@ -36,12 +36,12 @@ Search each memory type independently and assemble a bounded memory block that c
 |----------|------------|-------|
 | `max_chars` | `max_tokens = max_chars / 4` | `6500` → `1625`; an explicit `max_tokens` wins |
 | `min_score` | `score_threshold` | When neither is sent, the preset `0.35` applies |
-| `render: true` | `detail="auto"` | Default behavior |
+| `render: true` | No `detail` pin | Default behavior: each category takes its default tier |
 | `render: false` | Returns `entries` only, `rendered` empty | |
-| `render: "compact"` | `detail="abstract"` | The prototype-era compact mode |
-| v1 `quotas` keys | Passed through | Key names unchanged |
+| `render: "compact"` | `detail="abstract"` | The prototype-era compact mode; pins every category |
+| v1 `quotas` keys | Overlaid on the v1 bucket defaults | Key names unchanged; a partial map keeps the other buckets |
 
-Context-face parameters (`max_tokens`, `detail`, `dedup_turns`, `session_id`, `query_expansion`, `exclude_uris`, `purpose`, `full_score_threshold`, `rewrite`, `rewrite_max_bullets`) are also accepted here, so plugins can transition smoothly on deployments that have not been upgraded yet.
+Context-face parameters (`max_tokens`, `detail`, `dedup_turns`, `session_id`, `query_expansion`, `exclude_uris`, `purpose`, `rewrite`, `rewrite_max_bullets`) are also accepted here, so plugins can transition smoothly on deployments that have not been upgraded yet.
 
 **HTTP API**
 

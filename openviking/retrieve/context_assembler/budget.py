@@ -3,8 +3,8 @@
 """Token budgeting and breadth-first-then-depth tier filling.
 
 Scores cluster in a narrow band, so spending the whole budget on the top hit is
-a bad bet. ``detail="auto"`` therefore guarantees every candidate a readable
-floor first and only then deepens, and an oversized tier falls back to the
+a bad bet. Every candidate is placed at its category's default tier first and
+only then deepens on leftover budget, and an oversized tier falls back to the
 previous one instead of being truncated.
 """
 
@@ -18,12 +18,11 @@ from openviking.retrieve.context_assembler.models import AssembledEntry
 from openviking.retrieve.context_assembler.params import (
     TIER_ORDER,
     TIER_RANK,
-    Detail,
     Tier,
-    ceiling_for,
+    normalize_detail,
 )
 from openviking.retrieve.context_assembler.render import fragment_tokens
-from openviking.retrieve.context_assembler.tiers import clamp_tier, floor_tier, tier_text
+from openviking.retrieve.context_assembler.tiers import tier_text, tier_window
 
 SEPARATOR_TOKENS = 1
 
@@ -48,7 +47,13 @@ def per_entry_cap(max_tokens: int, candidate_count: int) -> int:
 
 
 def _tiers_down_from(tier: Tier) -> List[Tier]:
-    return list(reversed(TIER_ORDER[: TIER_RANK[tier] + 1]))
+    order = list(reversed(TIER_ORDER[: TIER_RANK[tier] + 1]))
+    if tier == "abstract":
+        # A memory file's stored abstract is its whole body, so overview is a
+        # cheaper substitute here rather than a step up: try it before giving up
+        # on showing any content at all.
+        order.insert(1, "overview")
+    return order
 
 
 def _make_entry(candidate: Candidate, tier: Tier, text: str) -> AssembledEntry:
@@ -64,16 +69,26 @@ def _make_entry(candidate: Candidate, tier: Tier, text: str) -> AssembledEntry:
     return entry
 
 
+def abstract_over_cap(candidate: Candidate, cap: int) -> bool:
+    """Whether this candidate's stored abstract exceeds the per-entry cap.
+
+    Such a candidate falls back to overview, so its body has to be read even
+    though its own tier would not need one.
+    """
+    text = candidate.abstract.strip()
+    return bool(text) and fragment_tokens(_make_entry(candidate, "abstract", text)) > cap
+
+
 def plan_entries(
     candidates: Sequence[Candidate],
     contents: Dict[str, str],
     *,
     max_tokens: int,
-    detail: Detail = "auto",
-    full_score_threshold: float = 0.5,
+    detail: Any = None,
 ) -> BudgetPlan:
     """Fill the budget over ``candidates`` and return the chosen tiers."""
     max_tokens = max(1, int(max_tokens))
+    pins = normalize_detail(detail)
     cap = per_entry_cap(max_tokens, len(candidates))
     slots: List[_Slot] = []
     used = 0
@@ -82,13 +97,13 @@ def plan_entries(
     seen_bodies: set[int] = set()
 
     def fits_cap(tier: Tier, tokens: int) -> bool:
-        # The abstract floor is cheap by construction and must never be capped
-        # away, otherwise a bare URI comes back.
-        return tier in ("uri", "abstract") or tokens <= cap
+        # Only the bare URI is exempt — it has no body to cap. No tier is cheap
+        # enough to trust unmeasured: a memory file's stored abstract is its
+        # whole body, so exempting that tier lets one entry eat the budget.
+        return tier == "uri" or tokens <= cap
 
     for candidate in candidates:
-        ceiling = ceiling_for(candidate.category, detail)
-        start = clamp_tier(floor_tier(candidate), ceiling)
+        start, ceiling = tier_window(candidate, pins.for_category(candidate.category))
         placed: Optional[_Slot] = None
         for tier in _tiers_down_from(start):
             text = tier_text(candidate, tier, contents=contents)
@@ -120,15 +135,13 @@ def plan_entries(
 
     floor_used = used
 
-    def upgrade_pass(target: Tier, *, respect_cap: bool, min_score: float = 0.0) -> int:
+    def upgrade_pass(target: Tier, *, respect_cap: bool) -> int:
         nonlocal used
         upgraded = 0
         for slot in slots:
             if TIER_RANK[slot.entry.detail] >= TIER_RANK[target]:
                 continue
             if TIER_RANK[target] > TIER_RANK[slot.ceiling]:
-                continue
-            if slot.candidate.score < min_score:
                 continue
             text = tier_text(slot.candidate, target, contents=contents)
             if text is None:
@@ -145,11 +158,14 @@ def plan_entries(
             upgraded += 1
         return upgraded
 
+    # Slots are in score order, so the depth passes spend whatever budget is
+    # left on the best hits first — no absolute score threshold, which the
+    # observed 0.38-0.50 score band cannot support anyway.
     overview_upgrades = upgrade_pass("overview", respect_cap=True)
-    full_upgrades = upgrade_pass("full", respect_cap=True, min_score=full_score_threshold)
+    full_upgrades = upgrade_pass("full", respect_cap=True)
     # Leftover budget is worth spending: one more depth pass without the
     # per-entry cap, still bounded by max_tokens.
-    spare_upgrades = upgrade_pass("full", respect_cap=False, min_score=full_score_threshold)
+    spare_upgrades = upgrade_pass("full", respect_cap=False)
 
     entries = [slot.entry for slot in slots]
     tier_counts: Dict[str, int] = {}
@@ -163,8 +179,7 @@ def plan_entries(
         "returned": len(entries),
         "dropped": dropped,
         "deduped": deduped,
-        "detail": detail,
-        "full_score_threshold": full_score_threshold,
+        "detail": pins.as_stats(),
         "tier_counts": tier_counts,
         "fill": {
             "floor_tokens": floor_used,

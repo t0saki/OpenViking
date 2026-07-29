@@ -13,10 +13,10 @@ from openviking.core.path_variables import resolve_path_variables
 from openviking.pyagfs.exceptions import AGFSClientError, AGFSNotFoundError
 from openviking.retrieve.context_assembler import (
     CATEGORY_KEYS,
-    DEFAULT_FULL_SCORE_THRESHOLD,
     DEFAULT_MAX_TOKENS,
     MAX_EXCLUDE_URIS,
     AssembleParams,
+    DetailRequest,
     assemble_context,
 )
 from openviking.retrieve.context_assembler.recall_preset import (
@@ -121,13 +121,22 @@ class FindRequest(BaseModel):
     telemetry: TelemetryRequest = False
 
 
+def _reject_unknown_categories(value: Any, label: str) -> None:
+    if not isinstance(value, dict):
+        return
+    unknown = sorted(set(value) - set(CATEGORY_KEYS))
+    if unknown:
+        raise ValueError(
+            f"unknown {label} keys: {', '.join(unknown)}; allowed: {', '.join(CATEGORY_KEYS)}"
+        )
+
+
 CONTEXT_ONLY_FIELDS = (
     "query_expansion",
     "max_tokens",
     "quotas",
     "purpose",
     "detail",
-    "full_score_threshold",
     "dedup_turns",
     "exclude_uris",
     "peer_scope",
@@ -173,8 +182,7 @@ class SearchRequest(BaseModel):
     max_tokens: int = Field(default=DEFAULT_MAX_TOKENS, ge=64, le=32000)
     quotas: Optional[Dict[str, int]] = None
     purpose: Optional[Literal["chat", "coding"]] = None
-    detail: Literal["auto", "abstract", "overview", "full"] = "auto"
-    full_score_threshold: float = Field(default=DEFAULT_FULL_SCORE_THRESHOLD, ge=0.0, le=1.0)
+    detail: Optional[DetailRequest] = None
     dedup_turns: int = Field(default=0, ge=0, le=100)
     exclude_uris: List[str] = Field(default_factory=list, max_length=MAX_EXCLUDE_URIS)
     peer_scope: Literal["actor", "all"] = "all"
@@ -195,11 +203,8 @@ class SearchRequest(BaseModel):
 
         if self.target_uri:
             raise ValueError("target_uri is not supported in mode='context'")
-        unknown = sorted(set(self.quotas or {}) - set(CATEGORY_KEYS))
-        if unknown:
-            raise ValueError(
-                f"unknown quota keys: {', '.join(unknown)}; allowed: {', '.join(CATEGORY_KEYS)}"
-            )
+        _reject_unknown_categories(self.quotas, "quota")
+        _reject_unknown_categories(self.detail, "detail")
         return self
 
 
@@ -226,8 +231,7 @@ class RecallRequest(BaseModel):
     query_expansion: Optional[Literal["off", "auto"]] = None
     max_tokens: Optional[int] = Field(default=None, ge=64, le=32000)
     purpose: Optional[Literal["chat", "coding"]] = None
-    detail: Optional[Literal["auto", "abstract", "overview", "full"]] = None
-    full_score_threshold: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    detail: Optional[DetailRequest] = None
     score_threshold: Optional[float] = None
     dedup_turns: Optional[int] = Field(default=None, ge=0, le=100)
     exclude_uris: List[str] = Field(default_factory=list, max_length=MAX_EXCLUDE_URIS)
@@ -236,11 +240,8 @@ class RecallRequest(BaseModel):
 
     @model_validator(mode="after")
     def _validate_quotas(self) -> "RecallRequest":
-        unknown = sorted(set(self.quotas or {}) - set(CATEGORY_KEYS))
-        if unknown:
-            raise ValueError(
-                f"unknown quota keys: {', '.join(unknown)}; allowed: {', '.join(CATEGORY_KEYS)}"
-            )
+        _reject_unknown_categories(self.quotas, "quota")
+        _reject_unknown_categories(self.detail, "detail")
         return self
 
 
@@ -336,7 +337,6 @@ async def _search_context(
         quotas=request.quotas,
         purpose=request.purpose,
         detail=request.detail,
-        full_score_threshold=request.full_score_threshold,
         dedup_turns=request.dedup_turns,
         exclude_uris=request.exclude_uris,
         peer_scope=request.peer_scope,

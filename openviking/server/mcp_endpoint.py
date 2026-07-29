@@ -39,11 +39,7 @@ from openviking.parse.parsers.code.ast.code_tools import (
     search_symbols,
 )
 from openviking.retrieve.context_assembler import assemble_context
-from openviking.retrieve.context_assembler.recall_preset import (
-    DEFAULT_MAX_CHARS,
-    DEFAULT_MIN_SCORE,
-    fold_recall_request,
-)
+from openviking.retrieve.context_assembler.recall_preset import fold_recall_request
 from openviking.server.auth import _extract_api_key, resolve_actor_peer_headers, resolve_identity
 from openviking.server.dependencies import get_server_config, get_service
 from openviking.server.identity import RequestContext
@@ -335,8 +331,8 @@ def _format_search_result(result) -> str:
 async def recall(
     query: str,
     quotas: Optional[dict[str, int]] = None,
-    max_chars: int = DEFAULT_MAX_CHARS,
-    min_score: float = DEFAULT_MIN_SCORE,
+    max_chars: Optional[int] = None,
+    min_score: Optional[float] = None,
     peer_scope: str = "all",
     other_peer_penalty: Optional[Union[float, Dict[str, float]]] = None,
     session_id: Optional[str] = None,
@@ -344,12 +340,15 @@ async def recall(
     max_tokens: Optional[int] = None,
     rewrite: Union[bool, str] = False,
 ) -> str:
-    """Memory recall assembled server-side. Searches each memory type separately, then returns a token-budgeted block where every entry carries its viking:// URI."""
+    """Memory recall assembled server-side. Searches each memory type separately, then returns a token-budgeted block where every entry carries its viking:// URI. detail pins the tier for every entry: "abstract", "overview" or "full"."""
     service = get_service()
+    # Omitted arguments must stay absent: this is the same preset as POST
+    # /recall, and a signature default sent through as a value would read as an
+    # explicit v1 alias and shift the whole profile.
     values: Dict[str, Any] = {
         "query": query,
         "quotas": quotas,
-        "max_chars": max(1, int(max_chars)),
+        "max_chars": None if max_chars is None else max(1, int(max_chars)),
         "min_score": min_score,
         "peer_scope": "actor" if peer_scope == "actor" else "all",
         "other_peer_penalty": other_peer_penalty,
@@ -357,11 +356,8 @@ async def recall(
         "detail": detail,
         "max_tokens": max_tokens,
         "rewrite": rewrite,
-        "render": True,
     }
     provided = {key for key, value in values.items() if value is not None}
-    if quotas is None:
-        provided.discard("quotas")
     params, _aliases = fold_recall_request(values, provided)
     result = await assemble_context(service=service, ctx=_get_ctx(), params=params)
     if result.digest.strip():

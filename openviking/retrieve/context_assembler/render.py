@@ -8,12 +8,18 @@ envelope costs a fraction of what recall v1's nested groups did.
 
 from __future__ import annotations
 
+import re
 from typing import Sequence
 
 from openviking.retrieve.context_assembler.models import AssembledEntry
 from openviking.utils.token_estimation import estimate_text_tokens
 
 FRAGMENT_SEPARATOR = "\n"
+
+# Both ends of the envelope, case- and whitespace-tolerant: a body that can emit
+# an opening <memory ...> tag can forge a sibling entry with its own uri, type
+# and score, which is exactly the provenance the envelope exists to carry.
+_ENVELOPE_TAG = re.compile(r"<(/?)memory(?=[\s/>])", re.IGNORECASE)
 
 
 def _attr(value: str) -> str:
@@ -23,7 +29,7 @@ def _attr(value: str) -> str:
 def _body(text: str) -> str:
     # Protect the envelope without escaping the body wholesale: agents read this
     # text as markdown, and escaping would also mangle the viking:// citations.
-    return text.replace("</memory>", "<\\/memory>")
+    return _ENVELOPE_TAG.sub(r"<\\\1memory", text)
 
 
 def render_entry(entry: AssembledEntry) -> str:

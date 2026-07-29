@@ -604,7 +604,7 @@ Injecting context every turn used to mean searching per type, reading each hit b
 **Pipeline**:
 1. **L1 query understanding**: optional bounded intent expansion from the session's recent messages (at most 3 queries, timeout fuse, falls back to the original query)
 2. **L0 retrieval**: bucketed per `quotas`, or a single whole-scope search when quotas are off
-3. **L2 assembly**: three-pass tier filling inside the token budget (everyone at abstract → upgrade to overview → high scores to full); an oversized tier falls back instead of being truncated
+3. **L2 assembly**: tier filling inside the token budget (everyone at their category's default tier first, then leftover budget deepens in score order); an oversized tier falls back instead of being truncated
 4. **L3 rewrite**: optional digest with URI citations (timeout fuse; on failure the unrewritten `rendered` is still returned)
 
 **Code entry points**:
@@ -631,8 +631,7 @@ Injecting context every turn used to mean searching per type, reading each hit b
 | `max_tokens` | int | 1600 | The single budget parameter, estimated with a CJK-aware heuristic (codepoint ≥ 0x3000 counts 1.5 tok/char, otherwise chars/4) |
 | `quotas` | object | None | Bucketed sampling; keys are `events`/`entities`/`preferences`/`experiences`/`resources`/`skills`. `limit` is ignored once active |
 | `purpose` | `chat` \| `coding` | None | Preset bucket ratios; applies only when `quotas` is not given |
-| `detail` | `auto` \| `abstract` \| `overview` \| `full` | `auto` | Per-entry tier ceiling. `auto` is the budget-driven breadth-first-then-depth fill |
-| `full_score_threshold` | float | 0.5 | Under `auto`, only entries scoring at or above this may reach the full tier |
+| `detail` | `abstract` \| `overview` \| `full` \| object | None | Pins every entry to one tier. Omitted, each category takes its default tier (below). Also accepts a per-category object such as `{"events":"overview","preferences":"abstract"}`; categories left out keep their default. `"auto"` is a deprecated spelling and behaves as if omitted |
 | `dedup_turns` | int | 0 | Cooldown window in turns; needs `session_id`. Ledger lives at `{session_uri}/.recall_log.json` |
 | `exclude_uris` | string[] | [] | Stateless dedup fallback, up to 200 entries, unioned with `dedup_turns` |
 | `peer_scope` | `actor` \| `all` | `all` | `actor` searches only the current actor peer |
@@ -647,11 +646,19 @@ Injecting context every turn used to mean searching per type, reading each hit b
 
 **Tier rules**
 
-- **Floor**: every result carries at least `uri` plus an abstract; the abstract comes from the vector index payload and costs no file read
-- **Directory hits**: memory directories have no stored abstract, so they start at the overview tier (reading the `.overview.md` sidecar) and their full tier is capped at overview
+- **Default tier per category**: with `detail` omitted, each category lands on the tier below. Only `events` reads a file; every other category costs no read
+
+  | Category | Default tier | Leftover budget may reach | Why |
+  |----------|--------------|---------------------------|-----|
+  | `events` | overview | full | The one memory type whose body is long enough for `# Summary` extraction to be a real compression |
+  | `entities` / `preferences` / `experiences` | abstract | abstract | Short bodies, and the writer stores the whole body in the abstract scalar, so abstract already is the complete file |
+  | `resources` / `skills` | abstract | abstract | The 256-char abstract from semantic processing; bodies can be large or carry credentials, so deepening is opt-in |
+  | Directory hits | overview | overview | A directory has no abstract, so it reads the `.overview.md` sidecar; a full tier is meaningless for a subtree |
+
+- **Floor**: every result carries at least its `uri`. When a category's default tier yields nothing usable — a resource that never went through semantic processing, or an abstract that busts the per-entry cap — the entry falls back to overview instead of degrading to a bare pointer
+- **Explicit `detail`**: pins every entry to that tier as both start and ceiling; entries that do not fit still step down a tier rather than being truncated
 - **Overview by source type**: memory files use the leading `# Summary` section, code files use class and function signatures (reusing `code_outline`), long documents use the heading tree plus first paragraph
-- **Per-entry cap**: `max_tokens ÷ candidate_count × 2`; a tier exceeding it falls back to the previous tier rather than being truncated
-- **resources / skills**: capped at overview under `detail="auto"` — the signature skeleton carries no function bodies; only an explicit `detail="full"` injects whole files
+- **Per-entry cap**: `max_tokens ÷ candidate_count × 2`, applied to every tier except the bare `uri`; a tier exceeding it falls back to the previous tier rather than being truncated. If budget is still left over, one final deepening pass ignores the cap and is bounded only by `max_tokens`
 
 #### 3. Examples
 
@@ -693,26 +700,38 @@ curl -X POST http://localhost:1933/api/v1/search/search \
   "result": {
     "entries": [
       {
-        "uri": "viking://user/default/memories/entities/software/openviking_fs.md",
-        "category": "entities",
+        "uri": "viking://user/default/memories/events/2026/07/14/tier_design.md",
+        "category": "events",
         "score": 0.45,
         "detail": "full",
-        "text": "# OpenViking FS storage layer\n...",
+        "text": "# Summary\nTiers now take a per-category default\n...",
+        "origin": "self"
+      },
+      {
+        "uri": "viking://user/default/memories/entities/software/openviking_fs.md",
+        "category": "entities",
+        "score": 0.43,
+        "detail": "abstract",
+        "text": "OpenViking FS storage layer...",
         "origin": "self"
       }
     ],
-    "rendered": "<memory uri=\"viking://user/default/memories/entities/software/openviking_fs.md\" type=\"entities\" score=\"0.45\" detail=\"full\">\n# OpenViking FS storage layer\n...\n</memory>",
+    "rendered": "<memory uri=\"viking://user/default/memories/events/2026/07/14/tier_design.md\" type=\"events\" score=\"0.45\" detail=\"full\">\n# Summary\n...\n</memory>",
     "digest": "",
     "stats": {
       "candidates": 13,
       "returned": 13,
       "dropped": 0,
+      "deduped": 0,
       "max_tokens": 3000,
       "used_tokens": 2510,
       "per_entry_cap": 462,
-      "tier_counts": {"full": 7, "overview": 3, "abstract": 3},
+      "detail": null,
+      "tier_counts": {"full": 4, "overview": 2, "abstract": 7},
+      "fill": {"floor_tokens": 1890, "overview_upgrades": 0, "full_upgrades": 4, "spare_upgrades": 0},
       "query_expansion": "used",
       "rewrite": "off",
+      "rewrite_usage": null,
       "excluded": 0,
       "dedup": {"turns": 5, "status": "ok", "cooled": 2, "turn": 34}
     }

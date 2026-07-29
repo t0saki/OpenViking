@@ -53,7 +53,6 @@ export function buildContextSearchBody(cfg = {}, options = {}) {
     query: "",
     mode: "context",
     purpose: "coding",
-    detail: "auto",
     max_tokens: Math.max(64, Math.floor(Number(cfg.recallMaxTokens || 1600))),
     score_threshold: Number.isFinite(Number(cfg.scoreThreshold)) ? Number(cfg.scoreThreshold) : 0.35,
   };

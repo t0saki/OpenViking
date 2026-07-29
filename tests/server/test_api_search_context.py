@@ -187,8 +187,9 @@ async def test_unknown_quota_keys_are_rejected(client: httpx.AsyncClient):
 async def test_out_of_range_context_params_are_rejected(client: httpx.AsyncClient):
     for payload in (
         {"mode": "context", "max_tokens": 1},
-        {"mode": "context", "full_score_threshold": 2.0},
         {"mode": "context", "detail": "everything"},
+        {"mode": "context", "detail": {"bogus": "full"}},
+        {"mode": "context", "detail": {"events": "everything"}},
         {"mode": "context", "rewrite_max_bullets": 0},
         {"mode": "context", "exclude_uris": [f"viking://{i}" for i in range(201)]},
     ):
