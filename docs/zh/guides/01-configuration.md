@@ -886,7 +886,7 @@ AST 提取支持：Python、JavaScript/TypeScript、Java、C/C++、Rust、Go、C
     "hotness_alpha": 0.0,
     "score_propagation_alpha": 1.0,
     "recall_intent_timeout_s": 5.0,
-    "recall_rewrite_timeout_s": 8.0
+    "recall_rewrite_timeout_s": 30.0
   }
 }
 ```
@@ -903,7 +903,7 @@ AST 提取支持：Python、JavaScript/TypeScript、Java、C/C++、Rust、Go、C
 | 参数 | 类型 | 说明 | 默认值 |
 |------|------|------|--------|
 | `recall_intent_timeout_s` | float | 会话感知查询扩展的超时；超时后回退为用户原查询 | `5.0` |
-| `recall_rewrite_timeout_s` | float | digest 重写的超时；超时后 `digest` 为空并照常返回 `rendered` | `8.0` |
+| `recall_rewrite_timeout_s` | float | digest 重写的超时；超时后 `digest` 为空并照常返回 `rendered` | `30.0` |
 
 两个 LLM 环节都是纯 opt-in：查询扩展需要传 `session_id`，重写需要传 `rewrite`。任一环节失败都优雅降级，不会阻塞召回。
 

@@ -918,7 +918,7 @@ Retrieval ranking configuration for final search scores.
     "hotness_alpha": 0.0,
     "score_propagation_alpha": 1.0,
     "recall_intent_timeout_s": 5.0,
-    "recall_rewrite_timeout_s": 8.0
+    "recall_rewrite_timeout_s": 30.0
   }
 }
 ```
@@ -935,7 +935,7 @@ The `mode="context"` assembly face on `/search` uses two timeout fuses:
 | Parameter | Type | Description | Default |
 |-----------|------|-------------|---------|
 | `recall_intent_timeout_s` | float | Timeout for session-aware query expansion; on timeout the original user query is used | `5.0` |
-| `recall_rewrite_timeout_s` | float | Timeout for the digest rewrite; on timeout `digest` is empty and `rendered` is returned as usual | `8.0` |
+| `recall_rewrite_timeout_s` | float | Timeout for the digest rewrite; on timeout `digest` is empty and `rendered` is returned as usual | `30.0` |
 
 Both LLM steps are strictly opt-in: expansion needs a `session_id`, the rewrite needs `rewrite`. Either one failing degrades gracefully and never blocks recall.
 

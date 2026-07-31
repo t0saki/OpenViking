@@ -32,7 +32,7 @@ class RetrievalConfig(BaseModel):
         description="Timeout in seconds for optional context query expansion.",
     )
     recall_rewrite_timeout_s: float = Field(
-        default=8.0,
+        default=30.0,
         gt=0.0,
         description="Timeout in seconds for optional context digest rewriting.",
     )

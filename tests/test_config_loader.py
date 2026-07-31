@@ -239,6 +239,7 @@ def test_openviking_config_retrieval_hotness_alpha_defaults_to_zero(monkeypatch)
 
     assert config.retrieval.hotness_alpha == 0.0
     assert config.retrieval.score_propagation_alpha == 1.0
+    assert config.retrieval.recall_rewrite_timeout_s == 30.0
     assert config.storage.transaction.redo_recovery_enabled is True
 
     OpenVikingConfigSingleton.reset_instance()
