@@ -14,6 +14,7 @@
     "recallMaxTokens": 1600,
     "recallDedupTurns": 5,
     "recallQueryExpansion": "auto",
+    "recallCompress": "auto",
 
     "claude_code": {},
     "codex": {},

@@ -36,10 +36,10 @@ export OPENVIKING_RECALL_COMPRESS=off
 
 两个插件都有本地压缩逻辑，但配置模型不同：
 
-- Claude Code 的 `recallCompress=client` 或 `auto` 会调用本地 `claude -p`，默认使用 Sonnet + low；`server` 改由 OpenViking 服务端生成 digest。该功能默认关闭。
+- Claude Code 默认使用 `recallCompress=auto`：优先调用本地 `claude -p`（Sonnet + low），本地 CLI 不可用时回落到 OpenViking 服务端生成 digest。`client` 强制只用本地，`server` 强制只用服务端。
 - Codex 默认调用本地 `codex exec`，模型顺序为 `gpt-5.3-codex-spark`，其次 `gpt-5.6-luna` + low。它不会启用服务端压缩。
 
-`OPENVIKING_RECALL_COMPRESS=off` 在两端都会关闭压缩。Claude Code 还接受 `client`、`server` 和 `auto`；Codex 只把该变量作为开关。旧的 Claude Code 变量 `OPENVIKING_RECALL_REWRITE` 仍可兼容，但新配置请使用统一名称。
+两端的共同默认配置是 `recallCompress=auto`。`OPENVIKING_RECALL_COMPRESS=off` 会同时关闭两端压缩；Codex 将 `auto` 或 `client` 解释为启用本地压缩。旧的 Claude Code 变量 `OPENVIKING_RECALL_REWRITE` 仍可兼容，但新配置请使用统一名称。
 
 也可以把同样的设置写进 `~/.openviking/ovcli.conf`：
 

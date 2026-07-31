@@ -68,7 +68,8 @@ function envBool(name) {
   if (v == null || v === "") return undefined;
   const lower = v.trim().toLowerCase();
   if (lower === "0" || lower === "false" || lower === "no" || lower === "off") return false;
-  if (lower === "1" || lower === "true" || lower === "yes") return true;
+  if (lower === "1" || lower === "true" || lower === "yes" || lower === "on"
+      || lower === "auto" || lower === "client") return true;
   return undefined;
 }
 
@@ -76,7 +77,8 @@ function configBool(value, fallback) {
   if (typeof value === "boolean") return value;
   const lower = String(value ?? "").trim().toLowerCase();
   if (lower === "0" || lower === "false" || lower === "no" || lower === "off") return false;
-  if (lower === "1" || lower === "true" || lower === "yes" || lower === "on") return true;
+  if (lower === "1" || lower === "true" || lower === "yes" || lower === "on"
+      || lower === "auto" || lower === "client") return true;
   return fallback;
 }
 

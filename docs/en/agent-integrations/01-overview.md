@@ -36,10 +36,10 @@ export OPENVIKING_RECALL_COMPRESS=off
 
 Both plugins have a local compression path, but expose it differently:
 
-- Claude Code calls local `claude -p` when `recallCompress` is `client` or `auto`, using Sonnet with low effort by default; `server` asks OpenViking to produce the digest instead. This feature is off by default.
+- Claude Code defaults to `recallCompress=auto`: it prefers local `claude -p` (Sonnet with low effort) and falls back to an OpenViking server digest when the local CLI is unavailable. `client` forces local-only compression, while `server` forces server-only compression.
 - Codex calls local `codex exec` by default, trying `gpt-5.3-codex-spark` first and then `gpt-5.6-luna` with low effort. It does not enable server-side compression.
 
-`OPENVIKING_RECALL_COMPRESS=off` disables compression in both plugins. Claude Code also accepts `client`, `server`, and `auto`; Codex treats the variable as an on/off switch. The old Claude Code variable `OPENVIKING_RECALL_REWRITE` remains supported for compatibility, but new configurations should use the unified name.
+The shared default is `recallCompress=auto`. `OPENVIKING_RECALL_COMPRESS=off` disables compression in both plugins; Codex interprets `auto` or `client` as enabling its local compressor. The old Claude Code variable `OPENVIKING_RECALL_REWRITE` remains supported for compatibility, but new configurations should use the unified name.
 
 The same settings can live in `~/.openviking/ovcli.conf`:
 

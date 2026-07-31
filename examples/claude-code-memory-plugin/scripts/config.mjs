@@ -271,8 +271,9 @@ export function loadConfig() {
       process.env.OPENVIKING_RECALL_QUERY_EXPANSION,
       str(cc.recallQueryExpansion, "auto"),
     ) === "off" ? "off" : "auto",
-    // Digest rewriting is opt-in on both paths: a failed digest always falls
-    // back to the unrewritten context block.
+    // Digest compression defaults to auto: prefer the local host CLI and fall
+    // back to the server when it is unavailable. A failed digest still falls
+    // back to the uncompressed context block.
     // OPENVIKING_RECALL_REWRITE / recallRewrite are legacy aliases. Keep the
     // internal field name because the shared core maps this mode to the
     // server's `rewrite` request field.
@@ -281,7 +282,7 @@ export function loadConfig() {
         ?? process.env.OPENVIKING_RECALL_REWRITE
         ?? cc.recallCompress
         ?? cc.recallRewrite,
-      "off",
+      "auto",
     ),
     recallCompressMinInputChars: Math.max(0, Math.floor(num(
       process.env.OPENVIKING_RECALL_COMPRESS_MIN_INPUT_CHARS,

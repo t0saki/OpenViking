@@ -11,7 +11,7 @@
  *     "url": "...", "api_key": "...",
  *     "plugin": {
  *       "recallMaxTokens": 1600,
- *       "recallCompress": "off"
+ *       "recallCompress": "auto"
  *     }
  *   }
  *
@@ -71,7 +71,7 @@ const REWRITE_MODES = new Set(["off", "client", "server", "auto"]);
 /**
  * Normalize the tri-state rewrite knob.
  *
- * off    — never rewrite (default; the whole LLM path is opt-in)
+ * off    — never compress
  * client — always compress locally through the host CLI
  * server — always ask the server for a digest
  * auto   — prefer local (cost lands on the user's own subscription), fall back

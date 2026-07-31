@@ -152,7 +152,7 @@ claude
 | `OPENVIKING_RECALL_MAX_TOKENS`         | `1600`        | 服务端组装上下文块的 token 预算（感知 CJK 的估算）                   |
 | `OPENVIKING_RECALL_DEDUP_TURNS`        | `5`           | 跨轮冷却：最近 N 轮已注入过的 URI 本轮跳过                           |
 | `OPENVIKING_RECALL_QUERY_EXPANSION`    | `auto`        | `auto` 让服务端结合会话上下文扩展短提问；`off` 关闭                   |
-| `OPENVIKING_RECALL_COMPRESS`           | `off`         | digest 压缩：`off`、`client`（本地宿主 CLI）、`server`、`auto`（本地优先、失败回落服务端） |
+| `OPENVIKING_RECALL_COMPRESS`           | `auto`        | digest 压缩：`off`、`client`（本地宿主 CLI）、`server`、`auto`（本地优先、失败回落服务端） |
 | `OPENVIKING_RECALL_COMPRESS_MAX_BULLETS` | `6`         | digest 条数上限                                                     |
 
 #### 捕获调优
@@ -223,7 +223,7 @@ bypass 命中时所有 hook 直接放行，不联系 OpenViking。
   "plugin": {
     "recallMaxTokens": 1600,
     "recallDedupTurns": 5,
-    "claude_code": { "recallCompress": "auto" }
+    "recallCompress": "auto"
   }
 }
 ```
@@ -232,7 +232,7 @@ bypass 命中时所有 hook 直接放行，不联系 OpenViking。
 
 ### digest 压缩
 
-`recallCompress` 决定可选的 digest 在哪里生成。`client` 始终通过 `claude -p` 在本地压缩（默认 Sonnet + 低推理档——Haiku 不支持 effort 旋钮，时延不可控），token 成本留在你自己的订阅额度里。`server` 让 OpenViking 生成 digest。`auto` 优先本地，探测不到可用的宿主 CLI 时回落到服务端。所有路径都是 opt-in，失败一律退回未压缩的上下文块；压缩子进程运行时所有 OpenViking hook 均被禁用，不会递归。旧的环境变量 `OPENVIKING_RECALL_REWRITE` 和配置键 `recallRewrite` 仍作为低优先级兼容别名保留。
+`recallCompress` 决定 digest 在哪里生成，默认值为 `auto`。`client` 始终通过 `claude -p` 在本地压缩（默认 Sonnet + 低推理档——Haiku 不支持 effort 旋钮，时延不可控），token 成本留在你自己的订阅额度里。`server` 让 OpenViking 生成 digest。`auto` 优先本地，探测不到可用的宿主 CLI 时回落到服务端。所有路径失败时都退回未压缩的上下文块；压缩子进程运行时所有 OpenViking hook 均被禁用，不会递归。旧的环境变量 `OPENVIKING_RECALL_REWRITE` 和配置键 `recallRewrite` 仍作为低优先级兼容别名保留。
 
 ### 遗留 `claude_code` 块（在 `ov.conf` 里）
 
@@ -245,7 +245,7 @@ bypass 命中时所有 hook 直接放行，不联系 OpenViking。
 | Hook                | 超时   | 备注                                                                                          |
 |---------------------|--------|----------------------------------------------------------------------------------------------|
 | `SessionStart`      | `120s` | 充裕，因为 resume / compact 可能拉一个较大的 archive overview                                |
-| `UserPromptSubmit`  | `8s`   | 自动召回必须快，prompt 提交不能被 hook 阻塞                                                  |
+| `UserPromptSubmit`  | `60s`  | 给默认本地压缩器留出完成时间；其自身超时更短，失败时可在 hook 截止前安全降级                  |
 | `Stop`              | `45s`  | 自动捕获要解析 transcript + 推 turn；async detach 让用户感知接近 0                          |
 | `PreCompact`        | `30s`  | 同步 commit，CC 紧接着会改 transcript                                                        |
 | `SessionEnd`        | `30s`  | 最终 commit；async detach                                                                    |

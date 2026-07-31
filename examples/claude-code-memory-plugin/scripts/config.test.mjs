@@ -27,6 +27,20 @@ async function withConfigEnv(values, action) {
   }
 }
 
+test("Claude compression defaults to auto", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "ov-cc-config-"));
+  try {
+    await withConfigEnv({
+      OPENVIKING_CLI_CONFIG_FILE: join(dir, "missing-ovcli.conf"),
+      OPENVIKING_CONFIG_FILE: join(dir, "missing-ov.conf"),
+    }, () => {
+      assert.equal(loadConfig().recallRewrite, "auto");
+    });
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("OPENVIKING_RECALL_COMPRESS is the canonical Claude compression mode", async () => {
   const dir = await mkdtemp(join(tmpdir(), "ov-cc-config-"));
   try {
