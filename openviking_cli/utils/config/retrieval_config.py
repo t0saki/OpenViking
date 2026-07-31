@@ -36,5 +36,14 @@ class RetrievalConfig(BaseModel):
         gt=0.0,
         description="Timeout in seconds for optional context digest rewriting.",
     )
+    enable_intent: bool = Field(
+        default=True,
+        description=(
+            "Whether search() loads session context and runs LLM intent analysis / query "
+            "planning when session_id is present. false skips session load, "
+            "get_context_for_search, and IntentAnalyzer — searches with the raw query only "
+            "(same path as no-session search)."
+        ),
+    )
 
     model_config = {"extra": "forbid"}

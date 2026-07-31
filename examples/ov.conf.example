@@ -4,6 +4,9 @@
         "port": 1933,
         "root_api_key": null,
         "cors_origins": ["*"],
+        "agent_evolution": {
+            "enabled": false,
+        },
         "observability": {
             "metrics": {
                 "enabled": true,
@@ -61,6 +64,11 @@
         "agfs": {
             "backend": "local",
             "timeout": 10,
+            "pathlock": {
+                "provider": "filesystem",
+                "lock_timeout_secs": 0.0,
+                "lock_expire_secs": 1800.0
+            },
             "s3": {
                 "bucket": null,
                 "region": null,
@@ -213,17 +221,18 @@
             "mineru_timeout": 300.0,
         },
         "code": {
-            "code_summary_mode": "ast",
-            "extract_functions": true,
-            "extract_classes": true,
-            "extract_imports": true,
-            "include_comments": true,
-            "max_line_length": 1000,
-            "max_token_limit": 50000,
-            "truncation_strategy": "head",
-            "warn_on_truncation": true,
             "github_raw_domain": "raw.githubusercontent.com",
-            "code_hosting_domains": ["github.com", "gitlab.com"],
+            "code_hosting_domains": [
+                "github.com",
+                "gitlab.com",
+                "gitcode.com",
+                "gitee.com",
+                "bitbucket.org",
+                "codeberg.org",
+                "gitea.com",
+                "atomgit.com",
+                "git.sr.ht"
+            ],
             "github_domains": ["github.com", "www.github.com"],
             "gitlab_domains": ["gitlab.com", "www.gitlab.com"],
         },

@@ -13,6 +13,7 @@ from typing import Any
 from loguru import logger
 
 from openviking.utils.model_retry import is_retryable_rate_limit_error, rate_limit_retry_delay
+from openviking.utils.multimodal import redact_image_data_urls
 from vikingbot.integrations.langfuse import LangfuseClient
 from vikingbot.providers.base import (
     LLMProvider,
@@ -52,7 +53,7 @@ class VLMProviderAdapter(LLMProvider):
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
         model: str | None = None,
-        max_tokens: int = 4096,
+        max_tokens: int | None = None,
         temperature: float = 0.7,
         session_id: str | None = None,
     ) -> LLMResponse:
@@ -72,7 +73,7 @@ class VLMProviderAdapter(LLMProvider):
                         name="llm-chat",
                         as_type="generation",
                         model=effective_model,
-                        input=messages,
+                        input=redact_image_data_urls(messages),
                         metadata=metadata,
                     )
                     if response_id:
@@ -82,13 +83,16 @@ class VLMProviderAdapter(LLMProvider):
 
             # --- Call VLM backend ---
             attempt = 1
+            # An explicit empty list asks VLM backends for a structured response
+            # without exposing tools, so per-response usage is preserved.
+            response_tools = tools if tools is not None else []
             while True:
                 try:
                     result = await self._vlm.get_completion_async(
                         messages=messages,
                         thinking=getattr(self._vlm, "thinking", None),
-                        tools=tools,
-                        tool_choice="auto" if tools else None,
+                        tools=response_tools,
+                        tool_choice="auto" if response_tools else None,
                     )
                     break
                 except Exception as e:
@@ -125,7 +129,7 @@ class VLMProviderAdapter(LLMProvider):
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
         model: str | None = None,
-        max_tokens: int = 4096,
+        max_tokens: int | None = None,
         temperature: float = 0.7,
         session_id: str | None = None,
     ) -> AsyncIterator[LLMStreamEvent]:
@@ -161,20 +165,25 @@ class VLMProviderAdapter(LLMProvider):
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None,
         model: str | None,
-        max_tokens: int,
+        max_tokens: int | None,
         temperature: float,
     ) -> AsyncIterator[LLMStreamEvent]:
+        configured_max_tokens = getattr(self._vlm, "max_tokens", None)
+        effective_max_tokens = (
+            configured_max_tokens if configured_max_tokens is not None else max_tokens
+        )
         kwargs: dict[str, Any] = {
             "model": model or getattr(self._vlm, "model", None) or self._default_model,
             "messages": messages,
             "temperature": getattr(self._vlm, "temperature", temperature),
-            "max_tokens": getattr(self._vlm, "max_tokens", None) or max_tokens,
             "thinking": {
                 "type": "enabled" if getattr(self._vlm, "thinking", False) else "disabled"
             },
             "stream": True,
             "stream_options": {"include_usage": True},
         }
+        if effective_max_tokens is not None:
+            kwargs["max_tokens"] = effective_max_tokens
         extra_headers = getattr(self._vlm, "extra_headers", None)
         if extra_headers:
             kwargs["extra_headers"] = extra_headers

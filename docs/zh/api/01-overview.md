@@ -431,6 +431,7 @@ JSON 输出 - 错误：
 | GET | `/api/v1/content/overview` | 读取概览（L1） |
 | GET | `/api/v1/content/download` | 下载原始文件字节 |
 | POST | `/api/v1/content/write` | 写入内容并刷新语义索引 |
+| POST | `/api/v1/content/batch-write` | 执行带前置条件的多文件写入 |
 | POST | `/api/v1/content/set_tags` | 设置检索标签 |
 | POST | `/api/v1/content/reindex` | 重建语义或向量索引 |
 
@@ -466,7 +467,7 @@ JSON 输出 - 错误：
 | POST | `/api/v1/sessions/{session_id}/used` | 记录实际使用的上下文或技能 |
 | POST | `/api/v1/search/recall` | 已弃用：`/search` `mode="context"` 之上的轻量预设 |
 
-### [检索](06-retrieval.md)、[代码检索](21-code.md)与[关系](13-relations.md)
+### [检索](06-retrieval.md)与[关系](13-relations.md)
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
@@ -474,9 +475,6 @@ JSON 输出 - 错误：
 | POST | `/api/v1/search/search` | 上下文感知搜索；`mode="context"` 返回可注入的组装上下文 |
 | POST | `/api/v1/search/grep` | 内容模式搜索 |
 | POST | `/api/v1/search/glob` | 文件模式匹配 |
-| POST | `/api/v1/code/outline` | 提取代码结构 |
-| POST | `/api/v1/code/search` | 代码搜索 |
-| POST | `/api/v1/code/expand` | 展开代码上下文 |
 | GET | `/api/v1/relations` | 获取资源关系 |
 | POST | `/api/v1/relations/link` | 创建资源链接 |
 | DELETE | `/api/v1/relations/link` | 删除资源链接 |
@@ -512,6 +510,7 @@ JSON 输出 - 错误：
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | `/api/v1/tasks/{task_id}` | 获取后台任务 |
+| POST | `/api/v1/tasks/{task_id}/cancel` | 取消后台任务 |
 | GET | `/api/v1/tasks` | 列出后台任务 |
 | GET | `/api/v1/observer/queue` | 队列状态 |
 | GET | `/api/v1/observer/vikingdb` | VikingDB 状态 |
@@ -526,6 +525,7 @@ JSON 输出 - 错误：
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
+| GET | `/api/v1/admin/agent-evolution` | 获取实例级 Agent 进化开关的实时状态 |
 | POST | `/api/v1/admin/accounts` | 创建账号及首个管理员 |
 | GET | `/api/v1/admin/accounts` | 列出账号 |
 | POST | `/api/v1/admin/migrate` | 迁移旧版身份数据 |
@@ -533,7 +533,7 @@ JSON 输出 - 错误：
 | POST | `/api/v1/admin/accounts/{account_id}/users` | 注册用户 |
 | GET | `/api/v1/admin/accounts/{account_id}/users` | 列出用户 |
 | DELETE | `/api/v1/admin/accounts/{account_id}/users/{user_id}` | 移除用户 |
-| PUT | `/api/v1/admin/accounts/{account_id}/users/{user_id}/role` | 修改用户角色 |
+| PUT | `/api/v1/admin/accounts/{account_id}/users/{user_id}/role` | 将用户提升为 ADMIN |
 | POST | `/api/v1/admin/accounts/{account_id}/users/{user_id}/key` | 重新生成用户 Key |
 | GET | `/api/v1/privacy-configs` | 列出隐私配置分类 |
 | GET | `/api/v1/privacy-configs/{category}` | 列出分类目标 |
@@ -543,10 +543,12 @@ JSON 输出 - 错误：
 | POST | `/api/v1/privacy-configs/{category}/{target_key}` | 写入并激活新版本 |
 | POST | `/api/v1/privacy-configs/{category}/{target_key}/activate` | 激活指定版本 |
 
-### [WebDAV](20-webdav.md) 与 [VikingBot API](24-vikingbot.md)
+### [OpenViking Assets](22-openviking-assets.md)、[WebDAV](20-webdav.md) 与 [VikingBot API](24-vikingbot.md)
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
+| POST | `/api/v1/openviking-assets/resolve` | 解析并校验 Catalog 与 Manifest，返回标准化资产计划 |
+| POST | `/api/v1/openviking-assets/preflight` | 只读校验 Git 仓库和 ref 的访问权限 |
 | OPTIONS | `/webdav/resources`、`/webdav/resources/{resource_path}` | 查询 WebDAV 能力 |
 | PROPFIND | `/webdav/resources`、`/webdav/resources/{resource_path}` | 查询资源属性 |
 | GET / HEAD | `/webdav/resources`、`/webdav/resources/{resource_path}` | 读取文件或目录 |
@@ -558,6 +560,8 @@ JSON 输出 - 错误：
 | POST | `/bot/v1/chat` | VikingBot 非流式对话 |
 | POST | `/bot/v1/chat/stream` | VikingBot 流式对话 |
 | POST | `/bot/v1/feedback` | 提交 VikingBot 回答反馈 |
+| POST | `/bot/v1/compile` | 启动 Skill 驱动的 Compile 任务 |
+| GET | `/bot/v1/compile/{task_id}` | 获取 Compile 任务状态 |
 
 ---
 
@@ -572,4 +576,4 @@ JSON 输出 - 错误：
 | 数据生命周期 | Watch、快照、OVPack |
 | 运维与观测 | 系统、任务、Observer、Metrics |
 | 身份与治理 | 管理员、隐私配置 |
-| 协议与扩展 | WebDAV、VikingBot API |
+| 协议与扩展 | OpenViking Assets、WebDAV、VikingBot API |

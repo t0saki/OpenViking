@@ -13,8 +13,8 @@ import asyncio
 import re
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from openviking.parse.parsers.code.ast.code_tools import outline_file
-from openviking.parse.parsers.code.ast.extractor import get_extractor
+from openviking.parse.parsers.code.ast import extract_skeleton_result
+from openviking.parse.parsers.code.ast.providers import supports_code_skeleton
 from openviking.retrieve.context_assembler.gather import Candidate
 from openviking.retrieve.context_assembler.params import (
     DEFAULT_TIER,
@@ -60,7 +60,7 @@ def _is_memory_uri(uri: str) -> bool:
 
 def _is_code_uri(uri: str) -> bool:
     try:
-        return bool(get_extractor().supports(uri))
+        return supports_code_skeleton(uri)
     except Exception:
         return False
 
@@ -110,9 +110,9 @@ def overview_from_content(candidate: Candidate, content: str) -> str:
         # The cached content already is the directory's own overview sidecar.
         return content.strip()
     if _is_code_uri(candidate.base_uri):
-        outline = outline_file(content, filename_from_uri(candidate.base_uri))
-        if outline and not outline.startswith("Error:"):
-            return outline.strip()
+        extraction = extract_skeleton_result(filename_from_uri(candidate.base_uri), content)
+        if extraction.text:
+            return extraction.text.strip()
     if _is_memory_uri(candidate.base_uri):
         summary = extract_summary_section(content)
         if summary:

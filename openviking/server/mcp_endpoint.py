@@ -3,8 +3,7 @@
 """MCP (Model Context Protocol) endpoint for OpenViking server.
 
 Exposes tools to Claude Code (or any MCP client) via streamable HTTP:
-  find, search, read, list, remember, add_resource, grep, glob,
-  code_outline, code_search, code_expand, forget, health
+  find, search, read, list, remember, add_resource, grep, glob, forget, health
 
 Mounted on the FastAPI app at /mcp. The MCP session manager lifecycle is
 tied to the FastAPI app lifespan (not a sub-app lifespan) so the task group
@@ -31,13 +30,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from openviking.parse.parsers.code.ast.code_tools import (
-    CODE_SEARCH_CONCURRENCY,
-    expand_symbol,
-    filter_code_uris,
-    outline_file,
-    search_symbols,
-)
+from openviking.resource.processing_mode import DEFAULT_PROCESSING_MODE, ProcessingMode
 from openviking.retrieve.context_assembler import assemble_context
 from openviking.retrieve.context_assembler.recall_preset import fold_recall_request
 from openviking.server.auth import _extract_api_key, resolve_actor_peer_headers, resolve_identity
@@ -59,9 +52,6 @@ from openviking_cli.exceptions import (
 )
 from openviking_cli.session.user_id import UserIdentifier
 from openviking_cli.utils import get_logger
-
-# Backwards-compatible alias for existing tests that import this private name.
-_filter_code_uris = filter_code_uris
 
 logger = get_logger(__name__)
 
@@ -283,7 +273,8 @@ async def search(
     service = get_service()
     ctx = _get_ctx()
     session = None
-    if session_id:
+    # Intent off: skip session.load — SearchService will not scan session either.
+    if session_id and service.search.is_intent_enabled():
         session = service.sessions.session(ctx, session_id)
         await session.load()
     result = await service.search.search(
@@ -555,10 +546,14 @@ async def _maybe_sitemap_hint(path: str) -> str:
 async def add_resource(
     path: str = "",
     temp_file_id: str = "",
+    add_type: str = "",
     description: str = "",
     watch_interval: float = 0,
+    processing_mode: ProcessingMode = DEFAULT_PROCESSING_MODE,
     to: str = "",
     parent: str = "",
+    tags: Optional[list[str]] = None,
+    tag_mode: str = "replace",
     args: Optional[dict[str, Any]] = None,
 ) -> str:
     """Add a resource to OpenViking. Asynchronous — processing happens in the background.
@@ -574,14 +569,25 @@ async def add_resource(
     Args:
         path: Remote URL or local filesystem path. Required unless ``temp_file_id`` is set.
         temp_file_id: Server-minted upload id from a prior signed local-file upload.
+        add_type: Explicit Connector source type (e.g. "tos", "git"). When set, the
+            request routes through the Connector integration (must be enabled
+            server-side) and ``path`` is sent verbatim — never treated as a local
+            file. Requires an exact ``to`` target and cannot be combined with
+            ``temp_file_id`` or ``parent``. Leave empty for the default path-probing
+            behavior.
         description: Optional human-readable reason for adding the resource.
         watch_interval: Auto-refresh cadence in minutes. 0 = no watch. Prefer >=1440 (24h)
             unless the source changes faster — every refresh re-embeds the whole resource.
             Only applies to remote-URL invocations.
+        processing_mode: "semantic_and_vectors" for normal semantic processing, or
+            "vectors_only" to skip semantic understanding and only build vector indexes.
         to: Target URI under viking://resources/ (e.g. "viking://resources/volcengine/OpenViking").
-            Leave empty to derive a URI from the source.
+            Required when ``add_type`` is set; otherwise leave empty to derive a URI
+            from the source.
         parent: Parent URI under viking://resources/ for remote imports. Mutually exclusive
-            with ``to``.
+            with ``to`` and not supported when ``add_type`` is set.
+        tags: Optional explicit k=v retrieval tags to apply after ingestion.
+        tag_mode: Tag update mode, "replace" or "append". Defaults to "replace".
         args: Parser-specific options, e.g. {"feishu_access_token": "..."} for Feishu imports,
             or {"site": true} for whole-site ingestion.
     """
@@ -596,6 +602,16 @@ async def add_resource(
             "use a positive number of minutes (>=1440 recommended) to subscribe to auto-refresh."
         )
 
+    add_type = add_type.strip()
+    if add_type and temp_file_id:
+        return "Error: add_type cannot be combined with temp_file_id."
+    if add_type and not path:
+        return "Error: add_type requires 'path'."
+    if add_type and parent:
+        return "Error: add_type cannot be combined with parent."
+    if add_type and not to:
+        return "Error: add_type requires an exact 'to' target."
+
     # Branch 1: ingest by temp_file_id. Kept for backward compat / REST-style use — the
     # signed upload now auto-ingests server-side, so agents no longer need this second leg.
     if temp_file_id:
@@ -605,7 +621,15 @@ async def add_resource(
         store = TempUploadStore.build(server_config)
         try:
             result = await ingest_temp_upload(
-                store, temp_file_id, ctx, to=to, reason=description, args=args
+                store,
+                temp_file_id,
+                ctx,
+                to=to,
+                reason=description,
+                args=args,
+                processing_mode=processing_mode,
+                tags=tags,
+                tag_mode=tag_mode,
             )
         except (PermissionDeniedError, InvalidArgumentError) as exc:
             return f"Error: {exc}"
@@ -638,20 +662,28 @@ async def add_resource(
             f'Pass it as the temp_file_id kwarg: add_resource(temp_file_id="{path}")'
         )
 
-    # Branch 3: remote URL — same flow as before
-    if is_remote_resource_source(path):
+    # Branch 3: remote URL, or an explicitly declared Connector source type
+    # (declared requests are delegated or rejected server-side, never resolved
+    # as local paths)
+    if add_type or is_remote_resource_source(path):
         try:
-            path = require_remote_resource_source(path)
+            path = require_remote_resource_source(
+                path, declared_connector_add_type=add_type or None
+            )
             result = await service.resources.add_resource(
                 path=path,
                 ctx=ctx,
+                add_type=add_type or None,
                 to=to or None,
                 parent=parent or None,
                 reason=description,
                 wait=False,
                 watch_interval=watch_interval,
+                processing_mode=processing_mode,
                 enforce_public_remote_targets=True,
                 args=args,
+                tags=tags,
+                tag_mode=tag_mode,
             )
         except Exception as exc:
             return f"Error adding resource: {exc}"
@@ -672,7 +704,8 @@ async def add_resource(
         # Detect-and-suggest: if this single page belongs to a site that exposes a
         # sitemap/RSS feed, hint at whole-site ingestion. Never auto-crawls; the
         # add above is already done, so a slow/failed probe has no functional impact.
-        hint = await _maybe_sitemap_hint(path)
+        # Declared Connector imports ingest the whole source already — no hint.
+        hint = None if add_type else await _maybe_sitemap_hint(path)
         if hint:
             message += "\n" + hint
         return message
@@ -692,6 +725,9 @@ async def add_resource(
         to=to,
         reason=description,
         actor_peer_id=ctx.actor_peer_id or "",
+        processing_mode=processing_mode,
+        tags=tags,
+        tag_mode=tag_mode,
     )
     base_url, url_source = _resolve_public_base_url()
     upload_url = f"{base_url}/api/v1/resources/temp_upload?token={quote(token, safe='')}"
@@ -892,97 +928,6 @@ async def forget(uri: str, recursive: bool = False) -> str:
     return f"Deleted: {uri}"
 
 
-# -- code navigation -------------------------------------------------------
-
-
-def _require_viking_uri(uri: str) -> Optional[str]:
-    """Return error message if uri is not a viking:// URI, else None."""
-    if not isinstance(uri, str) or not uri.startswith("viking://"):
-        return (
-            "Error: only viking:// URIs are supported; "
-            "use add_resource to ingest local code as a viking:// resource first."
-        )
-    return None
-
-
-@mcp.tool()
-async def code_outline(uri: str) -> str:
-    """Show symbol structure (classes, functions, methods, line ranges) of a viking:// source file without reading full content."""
-    err = _require_viking_uri(uri)
-    if err:
-        return err
-    service = get_service()
-    ctx = _get_ctx()
-    try:
-        content = await service.fs.read(uri, ctx=ctx)
-    except Exception as exc:
-        return f"Error: failed to read {uri}: {exc}"
-    if not isinstance(content, str):
-        return f"Error: {uri} is not text"
-    return outline_file(content, uri)
-
-
-@mcp.tool()
-async def code_search(query: str, uri: str) -> str:
-    """Search symbol names (class/function/method) by substring across a viking:// code repository. Returns symbol type, class context, file URI, and line range. Scans up to 200 source files — narrow uri for deeper coverage."""
-    err = _require_viking_uri(uri)
-    if err:
-        return err
-    if not query:
-        return "Error: empty query"
-
-    service = get_service()
-    ctx = _get_ctx()
-    try:
-        entries = await service.fs.ls(uri, ctx=ctx, recursive=True, output="original")
-    except Exception as exc:
-        return f"Error: failed to list {uri}: {exc}"
-
-    code_uris, capped = filter_code_uris(entries or [])
-    if not code_uris:
-        return f"No supported source files found under {uri}"
-
-    semaphore = asyncio.Semaphore(CODE_SEARCH_CONCURRENCY)
-
-    async def _read(u: str) -> Optional[tuple[str, str]]:
-        async with semaphore:
-            try:
-                body = await service.fs.read(u, ctx=ctx)
-            except Exception as exc:
-                logger.warning("code_search: read failed for %s: %s", u, exc)
-                return None
-            if isinstance(body, str):
-                return body, u
-            return None
-
-    fetched = await asyncio.gather(*[_read(u) for u in code_uris])
-    files = [pair for pair in fetched if pair is not None]
-    result = search_symbols(query, files)
-    if capped:
-        result += "\n\n(scanning stopped at 200-file cap; narrow uri to search more)"
-    return result
-
-
-@mcp.tool()
-async def code_expand(uri: str, symbol: str) -> str:
-    """Return the full source of a single named symbol from a viking:// source file. symbol accepts 'bar' (top-level) or 'Foo.bar' (method)."""
-    err = _require_viking_uri(uri)
-    if err:
-        return err
-    if not symbol:
-        return "Error: empty symbol"
-
-    service = get_service()
-    ctx = _get_ctx()
-    try:
-        content = await service.fs.read(uri, ctx=ctx)
-    except Exception as exc:
-        return f"Error: failed to read {uri}: {exc}"
-    if not isinstance(content, str):
-        return f"Error: {uri} is not text"
-    return expand_symbol(content, uri, symbol)
-
-
 # -- health ----------------------------------------------------------------
 
 
@@ -1094,9 +1039,8 @@ async def mcp_lifespan():
     """Run the MCP session manager. Call this inside the FastAPI lifespan."""
     async with mcp.session_manager.run():
         logger.info(
-            "MCP endpoint ready (16 tools: find, search, recall, read, list, remember, "
-            "add_resource, list_watches, cancel_watch, grep, glob, forget, code_outline, "
-            "code_search, code_expand, health)"
+            "MCP endpoint ready (13 tools: find, search, recall, read, list, remember, "
+            "add_resource, list_watches, cancel_watch, grep, glob, forget, health)"
         )
         yield
 
