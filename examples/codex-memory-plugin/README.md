@@ -4,10 +4,11 @@ Long-term semantic memory for [Codex](https://developers.openai.com/codex), powe
 
 This is the Codex counterpart to [`claude-code-memory-plugin`](../claude-code-memory-plugin). It hooks Codex's lifecycle to:
 
+- **Session-start profile injection** on `startup`, `clear`, and `resume`: load `profile.md` plus abstract-annotated indexes of `preferences/` and `entities/` through the shared CJK-aware profile builder.
 - **Auto-recall** relevant memories on every `UserPromptSubmit` and inject them via `hookSpecificOutput.additionalContext`
 - **Incremental capture on `Stop`** (turn end): append the new user/assistant turns to a deterministic OpenViking session id `cx-<codex_session_id>`. When `pending_tokens` reaches `OPENVIKING_COMMIT_TOKEN_THRESHOLD`, commit while keeping a recent live tail.
 - **Commit on `PreCompact`**: trigger OpenViking's memory extractor on the full pre-compact transcript before Codex summarizes it.
-- **Commit on `SessionStart` (source=startup|clear)**: active-window heuristic — if exactly one *other* state file was touched within the last 2 min, commit it (the just-ended session). On `≥2`, defer to idle-TTL sweep at the tail. `source=resume` never commits or sweeps; if the live OV session was already committed, it may inject the latest archive summary for continuity. See `DESIGN.md` for the full decision tree.
+- **Commit on `SessionStart` (source=startup|clear)**: active-window heuristic — if exactly one *other* state file was touched within the last 2 min, commit it (the just-ended session). On `≥2`, defer to idle-TTL sweep at the tail. `source=resume` never commits or sweeps; if the live OV session was already committed, it combines the profile block with the latest archive summary for continuity. See `DESIGN.md` for the full decision tree.
 
 It also starts a local stdio MCP proxy that forwards to OpenViking's native `/mcp` endpoint with credentials resolved from env / `ovcli.conf`, so the model has direct access to the server's retrieval, memory, resource, watch, filesystem, and code-navigation tools.
 
@@ -124,6 +125,7 @@ export OPENVIKING_RECALL_COMPRESS_THINKING=default
 export OPENVIKING_RECALL_TIMEOUT_MS=120000
 export OPENVIKING_CAPTURE_ASSISTANT_TURNS=1
 export OPENVIKING_AUTO_COMMIT_ON_COMPACT=1
+export OPENVIKING_PROFILE_TOKEN_BUDGET=10000
 export OPENVIKING_DEBUG=1
 ```
 
@@ -146,10 +148,10 @@ Earlier plugin versions configured tuning fields under a `codex` block in `~/.op
  ┌────▼──────────┐ ┌────▼──────┐ ┌──────▼──────┐ ┌──────────▼──────┐
  │ session-start │ │ auto-     │ │ auto-       │ │ pre-compact-    │
  │ -commit.mjs   │ │ recall.mjs│ │ capture.mjs │ │ capture.mjs     │
- │ (active-win   │ │ (search + │ │ (append +   │ │ (commit + reset │
- │ heuristic +   │ │ compress) │ │ threshold   │ │ ovSessionId)    │
+ │ (profile +    │ │ (search + │ │ (append +   │ │ (commit + reset │
+ │ active-win +  │ │ compress) │ │ threshold   │ │ ovSessionId)    │
  │ idle TTL +    │ │           │ │             │ │                 │
- │ resume inject)│ │           │ │             │ │                 │
+ │ resume archive)││           │ │             │ │                 │
  └────┬──────────┘ └────┬──────┘ └──────┬──────┘ └──────────┬──────┘
       │                 │                │                   │
       │             ┌───▼────────────────▼───────────────────▼──┐
@@ -172,11 +174,13 @@ For details on OpenViking's MCP endpoint, tools, and protocol, see the [MCP Inte
 
 > See [`DESIGN.md`](./DESIGN.md) for the commit decision tree — it's the source of truth for *which* OpenViking session is sealed by *which* hook event.
 
-### SessionStart commit logic (source=startup|clear, heuristic + idle TTL)
+### SessionStart profile injection and commit logic
 
 Codex fires `SessionStart` with one of three `source` values: `startup` (fresh process / `/new` / zouk daemon spawn-without-sessionId), `resume` (`/resume` or short reconnect), and `clear` (`/clear` — the previous transcript is orphaned and a new session_id is created). `resume` never commits or sweeps; on `startup` and `clear` we run the same active-window heuristic.
 
 `hooks.json` registers `SessionStart` with `matcher: "clear|startup|resume"` so codex's dispatcher invokes the script on all three relevant sources. `session-start-commit.mjs` gates internally so only `startup` and `clear` commit/sweep.
+
+On all three sources, the hook uses the same shared `buildProfileBlock()` implementation as the Claude Code, OpenCode, and pi integrations. It reads the user's `profile.md` and adds URI plus abstract indexes for `preferences/` and `entities/`, with a CJK-aware token budget. The default budget is `10000`; set `OPENVIKING_PROFILE_TOKEN_BUDGET` or `plugin.codex.profileTokenBudget` to change it. Set `OPENVIKING_NO_AUTO_INJECT=1` or `plugin.codex.noAutoInject=true` to disable only this fixed profile/background injection; per-prompt semantic recall remains controlled separately by `OPENVIKING_AUTO_RECALL`.
 
 On `startup` or `clear`, the script:
 
@@ -188,7 +192,7 @@ On `startup` or `clear`, the script:
 
 On any /commit failure (OV unreachable, non-2xx, timeout) we **preserve state** (don't `clearState`) so the next sweep can retry.
 
-On `resume`, the script skips commit/sweep. If local state has no live `ovSessionId`, it reads `/api/v1/sessions/{cx-session-id}/context` and injects the latest committed archive overview. The injected block includes a `viking://user/sessions/{cx-session-id}/history/` URI and tells the model to use the OpenViking MCP `read`/`search` tools for exact prior commands, file paths, tool outputs, or messages. Set `OPENVIKING_RESUME_ARCHIVE_INJECT=0` to disable this.
+On `resume`, the script skips commit/sweep. It still injects the profile block. If local state has no live `ovSessionId`, it also reads `/api/v1/sessions/{cx-session-id}/context` and combines the latest committed archive overview into the same `SessionStart` output. The archive block includes a `viking://user/sessions/{cx-session-id}/history/` URI and tells the model to use the OpenViking MCP `read`/`search` tools for exact prior commands, file paths, tool outputs, or messages. Set `OPENVIKING_RESUME_ARCHIVE_INJECT=0` to disable the archive half without disabling profile injection.
 
 ### Auto-recall (every UserPromptSubmit)
 
@@ -260,7 +264,7 @@ Codex's hook output schema differs from Claude Code's. Notably:
 
 | Hook | Input field of interest | Output channel for context injection |
 |------|------------------------|--------------------------------------|
-| `SessionStart`   | `source` (`startup`/`resume`/`clear`), `session_id` | `hookSpecificOutput.additionalContext` |
+| `SessionStart`   | `source` (`startup`/`resume`/`clear`), `session_id`, `cwd` | `hookSpecificOutput.additionalContext`; may also include `systemMessage` when an orphaned session was committed |
 | `UserPromptSubmit` | `prompt`, `session_id`                     | `hookSpecificOutput.additionalContext` |
 | `Stop`           | `last_assistant_message`, `transcript_path`, `session_id` | `systemMessage` (only) |
 | `PreCompact`     | `trigger` (`manual`/`auto`), `transcript_path`, `session_id` | `systemMessage` (only) |
@@ -285,7 +289,7 @@ codex-memory-plugin/
 │   ├── session-state.mjs        # Per-codex-session OV session state
 │   ├── auto-recall.mjs          # UserPromptSubmit hook (REST /search/search)
 │   ├── auto-capture.mjs         # Stop hook (append + threshold commit)
-│   ├── session-start-commit.mjs # SessionStart hook (active-window + idle TTL)
+│   ├── session-start-commit.mjs # SessionStart hook (profile + active-window + idle TTL + resume archive)
 │   └── pre-compact-capture.mjs  # PreCompact hook
 ├── servers/
 │   ├── mcp-proxy.mjs            # stdio -> OpenViking /mcp bridge
