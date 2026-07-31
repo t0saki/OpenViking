@@ -72,6 +72,14 @@ function envBool(name) {
   return undefined;
 }
 
+function configBool(value, fallback) {
+  if (typeof value === "boolean") return value;
+  const lower = String(value ?? "").trim().toLowerCase();
+  if (lower === "0" || lower === "false" || lower === "no" || lower === "off") return false;
+  if (lower === "1" || lower === "true" || lower === "yes" || lower === "on") return true;
+  return fallback;
+}
+
 function hasOwn(obj, key) {
   return Object.prototype.hasOwnProperty.call(obj || {}, key);
 }
@@ -170,7 +178,7 @@ export function loadConfig() {
     ))),
     logRankingDetails: envBool("OPENVIKING_LOG_RANKING_DETAILS") ?? (cx.logRankingDetails === true),
     recallPeerScope,
-    recallCompress: envBool("OPENVIKING_RECALL_COMPRESS") ?? (cx.recallCompress !== false),
+    recallCompress: envBool("OPENVIKING_RECALL_COMPRESS") ?? configBool(cx.recallCompress, true),
     recallCompressModel,
     recallCompressThinking,
     recallCompressConfigured: Boolean(recallCompressModel || recallCompressThinking),

@@ -27,22 +27,19 @@ Every integration on this page connects to a running OpenViking server. If you d
 
 Query expansion and recall-result compression are two independent, optional model calls. Disable both in the Agent plugin when response latency matters most; semantic retrieval, budgeting, tier degradation, and cross-turn dedup continue to work.
 
-The Claude Code and Codex memory plugins support environment-variable configuration:
+The same environment variables apply to both the Claude Code and Codex memory plugins:
 
 ```bash
-# Claude Code: disable server query expansion and optional local/server digest rewriting
 export OPENVIKING_RECALL_QUERY_EXPANSION=off
-export OPENVIKING_RECALL_REWRITE=off
-
-# Codex: disable server query expansion and Codex's own local compression pass
-export OPENVIKING_RECALL_QUERY_EXPANSION=off
-export OPENVIKING_RECALL_COMPRESS=0
+export OPENVIKING_RECALL_COMPRESS=off
 ```
 
 Both plugins have a local compression path, but expose it differently:
 
-- Claude Code calls local `claude -p` when `recallRewrite` is `client` or `auto`, using Sonnet with low effort by default; `server` asks OpenViking to produce the digest instead. This feature is off by default, and `OPENVIKING_RECALL_REWRITE=off` disables both local and server rewriting.
-- Codex calls local `codex exec` by default, trying `gpt-5.3-codex-spark` first and then `gpt-5.6-luna` with low effort. It does not enable the server rewrite, so use `OPENVIKING_RECALL_COMPRESS=0` to disable local compression.
+- Claude Code calls local `claude -p` when `recallCompress` is `client` or `auto`, using Sonnet with low effort by default; `server` asks OpenViking to produce the digest instead. This feature is off by default.
+- Codex calls local `codex exec` by default, trying `gpt-5.3-codex-spark` first and then `gpt-5.6-luna` with low effort. It does not enable server-side compression.
+
+`OPENVIKING_RECALL_COMPRESS=off` disables compression in both plugins. Claude Code also accepts `client`, `server`, and `auto`; Codex treats the variable as an on/off switch. The old Claude Code variable `OPENVIKING_RECALL_REWRITE` remains supported for compatibility, but new configurations should use the unified name.
 
 The same settings can live in `~/.openviking/ovcli.conf`:
 
@@ -51,14 +48,8 @@ The same settings can live in `~/.openviking/ovcli.conf`:
   "url": "https://openviking.example.com",
   "api_key": "your-api-key",
   "plugin": {
-    "claude_code": {
-      "recallQueryExpansion": "off",
-      "recallRewrite": "off"
-    },
-    "codex": {
-      "recallQueryExpansion": "off",
-      "recallCompress": false
-    }
+    "recallQueryExpansion": "off",
+    "recallCompress": "off"
   }
 }
 ```

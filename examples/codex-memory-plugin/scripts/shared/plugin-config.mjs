@@ -10,9 +10,8 @@
  *   {
  *     "url": "...", "api_key": "...",
  *     "plugin": {
- *       "recallRewrite": "auto",
  *       "recallMaxTokens": 1600,
- *       "claude_code": { "recallRewrite": "server" }
+ *       "recallCompress": "off"
  *     }
  *   }
  *

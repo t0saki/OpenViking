@@ -21,7 +21,7 @@
  *     OPENVIKING_AUTO_RECALL, OPENVIKING_RECALL_LIMIT, OPENVIKING_RECALL_TOKEN_BUDGET,
  *     OPENVIKING_RECALL_MAX_CONTENT_CHARS, OPENVIKING_RECALL_PREFER_ABSTRACT,
  *     OPENVIKING_SCORE_THRESHOLD, OPENVIKING_MIN_QUERY_LENGTH, OPENVIKING_LOG_RANKING_DETAILS,
- *     OPENVIKING_RECALL_PEER_SCOPE
+ *     OPENVIKING_RECALL_PEER_SCOPE, OPENVIKING_RECALL_COMPRESS
  *   Capture tuning:
  *     OPENVIKING_AUTO_CAPTURE, OPENVIKING_CAPTURE_MODE, OPENVIKING_CAPTURE_MAX_LENGTH,
  *     OPENVIKING_CAPTURE_ASSISTANT_TURNS, OPENVIKING_COMMIT_TOKEN_THRESHOLD,
@@ -273,8 +273,14 @@ export function loadConfig() {
     ) === "off" ? "off" : "auto",
     // Digest rewriting is opt-in on both paths: a failed digest always falls
     // back to the unrewritten context block.
+    // OPENVIKING_RECALL_REWRITE / recallRewrite are legacy aliases. Keep the
+    // internal field name because the shared core maps this mode to the
+    // server's `rewrite` request field.
     recallRewrite: normalizeRewriteMode(
-      process.env.OPENVIKING_RECALL_REWRITE ?? cc.recallRewrite,
+      process.env.OPENVIKING_RECALL_COMPRESS
+        ?? process.env.OPENVIKING_RECALL_REWRITE
+        ?? cc.recallCompress
+        ?? cc.recallRewrite,
       "off",
     ),
     recallCompressMinInputChars: Math.max(0, Math.floor(num(

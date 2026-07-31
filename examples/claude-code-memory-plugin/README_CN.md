@@ -152,7 +152,7 @@ claude
 | `OPENVIKING_RECALL_MAX_TOKENS`         | `1600`        | 服务端组装上下文块的 token 预算（感知 CJK 的估算）                   |
 | `OPENVIKING_RECALL_DEDUP_TURNS`        | `5`           | 跨轮冷却：最近 N 轮已注入过的 URI 本轮跳过                           |
 | `OPENVIKING_RECALL_QUERY_EXPANSION`    | `auto`        | `auto` 让服务端结合会话上下文扩展短提问；`off` 关闭                   |
-| `OPENVIKING_RECALL_REWRITE`            | `off`         | digest 重写：`off`、`client`（本地宿主 CLI）、`server`、`auto`（本地优先、失败回落服务端） |
+| `OPENVIKING_RECALL_COMPRESS`           | `off`         | digest 压缩：`off`、`client`（本地宿主 CLI）、`server`、`auto`（本地优先、失败回落服务端） |
 | `OPENVIKING_RECALL_COMPRESS_MAX_BULLETS` | `6`         | digest 条数上限                                                     |
 
 #### 捕获调优
@@ -223,16 +223,16 @@ bypass 命中时所有 hook 直接放行，不联系 OpenViking。
   "plugin": {
     "recallMaxTokens": 1600,
     "recallDedupTurns": 5,
-    "claude_code": { "recallRewrite": "auto" }
+    "claude_code": { "recallCompress": "auto" }
   }
 }
 ```
 
 解析顺序：env vars → `plugin.claude_code` → `plugin` → `ov.conf` 里遗留的 `claude_code` 块 → 内置默认值。
 
-### digest 重写
+### digest 压缩
 
-`recallRewrite` 决定可选的 digest 在哪里生成。`client` 始终通过 `claude -p` 在本地压缩（默认 Sonnet + 低推理档——Haiku 不支持 effort 旋钮，时延不可控），token 成本留在你自己的订阅额度里。`server` 让 OpenViking 生成 digest。`auto` 优先本地，探测不到可用的宿主 CLI 时回落到服务端。所有路径都是 opt-in，失败一律退回未重写的上下文块；压缩子进程运行时所有 OpenViking hook 均被禁用，不会递归。
+`recallCompress` 决定可选的 digest 在哪里生成。`client` 始终通过 `claude -p` 在本地压缩（默认 Sonnet + 低推理档——Haiku 不支持 effort 旋钮，时延不可控），token 成本留在你自己的订阅额度里。`server` 让 OpenViking 生成 digest。`auto` 优先本地，探测不到可用的宿主 CLI 时回落到服务端。所有路径都是 opt-in，失败一律退回未压缩的上下文块；压缩子进程运行时所有 OpenViking hook 均被禁用，不会递归。旧的环境变量 `OPENVIKING_RECALL_REWRITE` 和配置键 `recallRewrite` 仍作为低优先级兼容别名保留。
 
 ### 遗留 `claude_code` 块（在 `ov.conf` 里）
 

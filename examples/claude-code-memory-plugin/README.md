@@ -151,7 +151,7 @@ By default the plugin derives a peer from the workspace path using Claude's proj
 | `OPENVIKING_RECALL_MAX_TOKENS`         | `1600`       | Token budget for the server-assembled context block (CJK-aware estimate)  |
 | `OPENVIKING_RECALL_DEDUP_TURNS`        | `5`          | Cross-turn cooldown: URIs served in the last N turns are skipped          |
 | `OPENVIKING_RECALL_QUERY_EXPANSION`    | `auto`       | `auto` lets the server widen short prompts using session context; `off` disables it |
-| `OPENVIKING_RECALL_REWRITE`            | `off`        | Digest rewriting: `off`, `client` (host CLI), `server`, or `auto` (local first, server fallback) |
+| `OPENVIKING_RECALL_COMPRESS`           | `off`        | Digest compression: `off`, `client` (host CLI), `server`, or `auto` (local first, server fallback) |
 | `OPENVIKING_RECALL_COMPRESS_MAX_BULLETS` | `6`        | Digest bullet ceiling                                                     |
 | `OPENVIKING_SCORE_THRESHOLD`           | `0.35`       | Min relevance score (0–1)                                                |
 | `OPENVIKING_MIN_QUERY_LENGTH`          | `3`          | Skip recall for very short queries                                       |
@@ -227,16 +227,16 @@ Client-side tuning belongs in `~/.openviking/ovcli.conf` under a `plugin` sectio
   "plugin": {
     "recallMaxTokens": 1600,
     "recallDedupTurns": 5,
-    "claude_code": { "recallRewrite": "auto" }
+    "claude_code": { "recallCompress": "auto" }
   }
 }
 ```
 
 Resolution order: env vars → `plugin.claude_code` → `plugin` → the legacy `claude_code` block in `ov.conf` → built-in defaults.
 
-### Digest rewriting
+### Digest compression
 
-`recallRewrite` decides where the optional digest is produced. `client` always compresses locally through `claude -p` (Sonnet with low effort by default — Haiku ignores the effort knob, so its latency is unbounded), keeping the token cost on your own subscription. `server` asks OpenViking for the digest. `auto` prefers local and falls back to the server when no healthy host CLI is found. Every path is opt-in and fails back to the unrewritten context block, and the compressor subprocess runs with all OpenViking hooks disabled so it cannot recurse.
+`recallCompress` decides where the optional digest is produced. `client` always compresses locally through `claude -p` (Sonnet with low effort by default — Haiku ignores the effort knob, so its latency is unbounded), keeping the token cost on your own subscription. `server` asks OpenViking for the digest. `auto` prefers local and falls back to the server when no healthy host CLI is found. Every path is opt-in and fails back to the uncompressed context block, and the compressor subprocess runs with all OpenViking hooks disabled so it cannot recurse. The former `OPENVIKING_RECALL_REWRITE` environment variable and `recallRewrite` config key remain supported as lower-priority compatibility aliases.
 
 ### Legacy `claude_code` block in `ov.conf`
 
