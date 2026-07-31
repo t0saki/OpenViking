@@ -22,3 +22,42 @@ OpenViking 可以作为多种 Agent 运行时的长期记忆与上下文后端�
 ## 所有集成的共同前置
 
 本页所有集成都需要连接到一个正在运行的 OpenViking 服务。如果你还没有，请先按 [快速开始](../getting-started/02-quickstart.md) 部署。默认端点是 `http://localhost:1933`；远程使用需要 API Key（参见 [鉴权](../guides/04-authentication.md)）。
+
+## 低延迟召回
+
+查询扩展和结果重写是两个独立的可选模型调用。需要优先保证响应速度时，可以在 Agent 插件端同时关闭它们；语义检索、预算控制、档位降级和跨轮去重仍会正常工作。
+
+Claude Code 和 Codex 记忆插件可以通过环境变量配置：
+
+```bash
+# Claude Code：关闭服务端查询扩展和可选的本地/服务端 digest 重写
+export OPENVIKING_RECALL_QUERY_EXPANSION=off
+export OPENVIKING_RECALL_REWRITE=off
+
+# Codex：关闭服务端查询扩展和 Codex 自己的本地压缩步骤
+export OPENVIKING_RECALL_QUERY_EXPANSION=off
+export OPENVIKING_RECALL_COMPRESS=0
+```
+
+Codex 的服务端 rewrite 本来就是关闭的，但默认还会运行一次本地 `codex exec` 压缩，所以它使用 `OPENVIKING_RECALL_COMPRESS=0`，不是 `OPENVIKING_RECALL_REWRITE=off`。
+
+也可以把同样的设置写进 `~/.openviking/ovcli.conf`：
+
+```json
+{
+  "url": "https://openviking.example.com",
+  "api_key": "your-api-key",
+  "plugin": {
+    "claude_code": {
+      "recallQueryExpansion": "off",
+      "recallRewrite": "off"
+    },
+    "codex": {
+      "recallQueryExpansion": "off",
+      "recallCompress": false
+    }
+  }
+}
+```
+
+环境变量优先于 `ovcli.conf`。修改后重启对应的 Agent，让 hook 进程重新加载配置。上述设置属于插件客户端，不需要修改服务端的 `ov.conf`。

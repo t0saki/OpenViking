@@ -22,3 +22,42 @@ OpenViking can act as the long-term memory and context backend for many agent ru
 ## Prerequisite for all integrations
 
 Every integration on this page connects to a running OpenViking server. If you don't have one yet, follow the [Quickstart Guide](../getting-started/02-quickstart.md). The default endpoint is `http://localhost:1933`; remote use requires an API key (see [Authentication](../guides/04-authentication.md)).
+
+## Low-latency recall
+
+Query expansion and result rewriting are two independent, optional model calls. Disable both in the Agent plugin when response latency matters most; semantic retrieval, budgeting, tier degradation, and cross-turn dedup continue to work.
+
+The Claude Code and Codex memory plugins support environment-variable configuration:
+
+```bash
+# Claude Code: disable server query expansion and optional local/server digest rewriting
+export OPENVIKING_RECALL_QUERY_EXPANSION=off
+export OPENVIKING_RECALL_REWRITE=off
+
+# Codex: disable server query expansion and Codex's own local compression pass
+export OPENVIKING_RECALL_QUERY_EXPANSION=off
+export OPENVIKING_RECALL_COMPRESS=0
+```
+
+Codex already keeps the server rewrite off, but runs a local `codex exec` compression pass by default. It therefore uses `OPENVIKING_RECALL_COMPRESS=0`, not `OPENVIKING_RECALL_REWRITE=off`.
+
+The same settings can live in `~/.openviking/ovcli.conf`:
+
+```json
+{
+  "url": "https://openviking.example.com",
+  "api_key": "your-api-key",
+  "plugin": {
+    "claude_code": {
+      "recallQueryExpansion": "off",
+      "recallRewrite": "off"
+    },
+    "codex": {
+      "recallQueryExpansion": "off",
+      "recallCompress": false
+    }
+  }
+}
+```
+
+Environment variables take precedence over `ovcli.conf`. Restart the Agent after changing these settings so its hook processes reload the configuration. These are plugin-client settings; the server's `ov.conf` does not need to change.

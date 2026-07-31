@@ -76,6 +76,8 @@ Configuration priority: environment variables > `ovcli.conf` > `ov.conf` > built
 | `OPENVIKING_MEMORY_ENABLED` | (auto) | Force enable or disable |
 | `OPENVIKING_DEBUG` | `false` | Write logs to `~/.openviking/logs/cc-hooks.log` |
 
+If recall latency matters most, see [Low-latency recall](../../../en/agent-integrations/01-overview.md#low-latency-recall).
+
 For multi-tenant deployments, set `OPENVIKING_ACCOUNT` and `OPENVIKING_USER`. See the [plugin README](https://github.com/volcengine/OpenViking/blob/main/examples/claude-code-memory-plugin/README.md#configuration) for the full environment variable list.
 
 </details>
