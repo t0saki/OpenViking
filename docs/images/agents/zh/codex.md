@@ -61,7 +61,7 @@ codex              # 首次启动需执行 /hooks 进行一次安全审批
 | `OPENVIKING_CODEX_IDLE_TTL_MS` | `1800000` | `SessionStart` 闲置 TTL 清理阈值 |
 | `OPENVIKING_DEBUG` | `false` | 将日志输出至 `~/.openviking/logs/codex-hooks.log` |
 
-如果更看重召回响应速度，请参阅[低延迟召回](../../../zh/agent-integrations/01-overview.md#低延迟召回)。
+如果更看重召回响应速度，请参阅[低延迟召回](https://docs.openviking.net/zh/agent-integrations/01-overview#低延迟召回)。
 
 关于更多参数调优（如 `OPENVIKING_RECALL_LIMIT`、`OPENVIKING_CAPTURE_ASSISTANT_TURNS` 等），请参阅 [插件 README](https://github.com/volcengine/OpenViking/blob/main/examples/codex-memory-plugin/README.md#tuning-the-plugin)。
 

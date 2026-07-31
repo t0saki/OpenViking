@@ -78,7 +78,7 @@ Claude Code 和 Codex 共用这一个安装脚本。它会依次询问要安装�
 | `OPENVIKING_MEMORY_ENABLED` | (auto) | 强制开启或关闭插件 |
 | `OPENVIKING_DEBUG` | `false` | 将调试日志输出至 `~/.openviking/logs/cc-hooks.log` |
 
-如果更看重召回响应速度，请参阅[低延迟召回](../../../zh/agent-integrations/01-overview.md#低延迟召回)。
+如果更看重召回响应速度，请参阅[低延迟召回](https://docs.openviking.net/zh/agent-integrations/01-overview#低延迟召回)。
 
 在多租户场景下，请额外配置 `OPENVIKING_ACCOUNT` 和 `OPENVIKING_USER`。完整的环境变量列表请参阅 [插件 README](https://github.com/volcengine/OpenViking/blob/main/examples/claude-code-memory-plugin/README_CN.md#配置)。
 

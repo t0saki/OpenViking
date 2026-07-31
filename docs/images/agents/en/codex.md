@@ -59,7 +59,7 @@ Configuration priority: environment variables > `ovcli.conf` > `ov.conf` > built
 | `OPENVIKING_CODEX_IDLE_TTL_MS` | `1800000` | SessionStart idle TTL cleanup threshold |
 | `OPENVIKING_DEBUG` | `false` | Write logs to `~/.openviking/logs/codex-hooks.log` |
 
-If recall latency matters most, see [Low-latency recall](../../../en/agent-integrations/01-overview.md#low-latency-recall).
+If recall latency matters most, see [Low-latency recall](https://docs.openviking.net/en/agent-integrations/01-overview#low-latency-recall).
 
 For tuning options such as `OPENVIKING_RECALL_LIMIT` and `OPENVIKING_CAPTURE_ASSISTANT_TURNS`, see the [plugin README](https://github.com/volcengine/OpenViking/blob/main/examples/codex-memory-plugin/README.md#tuning-the-plugin).
 
