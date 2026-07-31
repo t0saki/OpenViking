@@ -301,7 +301,7 @@ Fallback order:
 1. configured model/thinking (`OPENVIKING_RECALL_COMPRESS_MODEL` +
    `OPENVIKING_RECALL_COMPRESS_THINKING`)
 2. `gpt-5.3-codex-spark`, thinking `default`
-3. `gpt-5.5`, thinking `low`
+3. `gpt-5.6-luna`, thinking `low`
 4. off (deterministic digest, no child `codex exec`)
 
 Configured `off` (`OPENVIKING_RECALL_COMPRESS=0`, model `off`, or thinking

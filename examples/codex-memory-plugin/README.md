@@ -208,7 +208,7 @@ The compressor profile is recreated on every `SessionStart` and cached under `OP
 
 1. configured `OPENVIKING_RECALL_COMPRESS_MODEL` + `OPENVIKING_RECALL_COMPRESS_THINKING`
 2. `gpt-5.3-codex-spark` with thinking `default`
-3. `gpt-5.5` with thinking `low`
+3. `gpt-5.6-luna` with thinking `low`
 4. off (deterministic digest, no `codex exec` compression)
 
 Config knobs:

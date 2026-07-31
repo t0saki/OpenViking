@@ -25,7 +25,7 @@ OpenViking 可以作为多种 Agent 运行时的长期记忆与上下文后端�
 
 ## 低延迟召回
 
-查询扩展和结果重写是两个独立的可选模型调用。需要优先保证响应速度时，可以在 Agent 插件端同时关闭它们；语义检索、预算控制、档位降级和跨轮去重仍会正常工作。
+查询扩展和召回结果压缩是两个独立的可选模型调用。需要优先保证响应速度时，可以在 Agent 插件端同时关闭它们；语义检索、预算控制、档位降级和跨轮去重仍会正常工作。
 
 Claude Code 和 Codex 记忆插件可以通过环境变量配置：
 
@@ -39,7 +39,10 @@ export OPENVIKING_RECALL_QUERY_EXPANSION=off
 export OPENVIKING_RECALL_COMPRESS=0
 ```
 
-Codex 的服务端 rewrite 本来就是关闭的，但默认还会运行一次本地 `codex exec` 压缩，所以它使用 `OPENVIKING_RECALL_COMPRESS=0`，不是 `OPENVIKING_RECALL_REWRITE=off`。
+两个插件都有本地压缩逻辑，但配置模型不同：
+
+- Claude Code 的 `recallRewrite=client` 或 `auto` 会调用本地 `claude -p`，默认使用 Sonnet + low；`server` 改由 OpenViking 服务端生成 digest。该功能默认关闭，设置 `OPENVIKING_RECALL_REWRITE=off` 会同时禁用本地和服务端重写。
+- Codex 默认调用本地 `codex exec`，模型顺序为 `gpt-5.3-codex-spark`，其次 `gpt-5.6-luna` + low。它不会启用服务端 rewrite，因此应通过 `OPENVIKING_RECALL_COMPRESS=0` 关闭本地压缩。
 
 也可以把同样的设置写进 `~/.openviking/ovcli.conf`：
 
