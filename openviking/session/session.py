@@ -1897,7 +1897,6 @@ class Session:
                 session_uri=self._session_uri,
                 archive_uri=archive_uri,
                 user=self.ctx.user.to_dict(),
-                actor_peer_id=self.ctx.actor_peer_id,
                 memory_policy=effective_memory_policy,
                 usage_uris=list(dict.fromkeys(u.uri for u in usage_snapshot if u.uri)),
             )
@@ -3799,7 +3798,29 @@ class Session:
         combined: List[Message] = []
         completed_memory_steps: Dict[str, set[str]] = {}
         for state in replay_states:
-            combined.extend(await self._read_archive_messages(state.archive_uri))
+            # A terminally-failed earlier archive can have a missing or corrupt
+            # messages.jsonl (legacy "no messages" data, or #3417's own
+            # archive_read terminal path). Tolerate that exactly like
+            # _get_uncovered_archive_messages does, otherwise every subsequent
+            # commit's Phase 2 re-raises here and stays permanently poisoned.
+            # Real storage failures still propagate.
+            try:
+                replayed = await self._read_archive_messages(state.archive_uri)
+            except _ArchiveMessagesCorruptError:
+                logger.warning(
+                    "Skipping failed archive %s in Phase-2 replay: messages.jsonl is corrupt",
+                    state.archive_uri,
+                )
+                continue
+            except Exception as exc:
+                if not _is_storage_not_found(exc):
+                    raise
+                logger.warning(
+                    "Skipping failed archive %s in Phase-2 replay: messages.jsonl is missing",
+                    state.archive_uri,
+                )
+                continue
+            combined.extend(replayed)
             marker = state.failed
             self._merge_completed_memory_steps(
                 completed_memory_steps,

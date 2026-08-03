@@ -188,7 +188,7 @@ async def gather_candidates(
     """Retrieve and rank candidates, returning ``(candidates, stats)``."""
     peer_scope = "actor" if peer_scope == "actor" else "all"
     user_root = canonical_user_root(ctx)
-    open_ctx = replace(ctx, actor_peer_id=None, legacy_agent_id=None)
+    open_ctx = replace(ctx, actor_peer_id=None)
     penalties = penalties or {}
     excluded = excluded or set()
     planned = [q for q in queries if q] or [""]
