@@ -62,12 +62,25 @@ test("repairDigestUris drops bullets whose citation cannot be recovered", () => 
   assert.doesNotMatch(repaired, /invented/);
 });
 
-test("cache key depends on the served URI set, not their order", () => {
-  const a = recallDigestCacheKey([{ uri: "viking://a" }, { uri: "viking://b" }]);
-  const b = recallDigestCacheKey([{ uri: "viking://b" }, { uri: "viking://a" }]);
-  const c = recallDigestCacheKey([{ uri: "viking://a" }]);
+test("cache key covers every input that can change the digest", () => {
+  const base = {
+    query: "what changed",
+    rendered: "<memory>release facts</memory>",
+    entries: [{ uri: "viking://a" }, { uri: "viking://b" }],
+    maxInputChars: 18000,
+    maxBullets: 6,
+  };
+  const a = recallDigestCacheKey(base);
+  const b = recallDigestCacheKey({
+    ...base,
+    entries: [{ uri: "viking://b" }, { uri: "viking://a" }],
+  });
   assert.equal(a, b);
-  assert.notEqual(a, c);
+  assert.notEqual(a, recallDigestCacheKey({ ...base, query: "what deadline" }));
+  assert.notEqual(a, recallDigestCacheKey({ ...base, rendered: "<memory>new facts</memory>" }));
+  assert.notEqual(a, recallDigestCacheKey({ ...base, entries: [{ uri: "viking://a" }] }));
+  assert.notEqual(a, recallDigestCacheKey({ ...base, maxInputChars: 1000 }));
+  assert.notEqual(a, recallDigestCacheKey({ ...base, maxBullets: 3 }));
 });
 
 test("compressRecallContext passes short input straight through", async () => {
@@ -83,7 +96,7 @@ test("compressRecallContext passes short input straight through", async () => {
   assert.equal(called, false);
 });
 
-test("compressRecallContext caches digests by served URI set", async () => {
+test("compressRecallContext reuses only an identical compression request", async () => {
   const cachePath = await tempPath("digest.json");
   const rendered = `<memory uri="viking://a">${"x".repeat(2000)}</memory>`;
   const entries = [{ uri: "viking://a" }];
@@ -105,6 +118,46 @@ test("compressRecallContext caches digests by served URI set", async () => {
   assert.equal(first, second);
   assert.match(first, /OpenViking memory digest:/);
   assert.match(await readFile(cachePath, "utf8"), /"digest"/);
+});
+
+test("compressRecallContext does not reuse a digest across queries or content", async () => {
+  const cachePath = await tempPath("digest.json");
+  const entries = [{ uri: "viking://a" }];
+  let calls = 0;
+
+  const runCompressor = async (prompt) => {
+    calls += 1;
+    return prompt.includes("deadline")
+      ? "- deadline 来源：viking://a"
+      : "- command 来源：viking://a";
+  };
+
+  const first = await compressRecallContext({
+    query: "which command",
+    rendered: `<memory uri="viking://a">${"x".repeat(2000)}</memory>`,
+    entries,
+    runCompressor,
+    cachePath,
+  });
+  const second = await compressRecallContext({
+    query: "what deadline",
+    rendered: `<memory uri="viking://a">${"x".repeat(2000)}</memory>`,
+    entries,
+    runCompressor,
+    cachePath,
+  });
+  const third = await compressRecallContext({
+    query: "what deadline",
+    rendered: `<memory uri="viking://a">${"y".repeat(2000)}</memory>`,
+    entries,
+    runCompressor,
+    cachePath,
+  });
+
+  assert.equal(calls, 3);
+  assert.match(first, /command/);
+  assert.match(second, /deadline/);
+  assert.match(third, /deadline/);
 });
 
 test("compressRecallContext returns null when the model emits nothing usable", async () => {

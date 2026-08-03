@@ -239,19 +239,28 @@ async def gather_candidates(
         """
         return want + min(len(excluded), want * 2)
 
+    def _find(*, query: str, find_ctx: RequestContext, target_uri: str, find_limit: int) -> Any:
+        return _safe_find(
+            service,
+            retrieval_errors,
+            query=query,
+            ctx=find_ctx,
+            target_uri=target_uri,
+            limit=find_limit,
+            score_threshold=score_threshold,
+            filter=filter,
+            image_url=image_url,
+            level=None,
+        )
+
     async def gather_bucket(bucket: str, quota: int) -> List[Candidate]:
         targets = category_targets(bucket, ctx)
         searches = [
-            _safe_find(
-                service,
-                retrieval_errors,
+            _find(
                 query=query,
-                ctx=ctx,
+                find_ctx=ctx,
                 target_uri=target,
-                limit=_overfetch(quota),
-                score_threshold=score_threshold,
-                filter=filter,
-                level=None,
+                find_limit=_overfetch(quota),
             )
             for query in planned
             for target in targets
@@ -259,16 +268,11 @@ async def gather_candidates(
         peer_offset = len(searches)
         if peer_scope == "all" and bucket in MEMORY_CATEGORIES:
             searches.extend(
-                _safe_find(
-                    service,
-                    retrieval_errors,
+                _find(
                     query=query,
-                    ctx=open_ctx,
+                    find_ctx=open_ctx,
                     target_uri=f"{user_root}/peers",
-                    limit=_overfetch(max(quota * OTHER_PEER_OVERFETCH, quota)),
-                    score_threshold=score_threshold,
-                    filter=filter,
-                    level=None,
+                    find_limit=_overfetch(max(quota * OTHER_PEER_OVERFETCH, quota)),
                 )
                 for query in planned
             )
@@ -292,31 +296,42 @@ async def gather_candidates(
 
     async def gather_flat() -> List[Candidate]:
         searches = [
-            _safe_find(
-                service,
-                retrieval_errors,
+            _find(
                 query=query,
-                ctx=ctx,
+                find_ctx=ctx,
                 target_uri="",
-                limit=_overfetch(limit),
-                score_threshold=score_threshold,
-                filter=filter,
-                image_url=image_url,
-                level=None,
+                find_limit=_overfetch(limit),
             )
             for query in planned
         ]
+        peer_offset = len(searches)
+        if peer_scope == "all":
+            searches.extend(
+                _find(
+                    query=query,
+                    find_ctx=open_ctx,
+                    target_uri=f"{user_root}/peers",
+                    find_limit=_overfetch(max(limit * OTHER_PEER_OVERFETCH, limit)),
+                )
+                for query in planned
+            )
         results = await asyncio.gather(*searches)
         # Keep each hit's owning bucket: inferring the category from the URI
         # alone reads viking://resources/backup/memories/events/log.md as an
         # event, which would lift a large resource past its tier ceiling.
         buckets: Dict[str, Optional[str]] = {}
         found: List[Any] = []
-        for result in results:
+        for result in results[:peer_offset]:
             for bucket in ("memories", "resources", "skills"):
                 for item in _extract(result, bucket):
                     buckets.setdefault(_uri(item), None if bucket == "memories" else bucket)
                     found.append(item)
+        for result in results[peer_offset:]:
+            for item in _extract(result, "memories"):
+                if origin_for_uri(_uri(item), ctx.actor_peer_id, user_root) != "other_peer":
+                    continue
+                buckets.setdefault(_uri(item), None)
+                found.append(item)
         found = dedupe_keep_best(found)
         searched["all"] = len(found)
         candidates = _build([(item, buckets.get(_uri(item))) for item in found])

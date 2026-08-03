@@ -148,7 +148,12 @@ async def test_recall_endpoint_assembles_tiers_and_signals_deprecation(
     assert {entry["category"] for entry in result["entries"]} == {"events", "entities"}
     assert all(entry["detail"] != "uri" for entry in result["entries"])
     assert result["rendered"].count("<memory ") == 2
-    assert result["stats"]["deprecated"]["aliases_used"] == ["max_chars", "min_score", "render"]
+    assert result["stats"]["deprecated"] == {
+        "endpoint": "/api/v1/search/recall",
+        "successor": "/api/v1/search/search",
+        "successor_body": {"mode": "context"},
+        "aliases_used": ["max_chars", "min_score", "render"],
+    }
     assert [call["target_uri"].rsplit("/", 1)[-1] for call in calls] == [
         "events",
         "peers",

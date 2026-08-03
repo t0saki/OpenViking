@@ -247,12 +247,50 @@ async def test_query_expansion_fans_out_planned_queries(monkeypatch):
     result = await assemble_context(
         service=service,
         ctx=_ctx(),
-        params=AssembleParams(query="short", session_id="s1", query_expansion="auto"),
+        params=AssembleParams(
+            query="short",
+            session_id="s1",
+            query_expansion="auto",
+            peer_scope="actor",
+        ),
     )
 
     assert queries_seen == ["short", "expanded query"]
     assert result.stats["planned_queries"] == ["short", "expanded query"]
     assert result.stats["query_expansion"] == "used"
+
+
+async def test_disabled_intent_skips_session_loading_and_query_expansion():
+    async def fake_find(**kwargs):
+        assert kwargs["query"] == "raw query"
+        return _FakeFindResult()
+
+    def fail_session(*args):
+        del args
+        raise AssertionError("session must not be loaded when intent is disabled")
+
+    service = SimpleNamespace(
+        search=SimpleNamespace(
+            find=fake_find,
+            is_intent_enabled=lambda: False,
+        ),
+        fs=SimpleNamespace(read=None),
+        sessions=SimpleNamespace(session=fail_session),
+        viking_fs=None,
+    )
+
+    result = await assemble_context(
+        service=service,
+        ctx=_ctx(),
+        params=AssembleParams(
+            query="raw query",
+            session_id="s1",
+            query_expansion="auto",
+        ),
+    )
+
+    assert result.stats["planned_queries"] == ["raw query"]
+    assert result.stats["query_expansion"] == "off"
 
 
 async def test_rewrite_failure_keeps_rendered_context(monkeypatch):
@@ -279,13 +317,14 @@ async def test_rewrite_failure_keeps_rendered_context(monkeypatch):
 
 async def test_successful_rewrite_reports_digest_and_usage(monkeypatch):
     hits = [{"uri": f"{USER_ROOT}/memories/events/a.md", "score": 0.6, "abstract": "abs a"}]
+    served_uri = hits[0]["uri"]
 
     monkeypatch.setattr(pipeline_module, "server_rewrite_enabled", lambda mode: True)
 
     async def ok_rewrite(**kwargs):
-        del kwargs
+        assert kwargs["valid_uris"] == [served_uri]
         return (
-            "OpenViking memory digest:\n- fact 来源：viking://a",
+            f"OpenViking memory digest:\n- fact 来源：{served_uri}",
             "ok",
             {"prompt_tokens": 120, "completion_tokens": 30},
         )

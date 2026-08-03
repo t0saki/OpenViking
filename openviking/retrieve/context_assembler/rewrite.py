@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import re
-from typing import Any, Dict, Literal, Optional, Tuple
+from typing import Any, Collection, Dict, Literal, Optional, Tuple
 
 from openviking.prompts import render_prompt
 from openviking_cli.utils.config import get_openviking_config
@@ -20,6 +20,7 @@ logger = get_logger(__name__)
 
 DIGEST_HEADER = "OpenViking memory digest:"
 MAX_BULLET_CHARS = 500
+URI_PATTERN = re.compile(r"""viking://[^\s<>"')\]]+""")
 
 
 def server_rewrite_enabled(mode: bool | Literal["auto"]) -> bool:
@@ -32,7 +33,11 @@ def server_rewrite_enabled(mode: bool | Literal["auto"]) -> bool:
     return planner is not None and planner._has_any_config()
 
 
-def normalize_digest(raw: Any, max_bullets: int = 6) -> str:
+def normalize_digest(
+    raw: Any,
+    max_bullets: int = 6,
+    valid_uris: Optional[Collection[str]] = None,
+) -> str:
     """Accept only the small, cited digest contract emitted by the prompt."""
     text = str(raw or "").strip()
     # The prompt asks for this token *as the whole output*; a memory body that
@@ -40,6 +45,8 @@ def normalize_digest(raw: Any, max_bullets: int = 6) -> str:
     if not text or text.upper() == "NO_RELEVANT_MEMORY":
         return ""
 
+    allowed = {str(uri).strip() for uri in valid_uris or () if str(uri).strip()}
+    enforce_provenance = valid_uris is not None
     bullets: list[str] = []
     for line in text.splitlines():
         cleaned = line.strip()
@@ -48,7 +55,8 @@ def normalize_digest(raw: Any, max_bullets: int = 6) -> str:
         cleaned = re.sub(r"^[-*]\s+", "- ", cleaned)[:MAX_BULLET_CHARS].rstrip()
         # Checked after truncation: the prompt puts the citation last, so a
         # bullet whose URI was cut off no longer carries one.
-        if "viking://" not in cleaned:
+        cited = URI_PATTERN.findall(cleaned)
+        if not cited or (enforce_provenance and any(uri not in allowed for uri in cited)):
             continue
         bullets.append(cleaned)
         if len(bullets) >= max(1, max_bullets):
@@ -73,6 +81,7 @@ async def rewrite_context(
     rendered: str,
     max_bullets: int = 6,
     timeout_s: Optional[float] = None,
+    valid_uris: Optional[Collection[str]] = None,
 ) -> Tuple[str, str, Optional[Dict[str, int]]]:
     """Return ``(digest, status, usage)`` while containing every model failure."""
     if not rendered.strip():
@@ -119,5 +128,9 @@ async def rewrite_context(
             "completion_tokens": max(0, after[1] - before[1]),
         }
 
-    digest = normalize_digest(response, max_bullets=max_bullets)
+    digest = normalize_digest(
+        response,
+        max_bullets=max_bullets,
+        valid_uris=valid_uris,
+    )
     return (digest, "ok", usage) if digest else ("", "empty", usage)

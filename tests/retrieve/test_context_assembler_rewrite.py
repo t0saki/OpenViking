@@ -33,6 +33,18 @@ def test_normalize_digest_keeps_only_cited_bullets():
     )
 
 
+def test_normalize_digest_rejects_citations_outside_the_served_set():
+    served = "viking://user/a/memories/events/release.md"
+    raw = (
+        f"- release fact source: {served}\n"
+        "- invented fact source: viking://user/a/memories/events/fake.md"
+    )
+
+    digest = normalize_digest(raw, valid_uris=[served])
+
+    assert digest == f"OpenViking memory digest:\n- release fact source: {served}"
+
+
 def test_server_rewrite_enabled_resolves_auto_from_planner_config(monkeypatch):
     configured = SimpleNamespace(_has_any_config=lambda: True)
     monkeypatch.setattr(
@@ -112,6 +124,26 @@ async def test_rewrite_reports_usage_delta(monkeypatch):
     assert status == "ok"
     assert digest.startswith("OpenViking memory digest:")
     assert usage == {"prompt_tokens": 200, "completion_tokens": 50}
+
+
+async def test_rewrite_drops_a_hallucinated_citation(monkeypatch):
+    served = "viking://user/a/memories/events/release.md"
+
+    class Hallucinating:
+        async def get_completion_async(self, _prompt):
+            return "- invented source: viking://user/a/memories/events/fake.md"
+
+    monkeypatch.setattr(
+        rewrite_module,
+        "get_openviking_config",
+        lambda: _config(lambda: Hallucinating(), rewrite_timeout=5),
+    )
+
+    assert await rewrite_context(
+        query="q",
+        rendered=f'<memory uri="{served}" />',
+        valid_uris=[served],
+    ) == ("", "empty", None)
 
 
 async def test_rewrite_usage_is_dropped_when_another_call_shared_the_tracker(monkeypatch):

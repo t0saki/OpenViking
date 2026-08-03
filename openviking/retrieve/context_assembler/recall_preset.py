@@ -117,6 +117,7 @@ def fold_recall_request(
 def deprecation_stats(aliases: Sequence[str]) -> Dict[str, Any]:
     return {
         "endpoint": "/api/v1/search/recall",
-        "successor": "/api/v1/search/search?mode=context",
+        "successor": "/api/v1/search/search",
+        "successor_body": {"mode": "context"},
         "aliases_used": list(aliases),
     }

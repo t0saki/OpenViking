@@ -58,15 +58,16 @@ async def assemble_context(
     quotas = normalize_quotas(params.quotas, params.purpose)
     penalties = normalize_penalties(params.other_peer_penalty)
 
-    needs_session = bool(params.session_id) and (
-        params.query_expansion == "auto" or params.dedup_turns > 0
-    )
+    intent_checker = getattr(service.search, "is_intent_enabled", None)
+    intent_enabled = intent_checker() if callable(intent_checker) else True
+    expansion_mode = params.query_expansion if intent_enabled else "off"
+    needs_session = bool(params.session_id) and (expansion_mode == "auto" or params.dedup_turns > 0)
     session = await _load_session(service, ctx, params.session_id) if needs_session else None
 
     queries, expansion_status = await expand_queries(
         query=params.query,
         session=session,
-        mode=params.query_expansion,
+        mode=expansion_mode,
     )
 
     ledger = await RecallLedger.load(
@@ -122,6 +123,7 @@ async def assemble_context(
             query=params.query,
             rendered=rendered or render_context(plan.entries),
             max_bullets=params.rewrite_max_bullets,
+            valid_uris=[entry.uri for entry in plan.entries],
         )
 
     if ledger and plan.entries:

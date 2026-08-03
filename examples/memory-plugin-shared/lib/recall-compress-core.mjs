@@ -107,11 +107,22 @@ export function normalizeCompressedContext(raw, maxChars = 4000, maxBullets = 6)
   return (`${DIGEST_HEADER}\n${bullets.join("\n")}`).slice(0, Math.max(100, maxChars));
 }
 
-export function recallDigestCacheKey(entries = [], rendered = "") {
+export function recallDigestCacheKey({
+  query = "",
+  rendered = "",
+  entries = [],
+  maxInputChars = 18000,
+  maxBullets = 6,
+} = {}) {
   const uris = entries.map((entry) => String(entry?.uri || "").trim()).filter(Boolean).sort();
-  const source = uris.length
-    ? uris.join("\n")
-    : (String(rendered).match(/viking:\/\/[^\s<]+/g) || []).sort().join("\n");
+  const source = JSON.stringify({
+    version: 2,
+    query: String(query),
+    rendered: String(rendered).slice(0, maxInputChars),
+    uris,
+    maxInputChars,
+    maxBullets,
+  });
   return createHash("sha256").update(source).digest("hex");
 }
 
@@ -144,12 +155,18 @@ export async function compressRecallContext({
   const minChars = Math.max(0, Number(cfg.recallCompressMinInputChars ?? 1500));
   if (input.length < minChars) return input;
 
-  const key = recallDigestCacheKey(entries, input);
+  const maxInputChars = Math.max(1000, Number(cfg.recallCompressMaxInputChars || 18000));
+  const maxBullets = Math.max(1, Number(cfg.recallCompressMaxBullets || 6));
+  const key = recallDigestCacheKey({
+    query,
+    rendered: input,
+    entries,
+    maxInputChars,
+    maxBullets,
+  });
   const cached = await readCache(cachePath);
   if (cached?.key === key && typeof cached.digest === "string") return cached.digest;
 
-  const maxInputChars = Math.max(1000, Number(cfg.recallCompressMaxInputChars || 18000));
-  const maxBullets = Math.max(1, Number(cfg.recallCompressMaxBullets || 6));
   const prompt = buildRecallCompressionPrompt({
     query,
     rendered: input.slice(0, maxInputChars),

@@ -133,7 +133,8 @@ async def test_quota_buckets_search_concurrently():
 
 async def test_flat_mode_merges_all_categories():
     async def fake_find(**kwargs):
-        assert kwargs["target_uri"] == ""
+        if kwargs["target_uri"]:
+            return _FakeFindResult()
         return _FakeFindResult(
             memories=[{"uri": "viking://user/test_user/memories/events/a.md", "score": 0.5}],
             resources=[{"uri": "viking://resources/doc.md", "score": 0.4}],
@@ -158,7 +159,8 @@ async def test_flat_mode_keeps_the_owning_bucket_over_the_uri_shape():
     trap = "viking://resources/backup/memories/events/log.md"
 
     async def fake_find(**kwargs):
-        del kwargs
+        if kwargs["target_uri"]:
+            return _FakeFindResult()
         return _FakeFindResult(resources=[{"uri": trap, "score": 0.5}])
 
     candidates, _ = await gather_candidates(
@@ -171,6 +173,57 @@ async def test_flat_mode_keeps_the_owning_bucket_over_the_uri_shape():
     )
 
     assert [c.category for c in candidates] == ["resources"]
+
+
+async def test_flat_mode_searches_other_peers_when_scope_is_all():
+    other_uri = "viking://user/test_user/peers/other/memories/events/theirs.md"
+    calls = []
+
+    async def fake_find(**kwargs):
+        calls.append(kwargs)
+        if kwargs["target_uri"].endswith("/peers"):
+            return _FakeFindResult(memories=[{"uri": other_uri, "score": 0.6}])
+        return _FakeFindResult()
+
+    candidates, stats = await gather_candidates(
+        service=_service(fake_find),
+        ctx=_ctx(),
+        queries=["flat peer"],
+        quotas=None,
+        limit=10,
+        score_threshold=None,
+        peer_scope="all",
+    )
+
+    assert [candidate.base_uri for candidate in candidates] == [other_uri]
+    assert candidates[0].origin == "other_peer"
+    peer_call = next(call for call in calls if call["target_uri"].endswith("/peers"))
+    assert peer_call["ctx"].actor_peer_id is None
+    assert stats["origins"]["other_peer"] == 1
+
+
+async def test_bucket_mode_forwards_image_url_to_every_search():
+    image_url = "data:image/png;base64,AA=="
+    calls = []
+
+    async def fake_find(**kwargs):
+        calls.append(kwargs)
+        return _FakeFindResult()
+
+    _candidates, stats = await gather_candidates(
+        service=_service(fake_find),
+        ctx=_ctx(),
+        queries=[""],
+        quotas={"events": 1},
+        limit=10,
+        score_threshold=None,
+        image_url=image_url,
+        peer_scope="all",
+    )
+
+    assert calls
+    assert all(call["query"] == "" and call["image_url"] == image_url for call in calls)
+    assert "retrieval_errors" not in stats
 
 
 async def test_excluded_uris_are_compensated_with_extra_rows():
@@ -196,6 +249,8 @@ async def test_excluded_uris_are_compensated_with_extra_rows():
 
 async def test_exclude_uris_filtered_and_counted():
     async def fake_find(**kwargs):
+        if kwargs["target_uri"]:
+            return _FakeFindResult()
         return _FakeFindResult(
             memories=[
                 {"uri": "viking://user/test_user/memories/events/a.md", "score": 0.5},
@@ -247,6 +302,8 @@ async def test_other_peer_penalty_demotes_foreign_hits():
 
 async def test_profile_memory_is_never_a_candidate():
     async def fake_find(**kwargs):
+        if kwargs["target_uri"]:
+            return _FakeFindResult()
         return _FakeFindResult(
             memories=[{"uri": "viking://user/test_user/memories/profile.md", "score": 0.9}]
         )
