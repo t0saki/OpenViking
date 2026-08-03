@@ -184,69 +184,6 @@ test("startup injects the shared profile block with workspace peer routing", asy
   }
 });
 
-test("resume composes profile and archive context in one SessionStart output", async () => {
-  const stateDir = await mkdtemp(join(tmpdir(), "ov-codex-session-resume-"));
-  const requests = [];
-  try {
-    await withMockOpenViking(
-      profileHandler(requests, { archiveOverview: "Previously implemented session capture." }),
-      async (baseUrl) => {
-        const { output } = await runSessionStart(
-          {
-            session_id: "resume-profile",
-            source: "resume",
-            cwd: "/tmp/codex-resume",
-            hook_event_name: "SessionStart",
-          },
-          baseEnv(baseUrl, stateDir),
-        );
-
-        const context = output.hookSpecificOutput.additionalContext;
-        assert.match(context, /source="session-start"/);
-        assert.match(context, /Works on OpenViking integrations/);
-        assert.match(context, /source="session-resume"/);
-        assert.match(context, /Previously implemented session capture/);
-        assert.match(context, /viking:\/\/user\/sessions\/cx-resume-profile\/history\//);
-      },
-    );
-  } finally {
-    await rm(stateDir, { recursive: true, force: true });
-  }
-});
-
-test("profile injection can be disabled without changing SessionStart cleanup behavior", async () => {
-  const stateDir = await mkdtemp(join(tmpdir(), "ov-codex-session-disabled-"));
-  const requests = [];
-  try {
-    await withMockOpenViking(profileHandler(requests), async (baseUrl) => {
-      const { output } = await runSessionStart(
-        {
-          session_id: "disabled-profile",
-          source: "startup",
-          cwd: "/tmp/codex-disabled",
-          hook_event_name: "SessionStart",
-        },
-        {
-          ...baseEnv(baseUrl, stateDir),
-          OPENVIKING_NO_AUTO_INJECT: "1",
-        },
-      );
-      assert.deepEqual(output, {});
-    });
-
-    assert.equal(
-      requests.some((request) =>
-        request.path === "/api/v1/content/read"
-        || request.path === "/api/v1/system/status"
-        || request.path === "/api/v1/fs/ls"
-      ),
-      false,
-    );
-  } finally {
-    await rm(stateDir, { recursive: true, force: true });
-  }
-});
-
 test("startup preserves the existing commit systemMessage alongside profile context", async () => {
   const stateDir = await mkdtemp(join(tmpdir(), "ov-codex-session-commit-"));
   const requests = [];

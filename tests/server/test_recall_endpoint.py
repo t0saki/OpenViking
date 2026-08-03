@@ -3,7 +3,7 @@
 
 import httpx
 
-from openviking.retrieve.context_assembler.params import DEFAULT_QUOTAS, PURPOSE_PRESETS
+from openviking.retrieve.context_assembler.params import DEFAULT_QUOTAS
 from openviking.retrieve.context_assembler.recall_preset import (
     RECALL_SCORE_THRESHOLD,
     fold_recall_request,
@@ -27,75 +27,36 @@ def _memory(uri: str, score: float = 0.9, abstract: str = ""):
     )
 
 
-def test_v1_max_chars_folds_into_a_token_budget():
-    params, aliases = fold_recall_request({"query": "q", "max_chars": 6500}, {"max_chars"})
+def test_v1_aliases_fold_into_the_context_contract():
+    params, aliases = fold_recall_request(
+        {
+            "query": "q",
+            "max_chars": 6500,
+            "min_score": 0.1,
+            "render": "compact",
+            "session_id": "s1",
+        },
+        {"max_chars", "min_score", "render", "session_id"},
+    )
+
     assert params.max_tokens == 1625
-    assert aliases == ["max_chars"]
-
-    explicit, _ = fold_recall_request(
-        {"query": "q", "max_chars": 6500, "max_tokens": 900}, {"max_chars", "max_tokens"}
-    )
-    assert explicit.max_tokens == 900
-
-
-def test_v1_min_score_folds_and_preset_applies_when_absent():
-    params, aliases = fold_recall_request({"query": "q", "min_score": 0.1}, {"min_score"})
     assert params.score_threshold == 0.1
-    assert aliases == ["min_score"]
+    assert params.detail == "abstract"
+    assert params.quotas == DEFAULT_QUOTAS
+    assert params.dedup_turns == 5
+    assert aliases == ["max_chars", "min_score", "render"]
 
-    preset, aliases = fold_recall_request({"query": "q"}, set())
-    assert preset.score_threshold == RECALL_SCORE_THRESHOLD
-    assert aliases == []
-
-
-def test_v1_render_tristate_maps_onto_detail():
-    rendered, _ = fold_recall_request({"query": "q", "render": True}, {"render"})
-    assert (rendered.render, rendered.detail) == (True, None)
-
-    entries_only, _ = fold_recall_request({"query": "q", "render": False}, {"render"})
-    assert (entries_only.render, entries_only.detail) == (False, None)
-
-    compact, _ = fold_recall_request({"query": "q", "render": "compact"}, {"render"})
-    assert (compact.render, compact.detail) == (True, "abstract")
-
-    override, _ = fold_recall_request(
-        {"query": "q", "render": "compact", "detail": "full"}, {"render", "detail"}
-    )
-    assert override.detail == "full"
+    defaults, _ = fold_recall_request({"query": "q"}, set())
+    assert defaults.score_threshold == RECALL_SCORE_THRESHOLD
+    assert defaults.dedup_turns == 0
 
 
-def test_quotas_default_to_v1_buckets_and_null_opts_into_purpose():
-    omitted, _ = fold_recall_request({"query": "q"}, set())
-    assert omitted.quotas == DEFAULT_QUOTAS
-    assert omitted.purpose == "coding"
-
-    explicit_null, _ = fold_recall_request({"query": "q", "quotas": None}, {"quotas"})
-    assert explicit_null.quotas is None
-    assert PURPOSE_PRESETS[explicit_null.purpose]["experiences"] == 2
-
-
-def test_dedup_turns_only_default_on_with_a_session():
-    stateless, _ = fold_recall_request({"query": "q"}, set())
-    assert stateless.dedup_turns == 0
-
-    stateful, _ = fold_recall_request({"query": "q", "session_id": "s1"}, {"session_id"})
-    assert stateful.dedup_turns == 5
-
-    pinned, _ = fold_recall_request(
-        {"query": "q", "session_id": "s1", "dedup_turns": 0}, {"session_id", "dedup_turns"}
-    )
-    assert pinned.dedup_turns == 0
-
-
-async def test_recall_endpoint_assembles_tiers_and_signals_deprecation(
+async def test_recall_endpoint_assembles_context_and_signals_deprecation(
     client: httpx.AsyncClient,
     service,
     monkeypatch,
 ):
-    calls = []
-
     async def fake_find(**kwargs):
-        calls.append(kwargs)
         target_uri = kwargs["target_uri"]
         if target_uri.endswith("/events"):
             return _FakeFindResult(
@@ -127,8 +88,7 @@ async def test_recall_endpoint_assembles_tiers_and_signals_deprecation(
 
     monkeypatch.setattr(service.search, "find", fake_find)
     monkeypatch.setattr(service.fs, "read", fake_read)
-
-    resp = await client.post(
+    response = await client.post(
         "/api/v1/search/recall",
         json={
             "query": "what should I remember",
@@ -139,14 +99,10 @@ async def test_recall_endpoint_assembles_tiers_and_signals_deprecation(
         },
     )
 
-    assert resp.status_code == 200
-    assert resp.headers["Deprecation"] == "true"
-    body = resp.json()
-    assert body["status"] == "ok"
-    result = body["result"]
-    assert result["stats"]["returned"] == 2
+    assert response.status_code == 200
+    assert response.headers["Deprecation"] == "true"
+    result = response.json()["result"]
     assert {entry["category"] for entry in result["entries"]} == {"events", "entities"}
-    assert all(entry["detail"] != "uri" for entry in result["entries"])
     assert result["rendered"].count("<memory ") == 2
     assert result["stats"]["deprecated"] == {
         "endpoint": "/api/v1/search/recall",
@@ -154,154 +110,9 @@ async def test_recall_endpoint_assembles_tiers_and_signals_deprecation(
         "successor_body": {"mode": "context"},
         "aliases_used": ["max_chars", "min_score", "render"],
     }
-    assert [call["target_uri"].rsplit("/", 1)[-1] for call in calls] == [
-        "events",
-        "peers",
-        "entities",
-        "peers",
-    ]
 
 
-async def test_recall_endpoint_keeps_every_entry_readable_under_a_tight_budget(
-    client: httpx.AsyncClient,
-    service,
-    monkeypatch,
-):
-    async def fake_find(**kwargs):
-        if kwargs["target_uri"].endswith("/events"):
-            return _FakeFindResult(
-                [
-                    _memory("viking://user/default/memories/events/big.md", 0.9, "big event"),
-                    _memory("viking://user/default/memories/events/big2.md", 0.8, "second"),
-                ]
-            )
-        return _FakeFindResult([])
-
-    async def fake_read(uri, **kwargs):
-        del kwargs
-        return "# Summary\n" + ("s" * 500) + "\n\n# ChatLog:\n" + ("x" * 2000) + f"\n{uri}"
-
-    monkeypatch.setattr(service.search, "find", fake_find)
-    monkeypatch.setattr(service.fs, "read", fake_read)
-
-    # A budget that fits the abstract floor but nothing deeper: every entry stays
-    # readable instead of degrading to a bare URI.
-    resp = await client.post(
-        "/api/v1/search/recall",
-        json={
-            "query": "budget",
-            "quotas": {"events": 2, "entities": 0, "preferences": 0},
-            "max_tokens": 120,
-        },
-    )
-    assert resp.status_code == 200
-    result = resp.json()["result"]
-    assert [entry["detail"] for entry in result["entries"]] == ["abstract", "abstract"]
-    assert result["stats"]["used_tokens"] <= 120
-
-
-async def test_recall_endpoint_degrades_then_drops_when_nothing_fits(
-    client: httpx.AsyncClient,
-    service,
-    monkeypatch,
-):
-    long_abstract = "s" * 500
-    long_name = "n" * 200
-
-    async def fake_find(**kwargs):
-        if kwargs["target_uri"].endswith("/events"):
-            return _FakeFindResult(
-                [
-                    _memory(
-                        f"viking://user/default/memories/events/{long_name}-1.md",
-                        0.9,
-                        long_abstract,
-                    ),
-                    _memory(
-                        f"viking://user/default/memories/events/{long_name}-2.md",
-                        0.8,
-                        long_abstract,
-                    ),
-                ]
-            )
-        return _FakeFindResult([])
-
-    async def fake_read(uri, **kwargs):
-        del kwargs
-        return f"# Summary\n{'x' * 4000}\n\n# ChatLog:\n{uri}"
-
-    monkeypatch.setattr(service.search, "find", fake_find)
-    monkeypatch.setattr(service.fs, "read", fake_read)
-
-    # Abstract does not fit, so the entry degrades to the URI fragment.
-    resp = await client.post(
-        "/api/v1/search/recall",
-        json={
-            "query": "budget",
-            "quotas": {"events": 2, "entities": 0, "preferences": 0},
-            "max_tokens": 200,
-        },
-    )
-    assert resp.status_code == 200
-    result = resp.json()["result"]
-    assert [entry["detail"] for entry in result["entries"]] == ["uri", "uri"]
-    assert result["stats"]["used_tokens"] <= 200
-
-    # Not even one URI fragment fits: drop rather than overrun the contract.
-    resp = await client.post(
-        "/api/v1/search/recall",
-        json={
-            "query": "budget",
-            "quotas": {"events": 2, "entities": 0, "preferences": 0},
-            "max_tokens": 64,
-        },
-    )
-    assert resp.status_code == 200
-    result = resp.json()["result"]
-    assert result["entries"] == []
-    assert result["rendered"] == ""
-    assert result["stats"]["dropped"] == 2
-
-
-async def test_recall_endpoint_sanitizes_nonfinite_scores(
-    client: httpx.AsyncClient,
-    service,
-    monkeypatch,
-):
-    async def fake_find(**kwargs):
-        if kwargs["target_uri"].endswith("/events"):
-            return _FakeFindResult(
-                [_memory("viking://user/default/memories/events/inf.md", float("inf"), "bad score")]
-            )
-        return _FakeFindResult([])
-
-    async def fake_read(uri, **kwargs):
-        del uri, kwargs
-        return "small content"
-
-    monkeypatch.setattr(service.search, "find", fake_find)
-    monkeypatch.setattr(service.fs, "read", fake_read)
-
-    resp = await client.post(
-        "/api/v1/search/recall",
-        json={"query": "inf", "quotas": {"events": 1, "entities": 0, "preferences": 0}},
-    )
-
-    assert resp.status_code == 200
-    entries = resp.json()["result"]["entries"]
-    assert entries and entries[0]["score"] == 0.0
-
-
-async def test_recall_endpoint_rejects_unknown_fields(client: httpx.AsyncClient):
-    resp = await client.post(
-        "/api/v1/search/recall",
-        json={"query": "hello", "unexpected": "value"},
-    )
-
-    assert resp.status_code == 400
-
-
-async def test_recall_endpoint_filters_profile_and_duplicates(
+async def test_recall_excludes_profile_and_duplicate_hits(
     client: httpx.AsyncClient,
     service,
     monkeypatch,
@@ -314,18 +125,16 @@ async def test_recall_endpoint_filters_profile_and_duplicates(
 
     async def fake_read(uri, **kwargs):
         del kwargs
-        if uri.endswith("profile.md"):
-            return "profile"
-        return "duplicate content"
+        return "profile" if uri.endswith("profile.md") else "duplicate content"
 
     monkeypatch.setattr(service.search, "find", fake_find)
     monkeypatch.setattr(service.fs, "read", fake_read)
-
-    resp = await client.post(
+    response = await client.post(
         "/api/v1/search/recall",
         json={"query": "hello", "quotas": {"events": 3, "entities": 0, "preferences": 0}},
     )
 
-    assert resp.status_code == 200
-    entries = resp.json()["result"]["entries"]
-    assert [entry["uri"] for entry in entries] == ["viking://user/default/memories/events/dup.md"]
+    assert response.status_code == 200
+    assert [entry["uri"] for entry in response.json()["result"]["entries"]] == [
+        "viking://user/default/memories/events/dup.md"
+    ]

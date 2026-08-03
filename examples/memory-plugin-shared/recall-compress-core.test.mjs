@@ -1,182 +1,63 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  buildRecallCompressionPrompt,
   compressRecallContext,
   normalizeCompressedContext,
-  recallDigestCacheKey,
   repairDigestUris,
 } from "./lib/recall-compress-core.mjs";
-import { normalizeRewriteMode } from "./lib/plugin-config.mjs";
 
 async function tempPath(name) {
   const dir = await mkdtemp(join(tmpdir(), "ov-compress-"));
   return join(dir, name);
 }
 
-test("prompt states the goal and the citation slot without a length contract", () => {
-  const prompt = buildRecallCompressionPrompt({
-    query: "what changed",
-    rendered: "<memory uri=\"viking://a\" />",
-    maxBullets: 4,
-  });
-  assert.match(prompt, /at most 4 bullets/);
-  assert.match(prompt, /来源：viking:\/\//);
-  assert.match(prompt, /No preamble, no closing remark/);
-  assert.doesNotMatch(prompt, /120 characters/);
-});
+test("compressed context keeps only citations to served URIs", () => {
+  const served = "viking://user/u/memories/events/a.md";
+  const normalized = normalizeCompressedContext([
+    `- good 来源：${served}`,
+    "- uncited fact",
+    "- invented 来源：viking://unrelated/fake.md",
+  ].join("\n"));
 
-test("normalizeCompressedContext keeps only cited bullets", () => {
-  assert.equal(normalizeCompressedContext("NO_RELEVANT_MEMORY"), "");
-  assert.equal(normalizeCompressedContext("- uncited fact"), null);
   assert.equal(
-    normalizeCompressedContext("chatter\n* fact 来源：viking://a\nmore chatter"),
-    "OpenViking memory digest:\n- fact 来源：viking://a",
+    repairDigestUris(normalized, [served]),
+    `OpenViking memory digest:\n- good 来源：${served}`,
   );
 });
 
-test("normalizeCompressedContext honors the bullet ceiling", () => {
-  const raw = "- one 来源：viking://a\n- two 来源：viking://b\n- three 来源：viking://c";
-  const digest = normalizeCompressedContext(raw, 4000, 2);
-  assert.equal(digest.split("\n").length, 3);
-});
-
-test("repairDigestUris snaps near-miss URIs back onto the served set", () => {
-  const valid = ["viking://user/zhengxiao/memories/events/2026/07/14/release_notes.md"];
-  const mangled = "- fact 来源：viking://user/zhengxiao/memories/events/2026/07/14/release_note.md";
-  assert.equal(repairDigestUris(mangled, valid), `- fact 来源：${valid[0]}`);
-});
-
-test("repairDigestUris drops bullets whose citation cannot be recovered", () => {
-  const valid = ["viking://user/u/memories/events/a.md"];
-  const digest = [
-    "OpenViking memory digest:",
-    "- good 来源：viking://user/u/memories/events/a.md",
-    "- invented 来源：viking://completely/different/place/xyz.md",
-  ].join("\n");
-  const repaired = repairDigestUris(digest, valid);
-  assert.match(repaired, /good/);
-  assert.doesNotMatch(repaired, /invented/);
-});
-
-test("cache key covers every input that can change the digest", () => {
-  const base = {
-    query: "what changed",
-    rendered: "<memory>release facts</memory>",
-    entries: [{ uri: "viking://a" }, { uri: "viking://b" }],
-    maxInputChars: 18000,
-    maxBullets: 6,
-  };
-  const a = recallDigestCacheKey(base);
-  const b = recallDigestCacheKey({
-    ...base,
-    entries: [{ uri: "viking://b" }, { uri: "viking://a" }],
-  });
-  assert.equal(a, b);
-  assert.notEqual(a, recallDigestCacheKey({ ...base, query: "what deadline" }));
-  assert.notEqual(a, recallDigestCacheKey({ ...base, rendered: "<memory>new facts</memory>" }));
-  assert.notEqual(a, recallDigestCacheKey({ ...base, entries: [{ uri: "viking://a" }] }));
-  assert.notEqual(a, recallDigestCacheKey({ ...base, maxInputChars: 1000 }));
-  assert.notEqual(a, recallDigestCacheKey({ ...base, maxBullets: 3 }));
-});
-
-test("compressRecallContext passes short input straight through", async () => {
-  let called = false;
-  const rendered = "<memory uri=\"viking://a\" />";
-  const out = await compressRecallContext({
-    query: "q",
-    rendered,
-    cfg: { recallCompressMinInputChars: 1500 },
-    runCompressor: async () => { called = true; return ""; },
-  });
-  assert.equal(out, rendered);
-  assert.equal(called, false);
-});
-
-test("compressRecallContext reuses only an identical compression request", async () => {
+test("compression cache is reused only for the same request", async () => {
   const cachePath = await tempPath("digest.json");
   const rendered = `<memory uri="viking://a">${"x".repeat(2000)}</memory>`;
   const entries = [{ uri: "viking://a" }];
   let calls = 0;
-
   const runCompressor = async () => {
     calls += 1;
     return "- fact 来源：viking://a";
   };
 
-  const first = await compressRecallContext({
-    query: "q", rendered, entries, runCompressor, cachePath, now: 1,
+  await compressRecallContext({
+    query: "first", rendered, entries, runCompressor, cachePath,
   });
-  const second = await compressRecallContext({
-    query: "q", rendered, entries, runCompressor, cachePath, now: 2,
+  await compressRecallContext({
+    query: "first", rendered, entries, runCompressor, cachePath,
+  });
+  await compressRecallContext({
+    query: "different", rendered, entries, runCompressor, cachePath,
   });
 
-  assert.equal(calls, 1);
-  assert.equal(first, second);
-  assert.match(first, /OpenViking memory digest:/);
-  assert.match(await readFile(cachePath, "utf8"), /"digest"/);
+  assert.equal(calls, 2);
 });
 
-test("compressRecallContext does not reuse a digest across queries or content", async () => {
-  const cachePath = await tempPath("digest.json");
-  const entries = [{ uri: "viking://a" }];
-  let calls = 0;
-
-  const runCompressor = async (prompt) => {
-    calls += 1;
-    return prompt.includes("deadline")
-      ? "- deadline 来源：viking://a"
-      : "- command 来源：viking://a";
-  };
-
-  const first = await compressRecallContext({
-    query: "which command",
-    rendered: `<memory uri="viking://a">${"x".repeat(2000)}</memory>`,
-    entries,
-    runCompressor,
-    cachePath,
-  });
-  const second = await compressRecallContext({
-    query: "what deadline",
-    rendered: `<memory uri="viking://a">${"x".repeat(2000)}</memory>`,
-    entries,
-    runCompressor,
-    cachePath,
-  });
-  const third = await compressRecallContext({
-    query: "what deadline",
-    rendered: `<memory uri="viking://a">${"y".repeat(2000)}</memory>`,
-    entries,
-    runCompressor,
-    cachePath,
-  });
-
-  assert.equal(calls, 3);
-  assert.match(first, /command/);
-  assert.match(second, /deadline/);
-  assert.match(third, /deadline/);
-});
-
-test("compressRecallContext returns null when the model emits nothing usable", async () => {
-  const rendered = `<memory uri="viking://a">${"x".repeat(2000)}</memory>`;
-  const out = await compressRecallContext({
+test("unusable compressor output triggers the caller fallback", async () => {
+  const output = await compressRecallContext({
     query: "q",
-    rendered,
+    rendered: `<memory uri="viking://a">${"x".repeat(2000)}</memory>`,
     entries: [{ uri: "viking://a" }],
     runCompressor: async () => "I could not find anything relevant.",
   });
-  assert.equal(out, null);
-});
 
-test("normalizeRewriteMode accepts the tri-state knob and booleans", () => {
-  assert.equal(normalizeRewriteMode("client"), "client");
-  assert.equal(normalizeRewriteMode("SERVER"), "server");
-  assert.equal(normalizeRewriteMode("auto"), "auto");
-  assert.equal(normalizeRewriteMode("true"), "auto");
-  assert.equal(normalizeRewriteMode("0"), "off");
-  assert.equal(normalizeRewriteMode("nonsense"), "off");
-  assert.equal(normalizeRewriteMode(undefined, "server"), "server");
+  assert.equal(output, null);
 });

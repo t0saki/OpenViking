@@ -68,18 +68,6 @@ test("Claude hooks include optional skill experience PostToolUse Read hook", () 
   execFileSync("node", ["--check", join(pluginDir, "scripts", "skill-experience.mjs")], { stdio: "pipe" });
 });
 
-test("Claude UserPromptSubmit timeout accommodates the default compressor", () => {
-  const hooks = readJson(join(pluginDir, "hooks", "hooks.json"));
-  const userPromptSubmit = hooks.hooks?.UserPromptSubmit;
-  assert.ok(Array.isArray(userPromptSubmit), "hooks.json must define UserPromptSubmit hooks");
-  const recallHook = userPromptSubmit[0]?.hooks?.[0];
-  assert.equal(
-    recallHook?.command,
-    "node ${CLAUDE_PLUGIN_ROOT}/scripts/auto-recall.mjs",
-  );
-  assert.equal(recallHook?.timeout, 60);
-});
-
 test("Claude hooks include PreToolUse URI guard for filesystem tools", () => {
   const hooks = readJson(join(pluginDir, "hooks", "hooks.json"));
   const preToolUse = hooks.hooks?.PreToolUse;

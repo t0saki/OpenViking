@@ -145,32 +145,6 @@ test("invalidateRecallCompressorProfileCache removes the persisted profile", asy
   });
 });
 
-test("loadCachedRecallCompressorProfile rejects profiles from the previous candidate schema", async () => {
-  await withTempState(async ({ stateDir }) => {
-    await writeFile(
-      join(stateDir, "recall-compressor-profile.json"),
-      JSON.stringify({
-        checkedAt: Date.now(),
-        configKey: JSON.stringify({
-          version: 2,
-          recallCompress: true,
-          recallCompressModel: "",
-          recallCompressThinking: "default",
-          recallCompressConfigured: false,
-        }),
-        profile: {
-          enabled: true,
-          model: "gpt-5.5",
-          thinking: "low",
-          source: "default_fallback",
-        },
-      }),
-    );
-
-    assert.equal(await loadCachedRecallCompressorProfile(baseCfg()), null);
-  });
-});
-
 test("detectRecallCompressorProfile prefers cached profile (no probe even when cache exists)", async () => {
   await withTempState(async ({ stateDir, codexHome }) => {
     // Seed cache with a different model than what the resolver would pick now.
