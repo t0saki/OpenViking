@@ -70,8 +70,8 @@ Claude Code 和 Codex 共用这一个安装脚本。它会依次询问要安装�
 | 环境变量 | 默认值 | 说明 |
 |---------|--------|------|
 | `OPENVIKING_AUTO_RECALL` | `true` | 每次用户输入前自动触发记忆召回 |
-| `OPENVIKING_RECALL_LIMIT` | `6` | 单轮对话最多注入的记忆条数 |
-| `OPENVIKING_RECALL_TOKEN_BUDGET` | `2000` | 内联记忆内容的 Token 预算上限 |
+| `OPENVIKING_RECALL_LIMIT` | `10` | 遗留宽度覆盖，会转换为各分类 coding 配额 |
+| `OPENVIKING_RECALL_TOKEN_BUDGET` | `2000` | 最终 raw-find fallback 的内联 Token 预算 |
 | `OPENVIKING_AUTO_CAPTURE` | `true` | 每轮对话结束后自动捕获新记忆 |
 | `OPENVIKING_BYPASS_SESSION` | `false` | 禁用当前会话的所有 Hook |
 | `OPENVIKING_BYPASS_SESSION_PATTERNS` | `""` | 通过 CSV 格式的 glob 模式匹配并自动跳过特定会话 |

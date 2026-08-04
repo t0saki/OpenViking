@@ -53,7 +53,8 @@ export function loadAgentHookConfig(clientId) {
     bypassSession: envBool("OPENVIKING_BYPASS_SESSION", false),
     bypassSessionPatterns: String(process.env.OPENVIKING_BYPASS_SESSION_PATTERNS || "")
       .split(",").map((item) => item.trim()).filter(Boolean),
-    recallLimit: envNumber("OPENVIKING_RECALL_LIMIT", 6, 1),
+    recallLimit: envNumber("OPENVIKING_RECALL_LIMIT", 10, 1),
+    recallLimitConfigured: Boolean(process.env.OPENVIKING_RECALL_LIMIT),
     recallTokenBudget: envNumber("OPENVIKING_RECALL_TOKEN_BUDGET", 2000, 200),
     recallMaxContentChars: envNumber("OPENVIKING_RECALL_MAX_CONTENT_CHARS", 500, 50),
     scoreThreshold: envNumber("OPENVIKING_SCORE_THRESHOLD", 0.35, 0),

@@ -168,8 +168,10 @@ export function loadConfig() {
     autoRecall: envBool("OPENVIKING_AUTO_RECALL") ?? (cx.autoRecall !== false),
     recallLimit: Math.max(1, Math.floor(num(
       process.env.OPENVIKING_RECALL_LIMIT,
-      num(cx.recallLimit, 6),
+      num(cx.recallLimit, 10),
     ))),
+    recallLimitConfigured: Boolean(process.env.OPENVIKING_RECALL_LIMIT) ||
+      hasOwn(cx, "recallLimit"),
     scoreThreshold: Math.min(1, Math.max(0, num(
       process.env.OPENVIKING_SCORE_THRESHOLD,
       num(cx.scoreThreshold, 0.35),
@@ -202,12 +204,17 @@ export function loadConfig() {
       process.env.OPENVIKING_RECALL_COMPRESS_MAX_BULLETS,
       num(cx.recallCompressMaxBullets, 6),
     ))),
+    recallCompressMaxBulletsConfigured:
+      Boolean(process.env.OPENVIKING_RECALL_COMPRESS_MAX_BULLETS) ||
+      hasOwn(cx, "recallCompressMaxBullets"),
 
     // Server-side context assembly (/search mode="context").
     recallMaxTokens: Math.max(64, Math.floor(num(
       process.env.OPENVIKING_RECALL_MAX_TOKENS,
       num(cx.recallMaxTokens, 1600),
     ))),
+    recallMaxTokensConfigured: Boolean(process.env.OPENVIKING_RECALL_MAX_TOKENS) ||
+      hasOwn(cx, "recallMaxTokens"),
     recallDedupTurns: Math.max(0, Math.floor(num(
       process.env.OPENVIKING_RECALL_DEDUP_TURNS,
       num(cx.recallDedupTurns, 5),
@@ -216,6 +223,8 @@ export function loadConfig() {
       process.env.OPENVIKING_RECALL_QUERY_EXPANSION,
       str(cx.recallQueryExpansion, "auto"),
     ) === "off" ? "off" : "auto",
+    recallQueryExpansionConfigured: Boolean(process.env.OPENVIKING_RECALL_QUERY_EXPANSION) ||
+      hasOwn(cx, "recallQueryExpansion"),
 
     autoCapture: envBool("OPENVIKING_AUTO_CAPTURE") ?? (cx.autoCapture !== false),
     captureMode: (str(process.env.OPENVIKING_CAPTURE_MODE, str(cx.captureMode, "semantic")) === "keyword")

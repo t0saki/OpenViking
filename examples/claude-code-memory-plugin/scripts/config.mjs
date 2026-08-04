@@ -67,6 +67,10 @@ function str(val, fallback) {
   return fallback;
 }
 
+function hasOwn(obj, key) {
+  return Object.prototype.hasOwnProperty.call(obj || {}, key);
+}
+
 function envBool(name) {
   const v = process.env[name];
   if (v == null || v === "") return undefined;
@@ -234,8 +238,10 @@ export function loadConfig() {
     autoRecall: envBool("OPENVIKING_AUTO_RECALL") ?? (cc.autoRecall !== false),
     recallLimit: Math.max(1, Math.floor(num(
       process.env.OPENVIKING_RECALL_LIMIT,
-      num(cc.recallLimit, 6),
+      num(cc.recallLimit, 10),
     ))),
+    recallLimitConfigured: Boolean(process.env.OPENVIKING_RECALL_LIMIT) ||
+      hasOwn(cc, "recallLimit"),
     scoreThreshold: Math.min(1, Math.max(0, num(
       process.env.OPENVIKING_SCORE_THRESHOLD,
       num(cc.scoreThreshold, 0.35),
@@ -263,6 +269,8 @@ export function loadConfig() {
       process.env.OPENVIKING_RECALL_MAX_TOKENS,
       num(cc.recallMaxTokens, 1600),
     ))),
+    recallMaxTokensConfigured: Boolean(process.env.OPENVIKING_RECALL_MAX_TOKENS) ||
+      hasOwn(cc, "recallMaxTokens"),
     recallDedupTurns: Math.max(0, Math.floor(num(
       process.env.OPENVIKING_RECALL_DEDUP_TURNS,
       num(cc.recallDedupTurns, 5),
@@ -271,6 +279,8 @@ export function loadConfig() {
       process.env.OPENVIKING_RECALL_QUERY_EXPANSION,
       str(cc.recallQueryExpansion, "auto"),
     ) === "off" ? "off" : "auto",
+    recallQueryExpansionConfigured: Boolean(process.env.OPENVIKING_RECALL_QUERY_EXPANSION) ||
+      hasOwn(cc, "recallQueryExpansion"),
     // Digest compression defaults to auto: prefer the local host CLI and fall
     // back to the server when it is unavailable. A failed digest still falls
     // back to the uncompressed context block.
@@ -301,6 +311,9 @@ export function loadConfig() {
       process.env.OPENVIKING_RECALL_COMPRESS_MAX_BULLETS,
       num(cc.recallCompressMaxBullets, 6),
     ))),
+    recallCompressMaxBulletsConfigured:
+      Boolean(process.env.OPENVIKING_RECALL_COMPRESS_MAX_BULLETS) ||
+      hasOwn(cc, "recallCompressMaxBullets"),
 
     // Capture
     autoCapture: envBool("OPENVIKING_AUTO_CAPTURE") ?? (cc.autoCapture !== false),

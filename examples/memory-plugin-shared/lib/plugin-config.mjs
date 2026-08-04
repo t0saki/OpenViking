@@ -9,7 +9,7 @@
  *   {
  *     "url": "...", "api_key": "...",
  *     "plugin": {
- *       "recallMaxTokens": 1600,
+ *       "recallQueryExpansion": "off",
  *       "recallCompress": "auto"
  *     }
  *   }

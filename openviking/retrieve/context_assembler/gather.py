@@ -13,6 +13,7 @@ from dataclasses import dataclass, replace
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Set, Tuple
 
 from openviking.core.namespace import AGENT_SHARED_ROOTS, canonical_user_root
+from openviking.core.retrieval_targets import default_target_directories
 from openviking.retrieve.context_assembler.params import (
     CATEGORY_KEYS,
     MEMORY_CATEGORIES,
@@ -20,7 +21,9 @@ from openviking.retrieve.context_assembler.params import (
     OTHER_PEER_OVERFETCH,
 )
 from openviking.server.identity import RequestContext
+from openviking.utils.search_filters import merge_context_type_filter
 from openviking_cli.exceptions import InvalidArgumentError
+from openviking_cli.retrieve import ContextType
 
 LEVEL_SUFFIXES = (".abstract.md", ".overview.md")
 
@@ -91,9 +94,18 @@ def category_targets(category: str, ctx: RequestContext) -> List[str]:
     """Retrieval scopes owning ``category``."""
     user_root = canonical_user_root(ctx)
     if category == "resources":
-        return [f"{user_root}/resources", "viking://resources"]
+        targets = default_target_directories(ctx, context_type=ContextType.RESOURCE)
+        if targets:
+            return targets
+        fallback = [f"{user_root}/resources", "viking://resources"]
+        if ctx.actor_peer_id:
+            fallback.append(f"{user_root}/peers/{ctx.actor_peer_id}/resources")
+        return fallback
     if category == "skills":
-        return [f"{user_root}/skills", *AGENT_SHARED_ROOTS]
+        return default_target_directories(ctx, context_type=ContextType.SKILL) or [
+            f"{user_root}/skills",
+            *AGENT_SHARED_ROOTS,
+        ]
     return [f"{root.rstrip('/')}/{category}" for root in memory_target_roots(ctx)]
 
 
@@ -245,7 +257,14 @@ async def gather_candidates(
         """
         return want + min(len(excluded), want * 2)
 
-    def _find(*, query: str, find_ctx: RequestContext, target_uri: str, find_limit: int) -> Any:
+    def _find(
+        *,
+        query: str,
+        find_ctx: RequestContext,
+        target_uri: str,
+        find_limit: int,
+        find_filter: Optional[Dict[str, Any]] = None,
+    ) -> Any:
         return _safe_find(
             service,
             retrieval_errors,
@@ -254,19 +273,25 @@ async def gather_candidates(
             target_uri=target_uri,
             limit=find_limit,
             score_threshold=score_threshold,
-            filter=filter,
+            filter=find_filter if find_filter is not None else filter,
             image_url=image_url,
             level=None,
         )
 
     async def gather_bucket(bucket: str, quota: int) -> List[Candidate]:
         targets = category_targets(bucket, ctx)
+        context_type = {
+            "resources": ContextType.RESOURCE,
+            "skills": ContextType.SKILL,
+        }.get(bucket, ContextType.MEMORY)
+        bucket_filter = merge_context_type_filter(filter, context_type)
         searches = [
             _find(
                 query=query,
                 find_ctx=ctx,
                 target_uri=target,
                 find_limit=_overfetch(quota),
+                find_filter=bucket_filter,
             )
             for query in planned
             for target in targets
@@ -279,6 +304,7 @@ async def gather_candidates(
                     find_ctx=open_ctx,
                     target_uri=f"{user_root}/peers",
                     find_limit=_overfetch(max(quota * OTHER_PEER_OVERFETCH, quota)),
+                    find_filter=bucket_filter,
                 )
                 for query in planned
             )

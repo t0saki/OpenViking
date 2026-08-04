@@ -111,7 +111,7 @@ All fields below live in `config.json`. Defaults are shown.
 | `recallTokenBudget`      | `2000`     | Token budget for inline recall content                                   |
 | `recallMaxContentChars`  | `500`      | Per-item content cap for search results                                  |
 | `recallPreferAbstract`   | `true`     | Prefer L0 abstract over L2 full body when available                      |
-| `recallLimit`            | `6`        | Max memories to inject per prompt                                        |
+| `recallLimit`            | `10`       | Legacy width override converted to per-category coding quotas            |
 | `scoreThreshold`         | `0.35`     | Min relevance score (0–1)                                                |
 | `minQueryLength`         | `3`        | Skip recall for queries shorter than N characters                        |
 

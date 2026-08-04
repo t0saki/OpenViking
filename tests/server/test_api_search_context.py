@@ -90,6 +90,83 @@ async def test_context_mode_quotas_use_category_ownership_roots(
     assert "viking://agent/skills" in targets
 
 
+async def test_coding_purpose_searches_all_domains_and_actor_resource(
+    client: httpx.AsyncClient,
+    service,
+    monkeypatch,
+):
+    calls = []
+
+    async def fake_find(**kwargs):
+        calls.append(kwargs)
+        return _FakeFindResult()
+
+    monkeypatch.setattr(service.search, "find", fake_find)
+    response = await client.post(
+        "/api/v1/search/search",
+        headers={"X-OpenViking-Actor-Peer": "current"},
+        json={
+            "query": "release",
+            "mode": "context",
+            "purpose": "coding",
+            "limit": 1,
+            "peer_scope": "actor",
+        },
+    )
+
+    assert response.status_code == 200
+    targets = [call["target_uri"] for call in calls]
+    assert any(target.endswith("/memories/events") for target in targets)
+    assert any(target.endswith("/memories/entities") for target in targets)
+    assert any(target.endswith("/memories/preferences") for target in targets)
+    assert any(target.endswith("/memories/experiences") for target in targets)
+    assert "viking://resources" in targets
+    assert any(target.endswith("/peers/current/resources") for target in targets)
+    assert any(target.endswith("/skills") for target in targets)
+    assert response.json()["result"]["stats"]["quotas"] == {
+        "events": 1,
+        "entities": 2,
+        "preferences": 1,
+        "experiences": 1,
+        "resources": 3,
+        "skills": 2,
+    }
+    assert response.json()["result"]["stats"]["ignored"] == ["limit"]
+
+
+async def test_context_and_list_default_limit_is_ten(
+    client: httpx.AsyncClient,
+    service,
+    monkeypatch,
+):
+    limits = []
+
+    async def fake_find(**kwargs):
+        limits.append(("context", kwargs["limit"]))
+        return _FakeFindResult()
+
+    async def fake_search(**kwargs):
+        limits.append(("list", kwargs["limit"]))
+        return _FakeFindResult()
+
+    monkeypatch.setattr(service.search, "find", fake_find)
+    monkeypatch.setattr(service.search, "search", fake_search)
+
+    context_response = await client.post(
+        "/api/v1/search/search",
+        json={"query": "defaults", "mode": "context"},
+    )
+    list_response = await client.post(
+        "/api/v1/search/search",
+        json={"query": "defaults"},
+    )
+
+    assert context_response.status_code == 200
+    assert list_response.status_code == 200
+    assert ("context", 10) in limits
+    assert ("list", 10) in limits
+
+
 async def test_context_and_list_parameter_domains_do_not_overlap(client: httpx.AsyncClient):
     list_response = await client.post(
         "/api/v1/search/search",

@@ -142,14 +142,14 @@ claude
 | 环境变量                                | 默认值        | 说明                                                                |
 |----------------------------------------|---------------|--------------------------------------------------------------------|
 | `OPENVIKING_AUTO_RECALL`               | `true`        | 启用每轮自动召回                                                   |
-| `OPENVIKING_RECALL_LIMIT`              | `6`           | 每轮最多注入的记忆条数                                             |
-| `OPENVIKING_RECALL_TOKEN_BUDGET`       | `2000`        | 内联内容的 token 预算；超出预算的项降级为 URI hint                  |
+| `OPENVIKING_RECALL_LIMIT`              | `10`          | 遗留宽度覆盖；显式设置时会转换为六类 coding 配额                    |
+| `OPENVIKING_RECALL_TOKEN_BUDGET`       | `2000`        | 仅用于最终 raw-find fallback 的内联 token 预算                      |
 | `OPENVIKING_RECALL_MAX_CONTENT_CHARS`  | `500`         | 单条记忆内容字符上限                                               |
 | `OPENVIKING_RECALL_PREFER_ABSTRACT`    | `true`        | 有 abstract 时优先用 abstract 而非完整 body                        |
 | `OPENVIKING_SCORE_THRESHOLD`           | `0.35`        | 最低相关度得分（0–1）                                               |
 | `OPENVIKING_MIN_QUERY_LENGTH`          | `3`           | 短于此长度的 query 跳过召回                                        |
 | `OPENVIKING_LOG_RANKING_DETAILS`       | `false`       | 每候选打分日志（很啰嗦）                                           |
-| `OPENVIKING_RECALL_MAX_TOKENS`         | `1600`        | 服务端组装上下文块的 token 预算（感知 CJK 的估算）                   |
+| `OPENVIKING_RECALL_MAX_TOKENS`         | `1600`        | 服务端组装上下文块的 token 预算（与本地压缩输入上限相互独立）         |
 | `OPENVIKING_RECALL_DEDUP_TURNS`        | `5`           | 跨轮冷却：最近 N 轮已注入过的 URI 本轮跳过                           |
 | `OPENVIKING_RECALL_QUERY_EXPANSION`    | `auto`        | `auto` 让服务端结合会话上下文扩展短提问；`off` 关闭                   |
 | `OPENVIKING_RECALL_COMPRESS`           | `auto`        | digest 压缩：`off`、`client`（本地宿主 CLI）、`server`、`auto`（本地优先、失败回落服务端） |
@@ -221,14 +221,17 @@ bypass 命中时所有 hook 直接放行，不联系 OpenViking。
 {
   "url": "http://127.0.0.1:1933",
   "plugin": {
-    "recallMaxTokens": 1600,
-    "recallDedupTurns": 5,
     "recallCompress": "auto"
   }
 }
 ```
 
 解析顺序：env vars → `plugin.claude_code` → `plugin` → `ov.conf` 里遗留的 `claude_code` 块 → 内置默认值。
+除非用户显式覆盖，插件不会发送 `limit=10`、`max_tokens=1600`、
+`query_expansion="auto"` 等由服务端拥有的 Context 默认值。
+显式设置遗留 `recallLimit` 时，插件会将其转换为各分类 coding 配额；
+当值小于 6 时仍会给六个 coding 域各一个检索槽位。新的直接 API 接入应优先配置
+`quotas`。
 
 ### digest 压缩
 

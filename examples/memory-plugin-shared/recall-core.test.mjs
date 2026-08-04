@@ -4,6 +4,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  buildContextSearchBody,
   buildRecallBlock,
   contextRequestTimeoutMs,
   isContextFaceLegacy,
@@ -13,6 +14,45 @@ async function tempPath(name) {
   const dir = await mkdtemp(join(tmpdir(), "ov-recall-"));
   return join(dir, name);
 }
+
+test("context requests preserve the configured recall width and server budget", () => {
+  const body = buildContextSearchBody({
+    recallLimit: 1,
+    recallLimitConfigured: true,
+    recallMaxTokens: 800,
+    recallMaxTokensConfigured: true,
+    recallCompressMaxInputChars: 18000,
+  });
+
+  assert.equal(Object.values(body.quotas).reduce((sum, quota) => sum + quota, 0), 6);
+  assert.equal(body.quotas.resources, 1);
+  assert.equal(body.quotas.skills, 1);
+  assert.equal(body.max_tokens, 800);
+  assert.equal(body.purpose, "coding");
+});
+
+test("context requests omit defaults owned by the server", () => {
+  const body = buildContextSearchBody({
+    recallLimit: 10,
+    recallLimitConfigured: false,
+    recallMaxTokens: 1600,
+    recallMaxTokensConfigured: false,
+    recallQueryExpansion: "auto",
+    recallQueryExpansionConfigured: false,
+    recallCompressMaxBullets: 6,
+    recallCompressMaxBulletsConfigured: false,
+  }, { sessionId: "cx-defaults" });
+
+  assert.equal(body.limit, undefined);
+  assert.equal(body.quotas, undefined);
+  assert.equal(body.max_tokens, undefined);
+  assert.equal(body.query_expansion, undefined);
+  assert.equal(body.rewrite_max_bullets, undefined);
+  assert.equal(body.purpose, "coding");
+  assert.equal(body.score_threshold, 0.35);
+  assert.equal(body.session_id, "cx-defaults");
+  assert.equal(body.dedup_turns, 5);
+});
 
 test("buildRecallBlock injects context assembled by the server", async () => {
   const calls = [];
@@ -31,6 +71,8 @@ test("buildRecallBlock injects context assembled by the server", async () => {
 
   assert.equal(calls[0].path, "/api/v1/search/search");
   assert.equal(calls[0].body.mode, "context");
+  assert.equal(calls[0].body.limit, undefined);
+  assert.equal(calls[0].body.max_tokens, undefined);
   assert.match(block, /^<openviking-context>/);
   assert.match(block, /viking:\/\/user\/default\/memories\/a\.md/);
   assert.match(block, /<\/openviking-context>$/);

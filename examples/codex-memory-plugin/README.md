@@ -118,7 +118,7 @@ All plugin behavior is controlled by `OPENVIKING_*` environment variables. Conne
 
 ```sh
 # ~/.zshrc — examples
-export OPENVIKING_RECALL_LIMIT=6
+export OPENVIKING_RECALL_LIMIT=10
 export OPENVIKING_RECALL_COMPRESS=1
 export OPENVIKING_RECALL_COMPRESS_MODEL=gpt-5.3-codex-spark
 export OPENVIKING_RECALL_COMPRESS_THINKING=default
@@ -215,13 +215,14 @@ Config knobs:
 
 | Env var | Default | Meaning |
 |---|---|---|
+| `OPENVIKING_RECALL_LIMIT` | `10` | Legacy width override; explicit values are converted to six coding quotas. |
 | `OPENVIKING_RECALL_COMPRESS` | `1` | Set `0` / `off` to disable `codex exec` compression. |
 | `OPENVIKING_RECALL_COMPRESS_MODEL` | unset | Custom first-choice compressor model. Set `off` to disable compression. |
 | `OPENVIKING_RECALL_COMPRESS_THINKING` | unset | Custom `model_reasoning_effort`; `default` omits the Codex config override. Alias: `OPENVIKING_RECALL_COMPRESS_REASONING_EFFORT`. |
 | `OPENVIKING_RECALL_COMPRESS_DETECT_ON_STARTUP` | `1` | Recreate/cache compressor profile in `SessionStart`. |
 | `OPENVIKING_RECALL_COMPRESS_DETECT_TIMEOUT_MS` | `15000` | Per-candidate startup probe timeout. |
 | `OPENVIKING_RECALL_COMPRESS_DETECT_TTL_MS` | `604800000` | Cache TTL used by `UserPromptSubmit` when reading the latest profile. |
-| `OPENVIKING_RECALL_MAX_TOKENS` | `1600` | Token budget the server assembles the context block within. |
+| `OPENVIKING_RECALL_MAX_TOKENS` | `1600` | Token budget the server assembles the context block within, independent of the local compressor input limit. |
 | `OPENVIKING_RECALL_DEDUP_TURNS` | `5` | Cross-turn cooldown: URIs served in the last N turns are skipped. |
 | `OPENVIKING_RECALL_QUERY_EXPANSION` | `auto` | `auto` lets the server widen short prompts using session context; `off` disables it. |
 
@@ -229,7 +230,11 @@ Recall now asks the server to assemble the context block in one request
 (`POST /api/v1/search/search` with `mode="context"`), so budgeting, detail tiers
 and cross-turn dedup are shared with every other harness. Deployments without
 that endpoint fall back to `/api/v1/search/recall`, and that outcome is cached so
-only the first turn pays for the probe. Local `codex exec` compression is
+only the first turn pays for the probe. Server-owned Context defaults are omitted
+unless explicitly configured, so the plugin follows the server instead of copying
+values such as `limit=10` or `max_tokens=1600`. An explicit legacy `recallLimit`
+is converted to per-category coding quotas; values below 6 still give every
+coding domain one retrieval slot. Local `codex exec` compression is
 unchanged and still runs on top of whichever path answered.
 
 Client-side knobs can also live in `~/.openviking/ovcli.conf` under

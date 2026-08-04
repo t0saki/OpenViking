@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 from openviking.retrieve.context_assembler import pipeline as pipeline_module
 from openviking.retrieve.context_assembler.models import AssembledEntry
-from openviking.retrieve.context_assembler.params import AssembleParams
+from openviking.retrieve.context_assembler.params import AssembleParams, normalize_quotas
 from openviking.retrieve.context_assembler.pipeline import assemble_context
 from openviking.retrieve.context_assembler.render import render_entry
 from openviking.server.identity import RequestContext, Role
@@ -24,10 +24,10 @@ def _ctx():
 
 
 class _FakeFindResult:
-    def __init__(self, memories=None):
+    def __init__(self, memories=None, resources=None, skills=None):
         self.memories = memories or []
-        self.resources = []
-        self.skills = []
+        self.resources = resources or []
+        self.skills = skills or []
 
 
 def _service(*, hits, bodies, session=None):
@@ -74,6 +74,18 @@ def test_render_neutralizes_forged_memory_tags():
     assert len(re.findall(r"(?i)<(/?)memory[\s/>]", rendered)) == 2
     assert rendered.startswith('<memory uri="viking://real"')
     assert rendered.endswith("</memory>")
+
+
+def test_coding_purpose_uses_absolute_cross_domain_quotas():
+    assert normalize_quotas(None, "coding") == {
+        "events": 1,
+        "entities": 2,
+        "preferences": 1,
+        "experiences": 1,
+        "resources": 3,
+        "skills": 2,
+    }
+    assert normalize_quotas({"events": 7}, "coding") == {"events": 7}
 
 
 async def test_assembly_returns_readable_entries_within_budget():
@@ -161,6 +173,136 @@ async def test_disabled_intent_does_not_load_session_or_expand_query():
     )
 
     assert result.stats["query_expansion"] == "off"
+
+
+async def test_resource_bucket_uses_actor_scope_without_other_peer_scan():
+    calls = []
+    actor_uri = f"{USER_ROOT}/peers/current/resources/actor-faq.md"
+
+    async def fake_find(**kwargs):
+        calls.append(kwargs)
+        target_uri = kwargs["target_uri"]
+        if target_uri.endswith("/peers/current/resources"):
+            return _FakeFindResult(
+                resources=[
+                    {
+                        "uri": actor_uri,
+                        "score": 0.91,
+                        "abstract": "actor FAQ",
+                        "level": 2,
+                    }
+                ]
+            )
+        return _FakeFindResult()
+
+    service = SimpleNamespace(
+        search=SimpleNamespace(find=fake_find),
+        fs=SimpleNamespace(read=None),
+        sessions=SimpleNamespace(),
+        viking_fs=None,
+    )
+    result = await assemble_context(
+        service=service,
+        ctx=_ctx(),
+        params=AssembleParams(
+            query="faq",
+            quotas={"resources": 2},
+            peer_scope="all",
+            max_tokens=1600,
+        ),
+    )
+
+    targets = [call["target_uri"] for call in calls]
+    assert f"{USER_ROOT}/peers/current/resources" in targets
+    assert f"{USER_ROOT}/peers" not in targets
+    assert [(entry.uri, entry.origin) for entry in result.entries] == [(actor_uri, "actor_peer")]
+
+
+async def test_purpose_quotas_are_not_truncated_by_global_limit():
+    async def fake_find(**kwargs):
+        target_uri = kwargs["target_uri"]
+        leaf = target_uri.rsplit("/", 1)[-1]
+        if leaf in ("events", "entities", "preferences", "experiences"):
+            count = 2 if leaf == "entities" else 1
+            return _FakeFindResult(
+                memories=[
+                    {
+                        "uri": f"{target_uri}/{index}.md",
+                        "score": 0.9 - index * 0.01,
+                            "abstract": f"{target_uri} {index}",
+                        "level": 2,
+                    }
+                    for index in range(count)
+                ]
+            )
+        if target_uri == "viking://resources":
+            return _FakeFindResult(
+                resources=[
+                    {
+                        "uri": f"{target_uri}/global.md",
+                        "score": 0.88,
+                        "abstract": "global resource",
+                        "level": 2,
+                    }
+                ]
+            )
+        if target_uri.endswith("/resources"):
+            scope = "actor" if "/peers/" in target_uri else "user"
+            return _FakeFindResult(
+                resources=[
+                    {
+                        "uri": f"{target_uri}/{scope}.md",
+                        "score": 0.87,
+                        "abstract": f"{scope} resource",
+                        "level": 2,
+                    }
+                ]
+            )
+        if target_uri.endswith("/skills"):
+            scope = "agent" if target_uri.startswith("viking://agent/") else "user"
+            return _FakeFindResult(
+                skills=[
+                    {
+                        "uri": f"{target_uri}/{scope}.md",
+                        "score": 0.86,
+                        "abstract": f"{scope} skill",
+                        "level": 2,
+                    }
+                ]
+            )
+        return _FakeFindResult()
+
+    async def fake_read(uri, **kwargs):
+        del kwargs
+        return f"# Summary\n{uri}"
+
+    service = SimpleNamespace(
+        search=SimpleNamespace(find=fake_find),
+        fs=SimpleNamespace(read=fake_read),
+        sessions=SimpleNamespace(),
+        viking_fs=None,
+    )
+    result = await assemble_context(
+        service=service,
+        ctx=_ctx(),
+        params=AssembleParams(
+            query="coding",
+            purpose="coding",
+            limit=1,
+            peer_scope="actor",
+            max_tokens=10000,
+        ),
+    )
+
+    assert len(result.entries) == 10
+    assert result.stats["quotas"] == {
+        "events": 1,
+        "entities": 2,
+        "preferences": 1,
+        "experiences": 1,
+        "resources": 3,
+        "skills": 2,
+    }
 
 
 async def test_rewrite_failure_keeps_rendered_context(monkeypatch):

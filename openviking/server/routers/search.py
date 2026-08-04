@@ -13,6 +13,7 @@ from openviking.core.path_variables import resolve_path_variables
 from openviking.pyagfs.exceptions import AGFSClientError, AGFSNotFoundError
 from openviking.retrieve.context_assembler import (
     CATEGORY_KEYS,
+    DEFAULT_LIMIT,
     DEFAULT_MAX_TOKENS,
     MAX_EXCLUDE_URIS,
     AssembleParams,
@@ -106,7 +107,7 @@ class FindRequest(BaseModel):
     image_url: Optional[str] = None
     target_uri: Union[str, List[str]] = ""
     context_type: Optional[Union[str, List[str]]] = None
-    limit: int = 10
+    limit: int = DEFAULT_LIMIT
     node_limit: Optional[int] = None
     score_threshold: Optional[float] = None
     filter: Optional[Dict[str, Any]] = None
@@ -159,7 +160,7 @@ class SearchRequest(BaseModel):
     target_uri: Union[str, List[str]] = ""
     context_type: Optional[Union[str, List[str]]] = None
     session_id: Optional[str] = None
-    limit: int = 10
+    limit: int = DEFAULT_LIMIT
     node_limit: Optional[int] = None
     score_threshold: Optional[float] = None
     filter: Optional[Dict[str, Any]] = None
@@ -307,7 +308,9 @@ def _context_ignored_fields(request: SearchRequest) -> List[str]:
     ignored: List[str] = []
     if request.level is not None:
         ignored.append("level")
-    if request.quotas is not None or request.purpose is not None:
+    if (request.quotas is not None or request.purpose is not None) and (
+        "limit" in request.model_fields_set or request.node_limit is not None
+    ):
         ignored.append("limit")
     return ignored
 

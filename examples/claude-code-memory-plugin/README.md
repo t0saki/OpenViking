@@ -143,12 +143,12 @@ By default the plugin derives a peer from the workspace path using Claude's proj
 | Env Var                                | Default      | Description                                                              |
 |----------------------------------------|--------------|--------------------------------------------------------------------------|
 | `OPENVIKING_AUTO_RECALL`               | `true`       | Enable auto-recall on every user prompt                                  |
-| `OPENVIKING_RECALL_LIMIT`              | `6`          | Max memories to inject per turn                                          |
-| `OPENVIKING_RECALL_TOKEN_BUDGET`       | `2000`       | Token budget for inline content; over-budget items degrade to URI hints  |
+| `OPENVIKING_RECALL_LIMIT`              | `10`         | Legacy width override; explicit values are converted to six coding quotas |
+| `OPENVIKING_RECALL_TOKEN_BUDGET`       | `2000`       | Inline token budget for the final raw-find fallback only                 |
 | `OPENVIKING_RECALL_MAX_CONTENT_CHARS`  | `500`        | Per-item content cap                                                     |
 | `OPENVIKING_RECALL_PREFER_ABSTRACT`    | `true`       | Prefer abstract over full body when available                            |
 | `OPENVIKING_RECALL_PEER_SCOPE`          | `all`        | `all` can recall other project memories with a score penalty; `actor` only sees global plus the current project |
-| `OPENVIKING_RECALL_MAX_TOKENS`         | `1600`       | Token budget for the server-assembled context block (CJK-aware estimate)  |
+| `OPENVIKING_RECALL_MAX_TOKENS`         | `1600`       | Token budget for the server-assembled context block (independent of local compression limits) |
 | `OPENVIKING_RECALL_DEDUP_TURNS`        | `5`          | Cross-turn cooldown: URIs served in the last N turns are skipped          |
 | `OPENVIKING_RECALL_QUERY_EXPANSION`    | `auto`       | `auto` lets the server widen short prompts using session context; `off` disables it |
 | `OPENVIKING_RECALL_COMPRESS`           | `auto`       | Digest compression: `off`, `client` (host CLI), `server`, or `auto` (local first, server fallback) |
@@ -225,14 +225,17 @@ Client-side tuning belongs in `~/.openviking/ovcli.conf` under a `plugin` sectio
 {
   "url": "http://127.0.0.1:1933",
   "plugin": {
-    "recallMaxTokens": 1600,
-    "recallDedupTurns": 5,
     "recallCompress": "auto"
   }
 }
 ```
 
 Resolution order: env vars → `plugin.claude_code` → `plugin` → the legacy `claude_code` block in `ov.conf` → built-in defaults.
+The plugin omits server-owned Context defaults such as `limit=10`, `max_tokens=1600`,
+and `query_expansion="auto"` unless you explicitly override them.
+An explicit legacy `recallLimit` is converted to per-category coding quotas;
+values below 6 still give every coding domain one retrieval slot. New direct API
+integrations should configure `quotas` instead.
 
 ### Digest compression
 

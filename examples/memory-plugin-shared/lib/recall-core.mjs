@@ -16,6 +16,17 @@ const SOURCES = [
   { type: "memory", uri: "viking://user/memories", bucket: "memories" },
   { type: "skill", uri: "viking://user/skills", bucket: "skills" },
 ];
+const DEFAULT_CONTEXT_LIMIT = 10;
+const DEFAULT_CONTEXT_MAX_TOKENS = 1600;
+const DEFAULT_REWRITE_MAX_BULLETS = 6;
+const CODING_QUOTA_WEIGHTS = {
+  events: 1,
+  entities: 2,
+  preferences: 1,
+  experiences: 1,
+  resources: 3,
+  skills: 2,
+};
 
 let userSpaceCache = "";
 
@@ -23,16 +34,47 @@ export function estimateTokens(text) {
   return text ? Math.ceil(String(text).length / 4) : 0;
 }
 
+function scaleQuotas(limit, weights) {
+  const slots = Math.max(1, Math.floor(Number(limit) || DEFAULT_CONTEXT_LIMIT));
+  const order = Object.keys(weights);
+  const quotas = Object.fromEntries(order.map((key) => [key, 0]));
+  if (slots < order.length) {
+    for (const key of order) quotas[key] = 1;
+    return quotas;
+  }
+
+  for (const key of order) quotas[key] = 1;
+  const totalWeight = Object.values(weights).reduce((sum, weight) => sum + weight, 0);
+  const ideals = Object.fromEntries(
+    order.map((key) => [key, slots * weights[key] / totalWeight]),
+  );
+  while (order.reduce((sum, key) => sum + quotas[key], 0) < slots) {
+    const key = order.reduce((best, candidate) => (
+      ideals[candidate] - quotas[candidate] > ideals[best] - quotas[best]
+        ? candidate
+        : best
+    ));
+    quotas[key] += 1;
+  }
+  return quotas;
+}
+
+function legacyMemoryQuotas(limit) {
+  return {
+    ...scaleQuotas(limit, { events: 10, entities: 10, preferences: 3 }),
+    experiences: 0,
+  };
+}
+
+function codingQuotas(limit) {
+  return scaleQuotas(limit, CODING_QUOTA_WEIGHTS);
+}
+
 export function buildRecallEndpointBody(cfg = {}) {
-  const limit = Math.max(Number(cfg.recallLimit || 0), 1);
+  const limit = Math.max(Number(cfg.recallLimit || DEFAULT_CONTEXT_LIMIT), 1);
   const body = {
     query: "",
-    quotas: {
-      events: limit,
-      entities: limit,
-      preferences: Math.max(1, Math.min(limit, 3)),
-      experiences: 0,
-    },
+    quotas: legacyMemoryQuotas(limit),
     max_chars: Math.max(Number(cfg.recallMaxContentChars || 0) * limit, 1000),
     min_score: Number.isFinite(Number(cfg.scoreThreshold)) ? Number(cfg.scoreThreshold) : 0.35,
     render: true,
@@ -48,21 +90,35 @@ export function buildRecallEndpointBody(cfg = {}) {
  */
 export function buildContextSearchBody(cfg = {}, options = {}) {
   const rewriteMode = String(cfg.recallRewrite || "off").toLowerCase();
+  const limit = Math.max(1, Math.floor(Number(cfg.recallLimit || DEFAULT_CONTEXT_LIMIT)));
+  const maxTokens = Math.max(
+    64,
+    Math.floor(Number(cfg.recallMaxTokens || DEFAULT_CONTEXT_MAX_TOKENS)),
+  );
   const body = {
     query: "",
     mode: "context",
     purpose: "coding",
-    max_tokens: Math.max(64, Math.floor(Number(cfg.recallMaxTokens || 1600))),
     score_threshold: Number.isFinite(Number(cfg.scoreThreshold)) ? Number(cfg.scoreThreshold) : 0.35,
   };
+  const limitConfigured = cfg.recallLimitConfigured === true;
+  const maxTokensConfigured = cfg.recallMaxTokensConfigured === true;
+  if (limitConfigured) body.quotas = codingQuotas(limit);
+  if (maxTokensConfigured) body.max_tokens = maxTokens;
   if (cfg.recallPeerScope === "actor") body.peer_scope = "actor";
 
   const sessionId = String(options.sessionId || "").trim();
   if (sessionId) {
     body.session_id = sessionId;
-    body.query_expansion = cfg.recallQueryExpansion === "off" ? "off" : "auto";
+    const queryExpansionConfigured = cfg.recallQueryExpansionConfigured === true;
+    if (queryExpansionConfigured) {
+      body.query_expansion = cfg.recallQueryExpansion === "off" ? "off" : "auto";
+    }
     const dedupTurns = Number(cfg.recallDedupTurns);
-    body.dedup_turns = Number.isFinite(dedupTurns) ? Math.max(0, Math.floor(dedupTurns)) : 5;
+    const resolvedDedupTurns = Number.isFinite(dedupTurns)
+      ? Math.max(0, Math.floor(dedupTurns))
+      : 5;
+    if (resolvedDedupTurns > 0) body.dedup_turns = resolvedDedupTurns;
   }
 
   const excludeUris = Array.isArray(options.excludeUris) ? options.excludeUris.slice(0, 200) : [];
@@ -70,8 +126,13 @@ export function buildContextSearchBody(cfg = {}, options = {}) {
 
   if (rewriteMode === "server") body.rewrite = true;
   else if (rewriteMode === "auto" && !options.localCompressorAvailable) body.rewrite = "auto";
-  if (body.rewrite !== undefined) {
-    body.rewrite_max_bullets = Math.max(1, Math.floor(Number(cfg.recallCompressMaxBullets || 6)));
+  const rewriteMaxBullets = Math.max(
+    1,
+    Math.floor(Number(cfg.recallCompressMaxBullets || DEFAULT_REWRITE_MAX_BULLETS)),
+  );
+  const rewriteMaxBulletsConfigured = cfg.recallCompressMaxBulletsConfigured === true;
+  if (body.rewrite !== undefined && rewriteMaxBulletsConfigured) {
+    body.rewrite_max_bullets = rewriteMaxBullets;
   }
   return body;
 }
@@ -505,7 +566,7 @@ export async function buildRecallBlock(fetchJSON, cfg, query, options = {}) {
   });
   if (serverBlock !== null) return serverBlock || null;
 
-  const recallLimit = Math.max(1, Number(cfg.recallLimit || 6));
+  const recallLimit = Math.max(1, Number(cfg.recallLimit || DEFAULT_CONTEXT_LIMIT));
   const perSourceLimit = Math.max(recallLimit * 2, 8);
   const raw = await searchAllSources(fetchJSON, trimmed, perSourceLimit, actorPeerId, log);
   if (raw.length === 0) return null;

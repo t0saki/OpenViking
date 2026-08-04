@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Set, Tuple
 
 from openviking.retrieve.context_assembler.params import (
+    DEFAULT_LIMIT,
     DEFAULT_MAX_TOKENS,
     DEFAULT_QUOTAS,
     AssembleParams,
@@ -94,7 +95,7 @@ def fold_recall_request(
 
     params = AssembleParams(
         query=values.get("query", ""),
-        limit=int(values.get("limit") or 10),
+        limit=int(values.get("limit") or DEFAULT_LIMIT),
         score_threshold=score_threshold,
         filter=values.get("filter"),
         session_id=session_id,

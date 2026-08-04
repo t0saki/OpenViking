@@ -5,6 +5,7 @@
 from openviking.retrieve.context_assembler.models import AssembledEntry, AssembleResult
 from openviking.retrieve.context_assembler.params import (
     CATEGORY_KEYS,
+    DEFAULT_LIMIT,
     DEFAULT_MAX_TOKENS,
     DEFAULT_OTHER_PEER_PENALTIES,
     DEFAULT_QUOTAS,
@@ -27,6 +28,7 @@ __all__ = [
     "AssembleResult",
     "AssembledEntry",
     "CATEGORY_KEYS",
+    "DEFAULT_LIMIT",
     "DEFAULT_MAX_TOKENS",
     "DEFAULT_OTHER_PEER_PENALTIES",
     "DEFAULT_QUOTAS",

@@ -55,11 +55,25 @@ DEFAULT_TIER: Tier = "abstract"
 # reading resource bodies.
 DEPTH_CEILING_BY_CATEGORY: Dict[str, Tier] = {"events": "full"}
 
-# Purpose presets only supply quota ratios; they are overridden by explicit quotas.
-# Defaults await production telemetry, so keep them here as one-line knobs.
+# Purpose presets are absolute bucket ceilings. Their total is the candidate
+# width for bucketed retrieval; ``limit`` belongs only to quota-free flat mode.
 PURPOSE_PRESETS: Dict[str, Dict[str, int]] = {
-    "coding": {"events": 4, "entities": 6, "preferences": 2, "experiences": 2},
-    "chat": {"events": 6, "entities": 6, "preferences": 3, "experiences": 1},
+    "coding": {
+        "events": 1,
+        "entities": 2,
+        "preferences": 1,
+        "experiences": 1,
+        "resources": 3,
+        "skills": 2,
+    },
+    "chat": {
+        "events": 3,
+        "entities": 3,
+        "preferences": 1,
+        "experiences": 1,
+        "resources": 1,
+        "skills": 1,
+    },
 }
 
 DEFAULT_QUOTAS: Dict[str, int] = {
@@ -108,7 +122,8 @@ class AssembleParams:
 
 
 def normalize_quotas(
-    quotas: Optional[Mapping[str, Any]], purpose: Optional[str] = None
+    quotas: Optional[Mapping[str, Any]],
+    purpose: Optional[str] = None,
 ) -> Optional[Dict[str, int]]:
     """Resolve the active quota map, or ``None`` when bucketed sampling is off."""
     if quotas is None:

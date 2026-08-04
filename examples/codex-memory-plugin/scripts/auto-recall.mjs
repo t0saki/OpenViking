@@ -27,6 +27,7 @@ import {
 } from "./recall-compressor-profile.mjs";
 import { deriveOvSessionId } from "./session-state.mjs";
 import {
+  buildRecallEndpointBody,
   fetchAssembledContext,
   normalizeContextEntry,
   postRecall,
@@ -329,9 +330,9 @@ async function recallViaServerAssembly(query, ovSessionId = "") {
   const assembleCfg = {
     ...cfg,
     // Local compression happens below, so ask the server for the assembled
-    // block only — its token budget mirrors the char budget used before.
+    // block only. The server budget stays independent from the compressor's
+    // input-character ceiling.
     recallRewrite: "off",
-    recallMaxTokens: Math.max(64, Math.floor(maxInputChars / 4)),
   };
 
   const assembled = await fetchAssembledContext(fetchJSON, assembleCfg, query, {
@@ -343,19 +344,9 @@ async function recallViaServerAssembly(query, ovSessionId = "") {
     return assembledToRecallResult(assembled.rendered, assembled.entries);
   }
 
-  const body = {
-    query,
-    quotas: {
-      events: Math.max(cfg.recallLimit, 1),
-      entities: Math.max(cfg.recallLimit, 1),
-      preferences: Math.max(1, Math.min(cfg.recallLimit, 3)),
-      experiences: 0,
-    },
-    max_chars: maxInputChars,
-    min_score: cfg.scoreThreshold,
-    render: true,
-  };
-  if (cfg.recallPeerScope === "actor") body.peer_scope = "actor";
+  const body = buildRecallEndpointBody(cfg);
+  body.query = query;
+  body.max_chars = maxInputChars;
   const result = await postRecall(fetchJSON, body, { actorPeerId: effectivePeer.peerId, log });
   if (!result.ok) {
     log("recall_endpoint_fallback", { status: result.status || 0 });

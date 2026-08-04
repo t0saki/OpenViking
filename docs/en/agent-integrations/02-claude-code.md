@@ -80,8 +80,8 @@ Configuration priority: Environment variables > `ovcli.conf` > `ov.conf` > Built
 | Env Var | Default | Description |
 |---------|---------|-------------|
 | `OPENVIKING_AUTO_RECALL` | `true` | Auto-recall on every user prompt |
-| `OPENVIKING_RECALL_LIMIT` | `6` | Max memories to inject per turn |
-| `OPENVIKING_RECALL_TOKEN_BUDGET` | `2000` | Token budget for inline content |
+| `OPENVIKING_RECALL_LIMIT` | `10` | Legacy width override converted to per-category coding quotas |
+| `OPENVIKING_RECALL_TOKEN_BUDGET` | `2000` | Inline token budget for the final raw-find fallback |
 | `OPENVIKING_AUTO_CAPTURE` | `true` | Auto-capture after each turn |
 | `OPENVIKING_BYPASS_SESSION` | `false` | Skip all hooks for this session |
 | `OPENVIKING_BYPASS_SESSION_PATTERNS` | `""` | CSV glob patterns to auto-bypass |

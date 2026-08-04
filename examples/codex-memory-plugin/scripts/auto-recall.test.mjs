@@ -245,6 +245,7 @@ test("auto-recall asks the context face with the derived OpenViking session id",
           OPENVIKING_CREDENTIAL_SOURCE: "env",
           OPENVIKING_RECALL_COMPRESS: "0",
           OPENVIKING_RECALL_LIMIT: "1",
+          OPENVIKING_RECALL_MAX_TOKENS: "800",
           OPENVIKING_RECALL_TIMEOUT_MS: "10000",
           OPENVIKING_MIN_QUERY_LENGTH: "1",
           OPENVIKING_SCORE_THRESHOLD: "0",
@@ -264,6 +265,12 @@ test("auto-recall asks the context face with the derived OpenViking session id",
     assert.equal(requests[0].body.mode, "context");
     assert.equal(requests[0].body.session_id, "cx-codex_123");
     assert.equal(requests[0].body.purpose, "coding");
+    assert.equal(requests[0].body.limit, undefined);
+    assert.equal(
+      Object.values(requests[0].body.quotas).reduce((sum, quota) => sum + quota, 0),
+      6,
+    );
+    assert.equal(requests[0].body.max_tokens, 800);
     assert.equal(requests[0].body.dedup_turns, 5);
     assert.equal(requests[0].body.target_uri, undefined);
   } finally {
@@ -341,7 +348,7 @@ test("auto-recall prefers the server recall endpoint when available", async () =
       "/api/v1/search/search",
       "/api/v1/search/recall",
     ]);
-    assert.equal(requests[1].body.quotas.events, 2);
+    assert.equal(Object.values(requests[1].body.quotas).reduce((sum, quota) => sum + quota, 0), 3);
     assert.equal(requests[1].body.max_chars, 6500);
   } finally {
     await rm(stateDir, { recursive: true, force: true });

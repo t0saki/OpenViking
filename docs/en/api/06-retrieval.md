@@ -615,7 +615,7 @@ Injecting context every turn used to mean searching per type, reading each hit b
 
 #### 2. Parameters
 
-**L0 retrieval domain**: `query`, `image_url`, `context_type`, `limit`, `score_threshold`, `filter`, `tags`, `since`/`until` behave as in list mode. `target_uri` is not supported in context mode yet (returns 400); `level` is ignored because `detail` governs tiers.
+**L0 retrieval domain**: `query`, `image_url`, `context_type`, `limit`, `score_threshold`, `filter`, `tags`, `since`/`until` behave as in list mode. `limit` applies only to quota-free retrieval. Once `purpose` or explicit `quotas` enables bucketed retrieval, the per-category quotas are the only candidate ceilings. `target_uri` is not supported in context mode yet (returns 400); `level` is ignored because `detail` governs tiers.
 
 **L1 query understanding**
 
@@ -628,13 +628,14 @@ Injecting context every turn used to mean searching per type, reading each hit b
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
+| `limit` | int | 10 | Candidate ceiling for quota-free retrieval only; ignored when `purpose` or `quotas` enables bucketed retrieval |
 | `max_tokens` | int | 1600 | The single budget parameter, estimated with a CJK-aware heuristic (codepoint ≥ 0x3000 counts 1.5 tok/char, otherwise chars/4) |
-| `quotas` | object | None | Bucketed sampling; keys are `events`/`entities`/`preferences`/`experiences`/`resources`/`skills`. `limit` is ignored once active |
-| `purpose` | `chat` \| `coding` | None | Preset bucket ratios; applies only when `quotas` is not given |
-| `detail` | `abstract` \| `overview` \| `full` \| object | None | Pins every entry to one tier. Omitted, each category takes its default tier (below). Also accepts a per-category object such as `{"events":"overview","preferences":"abstract"}`; categories left out keep their default. `"auto"` is a deprecated spelling and behaves as if omitted |
+| `quotas` | object | None | Absolute per-bucket limits; keys are `events`/`entities`/`preferences`/`experiences`/`resources`/`skills`. Explicit quotas ignore `limit` |
+| `purpose` | `chat` \| `coding` | None | Enables six-domain bucket sampling with the absolute preset quotas below. Applies only when `quotas` is not given |
+| `detail` | `abstract` \| `overview` \| `full` \| object | None | Requests one starting/maximum tier for every entry. Entries whose requested tier is unavailable or does not fit step down instead of being truncated. Omitted, each category takes its default tier (below). Also accepts a per-category object such as `{"events":"overview","preferences":"abstract"}`; categories left out keep their default. `"auto"` is a deprecated spelling and behaves as if omitted |
 | `dedup_turns` | int | 0 | Cooldown window in turns; needs `session_id`. Ledger lives at `{session_uri}/.recall_log.json` |
 | `exclude_uris` | string[] | [] | Stateless dedup fallback, up to 200 entries, unioned with `dedup_turns` |
-| `peer_scope` | `actor` \| `all` | `all` | `actor` searches only the current actor peer |
+| `peer_scope` | `actor` \| `all` | `all` | `actor` excludes other peers while keeping global, self-owned and current-actor content |
 | `other_peer_penalty` | number \| object | per-category defaults | Score penalty applied to other-peer hits |
 
 **L3 rewrite**
@@ -646,6 +647,7 @@ Injecting context every turn used to mean searching per type, reading each hit b
 
 **Tier rules**
 
+- **Purpose presets**: `chat` uses `events:3, entities:3, preferences:1, experiences:1, resources:1, skills:1`; `coding` uses `events:1, entities:2, preferences:1, experiences:1, resources:3, skills:2`. These are absolute per-category ceilings, not weights. Results are deduplicated and globally sorted after gathering, but are not truncated by a second global `limit`
 - **Default tier per category**: with `detail` omitted, each category lands on the tier below. Only `events` reads a file; every other category costs no read
 
   | Category | Default tier | Leftover budget may reach | Why |
@@ -656,7 +658,7 @@ Injecting context every turn used to mean searching per type, reading each hit b
   | Directory hits | overview | overview | A directory has no abstract, so it reads the `.overview.md` sidecar; a full tier is meaningless for a subtree |
 
 - **Floor**: every result carries at least its `uri`. When a category's default tier yields nothing usable — a resource that never went through semantic processing, or an abstract that busts the per-entry cap — the entry falls back to overview instead of degrading to a bare pointer
-- **Explicit `detail`**: pins every entry to that tier as both start and ceiling; entries that do not fit still step down a tier rather than being truncated
+- **Explicit `detail`**: sets that tier as both the requested start and ceiling; entries that do not fit still step down a tier rather than being truncated
 - **Overview by source type**: memory files use the leading `# Summary` section, code files use class and function signatures (reusing `code_outline`), long documents use the heading tree plus first paragraph
 - **Per-entry cap**: `max_tokens ÷ candidate_count × 2`, applied to every tier except the bare `uri`; a tier exceeding it falls back to the previous tier rather than being truncated. If budget is still left over, one final deepening pass ignores the cap and is bounded only by `max_tokens`
 
@@ -754,7 +756,7 @@ curl -X POST http://localhost:1933/api/v1/search/search \
 - Any context-only parameter sent explicitly under `mode="list"` → 400
 - `target_uri` under `mode="context"` → 400
 - Unknown `quotas` key → 400
-- Fields ignored in context mode (`level`, and `limit` once quotas are active) are reported in `stats.ignored`
+- Fields ignored in context mode (`level`, and `limit` when `purpose` or explicit quotas are active) are reported in `stats.ignored`
 
 ---
 
