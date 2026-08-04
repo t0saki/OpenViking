@@ -169,7 +169,8 @@ export function makeAgentFetchJSON(cfg, cwd = process.cwd()) {
   const effectivePeer = resolveEffectivePeerId({ cfg, cwd });
   const fetchJSON = async (path, init = {}, options = {}) => {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), cfg.timeoutMs);
+    const timeoutMs = Math.max(1000, Number(options.timeoutMs) || cfg.timeoutMs);
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const headers = { "Content-Type": "application/json", ...(init.headers || {}) };
       if (cfg.apiKey) headers.Authorization = `Bearer ${cfg.apiKey}`;
@@ -224,10 +225,16 @@ export async function replayAgentPending(fetchJSON, log = () => {}) {
   return replayPending(fetchJSON, log);
 }
 
-export async function recallForPrompt(fetchJSON, cfg, prompt, cwd, log = () => {}) {
+export async function recallForPrompt(fetchJSON, cfg, prompt, cwd, log = () => {}, options = {}) {
   if (!cfg.autoRecall || !String(prompt || "").trim()) return null;
   const peer = resolveEffectivePeerId({ cfg, cwd });
-  return buildRecallBlock(fetchJSON, cfg, prompt, { actorPeerId: peer.peerId, log });
+  return buildRecallBlock(fetchJSON, cfg, prompt, {
+    actorPeerId: peer.peerId,
+    // Passing the OV session id is what turns on server-side query expansion
+    // and the cross-turn dedup ledger for these thin harnesses.
+    sessionId: options.sessionId || "",
+    log,
+  });
 }
 
 export async function buildAgentProfile(fetchJSON, cfg, cwd) {
