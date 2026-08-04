@@ -4,6 +4,9 @@ import { dirname } from "node:path";
 
 export const NO_RELEVANT_MEMORY = "NO_RELEVANT_MEMORY";
 export const DIGEST_HEADER = "OpenViking memory digest:";
+const COMPRESS_OK = "ok";
+const COMPRESS_EMPTY = "empty";
+const COMPRESS_FAILED = "failed";
 
 // Medium-constraint prompt: state the goal and two structural floors, but no hard
 // bullet-length contract. Hard per-bullet limits pin the digest to headline
@@ -97,7 +100,8 @@ export function repairDigestUris(digest, validUris = []) {
 
 export function normalizeCompressedContext(raw, maxChars = 4000, maxBullets = 6) {
   const text = String(raw || "").trim();
-  if (!text || text.toUpperCase().includes(NO_RELEVANT_MEMORY)) return "";
+  if (!text) return null;
+  if (text.toUpperCase() === NO_RELEVANT_MEMORY) return "";
   const bullets = text.split(/\r?\n/)
     .map((line) => line.trim())
     .filter((line) => /^[-*]\s+/.test(line) && line.includes("viking://"))
@@ -151,9 +155,9 @@ export async function compressRecallContext({
   now = 0,
 }) {
   const input = String(rendered || "").trim();
-  if (!input) return "";
+  if (!input) return { status: COMPRESS_EMPTY, context: "" };
   const minChars = Math.max(0, Number(cfg.recallCompressMinInputChars ?? 1500));
-  if (input.length < minChars) return input;
+  if (input.length < minChars) return { status: COMPRESS_OK, context: input };
 
   const maxInputChars = Math.max(1000, Number(cfg.recallCompressMaxInputChars || 18000));
   const maxBullets = Math.max(1, Number(cfg.recallCompressMaxBullets || 6));
@@ -165,7 +169,9 @@ export async function compressRecallContext({
     maxBullets,
   });
   const cached = await readCache(cachePath);
-  if (cached?.key === key && typeof cached.digest === "string") return cached.digest;
+  if (cached?.key === key && typeof cached.digest === "string") {
+    return { status: COMPRESS_OK, context: cached.digest };
+  }
 
   const prompt = buildRecallCompressionPrompt({
     query,
@@ -174,14 +180,15 @@ export async function compressRecallContext({
   });
   const raw = await runCompressor(prompt);
   const normalized = normalizeCompressedContext(raw, 4000, maxBullets);
-  if (normalized === null) return null;
+  if (normalized === null) return { status: COMPRESS_FAILED, context: "" };
+  if (!normalized) return { status: COMPRESS_EMPTY, context: "" };
 
   const validUris = entries.map((entry) => entry?.uri).filter(Boolean);
   const digest = repairDigestUris(normalized, validUris.length
     ? validUris
     : (input.match(/viking:\/\/[^\s<>"']+/g) || []));
-  if (!digest) return null;
+  if (!digest) return { status: COMPRESS_FAILED, context: "" };
 
   await writeCache(cachePath, { key, digest, updatedAt: now || 0 });
-  return digest;
+  return { status: COMPRESS_OK, context: digest };
 }

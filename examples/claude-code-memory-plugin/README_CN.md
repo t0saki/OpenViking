@@ -142,7 +142,7 @@ claude
 | 环境变量                                | 默认值        | 说明                                                                |
 |----------------------------------------|---------------|--------------------------------------------------------------------|
 | `OPENVIKING_AUTO_RECALL`               | `true`        | 启用每轮自动召回                                                   |
-| `OPENVIKING_RECALL_LIMIT`              | `10`          | 遗留宽度覆盖；显式设置时会转换为六类 coding 配额                    |
+| `OPENVIKING_RECALL_LIMIT`              | `10`          | 遗留配额缩放输入；转换为六类 coding 配额，不是最终结果上限          |
 | `OPENVIKING_RECALL_TOKEN_BUDGET`       | `2000`        | 仅用于最终 raw-find fallback 的内联 token 预算                      |
 | `OPENVIKING_RECALL_MAX_CONTENT_CHARS`  | `500`         | 单条记忆内容字符上限                                               |
 | `OPENVIKING_RECALL_PREFER_ABSTRACT`    | `true`        | 有 abstract 时优先用 abstract 而非完整 body                        |
@@ -229,13 +229,13 @@ bypass 命中时所有 hook 直接放行，不联系 OpenViking。
 解析顺序：env vars → `plugin.claude_code` → `plugin` → `ov.conf` 里遗留的 `claude_code` 块 → 内置默认值。
 除非用户显式覆盖，插件不会发送 `limit=10`、`max_tokens=1600`、
 `query_expansion="auto"` 等由服务端拥有的 Context 默认值。
-显式设置遗留 `recallLimit` 时，插件会将其转换为各分类 coding 配额；
-当值小于 6 时仍会给六个 coding 域各一个检索槽位。新的直接 API 接入应优先配置
-`quotas`。
+显式设置遗留 `recallLimit` 时，插件会将其转换为各分类 coding 配额，而不会作为
+最终结果上限执行。因此值为 1 到 5 时，有效总配额仍为 6，即六个 coding 域各一个
+检索槽位。新的直接 API 接入应优先配置 `quotas`。
 
 ### digest 压缩
 
-`recallCompress` 决定 digest 在哪里生成，默认值为 `auto`。`client` 始终通过 `claude -p` 在本地压缩（默认 Sonnet + 低推理档——Haiku 不支持 effort 旋钮，时延不可控），token 成本留在你自己的订阅额度里。`server` 让 OpenViking 生成 digest。`auto` 优先本地，探测不到可用的宿主 CLI 时回落到服务端。所有路径失败时都退回未压缩的上下文块；压缩子进程运行时所有 OpenViking hook 均被禁用，不会递归。旧的环境变量 `OPENVIKING_RECALL_REWRITE` 和配置键 `recallRewrite` 仍作为低优先级兼容别名保留。
+`recallCompress` 决定 digest 在哪里生成，默认值为 `auto`。`client` 始终通过 `claude -p` 在本地压缩（默认 Sonnet + 低推理档——Haiku 不支持 effort 旋钮，时延不可控），token 成本留在你自己的订阅额度里。`server` 让 OpenViking 生成 digest。`auto` 优先本地，探测不到可用的宿主 CLI 时回落到服务端。压缩器执行失败或输出校验失败时会退回未压缩的上下文块；任一压缩器精确返回 `NO_RELEVANT_MEMORY` 都是成功的空结果，不注入任何内容。压缩子进程运行时所有 OpenViking hook 均被禁用，不会递归。旧的环境变量 `OPENVIKING_RECALL_REWRITE` 和配置键 `recallRewrite` 仍作为低优先级兼容别名保留。
 
 ### 遗留 `claude_code` 块（在 `ov.conf` 里）
 

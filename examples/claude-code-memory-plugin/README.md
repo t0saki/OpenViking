@@ -143,7 +143,7 @@ By default the plugin derives a peer from the workspace path using Claude's proj
 | Env Var                                | Default      | Description                                                              |
 |----------------------------------------|--------------|--------------------------------------------------------------------------|
 | `OPENVIKING_AUTO_RECALL`               | `true`       | Enable auto-recall on every user prompt                                  |
-| `OPENVIKING_RECALL_LIMIT`              | `10`         | Legacy width override; explicit values are converted to six coding quotas |
+| `OPENVIKING_RECALL_LIMIT`              | `10`         | Legacy quota-scaling input; converted to six coding quotas, not a final cap |
 | `OPENVIKING_RECALL_TOKEN_BUDGET`       | `2000`       | Inline token budget for the final raw-find fallback only                 |
 | `OPENVIKING_RECALL_MAX_CONTENT_CHARS`  | `500`        | Per-item content cap                                                     |
 | `OPENVIKING_RECALL_PREFER_ABSTRACT`    | `true`       | Prefer abstract over full body when available                            |
@@ -233,13 +233,14 @@ Client-side tuning belongs in `~/.openviking/ovcli.conf` under a `plugin` sectio
 Resolution order: env vars → `plugin.claude_code` → `plugin` → the legacy `claude_code` block in `ov.conf` → built-in defaults.
 The plugin omits server-owned Context defaults such as `limit=10`, `max_tokens=1600`,
 and `query_expansion="auto"` unless you explicitly override them.
-An explicit legacy `recallLimit` is converted to per-category coding quotas;
-values below 6 still give every coding domain one retrieval slot. New direct API
-integrations should configure `quotas` instead.
+An explicit legacy `recallLimit` is converted to per-category coding quotas,
+not enforced as a final result cap. Values from 1 through 5 therefore produce
+an effective total quota of 6, one retrieval slot for each coding domain. New
+direct API integrations should configure `quotas` instead.
 
 ### Digest compression
 
-`recallCompress` decides where the digest is produced and defaults to `auto`. `client` always compresses locally through `claude -p` (Sonnet with low effort by default — Haiku ignores the effort knob, so its latency is unbounded), keeping the token cost on your own subscription. `server` asks OpenViking for the digest. `auto` prefers local and falls back to the server when no healthy host CLI is found. Every path fails back to the uncompressed context block, and the compressor subprocess runs with all OpenViking hooks disabled so it cannot recurse. The former `OPENVIKING_RECALL_REWRITE` environment variable and `recallRewrite` config key remain supported as lower-priority compatibility aliases.
+`recallCompress` decides where the digest is produced and defaults to `auto`. `client` always compresses locally through `claude -p` (Sonnet with low effort by default — Haiku ignores the effort knob, so its latency is unbounded), keeping the token cost on your own subscription. `server` asks OpenViking for the digest. `auto` prefers local and falls back to the server when no healthy host CLI is found. Compressor execution or output-validation failures fall back to the uncompressed context block; an exact `NO_RELEVANT_MEMORY` response from either compressor is a successful empty result and injects nothing. The compressor subprocess runs with all OpenViking hooks disabled so it cannot recurse. The former `OPENVIKING_RECALL_REWRITE` environment variable and `recallRewrite` config key remain supported as lower-priority compatibility aliases.
 
 ### Legacy `claude_code` block in `ov.conf`
 

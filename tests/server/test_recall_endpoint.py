@@ -5,6 +5,7 @@ import httpx
 
 from openviking.retrieve.context_assembler.params import DEFAULT_QUOTAS
 from openviking.retrieve.context_assembler.recall_preset import (
+    DEFAULT_MIN_SCORE,
     RECALL_SCORE_THRESHOLD,
     fold_recall_request,
 )
@@ -46,9 +47,43 @@ def test_v1_aliases_fold_into_the_context_contract():
     assert params.dedup_turns == 5
     assert aliases == ["max_chars", "min_score", "render"]
 
-    defaults, _ = fold_recall_request({"query": "q"}, set())
-    assert defaults.score_threshold == RECALL_SCORE_THRESHOLD
+    defaults, _ = fold_recall_request(
+        {"query": "q", "min_score": DEFAULT_MIN_SCORE},
+        set(),
+    )
+    assert defaults.score_threshold == RECALL_SCORE_THRESHOLD == DEFAULT_MIN_SCORE == 0.1
     assert defaults.dedup_turns == 0
+
+    coding, _ = fold_recall_request(
+        {"query": "q", "score_threshold": 0.35},
+        {"score_threshold"},
+    )
+    assert coding.score_threshold == 0.35
+
+
+async def test_recall_endpoint_omitted_min_score_keeps_v1_default(
+    client: httpx.AsyncClient,
+    service,
+    monkeypatch,
+):
+    thresholds = []
+
+    async def fake_find(**kwargs):
+        thresholds.append(kwargs["score_threshold"])
+        return _FakeFindResult([])
+
+    monkeypatch.setattr(service.search, "find", fake_find)
+    response = await client.post(
+        "/api/v1/search/recall",
+        json={
+            "query": "compatibility check",
+            "quotas": {"events": 1, "entities": 0, "preferences": 0, "experiences": 0},
+        },
+    )
+
+    assert response.status_code == 200
+    assert thresholds
+    assert set(thresholds) == {0.1}
 
 
 async def test_recall_endpoint_assembles_context_and_signals_deprecation(

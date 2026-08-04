@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   buildContextSearchBody,
+  buildRecallEndpointBody,
   buildRecallBlock,
   contextRequestTimeoutMs,
   isContextFaceLegacy,
@@ -52,6 +53,12 @@ test("context requests omit defaults owned by the server", () => {
   assert.equal(body.score_threshold, 0.35);
   assert.equal(body.session_id, "cx-defaults");
   assert.equal(body.dedup_turns, 5);
+});
+
+test("coding-agent fallback recall explicitly uses the 0.35 threshold", () => {
+  const body = buildRecallEndpointBody({});
+
+  assert.equal(body.min_score, 0.35);
 });
 
 test("buildRecallBlock injects context assembled by the server", async () => {
@@ -117,6 +124,22 @@ test("buildRecallBlock prefers a cited server digest", async () => {
   assert.doesNotMatch(block, /<memory /);
 });
 
+test("buildRecallBlock injects nothing when server compression finds no relevant memory", async () => {
+  const block = await buildRecallBlock(async () => ({
+    ok: true,
+    result: {
+      rendered: '<memory uri="viking://a">irrelevant body</memory>',
+      digest: "",
+      entries: [{ uri: "viking://a" }],
+      stats: { rewrite: "no_relevant" },
+    },
+  }), { recallRewrite: "server" }, "hello", {
+    legacyCachePath: await tempPath("context-face.json"),
+  });
+
+  assert.equal(block, null);
+});
+
 test("buildRecallBlock uses local compression when configured", async () => {
   const legacyCachePath = await tempPath("context-face.json");
   const digestCachePath = await tempPath("recall-digest.json");
@@ -135,6 +158,25 @@ test("buildRecallBlock uses local compression when configured", async () => {
 
   assert.match(block, /OpenViking memory digest:/);
   assert.match(block, /local fact/);
+});
+
+test("buildRecallBlock injects nothing when local compression finds no relevant memory", async () => {
+  const legacyCachePath = await tempPath("context-face.json");
+  const digestCachePath = await tempPath("recall-digest.json");
+  const block = await buildRecallBlock(async () => ({
+    ok: true,
+    result: {
+      rendered: `<memory uri="viking://a">${"irrelevant ".repeat(200)}</memory>`,
+      entries: [{ uri: "viking://a" }],
+      stats: {},
+    },
+  }), { recallRewrite: "client" }, "hello", {
+    legacyCachePath,
+    digestCachePath,
+    runCompressor: async () => "NO_RELEVANT_MEMORY",
+  });
+
+  assert.equal(block, null);
 });
 
 test("buildRecallBlock remembers a server that only supports v1 recall", async () => {

@@ -125,6 +125,8 @@ async def assemble_context(
             max_bullets=params.rewrite_max_bullets,
             valid_uris=[entry.uri for entry in plan.entries],
         )
+        if rewrite_status == "no_relevant":
+            rendered = ""
 
     if ledger and plan.entries:
         try:

@@ -28,14 +28,14 @@ These are the enabled built-in types. Deployments can extend or override them wi
 
 > **Deprecated**: `/api/v1/search/recall` is now a thin preset over [`/api/v1/search/search` with `mode="context"`](06-retrieval.md#searchmodecontext) and carries no assembly logic of its own. New integrations should target the context face directly; the v1 field aliases are accepted only here and will be removed in the next minor release. Responses carry a `Deprecation: true` header.
 
-Search each memory type independently and assemble a bounded memory block that can be injected directly into Agent context. Relative to the context face, `/recall` only overlays four defaults: `purpose="coding"`, `score_threshold=0.35`, `dedup_turns=5` when a `session_id` is present, and `query_expansion="auto"`. Omitting `quotas` keeps v1's bucket defaults (`events=10, entities=10, preferences=3, experiences=0`); sending `"quotas": null` explicitly opts into the `purpose` preset ratios instead.
+Search each memory type independently and assemble a bounded memory block that can be injected directly into Agent context. Relative to the context face, `/recall` overlays `purpose="coding"`, the v1-compatible `score_threshold=0.1`, `dedup_turns=5` when a `session_id` is present, and `query_expansion="auto"`. Coding Agent plugins explicitly send `score_threshold=0.35`; the public `/recall` default remains `0.1` so an unchanged request does not silently lose results after upgrading. Omitting `quotas` keeps v1's bucket defaults (`events=10, entities=10, preferences=3, experiences=0`); sending `"quotas": null` explicitly opts into the `purpose` preset ratios instead.
 
 **v1 field folding**
 
 | v1 field | Folds into | Notes |
 |----------|------------|-------|
 | `max_chars` | `max_tokens = max_chars / 4` | `6500` → `1625`; an explicit `max_tokens` wins |
-| `min_score` | `score_threshold` | When neither is sent, the preset `0.35` applies |
+| `min_score` | `score_threshold` | When neither is sent, the v1-compatible default `0.1` applies |
 | `render: true` | No `detail` pin | Default behavior: each category takes its default tier |
 | `render: false` | Returns `entries` only, `rendered` empty | |
 | `render: "compact"` | `detail="abstract"` | The prototype-era compact mode; pins every category |

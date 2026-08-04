@@ -128,9 +128,14 @@ async def rewrite_context(
             "completion_tokens": max(0, after[1] - before[1]),
         }
 
+    response_text = str(response or "").strip()
     digest = normalize_digest(
         response,
         max_bullets=max_bullets,
         valid_uris=valid_uris,
     )
-    return (digest, "ok", usage) if digest else ("", "empty", usage)
+    if digest:
+        return digest, "ok", usage
+    if response_text.upper() == "NO_RELEVANT_MEMORY":
+        return "", "no_relevant", usage
+    return "", "failed", usage

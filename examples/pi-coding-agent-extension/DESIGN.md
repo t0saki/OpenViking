@@ -54,7 +54,7 @@ interface OVConfig {
   recallBudget: number;          // Max tokens for <relevant-memories> block (default: 2000)
   recallMaxContentChars: number; // Max chars per recall result before truncation (default: 500)
   recallPreferAbstract: boolean; // Prefer abstract/overview over full content (default: true)
-  recallLimit: number;          // Max results after dedup, before budget filtering (default: 10)
+  recallLimit: number;          // Legacy input scaled into six coding quotas (default: 10)
   recallScoreThreshold: number;  // Min relevance score for recall results (default: 0.35)
   recallMinQueryLength: number;  // Skip recall for queries shorter than this (default: 3)
   profileBudget: number;        // Max tokens for user profile injection at session start (default: 10000)
@@ -73,6 +73,10 @@ interface OVConfig {
   logLevel: "silent" | "error" | "info";  // default: "error"
 }
 ```
+
+`recallLimit` is not a final result cap. Explicit values from 1 through 5 yield
+an effective total quota of 6 because every coding category keeps one slot.
+Callers that require exact category ceilings should use Context `quotas`.
 
 Config resolution: `config.json` → env vars (`OPENVIKING_URL`, `OPENVIKING_API_KEY`, `OPENVIKING_ACCOUNT`, `OPENVIKING_USER`, `OPENVIKING_AGENT_ID`, etc.) → defaults. Follows the Claude Code plugin's priority chain.
 

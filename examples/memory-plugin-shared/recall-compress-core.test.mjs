@@ -52,12 +52,23 @@ test("compression cache is reused only for the same request", async () => {
 });
 
 test("unusable compressor output triggers the caller fallback", async () => {
-  const output = await compressRecallContext({
+  const result = await compressRecallContext({
     query: "q",
     rendered: `<memory uri="viking://a">${"x".repeat(2000)}</memory>`,
     entries: [{ uri: "viking://a" }],
     runCompressor: async () => "I could not find anything relevant.",
   });
 
-  assert.equal(output, null);
+  assert.deepEqual(result, { status: "failed", context: "" });
+});
+
+test("NO_RELEVANT_MEMORY is a successful empty compression result", async () => {
+  const result = await compressRecallContext({
+    query: "q",
+    rendered: `<memory uri="viking://a">${"x".repeat(2000)}</memory>`,
+    entries: [{ uri: "viking://a" }],
+    runCompressor: async () => "NO_RELEVANT_MEMORY",
+  });
+
+  assert.deepEqual(result, { status: "empty", context: "" });
 });

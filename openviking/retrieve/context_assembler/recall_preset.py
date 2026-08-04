@@ -18,18 +18,18 @@ from openviking.retrieve.context_assembler.params import (
     AssembleParams,
 )
 
-# Preset overlay: what /recall assumes when the caller stays quiet.
-RECALL_PURPOSE = "coding"
-RECALL_SCORE_THRESHOLD = 0.35
-RECALL_DEDUP_TURNS = 5
-RECALL_QUERY_EXPANSION = "auto"
-
 # v1 budgeted characters; ~4 chars per token for the ASCII case it was tuned on.
 CHARS_PER_TOKEN = 4
 
 # v1 defaults, kept so the deprecated request model still documents its own shape.
 DEFAULT_MAX_CHARS = 6500
 DEFAULT_MIN_SCORE = 0.1
+
+# Preset overlay: what /recall assumes when the caller stays quiet.
+RECALL_PURPOSE = "coding"
+RECALL_SCORE_THRESHOLD = DEFAULT_MIN_SCORE
+RECALL_DEDUP_TURNS = 5
+RECALL_QUERY_EXPANSION = "auto"
 
 V1_ALIASES = ("max_chars", "min_score", "render")
 

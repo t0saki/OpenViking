@@ -28,14 +28,14 @@
 
 > **已弃用**：`/api/v1/search/recall` 现在只是 [`/api/v1/search/search` 的 `mode="context"`](06-retrieval.md#searchmodecontext) 之上的轻量预设，自身不再包含独立的组装逻辑。新接入请直接使用 context 面；v1 字段别名仅在本端点保留，将在下一个 minor 版本移除。响应会带上 `Deprecation: true` 头。
 
-按记忆类型分别检索，并在预算内组合成可直接注入 Agent 上下文的记忆块。相对 context 面，`/recall` 只叠加四处默认值：`purpose="coding"`、`score_threshold=0.35`、带 `session_id` 时 `dedup_turns=5`、`query_expansion="auto"`。省略 `quotas` 时沿用 v1 的分桶默认值（`events=10, entities=10, preferences=3, experiences=0`）；显式传 `"quotas": null` 才改用 `purpose` 预设配比。
+按记忆类型分别检索，并在预算内组合成可直接注入 Agent 上下文的记忆块。相对 context 面，`/recall` 会叠加 `purpose="coding"`、兼容 v1 的 `score_threshold=0.1`、带 `session_id` 时 `dedup_turns=5`、`query_expansion="auto"`。Coding Agent 插件会显式发送 `score_threshold=0.35`；公共 `/recall` 默认值仍为 `0.1`，避免相同请求在升级后静默减少结果。省略 `quotas` 时沿用 v1 的分桶默认值（`events=10, entities=10, preferences=3, experiences=0`）；显式传 `"quotas": null` 才改用 `purpose` 预设配比。
 
 **v1 字段折叠**
 
 | v1 字段 | 折叠为 | 说明 |
 |---------|--------|------|
 | `max_chars` | `max_tokens = max_chars / 4` | `6500` → `1625`；显式传 `max_tokens` 时以后者为准 |
-| `min_score` | `score_threshold` | 都未提供时取预设值 `0.35` |
+| `min_score` | `score_threshold` | 都未提供时取兼容 v1 的默认值 `0.1` |
 | `render: true` | 不钉档位 | 默认行为：各类别取自己的默认档 |
 | `render: false` | 只返回 `entries`，`rendered` 为空 | |
 | `render: "compact"` | `detail="abstract"` | 原型期的紧凑模式；把所有类别钉在摘要档 |

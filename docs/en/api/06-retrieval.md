@@ -605,7 +605,7 @@ Injecting context every turn used to mean searching per type, reading each hit b
 1. **L1 query understanding**: optional bounded intent expansion from the session's recent messages (at most 3 queries, timeout fuse, falls back to the original query)
 2. **L0 retrieval**: bucketed per `quotas`, or a single whole-scope search when quotas are off
 3. **L2 assembly**: tier filling inside the token budget (everyone at their category's default tier first, then leftover budget deepens in score order); an oversized tier falls back instead of being truncated
-4. **L3 rewrite**: optional digest with URI citations (timeout fuse; on failure the unrewritten `rendered` is still returned)
+4. **L3 rewrite**: optional digest with URI citations (timeout fuse; on failure the unrewritten `rendered` is still returned; an exact `NO_RELEVANT_MEMORY` result is reported as `stats.rewrite="no_relevant"` so Coding Agent clients inject nothing instead of falling back to `rendered`)
 
 **Code entry points**:
 - `openviking/server/routers/search.py:_search_context()` - HTTP route branch
@@ -747,9 +747,13 @@ curl -X POST http://localhost:1933/api/v1/search/search \
 | `entries[].category` | string | `events`/`entities`/`preferences`/`experiences`/`resources`/`skills` |
 | `entries[].detail` | string | Tier actually served: `full`, `overview`, `abstract` or `uri` |
 | `entries[].text` | string | Body for that tier; empty at the `uri` tier |
-| `rendered` | string | Flat XML context block, ready to inject |
-| `digest` | string | Digest when the rewrite succeeded, empty string otherwise |
-| `stats` | object | Budget usage, tier distribution, expansion and rewrite status, dedup ledger state; carries `retrieval_errors` when a retrieval scope failed, so a broken index is distinguishable from having no relevant memories |
+| `rendered` | string | Flat XML context block, ready to inject; empty when rewrite reports `no_relevant` |
+| `digest` | string | Digest when the rewrite succeeded, empty string on failure or when the compressor reports no relevant memory |
+| `stats` | object | Budget usage, tier distribution, expansion and rewrite status (`off`, `ok`, `no_relevant`, `failed` or `timeout`), dedup ledger state; carries `retrieval_errors` when a retrieval scope failed, so a broken index is distinguishable from having no relevant memories |
+
+When `stats.rewrite` is `no_relevant`, the response keeps `entries` for
+inspection but returns both `digest` and `rendered` as empty strings. This makes
+the successful empty result safe for clients that predate the explicit status.
 
 **Validation rules**
 

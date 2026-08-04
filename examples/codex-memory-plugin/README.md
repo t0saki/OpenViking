@@ -215,7 +215,7 @@ Config knobs:
 
 | Env var | Default | Meaning |
 |---|---|---|
-| `OPENVIKING_RECALL_LIMIT` | `10` | Legacy width override; explicit values are converted to six coding quotas. |
+| `OPENVIKING_RECALL_LIMIT` | `10` | Legacy quota-scaling input; explicit values are converted to six coding quotas, not enforced as a final result cap. |
 | `OPENVIKING_RECALL_COMPRESS` | `1` | Set `0` / `off` to disable `codex exec` compression. |
 | `OPENVIKING_RECALL_COMPRESS_MODEL` | unset | Custom first-choice compressor model. Set `off` to disable compression. |
 | `OPENVIKING_RECALL_COMPRESS_THINKING` | unset | Custom `model_reasoning_effort`; `default` omits the Codex config override. Alias: `OPENVIKING_RECALL_COMPRESS_REASONING_EFFORT`. |
@@ -233,8 +233,9 @@ that endpoint fall back to `/api/v1/search/recall`, and that outcome is cached s
 only the first turn pays for the probe. Server-owned Context defaults are omitted
 unless explicitly configured, so the plugin follows the server instead of copying
 values such as `limit=10` or `max_tokens=1600`. An explicit legacy `recallLimit`
-is converted to per-category coding quotas; values below 6 still give every
-coding domain one retrieval slot. Local `codex exec` compression is
+is converted to per-category coding quotas, not a final result cap. Values
+from 1 through 5 therefore produce an effective total quota of 6, one retrieval
+slot for each coding domain. Local `codex exec` compression is
 unchanged and still runs on top of whichever path answered.
 
 Client-side knobs can also live in `~/.openviking/ovcli.conf` under

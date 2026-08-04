@@ -5,6 +5,7 @@ import re
 from types import SimpleNamespace
 
 from openviking.retrieve.context_assembler import pipeline as pipeline_module
+from openviking.retrieve.context_assembler import rewrite as rewrite_module
 from openviking.retrieve.context_assembler.models import AssembledEntry
 from openviking.retrieve.context_assembler.params import AssembleParams, normalize_quotas
 from openviking.retrieve.context_assembler.pipeline import assemble_context
@@ -323,6 +324,61 @@ async def test_rewrite_failure_keeps_rendered_context(monkeypatch):
     assert result.digest == ""
     assert result.rendered.count("<memory ") == 1
     assert result.stats["rewrite"] == "timeout"
+
+
+async def test_rewrite_sentinel_marks_a_successful_empty_digest(monkeypatch):
+    hits = [{"uri": f"{USER_ROOT}/memories/events/a.md", "score": 0.6, "abstract": "abs"}]
+    monkeypatch.setattr(pipeline_module, "server_rewrite_enabled", lambda mode: True)
+
+    async def empty_rewrite(**kwargs):
+        del kwargs
+        return "", "no_relevant", None
+
+    monkeypatch.setattr(pipeline_module, "rewrite_context", empty_rewrite)
+    result = await assemble_context(
+        service=_service(hits=hits, bodies={}),
+        ctx=_ctx(),
+        params=AssembleParams(query="unrelated", rewrite=True),
+    )
+
+    assert result.digest == ""
+    assert result.rendered == ""
+    assert len(result.entries) == 1
+    assert result.stats["rewrite"] == "no_relevant"
+
+
+async def test_rewrite_kernel_distinguishes_no_relevant_from_invalid_output(monkeypatch):
+    responses = iter(
+        [
+            "NO_RELEVANT_MEMORY",
+            "",
+            "I could not produce a cited digest.",
+        ]
+    )
+
+    class _Planner:
+        async def get_completion_async(self, prompt):
+            assert prompt == "rewrite prompt"
+            return next(responses)
+
+    config = SimpleNamespace(
+        retrieval=SimpleNamespace(recall_rewrite_timeout_s=1),
+        get_query_planner=lambda: _Planner(),
+    )
+    monkeypatch.setattr(rewrite_module, "get_openviking_config", lambda: config)
+    monkeypatch.setattr(rewrite_module, "render_prompt", lambda *args, **kwargs: "rewrite prompt")
+
+    statuses = []
+    for _ in range(3):
+        digest, status, _ = await rewrite_module.rewrite_context(
+            query="q",
+            rendered='<memory uri="viking://a">body</memory>',
+            valid_uris=["viking://a"],
+        )
+        assert digest == ""
+        statuses.append(status)
+
+    assert statuses == ["no_relevant", "failed", "failed"]
 
 
 async def test_rewrite_receives_only_served_uris(monkeypatch):

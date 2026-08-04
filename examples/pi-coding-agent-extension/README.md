@@ -111,9 +111,13 @@ All fields below live in `config.json`. Defaults are shown.
 | `recallTokenBudget`      | `2000`     | Token budget for inline recall content                                   |
 | `recallMaxContentChars`  | `500`      | Per-item content cap for search results                                  |
 | `recallPreferAbstract`   | `true`     | Prefer L0 abstract over L2 full body when available                      |
-| `recallLimit`            | `10`       | Legacy width override converted to per-category coding quotas            |
+| `recallLimit`            | `10`       | Legacy quota-scaling input converted to six coding quotas, not a final cap |
 | `scoreThreshold`         | `0.35`     | Min relevance score (0–1)                                                |
 | `minQueryLength`         | `3`        | Skip recall for queries shorter than N characters                        |
+
+Explicit `recallLimit` values from 1 through 5 produce an effective total
+quota of 6 because each coding category keeps one retrieval slot. Direct API
+integrations should configure category `quotas` when they need exact ceilings.
 
 ### Capture tuning
 

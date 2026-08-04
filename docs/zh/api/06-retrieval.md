@@ -607,7 +607,7 @@ Agent 插件每轮注入上下文时，过去需要按类型逐个检索、再�
 1. **L1 查询理解**：可选，结合 Session 最近消息做有界意图扩展（最多 3 条查询，超时熔断，失败回退原查询）
 2. **L0 检索**：按 `quotas` 分桶独立检索，或不设配额时全域检索一次
 3. **L2 组装**：token 预算内填充档位（全员先落到各自类别的默认档，再用剩余预算按分数序加深），超限退档不截断
-4. **L3 重写**：可选，把组装结果压成带 URI 引用的 digest（超时熔断，失败仍返回未重写的 `rendered`）
+4. **L3 重写**：可选，把组装结果压成带 URI 引用的 digest（超时熔断，失败仍返回未重写的 `rendered`；精确返回 `NO_RELEVANT_MEMORY` 时记为 `stats.rewrite="no_relevant"`，Coding Agent 客户端不会再回退注入 `rendered`）
 
 **代码入口**：
 - `openviking/server/routers/search.py:_search_context()` - HTTP 路由分支
@@ -749,9 +749,12 @@ curl -X POST http://localhost:1933/api/v1/search/search \
 | `entries[].category` | string | `events`/`entities`/`preferences`/`experiences`/`resources`/`skills` |
 | `entries[].detail` | string | 实际档位：`full`、`overview`、`abstract` 或 `uri` |
 | `entries[].text` | string | 该档位的正文；`uri` 档为空 |
-| `rendered` | string | 扁平 XML 上下文块，可直接注入 |
-| `digest` | string | 重写成功时的摘要，否则为空字符串 |
-| `stats` | object | 预算用量、档位分布、扩展与重写状态、去重账本状态；某个检索域失败时附带 `retrieval_errors`，用于区分「检索坏了」和「确实没有相关记忆」 |
+| `rendered` | string | 扁平 XML 上下文块，可直接注入；重写返回 `no_relevant` 时为空 |
+| `digest` | string | 重写成功时的摘要；失败或压缩器判定无相关记忆时为空字符串 |
+| `stats` | object | 预算用量、档位分布、扩展与重写状态（`off`、`ok`、`no_relevant`、`failed` 或 `timeout`）、去重账本状态；某个检索域失败时附带 `retrieval_errors`，用于区分「检索坏了」和「确实没有相关记忆」 |
+
+当 `stats.rewrite` 为 `no_relevant` 时，响应仍保留 `entries` 供检查，但 `digest` 和
+`rendered` 都为空字符串。这样即使客户端尚未识别新状态，也不会回退注入原文。
 
 **校验规则**
 

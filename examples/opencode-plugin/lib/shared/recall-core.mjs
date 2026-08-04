@@ -494,10 +494,14 @@ async function recallViaContextFace(fetchJSON, cfg, query, options, log) {
   const { rendered, entries } = assembled;
   let digest = assembled.digest;
   const mode = String(cfg.recallRewrite || "off").toLowerCase();
+  if (String(assembled.stats?.rewrite || "").toLowerCase() === "no_relevant") {
+    log("recall_server_compression", { status: "empty" });
+    return "";
+  }
   const wantsLocal = mode === "client" || (mode === "auto" && !digest);
   if (wantsLocal && rendered && typeof options.runCompressor === "function") {
     try {
-      const compressed = await compressRecallContext({
+      const compression = await compressRecallContext({
         query,
         rendered,
         entries,
@@ -506,8 +510,9 @@ async function recallViaContextFace(fetchJSON, cfg, query, options, log) {
         cachePath: options.digestCachePath || stateFile("recall-digest.json"),
         now: Date.now(),
       });
-      if (compressed) digest = compressed;
-      log("recall_local_compression", { ok: Boolean(compressed) });
+      log("recall_local_compression", { status: compression.status });
+      if (compression.status === "ok") digest = compression.context;
+      if (compression.status === "empty") return "";
     } catch (err) {
       log("recall_local_compression_failed", { error: String(err?.message || err) });
     }
