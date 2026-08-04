@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   buildRecallBlock,
+  contextRequestTimeoutMs,
   isContextFaceLegacy,
 } from "./lib/recall-core.mjs";
 
@@ -33,6 +34,29 @@ test("buildRecallBlock injects context assembled by the server", async () => {
   assert.match(block, /^<openviking-context>/);
   assert.match(block, /viking:\/\/user\/default\/memories\/a\.md/);
   assert.match(block, /<\/openviking-context>$/);
+});
+
+test("a server-side digest outlasts the ordinary request timeout", async () => {
+  const timeouts = [];
+  const fetchJSON = async (path, init, options) => {
+    timeouts.push(options?.timeoutMs);
+    return {
+      ok: true,
+      result: { rendered: '<memory uri="viking://a">body</memory>', entries: [{ uri: "viking://a" }] },
+    };
+  };
+
+  const cfg = { timeoutMs: 15000, recallRewrite: "server" };
+  await buildRecallBlock(fetchJSON, cfg, "hello", {
+    legacyCachePath: await tempPath("context-face.json"),
+  });
+  await buildRecallBlock(fetchJSON, { timeoutMs: 15000 }, "hello", {
+    legacyCachePath: await tempPath("context-face.json"),
+  });
+
+  assert.ok(timeouts[0] > 30000, `server rewrite must outlast the 30s fuse, got ${timeouts[0]}`);
+  assert.equal(timeouts[1], undefined);
+  assert.equal(contextRequestTimeoutMs({ ...cfg, recallContextTimeoutMs: 45000 }, true), 45000);
 });
 
 test("buildRecallBlock prefers a cited server digest", async () => {

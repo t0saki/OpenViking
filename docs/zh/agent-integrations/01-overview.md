@@ -55,3 +55,5 @@ export OPENVIKING_RECALL_COMPRESS=off
 ```
 
 环境变量优先于 `ovcli.conf`。修改后重启对应的 Agent，让 hook 进程重新加载配置。上述设置属于插件客户端，不需要修改服务端的 `ov.conf`。
+
+当 Claude Code 请求服务端生成 digest 时，这次 context 请求的等待时间比普通请求更长：服务端自身的 rewrite 保险丝是 `retrieval.recall_rewrite_timeout_s`（默认 30 秒），客户端提前中断会丢掉整个响应，而不只是 digest。可以用 `OPENVIKING_RECALL_CONTEXT_TIMEOUT_MS`（或 `plugin.recallContextTimeoutMs`）指定这个上限，取值应高于服务端保险丝、低于 Agent 自身的 hook 超时。

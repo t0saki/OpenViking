@@ -110,6 +110,34 @@ async def test_context_and_list_parameter_domains_do_not_overlap(client: httpx.A
     assert "target_uri" in context_response.text
 
 
+async def test_context_mode_rejects_a_request_list_mode_rejects(client: httpx.AsyncClient):
+    list_response = await client.post("/api/v1/search/search", json={})
+    context_response = await client.post("/api/v1/search/search", json={"mode": "context"})
+
+    assert list_response.status_code == 400
+    assert context_response.status_code == 400
+    assert context_response.json()["error"]["code"] == "INVALID_ARGUMENT"
+
+
+async def test_context_mode_degrades_a_retrieval_failure(
+    client: httpx.AsyncClient,
+    service,
+    monkeypatch,
+):
+    async def fake_find(**kwargs):
+        del kwargs
+        raise RuntimeError("embedder unreachable")
+
+    monkeypatch.setattr(service.search, "find", fake_find)
+    response = await client.post(
+        "/api/v1/search/search",
+        json={"query": "still a valid request", "mode": "context"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["result"]["stats"]["retrieval_errors"]
+
+
 async def test_list_mode_response_is_unchanged(
     client: httpx.AsyncClient,
     service,

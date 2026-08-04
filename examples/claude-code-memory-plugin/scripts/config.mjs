@@ -284,6 +284,11 @@ export function loadConfig() {
         ?? cc.recallRewrite,
       "auto",
     ),
+    // 0 keeps the built-in default, which outlasts the server's rewrite fuse.
+    recallContextTimeoutMs: Math.max(0, Math.floor(num(
+      process.env.OPENVIKING_RECALL_CONTEXT_TIMEOUT_MS,
+      num(cc.recallContextTimeoutMs, 0),
+    ))),
     recallCompressMinInputChars: Math.max(0, Math.floor(num(
       process.env.OPENVIKING_RECALL_COMPRESS_MIN_INPUT_CHARS,
       num(cc.recallCompressMinInputChars, 1500),

@@ -91,9 +91,12 @@ recallDeadline = setTimeout(() => {
 }, cfg.recallTimeoutMs);
 recallDeadline.unref?.();
 
-async function fetchJSON(path, init = {}) {
+async function fetchJSON(path, init = {}, options = {}) {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), cfg.timeoutMs);
+  const timer = setTimeout(
+    () => controller.abort(),
+    Math.max(1000, Number(options.timeoutMs) || cfg.timeoutMs),
+  );
   try {
     const headers = { "Content-Type": "application/json" };
     if (cfg.apiKey) {

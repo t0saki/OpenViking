@@ -168,7 +168,8 @@ export function makeAgentFetchJSON(cfg, cwd = process.cwd()) {
   const effectivePeer = resolveEffectivePeerId({ cfg, cwd });
   const fetchJSON = async (path, init = {}, options = {}) => {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), cfg.timeoutMs);
+    const timeoutMs = Math.max(1000, Number(options.timeoutMs) || cfg.timeoutMs);
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const headers = { "Content-Type": "application/json", ...(init.headers || {}) };
       if (cfg.apiKey) headers.Authorization = `Bearer ${cfg.apiKey}`;

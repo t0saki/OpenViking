@@ -470,7 +470,7 @@ This catalog follows the routes actually mounted by the server. Each group headi
 | POST | `/api/v1/sessions/{session_id}/messages` | Add one message |
 | POST | `/api/v1/sessions/{session_id}/messages/batch` | Add messages in a batch |
 | POST | `/api/v1/sessions/{session_id}/used` | Record context or skills actually used |
-| POST | `/api/v1/search/recall` | Deprecated: thin preset over `/search` `mode="context"` |
+| POST | `/api/v1/search/recall` | Deprecated: thin preset over the search endpoint with `mode="context"` |
 
 ### [Retrieval](06-retrieval.md) and [Relations](13-relations.md)
 

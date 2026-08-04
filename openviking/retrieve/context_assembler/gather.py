@@ -20,6 +20,7 @@ from openviking.retrieve.context_assembler.params import (
     OTHER_PEER_OVERFETCH,
 )
 from openviking.server.identity import RequestContext
+from openviking_cli.exceptions import InvalidArgumentError
 
 LEVEL_SUFFIXES = (".abstract.md", ".overview.md")
 
@@ -162,10 +163,15 @@ async def _safe_find(service: Any, errors: List[str], **kwargs: Any) -> Any:
 
     Failures are counted into stats rather than swallowed silently, so an empty
     context block caused by a broken embedder is distinguishable from one caused
-    by genuinely having no relevant memories.
+    by genuinely having no relevant memories. A rejected request is not such a
+    failure: it fails every scope identically and degrading it would hide a
+    caller mistake behind a 200 with an empty block, so it propagates and gets
+    the same 400 ``mode="list"`` returns.
     """
     try:
         return await service.search.find(**kwargs)
+    except InvalidArgumentError:
+        raise
     except Exception as exc:
         errors.append(f"{type(exc).__name__}: {exc}"[:200])
         return None

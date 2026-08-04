@@ -55,3 +55,5 @@ The same settings can live in `~/.openviking/ovcli.conf`:
 ```
 
 Environment variables take precedence over `ovcli.conf`. Restart the Agent after changing these settings so its hook processes reload the configuration. These are plugin-client settings; the server's `ov.conf` does not need to change.
+
+When Claude Code asks the server for a digest, the context request waits longer than an ordinary request: the server's own rewrite fuse is `retrieval.recall_rewrite_timeout_s` (30s by default), and aborting earlier would discard the whole response rather than just the digest. Set `OPENVIKING_RECALL_CONTEXT_TIMEOUT_MS` (or `plugin.recallContextTimeoutMs`) to pin that deadline — keep it above the server's fuse and below the Agent's own hook timeout.

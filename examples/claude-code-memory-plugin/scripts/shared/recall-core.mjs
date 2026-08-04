@@ -77,6 +77,25 @@ export function buildContextSearchBody(cfg = {}, options = {}) {
   return body;
 }
 
+// Server default for retrieval.recall_rewrite_timeout_s plus room for the
+// retrieval that precedes it, still well inside the 60s prompt-hook budget.
+const SERVER_REWRITE_REQUEST_TIMEOUT_MS = 35000;
+
+/**
+ * HTTP deadline for one context request, or undefined to keep the caller's own.
+ *
+ * The ordinary request timeout is shorter than the server's rewrite fuse, so a
+ * digest that finishes inside its own fuse would be aborted client-side. That
+ * loses the whole response rather than just the digest, including the
+ * uncompressed block the server still returns when a rewrite fails.
+ */
+export function contextRequestTimeoutMs(cfg = {}, serverRewrite = false) {
+  if (!serverRewrite) return undefined;
+  const configured = Number(cfg.recallContextTimeoutMs);
+  if (Number.isFinite(configured) && configured > 0) return Math.max(1000, Math.floor(configured));
+  return Math.max(Number(cfg.timeoutMs) || 0, SERVER_REWRITE_REQUEST_TIMEOUT_MS);
+}
+
 /**
  * Strip the context-face fields a pre-context server rejects, converting the
  * token budget back to v1's character budget.
@@ -362,7 +381,7 @@ export async function fetchAssembledContext(fetchJSON, cfg, query, options = {})
   const res = await fetchJSON("/api/v1/search/search", {
     method: "POST",
     body: JSON.stringify(body),
-  }, { actorPeerId });
+  }, { actorPeerId, timeoutMs: contextRequestTimeoutMs(cfg, body.rewrite !== undefined) });
 
   if (!res.ok) {
     const status = res.status || 0;

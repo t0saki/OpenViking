@@ -465,7 +465,7 @@ JSON 输出 - 错误：
 | POST | `/api/v1/sessions/{session_id}/messages` | 添加单条消息 |
 | POST | `/api/v1/sessions/{session_id}/messages/batch` | 批量添加消息 |
 | POST | `/api/v1/sessions/{session_id}/used` | 记录实际使用的上下文或技能 |
-| POST | `/api/v1/search/recall` | 已弃用：`/search` `mode="context"` 之上的轻量预设 |
+| POST | `/api/v1/search/recall` | 已弃用：search 接口 `mode="context"` 之上的轻量预设 |
 
 ### [检索](06-retrieval.md)与[关系](13-relations.md)
 
