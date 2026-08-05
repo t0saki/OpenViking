@@ -37,7 +37,11 @@ export class RecallManager {
     }
 
     const block = await buildRecallBlock(
-      (path: string, init?: any, options?: any) => this.client.fetchJSON(path, init, 10000),
+      // 10s is this extension's own budget for a bare retrieval; when the
+      // request also spends a server fuse the helper hands down a longer
+      // deadline, and ignoring it would abort a request still inside its fuse.
+      (path: string, init?: any, options?: any) =>
+        this.client.fetchJSON(path, init, options?.timeoutMs ?? 10000),
       this.config as any,
       userQuery,
       {

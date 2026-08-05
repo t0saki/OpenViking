@@ -18,7 +18,11 @@ export function createMemoryRecall({ config, sessionManager }) {
     if (!health.ok) return
 
     const block = await buildRecallBlock(
-      (path, init = {}, options = {}) => fetchJSON(config, path, init, { ...options, timeoutMs: 5000 }),
+      // 5s is this hook's own budget for a bare retrieval; when the request
+      // also spends a server fuse the helper hands down a longer deadline, and
+      // overriding it here would abort a request the server was still inside.
+      (path, init = {}, options = {}) =>
+        fetchJSON(config, path, init, { ...options, timeoutMs: options.timeoutMs ?? 5000 }),
       config,
       query,
       {

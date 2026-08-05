@@ -111,7 +111,28 @@ test("a server-side digest outlasts the ordinary request timeout", async () => {
     `deadline must outlast both server fuses plus the work between, got ${timeouts[0]}`,
   );
   assert.equal(timeouts[1], undefined);
-  assert.equal(contextRequestTimeoutMs({ ...cfg, recallContextTimeoutMs: 50000 }, true), 50000);
+  assert.equal(
+    contextRequestTimeoutMs({ ...cfg, recallContextTimeoutMs: 50000 }, { rewrite: true }),
+    50000,
+  );
+});
+
+test("the deadline follows the stages the request actually asks for", async () => {
+  const cfg = { timeoutMs: 5000 };
+
+  // A bare retrieval spends no server fuse, so the caller keeps its own budget.
+  assert.equal(contextRequestTimeoutMs(cfg, {}), undefined);
+  assert.equal(contextRequestTimeoutMs(cfg, { session_id: "s", query_expansion: "off" }), undefined);
+
+  // A session engages query expansion, which the server defaults to "auto".
+  // Without headroom a 5s caller aborts a request the expansion fuse alone may
+  // consume, then falls back to the path with no dedup and no expansion.
+  const withSession = contextRequestTimeoutMs(cfg, { session_id: "s" });
+  assert.ok(withSession > 5000, `expansion needs headroom over the caller budget, got ${withSession}`);
+
+  // A digest costs the rewrite fuse on top of everything above it.
+  const withRewrite = contextRequestTimeoutMs(cfg, { session_id: "s", rewrite: true });
+  assert.ok(withRewrite > withSession, "a digest must outlast a plain expanded request");
 });
 
 test("buildRecallBlock prefers a cited server digest", async () => {

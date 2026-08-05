@@ -51,3 +51,48 @@ test("OpenCode passes the session manager into the recall component", async () =
   const source = await readFile(join(ROOT, "examples", "opencode-plugin", "index.mjs"), "utf-8");
   assert.match(source, /createMemoryRecall\(\{\s*config,\s*sessionManager\s*\}\)/);
 });
+
+// Forwarding a session id makes the server spend the query-expansion fuse, so
+// an adapter that pins its own HTTP timeout aborts a request the server is
+// still inside and drops back to the path without dedup or expansion. Each
+// adapter's own budget has to stay a default, not a ceiling.
+const TIMEOUT_PASSTHROUGH = [
+  {
+    name: "OpenCode keeps the per-request deadline the helper hands down",
+    file: join(ROOT, "examples", "opencode-plugin", "lib", "memory-recall.mjs"),
+    pattern: /timeoutMs:\s*options\.timeoutMs\s*\?\?\s*\d+/,
+  },
+  {
+    name: "pi keeps the per-request deadline the helper hands down",
+    file: join(ROOT, "examples", "pi-coding-agent-extension", "recall.ts"),
+    pattern: /fetchJSON\(path,\s*init,\s*options\?\.timeoutMs\s*\?\?\s*\d+\)/,
+  },
+];
+
+for (const { name, file, pattern } of TIMEOUT_PASSTHROUGH) {
+  test(name, async () => {
+    const source = await readFile(file, "utf-8");
+    assert.match(source, pattern);
+  });
+}
+
+const QUERY_EXPANSION_OPT_OUT = [
+  {
+    name: "OpenCode exposes the query-expansion opt-out",
+    file: join(ROOT, "examples", "opencode-plugin", "lib", "config.mjs"),
+  },
+  {
+    name: "pi exposes the query-expansion opt-out",
+    file: join(ROOT, "examples", "pi-coding-agent-extension", "config.ts"),
+  },
+];
+
+for (const { name, file } of QUERY_EXPANSION_OPT_OUT) {
+  test(name, async () => {
+    const source = await readFile(file, "utf-8");
+    // The env var alone is not enough: buildContextSearchBody only emits
+    // `query_expansion` when the harness also marks it as configured.
+    assert.match(source, /OPENVIKING_RECALL_QUERY_EXPANSION/);
+    assert.match(source, /recallQueryExpansionConfigured/);
+  });
+}
