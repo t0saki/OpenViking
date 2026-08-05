@@ -2,14 +2,15 @@ import { buildRecallBlock } from "./shared/recall-core.mjs"
 import { isBypassed } from "./shared/session-model.mjs"
 import { effectivePeerId, fetchJSON, log } from "./utils.mjs"
 
-export function createMemoryRecall({ config }) {
+export function createMemoryRecall({ config, sessionManager }) {
   async function injectRelevantMemories(input, output) {
     if (!config.autoRecall?.enabled) return
     const query = extractCurrentUserText(output.parts ?? [])
     if (!query) return
     if (query.length < config.minQueryLength) return
+    const sessionID = input.sessionID ?? output.message?.sessionID
     if (isBypassed(config, {
-      sessionId: input.sessionID ?? output.message?.sessionID,
+      sessionId: sessionID,
       cwd: input.directory ?? input.cwd,
     })) return
 
@@ -22,6 +23,9 @@ export function createMemoryRecall({ config }) {
       query,
       {
         actorPeerId: effectivePeerId(config),
+        // The mapped OV session is what turns on server-side query expansion
+        // and the cross-turn dedup ledger.
+        sessionId: sessionID ? sessionManager.getMappedSessionId(sessionID) : "",
         log: (stage, data) => log("DEBUG", "recall", stage, data),
       },
     )

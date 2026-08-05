@@ -137,9 +137,14 @@ export function buildContextSearchBody(cfg = {}, options = {}) {
   return body;
 }
 
-// Server default for retrieval.recall_rewrite_timeout_s plus room for the
-// retrieval that precedes it, still well inside the 60s prompt-hook budget.
-const SERVER_REWRITE_REQUEST_TIMEOUT_MS = 35000;
+// The server pipeline is serial, and only its last stage is the rewrite fuse:
+// query expansion (retrieval.recall_intent_timeout_s, 5s) runs first, then
+// retrieval, body reads and budgeting, and only then the rewrite
+// (retrieval.recall_rewrite_timeout_s, 30s). A deadline covering the rewrite
+// alone aborts requests where every server stage stayed inside its own fuse, so
+// this covers both fuses plus the work between them and still leaves a quarter
+// of the 60s prompt-hook budget.
+const SERVER_REWRITE_REQUEST_TIMEOUT_MS = 45000;
 
 /**
  * HTTP deadline for one context request, or undefined to keep the caller's own.

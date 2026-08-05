@@ -103,9 +103,15 @@ test("a server-side digest outlasts the ordinary request timeout", async () => {
     legacyCachePath: await tempPath("context-face.json"),
   });
 
-  assert.ok(timeouts[0] > 30000, `server rewrite must outlast the 30s fuse, got ${timeouts[0]}`);
+  // The server pipeline is serial: the 5s expansion fuse, retrieval and body
+  // reads all run before the 30s rewrite fuse even starts, so covering the
+  // rewrite alone still aborts requests that stayed inside every server budget.
+  assert.ok(
+    timeouts[0] > 35000,
+    `deadline must outlast both server fuses plus the work between, got ${timeouts[0]}`,
+  );
   assert.equal(timeouts[1], undefined);
-  assert.equal(contextRequestTimeoutMs({ ...cfg, recallContextTimeoutMs: 45000 }, true), 45000);
+  assert.equal(contextRequestTimeoutMs({ ...cfg, recallContextTimeoutMs: 50000 }, true), 50000);
 });
 
 test("buildRecallBlock prefers a cited server digest", async () => {
