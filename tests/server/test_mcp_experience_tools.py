@@ -8,6 +8,7 @@ result in a different envelope; attribution has to survive all of them.
 """
 
 import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -16,7 +17,9 @@ from openviking.core.experience import (
     normalize_experience_tool_name,
 )
 from openviking.message import Message, ToolPart
+from openviking.server.dependencies import set_service
 from openviking.server.identity import RequestContext, Role
+from openviking.server.mcp_endpoint import _mcp_ctx, mcp
 from openviking.session.memory.experience_lineage import collect_read_experience_uris
 from openviking.usage_reporter import MemoryUsageExtractor, UsageContext
 from openviking_cli.session.user_id import UserIdentifier
@@ -191,3 +194,109 @@ def test_load_tool_output_mapping_keeps_read_output_content_field():
     """`read_experience` output has its own `content` key — it must not be unwrapped."""
     assert load_tool_output_mapping(READ_OUTPUT)["uri"] == EXPERIENCE_URI
     assert load_tool_output_mapping(READ_OUTPUT)["content"].startswith("## Situation")
+
+
+# ---------------------------------------------------------------------------
+# Full round trip: MCP tools/call -> recorded tool part -> usage events
+# ---------------------------------------------------------------------------
+
+SERVER_USER = "test_user"
+SERVER_EXPERIENCE_URI = f"viking://user/{SERVER_USER}/memories/experiences/round-trip.md"
+
+
+@pytest.fixture
+def _mcp_identity(service):
+    ctx = RequestContext(user=UserIdentifier.the_default_user(SERVER_USER), role=Role.ROOT)
+    set_service(service)
+    token = _mcp_ctx.set(ctx)
+    yield ctx
+    _mcp_ctx.reset(token)
+
+
+async def test_tools_call_output_feeds_attribution_end_to_end(service, monkeypatch, _mcp_identity):
+    """Drive the real MCP tool dispatch and replay its content blocks through attribution."""
+
+    async def fake_find(**kwargs):
+        return SimpleNamespace(
+            memories=[
+                SimpleNamespace(
+                    uri=SERVER_EXPERIENCE_URI,
+                    abstract="matched situation",
+                    overview=None,
+                    score=0.7,
+                )
+            ],
+            resources=[],
+            skills=[],
+        )
+
+    async def fake_read_visible(uri, **kwargs):
+        return "## Situation\n用户未提供订单号但要求换货。"
+
+    monkeypatch.setattr(service.search, "find", fake_find)
+    monkeypatch.setattr(service.fs, "read_visible", fake_read_visible)
+
+    search_blocks, search_structured = await mcp.call_tool(
+        "search_experience", {"query": "无订单号换货"}
+    )
+    read_blocks, read_structured = await mcp.call_tool(
+        "read_experience", {"uri": SERVER_EXPERIENCE_URI}
+    )
+
+    def content_array(blocks):
+        """What a harness like Claude Code records: the MCP content-block array."""
+        return json.dumps([block.model_dump() for block in blocks])
+
+    for structured, expected_keys in (
+        (search_structured, {"results"}),
+        (read_structured, {"uri", "content"}),
+    ):
+        # FastMCP wraps a `-> str` tool as {"result": "<json>"}; some clients
+        # record structuredContent instead of the content blocks.
+        assert json.loads(structured["result"]).keys() == expected_keys
+
+    messages = [
+        Message(
+            id="msg-1",
+            role="user",
+            parts=[
+                ToolPart(
+                    tool_id="call-search",
+                    tool_name="mcp__openviking__search_experience",
+                    tool_status="completed",
+                    tool_input={"query": "无订单号换货"},
+                    tool_output=content_array(search_blocks),
+                ),
+                ToolPart(
+                    tool_id="call-read",
+                    tool_name="mcp__openviking__read_experience",
+                    tool_status="completed",
+                    tool_input={"uri": SERVER_EXPERIENCE_URI},
+                    tool_output=json.dumps(read_structured),
+                ),
+            ],
+        )
+    ]
+
+    events = await MemoryUsageExtractor().extract(
+        messages=messages,
+        context=UsageContext(
+            account_id="default",
+            user_id=SERVER_USER,
+            session_id="session-1",
+            archive_uri=f"viking://user/{SERVER_USER}/sessions/session-1/history/archive_001",
+            task_id="task-1",
+        ),
+    )
+
+    assert [event.event_type for event in events] == ["memory.recalled", "memory.injected"]
+    assert [event.resource_uri for event in events] == [SERVER_EXPERIENCE_URI] * 2
+    assert collect_read_experience_uris(messages, ctx=_mcp_identity) == [SERVER_EXPERIENCE_URI]
+
+
+async def test_tools_call_raises_instead_of_returning_an_error_payload(service, _mcp_identity):
+    """A rejected read must surface as isError, or attribution counts it as an injection."""
+    with pytest.raises(Exception, match="canonical Experience URI"):
+        await mcp.call_tool(
+            "read_experience", {"uri": "viking://user/other/memories/experiences/x.md"}
+        )
