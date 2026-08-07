@@ -38,6 +38,14 @@ const SKILL_TARGETS = [
       join(ROOT, "examples", "cursor-memory-plugin", "skills"),
     ],
   },
+  {
+    skill: "openviking-memory",
+    dirs: [
+      join(ROOT, "examples", "codex-memory-plugin", "skills"),
+      join(ROOT, "examples", "claude-code-memory-plugin", "skills"),
+      join(ROOT, "examples", "cursor-memory-plugin", "skills"),
+    ],
+  },
 ];
 
 test("vendored shared modules are synchronized", async () => {

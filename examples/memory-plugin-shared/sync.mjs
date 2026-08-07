@@ -45,6 +45,16 @@ const SKILL_TARGETS = [
       join(ROOT, "examples", "cursor-memory-plugin", "skills"),
     ],
   },
+  {
+    // Not shipped to openclaw-plugin: its REST tool surface has its own
+    // operator skill (openviking-context-database) with different tool names.
+    skill: "openviking-memory",
+    dirs: [
+      join(ROOT, "examples", "codex-memory-plugin", "skills"),
+      join(ROOT, "examples", "claude-code-memory-plugin", "skills"),
+      join(ROOT, "examples", "cursor-memory-plugin", "skills"),
+    ],
+  },
 ];
 
 async function listSharedFiles() {
