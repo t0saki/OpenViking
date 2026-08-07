@@ -21,6 +21,7 @@ class AssembledEntry:
     text: str = ""
     origin: str = ""
     tokens: int = 0
+    is_directory: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
         data: Dict[str, Any] = {
@@ -28,6 +29,7 @@ class AssembledEntry:
             "category": self.category,
             "score": self.score,
             "detail": self.detail,
+            "is_directory": self.is_directory,
             "text": self.text,
         }
         if self.origin:

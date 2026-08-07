@@ -62,6 +62,7 @@ def _make_entry(candidate: Candidate, tier: Tier, text: str) -> AssembledEntry:
         category=candidate.category,
         score=candidate.score,
         detail=tier,
+        is_directory=candidate.is_directory,
         text=text,
         origin=candidate.origin,
     )

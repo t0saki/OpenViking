@@ -284,8 +284,11 @@ async def test_context_mode_reads_real_agfs_content_and_sidecars(
     by_uri = {entry["uri"]: entry for entry in response.json()["result"]["entries"]}
     assert "Shipped the stdio MCP proxy." in by_uri[file_uri]["text"]
     assert "MEMORY_FIELDS" not in by_uri[file_uri]["text"]
+    assert by_uri[file_uri]["is_directory"] is False
     assert by_uri[directory_uri]["detail"] == "overview"
+    assert by_uri[directory_uri]["is_directory"] is True
     assert by_uri[directory_uri]["text"] == "Entities directory: projects, people and software."
+    assert "is_directory" not in response.json()["result"]["rendered"]
 
 
 async def test_context_mode_dedup_ledger_round_trips_through_agfs(

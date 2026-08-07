@@ -4,6 +4,7 @@
 import re
 from types import SimpleNamespace
 
+from openviking.retrieve.context_assembler import budget as budget_module
 from openviking.retrieve.context_assembler import pipeline as pipeline_module
 from openviking.retrieve.context_assembler import rewrite as rewrite_module
 from openviking.retrieve.context_assembler.budget import (
@@ -88,6 +89,25 @@ def test_render_neutralizes_forged_memory_tags():
     assert len(re.findall(r"(?i)<(/?)memory[\s/>]", rendered)) == 2
     assert rendered.startswith('<memory uri="viking://real"')
     assert rendered.endswith("</memory>")
+
+
+def test_render_ignores_structured_directory_metadata():
+    kwargs = {
+        "uri": "viking://resources/project",
+        "category": "resources",
+        "score": 0.8,
+        "detail": "overview",
+        "text": "Project overview",
+    }
+
+    legacy_entry = AssembledEntry(**kwargs)
+    file_rendered = render_entry(legacy_entry)
+    directory_rendered = render_entry(AssembledEntry(**kwargs, is_directory=True))
+
+    assert legacy_entry.is_directory is False
+    assert legacy_entry.to_dict()["is_directory"] is False
+    assert directory_rendered == file_rendered
+    assert "is_directory" not in directory_rendered
 
 
 def test_coding_purpose_uses_absolute_cross_domain_quotas():
@@ -461,7 +481,13 @@ async def test_only_candidates_that_can_deepen_are_read():
     }
 
 
-def _resource_candidate(abstract, category="resources", uri=f"{USER_ROOT}/resources/creds.md"):
+def _resource_candidate(
+    abstract,
+    category="resources",
+    uri=f"{USER_ROOT}/resources/creds.md",
+    *,
+    is_directory=False,
+):
     return Candidate(
         uri=uri,
         base_uri=uri,
@@ -471,9 +497,62 @@ def _resource_candidate(abstract, category="resources", uri=f"{USER_ROOT}/resour
         level=2,
         abstract=abstract,
         origin="actor_peer",
-        is_directory=False,
+        is_directory=is_directory,
         read_ctx=_ctx(),
     )
+
+
+def test_directory_metadata_survives_initial_upgrade_and_fallback_tiers():
+    directory_uri = f"{USER_ROOT}/resources/project"
+    directory = _resource_candidate(
+        "",
+        uri=directory_uri,
+        is_directory=True,
+    )
+    directory_contents = {f"{directory_uri}/.overview.md": "Project overview"}
+
+    initial = plan_entries([directory], directory_contents, max_tokens=1600)
+    assert [(entry.detail, entry.is_directory) for entry in initial.entries] == [
+        ("overview", True)
+    ]
+
+    oversized_contents = {f"{directory_uri}/.overview.md": "overview " * 500}
+    fallback = plan_entries([directory], oversized_contents, max_tokens=80)
+    assert [(entry.detail, entry.is_directory) for entry in fallback.entries] == [("uri", True)]
+
+    file_uri = f"{USER_ROOT}/memories/events/launch.md"
+    file_candidate = _resource_candidate(
+        "Launch summary",
+        category="events",
+        uri=file_uri,
+    )
+    upgraded = plan_entries(
+        [file_candidate],
+        {file_uri: "# Summary\nLaunch summary\n\n# Detail\nFull launch details."},
+        max_tokens=1600,
+    )
+    assert [(entry.detail, entry.is_directory) for entry in upgraded.entries] == [
+        ("full", False)
+    ]
+    assert initial.entries[0].to_dict()["is_directory"] is True
+    assert upgraded.entries[0].to_dict()["is_directory"] is False
+
+
+def test_directory_metadata_survives_upgrade_replacement(monkeypatch):
+    directory_uri = f"{USER_ROOT}/resources/project"
+    directory = _resource_candidate("", uri=directory_uri, is_directory=True)
+    monkeypatch.setattr(budget_module, "tier_window", lambda candidate, pin: ("uri", "overview"))
+
+    plan = plan_entries(
+        [directory],
+        {f"{directory_uri}/.overview.md": "Project overview"},
+        max_tokens=1600,
+    )
+
+    assert plan.stats["fill"]["overview_upgrades"] == 1
+    assert [(entry.detail, entry.is_directory) for entry in plan.entries] == [
+        ("overview", True)
+    ]
 
 
 def test_resource_without_abstract_never_substitutes_its_body():
