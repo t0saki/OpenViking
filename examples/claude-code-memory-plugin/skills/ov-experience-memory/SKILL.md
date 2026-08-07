@@ -30,8 +30,10 @@ The agent runtime must expose two tools with these exact names:
 - `read_experience`
 
 Both are served by the OpenViking server's MCP endpoint, so any runtime
-connected to OpenViking MCP already has them. A harness that namespaces MCP
-tools (for example Claude Code's `mcp__openviking__search_experience`) is fine —
+connected to an up-to-date OpenViking server already has them. If neither tool
+is listed, the connected server predates them — upgrading the server is the
+fix; the plugin ships no local fallback. A harness that namespaces MCP tools
+(for example Claude Code's `mcp__openviking__search_experience`) is fine —
 usage reporting strips the namespace prefix.
 
 OpenViking usage reporting recognizes only completed tool parts with these tool
