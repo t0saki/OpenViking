@@ -1,4 +1,4 @@
-# OpenViking Agent Plugin (Agent Plugins 1.0)
+# OpenViking Agent Plugins (Agent Plugins 1.0)
 
 Portable [Agent Plugins 1.0](https://agent-plugins.org/specification) package for [OpenViking](https://github.com/volcengine/OpenViking): long-term semantic memory and context for coding agents.
 
