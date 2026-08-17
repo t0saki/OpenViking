@@ -54,6 +54,18 @@ function hasPolicyEcho(result) {
   );
 }
 
+// Only a body that actually looks like a session result proves the server is
+// old. Plugin fetch helpers turn an unparseable 200 (truncated stream, proxy
+// interstitial) into {ok:true, result:{}} or a raw string, and caching that as
+// "legacy" would silently disable the idle backstop for the whole TTL.
+function looksLikeSessionResult(result) {
+  return Boolean(
+    result
+    && typeof result === "object"
+    && Object.prototype.hasOwnProperty.call(result, "session_id"),
+  );
+}
+
 async function callFetch(fetchJSON, path, init, options) {
   try {
     const result = await fetchJSON(path, init, options);
@@ -126,6 +138,7 @@ export async function applySessionAutoCommitPolicy(
     log = () => {},
     ensureOnLegacy = true,
     legacyCachePath,
+    timeoutMs = 0,
     now = Date.now(),
   } = {},
 ) {
@@ -137,7 +150,10 @@ export async function applySessionAutoCommitPolicy(
   const encodedSessionId = encodeURIComponent(sessionId);
   const createPath = "/api/v1/sessions";
   const patchPath = `/api/v1/sessions/${encodedSessionId}/config`;
-  const fetchOptions = actorPeerId ? { actorPeerId } : {};
+  const fetchOptions = {
+    ...(actorPeerId ? { actorPeerId } : {}),
+    ...(Number(timeoutMs) > 0 ? { timeoutMs: Number(timeoutMs) } : {}),
+  };
   const cachePath = legacyCachePath || stateFile(cacheKey);
   const legacyUntil = await readLegacyUntil(cachePath);
 
@@ -171,7 +187,7 @@ export async function applySessionAutoCommitPolicy(
       log("session_policy", { sessionId, method: result.method, idleActive: result.idleActive });
       return result;
     }
-    await markLegacy(cachePath, now);
+    if (looksLikeSessionResult(create.result)) await markLegacy(cachePath, now);
     return outcome({
       ensured: true,
       method: "create-legacy",

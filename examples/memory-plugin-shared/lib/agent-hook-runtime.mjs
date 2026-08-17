@@ -250,10 +250,23 @@ export async function replayAgentPending(fetchJSON, log = () => {}) {
 
 export async function applyAgentSessionPolicy(fetchJSON, cfg, sessionId, log = () => {}) {
   const policy = buildIdleAutoCommitPolicy(cfg.commitIdleTimeoutSeconds);
-  return applySessionAutoCommitPolicy(fetchJSON, sessionId, policy, {
+  const result = await applySessionAutoCommitPolicy(fetchJSON, sessionId, policy, {
     cacheKey: `${cfg.baseUrl || ""}|${cfg.account || ""}|${cfg.user || ""}`,
     log,
+    // These hooks have no /health pre-gate, so cap each request well below
+    // cfg.timeoutMs: a hung server must not stall session start twice over.
+    timeoutMs: 3000,
   });
+  // The helper only logs the two applied paths; these harnesses discard the
+  // outcome, so without this a legacy/error apply is undiagnosable.
+  if (result.method !== "create" && result.method !== "patch") {
+    log("session_policy_skipped", {
+      sessionId,
+      method: result.method,
+      status: result.status,
+    });
+  }
+  return result;
 }
 
 export async function recallForPrompt(fetchJSON, cfg, prompt, cwd, log = () => {}, options = {}) {

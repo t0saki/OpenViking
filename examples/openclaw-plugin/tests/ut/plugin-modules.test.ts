@@ -477,11 +477,13 @@ describe("plugin module seams", () => {
         message_count_threshold: 0,
       },
     });
+    // No agentId: the raw hook ctx.agentId is neither peer-prefixed nor
+    // sanitized, so sending it would scope the commit to a peer the session's
+    // messages were never written under. Every other commit path omits it.
     expect(commitSession).toHaveBeenCalledWith("oc-session-2", {
       wait: false,
       timeoutMs: 1500,
       keepRecentCount: 0,
-      agentId: "agent-main",
     });
 
     await handlers.get("before_reset")?.({}, { sessionId: "session-3", sessionKey: "key-3" });
@@ -497,7 +499,6 @@ describe("plugin module seams", () => {
       wait: false,
       timeoutMs: 4500,
       keepRecentCount: 0,
-      agentId: "agent-main",
     });
   });
 

@@ -162,6 +162,31 @@ test("commit writes failure trace_id to the pi debug log", async () => {
   });
 });
 
+test("a failed shutdown commit is queued for replay in non-takeover mode", async () => {
+  await withPendingDir(async () => {
+    const c = client({
+      commitSessionResponse: async () => ({
+        result: null,
+        status: 503,
+        error: { message: "server down" },
+      }),
+    });
+    const sync = new SyncManager(c, config({ takeoverEnabled: false }));
+    await sync.ensureSession("pi-shutdown-queue");
+
+    // Mirrors the session_shutdown call in index.ts: bounded, but queueing
+    // stays on because non-takeover mode keeps no local context boundary, so
+    // replay at next start is the only recovery path.
+    assert.equal(await sync.commit({ timeoutMs: 5000 }), null);
+
+    const pending = await listPending();
+    assert.equal(
+      pending.filter((item) => item.entry?.type === "commitSession").length,
+      1,
+    );
+  });
+});
+
 test("queued addMessage makes takeover flush barrier false until replay succeeds", async () => {
   await withPendingDir(async () => {
     let replayOk = false;

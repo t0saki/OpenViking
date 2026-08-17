@@ -71,20 +71,25 @@ export function registerOpenVikingLifecycleHooks(deps: OpenVikingLifecycleHooksD
   ): Promise<boolean> => {
     if (deps.isBypassedSession(ctx)) return true;
     const sessionRef = ctx.sessionId || ctx.sessionKey;
+    if (!sessionRef) return false;
     const ovSessionId = deps.toOvSessionId(ctx.sessionId, ctx.sessionKey);
-    if (!sessionRef || !ovSessionId) return false;
+    if (!ovSessionId) return false;
     const key = sessionRef;
     let pending = commitsInFlight.get(key);
     if (!pending) {
       pending = deps.getClient()
         .then(async (client) => {
+          // No agentId: the raw hook ctx.agentId is neither prefixed nor
+          // sanitized, so sending it as X-OpenViking-Actor-Peer would scope
+          // the commit to a peer the session's messages were never written
+          // under (and openclaw ids may contain ':', which the server
+          // rejects). Every other commit path here omits it too.
           const result = await client.commitSession(
             ovSessionId,
             {
               wait: false,
               timeoutMs,
               keepRecentCount: 0,
-              agentId: ctx.agentId,
             },
           );
           return result.status !== "failed" && result.status !== "timeout";
@@ -114,8 +119,11 @@ export function registerOpenVikingLifecycleHooks(deps: OpenVikingLifecycleHooksD
     deps.rememberSessionAgentId(ctx ?? {});
     if (deps.isBypassedSession(ctx)) return;
     rememberLiveSession(ctx);
-    const ovSessionId = deps.toOvSessionId(ctx?.sessionId, ctx?.sessionKey);
-    if (!ovSessionId || deps.commitIdleTimeoutSeconds <= 0) return;
+    // toOvSessionId throws when both ids are absent; keep this hook fail-open.
+    if (!ctx?.sessionId && !ctx?.sessionKey) return;
+    if (deps.commitIdleTimeoutSeconds <= 0) return;
+    const ovSessionId = deps.toOvSessionId(ctx.sessionId, ctx.sessionKey);
+    if (!ovSessionId) return;
     void deps.getClient()
       .then((client) => applyOpenVikingSessionPolicy(
         client,

@@ -62,10 +62,19 @@ export function createMemorySessionManager({ config, pluginRoot }) {
         (stage, data) => log("DEBUG", "pending", stage, data),
       )
       for (const sessionId of rehydratedSessionIds) {
-        await flushSession(sessionId, {
-          commit: true,
-          reason: "startup-recovery",
-        })
+        // A single unrecoverable entry (e.g. an OV session that no longer
+        // exists server-side) must not reject init() and take the plugin down.
+        try {
+          await flushSession(sessionId, {
+            commit: true,
+            reason: "startup-recovery",
+          })
+        } catch (error) {
+          log("WARN", "session", "Startup recovery commit failed", {
+            opencode_session: sessionId,
+            error: error?.message,
+          })
+        }
       }
     }
   }
@@ -332,11 +341,15 @@ export function createMemorySessionManager({ config, pluginRoot }) {
         ? Math.max(0, commitDeadline - Date.now())
         : commitTimeoutMs
       if (hasUncapturedMessages) {
-        log("WARN", "session", "Deferred commit because unsent messages remain", {
+        // Still commit: what already reached the server must be archived. On
+        // the session.deleted/error path the state entry is dropped right
+        // after this call, so skipping the commit would strand it forever.
+        log("WARN", "session", "Committing while unsent messages remain", {
           openviking_session: state.ovSessionId,
           reason,
         })
-      } else if (hasPendingMessages || effectiveCommitTimeoutMs === 0) {
+      }
+      if (hasPendingMessages || effectiveCommitTimeoutMs === 0) {
         const createdAt = sessionPendingMessages.reduce(
           (latest, item) => Math.max(latest, Number(item.entry?.createdAt || 0)),
           Date.now(),

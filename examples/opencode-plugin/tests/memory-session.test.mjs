@@ -18,7 +18,7 @@ async function withTempDir(prefix, fn) {
   }
 }
 
-async function withCaptureServer(fn) {
+async function withCaptureServer(fn, { commitStatus = 0, batchStatus = 0 } = {}) {
   const requests = []
   const server = createServer(async (req, res) => {
     let body = ""
@@ -27,6 +27,16 @@ async function withCaptureServer(fn) {
     requests.push({ method: req.method, url: req.url, body })
 
     res.setHeader("Content-Type", "application/json")
+    if (commitStatus && req.url?.endsWith("/commit")) {
+      res.statusCode = commitStatus
+      res.end(JSON.stringify({ status: "error", error: { message: "session not found" } }))
+      return
+    }
+    if (batchStatus && req.url?.endsWith("/messages/batch")) {
+      res.statusCode = batchStatus
+      res.end(JSON.stringify({ status: "error", error: { message: "rejected" } }))
+      return
+    }
     if (req.url === "/health") {
       res.end(JSON.stringify({ status: "ok" }))
     } else if (req.url === "/api/v1/sessions" && req.method === "POST") {
@@ -262,6 +272,83 @@ test("init flushes and commits stale rehydrated session state", async () => {
       await manager.flushAll({ commit: false })
     })
   })
+})
+
+test("an unrecoverable startup-recovery commit never rejects init", async () => {
+  await withCaptureServer(async ({ endpoint, requests }) => {
+    await withTempDir("ov-oc-init-throw-", async (dir) => {
+      await fs.promises.writeFile(
+        join(dir, "openviking-session-state.json"),
+        JSON.stringify({
+          version: 2,
+          sessions: {
+            "oc-poison": {
+              ovSessionId: "oc-oc-poison",
+              createdAt: Date.now() - 1000,
+              lastActivityAt: Date.now() - 1000,
+              messages: [],
+            },
+          },
+        }),
+      )
+      const manager = createMemorySessionManager({
+        config: baseConfig(endpoint),
+        pluginRoot: dir,
+      })
+
+      // A 404 on /commit is non-retryable and makes commitOvSession throw. It
+      // must not take the whole plugin down on every subsequent launch.
+      await manager.init()
+
+      assert.ok(requests.some((request) =>
+        request.url === "/api/v1/sessions/oc-oc-poison/commit"
+      ))
+    })
+  }, { commitStatus: 404 })
+})
+
+test("a non-retryable message send still commits what reached the server", async () => {
+  await withCaptureServer(async ({ endpoint, requests }) => {
+    await withTempDir("ov-oc-uncaptured-commit-", async (dir) => {
+      await fs.promises.writeFile(
+        join(dir, "openviking-session-state.json"),
+        JSON.stringify({
+          version: 2,
+          sessions: {
+            "oc-partial": {
+              ovSessionId: "oc-oc-partial",
+              createdAt: Date.now() - 1000,
+              lastActivityAt: Date.now() - 1000,
+              messages: [[
+                "message-partial",
+                {
+                  role: "user",
+                  captured: false,
+                  parts: [["part-partial", { type: "text", text: "Never sendable." }]],
+                },
+              ]],
+            },
+          },
+        }),
+      )
+      const manager = createMemorySessionManager({
+        config: baseConfig(endpoint),
+        pluginRoot: dir,
+      })
+
+      await manager.init()
+
+      // The batch POST is rejected 400 (non-retryable, nothing queued), so the
+      // message stays uncaptured — but the commit must still archive whatever
+      // earlier flushes already stored server-side.
+      assert.ok(requests.some((request) =>
+        request.url === "/api/v1/sessions/oc-oc-partial/messages/batch"
+      ))
+      assert.ok(requests.some((request) =>
+        request.url === "/api/v1/sessions/oc-oc-partial/commit"
+      ))
+    })
+  }, { batchStatus: 400 })
 })
 
 test("an exhausted dispose deadline queues the remaining commit", async () => {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import http from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -371,6 +371,109 @@ test("server-covered stale state skips local commit and is eventually garbage-co
     } finally {
       await rm(stateDir, { recursive: true, force: true });
     }
+  }
+});
+
+// Regression guard for the gate itself: broadening the covered-skip predicate
+// (e.g. `!== false` instead of `=== true`) would silently stop committing
+// killed sessions on every stock server, where auto_commit_idle_enabled is
+// false. These two cases must keep sweeping locally.
+test("local idle sweep still commits stale state the server does not cover", async () => {
+  for (const [label, extraState] of [
+    ["unmarked", {}],
+    ["marked without a usable timeout", { serverIdleCommit: true }],
+  ]) {
+    const stateDir = await mkdtemp(join(tmpdir(), "ov-codex-uncovered-"));
+    const requests = [];
+    try {
+      const now = Date.now();
+      await writeFile(join(stateDir, "stale.json"), JSON.stringify({
+        codexSessionId: "stale",
+        ovSessionId: "cx-stale",
+        capturedTurnCount: 2,
+        createdAt: now - 2_000_000,
+        lastUpdatedAt: now - 2_000_000,
+        ...extraState,
+      }));
+      await withMockOpenViking(
+        profileHandler(requests, { sessionPolicyIdleActive: false }),
+        async (baseUrl) => {
+          await runSessionStart({
+            session_id: "new-uncovered",
+            source: "startup",
+            cwd: "/tmp/codex-uncovered",
+            hook_event_name: "SessionStart",
+          }, baseEnv(baseUrl, stateDir));
+        },
+      );
+
+      assert.equal(
+        requests.some((request) =>
+          request.method === "POST"
+          && request.path === "/api/v1/sessions/cx-stale/commit"
+        ),
+        true,
+        `expected a local sweep commit for ${label} stale state`,
+      );
+      const files = await readdir(stateDir);
+      assert.equal(files.includes("stale.json"), false, `expected ${label} state cleared`);
+    } finally {
+      await rm(stateDir, { recursive: true, force: true });
+    }
+  }
+});
+
+test("idle-inactive server leaves no covered marker on the current session", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "ov-codex-inactive-marker-"));
+  const requests = [];
+  try {
+    await withMockOpenViking(
+      profileHandler(requests, { sessionPolicyIdleActive: false }),
+      async (baseUrl) => {
+        await runSessionStart({
+          session_id: "inactive-marker",
+          source: "startup",
+          cwd: "/tmp/codex-inactive",
+          hook_event_name: "SessionStart",
+        }, baseEnv(baseUrl, stateDir));
+      },
+    );
+
+    const state = JSON.parse(await readFile(join(stateDir, "inactive-marker.json"), "utf-8"));
+    assert.equal(state.serverIdleCommit, undefined);
+    assert.equal(state.serverIdleTimeoutSeconds, undefined);
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("startup without a session id writes no unknown state file", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "ov-codex-unknown-"));
+  const requests = [];
+  try {
+    await withMockOpenViking(
+      profileHandler(requests, { sessionPolicyIdleActive: true }),
+      async (baseUrl) => {
+        await runSessionStart({
+          source: "startup",
+          cwd: "/tmp/codex-unknown",
+          hook_event_name: "SessionStart",
+        }, baseEnv(baseUrl, stateDir));
+      },
+    );
+
+    const files = (await readdir(stateDir)).filter((name) => name.endsWith(".json"));
+    assert.equal(files.includes("unknown.json"), false);
+    assert.equal(
+      requests.some((request) =>
+        request.method === "POST"
+        && request.path === "/api/v1/sessions"
+        && request.body.includes("cx-unknown")
+      ),
+      false,
+    );
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
   }
 });
 

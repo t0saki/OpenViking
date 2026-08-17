@@ -93,6 +93,38 @@ test("create without policy echo marks legacy and later sends only policy-less e
   assert.ok(JSON.parse(await readFile(cache, "utf8")).legacyUntil > 2000);
 });
 
+test("a 200 whose body is not a session result never poisons the legacy cache", async () => {
+  // Plugin fetch helpers turn an unparseable 200 (truncated stream, proxy
+  // interstitial) into ok:true with an empty object or a raw string. Treating
+  // that as "old server" would disable the backstop for the whole 6h TTL.
+  for (const [label, garbled] of [
+    ["empty object", {}],
+    ["raw string", "<html>gateway timeout</html>"],
+  ]) {
+    const cache = await cachePath(`garbled-${label.replace(/\s/g, "-")}`);
+    const calls = [];
+    const fetchJSON = async (path, init) => {
+      calls.push({ path, body: JSON.parse(init.body) });
+      return response({ result: garbled });
+    };
+
+    const first = await applySessionAutoCommitPolicy(fetchJSON, "session-g", POLICY, {
+      legacyCachePath: cache,
+      now: 1000,
+    });
+    const second = await applySessionAutoCommitPolicy(fetchJSON, "session-g", POLICY, {
+      legacyCachePath: cache,
+      now: 2000,
+    });
+
+    assert.equal(first.method, "create-legacy", label);
+    await assert.rejects(() => readFile(cache, "utf8"), `${label} must not write a cache file`);
+    // The next attempt still sends the policy instead of short-circuiting.
+    assert.equal(second.method, "create-legacy", label);
+    assert.deepEqual(calls[1].body, { session_id: "session-g", auto_commit_policy: POLICY }, label);
+  }
+});
+
 test("policy echo distinguishes inactive and unknown idle scheduler states", async () => {
   const inactive = await applySessionAutoCommitPolicy(
     async () => response({

@@ -280,6 +280,12 @@ async function commitAndClear(state, reason) {
 }
 
 async function applyCurrentSessionPolicy(codexSessionId) {
+  // Same guard main() uses before persisting workspacePeerId: without a real
+  // session id we would create an "unknown" state file (polluting the active
+  // window) plus a bogus cx-unknown session server-side.
+  if (!codexSessionId || codexSessionId === "unknown") {
+    return { applied: false, idleActive: null, method: "disabled" };
+  }
   const state = await loadState(codexSessionId);
   const policy = buildIdleAutoCommitPolicy(cfg.commitIdleTimeoutSeconds);
   const result = await applySessionAutoCommitPolicy(
@@ -462,11 +468,13 @@ async function main() {
   for (const s of postHeuristic) {
     if (!s?.codexSessionId) continue;
     if (typeof s.lastUpdatedAt !== "number") continue;
-    if (s.serverIdleCommit === true) {
-      const timeoutMs = Math.max(0, Number(s.serverIdleTimeoutSeconds || 0) * 1000);
-      const gcAfterMs = timeoutMs + 600_000;
+    const coveredTimeoutMs = s.serverIdleCommit === true
+      ? Math.max(0, Number(s.serverIdleTimeoutSeconds || 0) * 1000)
+      : 0;
+    if (s.serverIdleCommit === true && coveredTimeoutMs > 0) {
+      const gcAfterMs = coveredTimeoutMs + 600_000;
       const ageMs = now - s.lastUpdatedAt;
-      if (timeoutMs > 0 && ageMs > gcAfterMs) {
+      if (ageMs > gcAfterMs) {
         log("server_covered_gc", {
           codexSessionId: s.codexSessionId,
           ovSessionId: s.ovSessionId,
@@ -484,6 +492,17 @@ async function main() {
         });
       }
       continue;
+    }
+    if (s.serverIdleCommit === true) {
+      // Marked covered but the paired timeout is missing or unusable, so we
+      // cannot tell when the server would have committed. Fall through to the
+      // local sweep rather than leaving the file neither committed nor GC'd.
+      log("server_covered_invalid", {
+        stage: "idle_sweep",
+        codexSessionId: s.codexSessionId,
+        ovSessionId: s.ovSessionId,
+        serverIdleTimeoutSeconds: s.serverIdleTimeoutSeconds ?? null,
+      });
     }
     if ((now - s.lastUpdatedAt) <= IDLE_TTL_MS) continue;
     log("idle_sweep", {

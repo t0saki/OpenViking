@@ -228,7 +228,14 @@ export class OpenVikingRuntime {
           await this.enqueueFinalCommit(state, commitPayload);
           return;
         }
-        if (!state.ready && !(await this.ensureState(state)).ready) return;
+        if (!state.ready) {
+          // Never re-run initializeState here: health check, policy apply,
+          // pending replay and profile build are each unbounded relative to
+          // DSH's 5s process grace, so a force-kill mid-init would lose the
+          // tail entirely. Queue the commit for the next startup instead.
+          await this.enqueueFinalCommit(state, commitPayload);
+          return;
+        }
         if (!writesDrained) {
           // The direct commit may overtake an in-flight addMessage. Keep one
           // ordered retry on disk so a late-successful write is committed on
