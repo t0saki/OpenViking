@@ -155,7 +155,7 @@ Options:
   --user ID          Optional OpenViking user.
   --statusline       Register the Claude Code statusline without asking.
   --no-statusline    Skip the statusline prompt.
-  --uninstall        Remove Cursor/TRAE OpenViking integration files and config.
+  --uninstall        Remove Cursor/TRAE/TRAE CN/TRAE CLI/ZCode OpenViking integration files and config.
   --yes, -y          Use defaults for prompts when possible.
 EOF
 }

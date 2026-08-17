@@ -45,12 +45,12 @@ Quit and restart the corresponding client after installation.
 - `UserPromptSubmit` recalls and injects context for the current request.
 - `PreToolUse` redirects accidental local access to `viking://` paths back to OpenViking MCP tools.
 - `Stop` captures and immediately commits the completed turn, including short sessions.
-- The OpenViking MCP server provides explicit tools such as `search`, `recall`, `read`, and `remember`.
+- The OpenViking MCP server transparently exposes the full server MCP tool set (16 tools): `find`, `search`, `recall`, `read`, `list`, `tree`, `remember`, `write`, `edit`, `add_resource`, `list_watches`, `cancel_watch`, `grep`, `glob`, `forget`, and `health`.
 
 ## Verify
 
 1. Restart TRAE, TRAE CN, or TRAE CLI and create a new Agent session.
-2. Confirm that `openviking` is connected in the client's MCP settings.
+2. Confirm that `openviking` is connected in the client's MCP settings (for TRAE CLI, the server is registered as `openviking-memory`).
 3. Ask about an existing project or preference and confirm that the answer uses stored memory.
 4. Tell the Agent a temporary preference, wait for the response to finish, then create a new session and ask for it again to verify capture, commit, and cross-session recall.
 5. For TRAE CLI, use `/hooks` and `/mcp` (or `traecli mcp list`) to confirm that the client is consuming the installed user-level configuration. Treat the client's displayed source as authoritative if it differs from the default path.

@@ -45,12 +45,12 @@ bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/memory-plugin-shar
 - `UserPromptSubmit`：根据当前问题召回并注入相关内容。
 - `PreToolUse`：阻止把 `viking://` 虚拟路径当作本地文件访问，并提示改用 OpenViking MCP 工具。
 - `Stop`：捕获本轮消息并立即提交，使短会话也能进入记忆抽取流程。
-- OpenViking MCP Server：提供 `search`、`recall`、`read`、`remember` 等主动记忆工具。
+- OpenViking MCP Server：透传服务端完整 MCP 工具集（16 个工具）：`find`、`search`、`recall`、`read`、`list`、`tree`、`remember`、`write`、`edit`、`add_resource`、`list_watches`、`cancel_watch`、`grep`、`glob`、`forget`、`health`。
 
 ## 验证
 
 1. 重启 TRAE、TRAE CN 或 TRAE CLI，并新建 Agent 会话。
-2. 在客户端的 MCP 设置中确认 `openviking` 已连接。
+2. 在客户端的 MCP 设置中确认 `openviking` 已连接（TRAE CLI 中的注册名为 `openviking-memory`）。
 3. 提问一个与已有项目或个人偏好相关的问题，确认回答使用了已有记忆。
 4. 告诉 Agent 一个临时偏好，等待回复完成；新建会话后再次询问，确认捕获、提交和跨会话召回均生效。
 5. 对 TRAE CLI，使用 `/hooks` 和 `/mcp`（或 `traecli mcp list`）确认客户端确实读取了安装后的用户级配置；若与默认路径不同，以客户端显示的有效来源为准。
