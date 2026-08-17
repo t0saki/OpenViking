@@ -11,6 +11,11 @@ import { enqueue, replayPending } from "./pending-queue.mjs";
 import { buildProfileBlock } from "./profile-inject.mjs";
 import { buildRecallBlock } from "./recall-core.mjs";
 import { isRetryableFailure } from "./retryable.mjs";
+import {
+  applySessionAutoCommitPolicy,
+  buildIdleAutoCommitPolicy,
+  normalizeIdleTimeoutSeconds,
+} from "./session-policy.mjs";
 import { deriveHarnessSessionId, isBypassed } from "./session-model.mjs";
 import { resolveEffectivePeerId } from "./workspace-peer.mjs";
 
@@ -67,7 +72,11 @@ export function loadAgentHookConfig(clientId) {
     recallPeerScope: process.env.OPENVIKING_RECALL_PEER_SCOPE === "actor" ? "actor" : "all",
     timeoutMs: envNumber("OPENVIKING_TIMEOUT_MS", 15000, 1000),
     profileTokenBudget: envNumber("OPENVIKING_PROFILE_TOKEN_BUDGET", 6000, 500),
-    commitTurnThreshold: envNumber("OPENVIKING_COMMIT_TURN_THRESHOLD", 8, 1),
+    commitTurnThreshold: envNumber("OPENVIKING_COMMIT_TURN_THRESHOLD", 1, 1),
+    commitIdleTimeoutSeconds: normalizeIdleTimeoutSeconds(
+      process.env.OPENVIKING_COMMIT_IDLE_TIMEOUT_SECONDS,
+      3600,
+    ),
     writePathAsync: envBool("OPENVIKING_WRITE_PATH_ASYNC", true),
     debug: envBool("OPENVIKING_DEBUG", false),
     debugLogPath,
@@ -238,6 +247,14 @@ export async function commitAgentSession(fetchJSON, sessionId, log = () => {}) {
 
 export async function replayAgentPending(fetchJSON, log = () => {}) {
   return replayPending(fetchJSON, log);
+}
+
+export async function applyAgentSessionPolicy(fetchJSON, cfg, sessionId, log = () => {}) {
+  const policy = buildIdleAutoCommitPolicy(cfg.commitIdleTimeoutSeconds);
+  return applySessionAutoCommitPolicy(fetchJSON, sessionId, policy, {
+    cacheKey: `${cfg.baseUrl || ""}|${cfg.account || ""}|${cfg.user || ""}`,
+    log,
+  });
 }
 
 export async function recallForPrompt(fetchJSON, cfg, prompt, cwd, log = () => {}, options = {}) {

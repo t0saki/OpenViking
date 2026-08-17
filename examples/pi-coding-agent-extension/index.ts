@@ -92,6 +92,7 @@ export default async function (pi: ExtensionAPI) {
         return;
       }
       await sync.replayPending();
+      await sync.applyAutoCommitPolicy();
 
       // Profile injection
       profileBlock = await buildSessionProfileBlock(client, config);
@@ -222,7 +223,7 @@ export default async function (pi: ExtensionAPI) {
     if (config.takeoverEnabled) {
       await takeover.shutdown();
     } else {
-      await sync.commit();
+      await sync.commit({ queueOnFailure: false, timeoutMs: 5000 });
     }
   });
 

@@ -10,6 +10,10 @@ function config(overrides = {}) {
   return {
     commitTokenThreshold: 20000,
     commitKeepRecentCount: 10,
+    commitIdleTimeoutSeconds: 3600,
+    endpoint: "http://127.0.0.1:1933",
+    account: "",
+    user: "",
     captureAssistantTurns: true,
     captureToolMaxChars: 2000,
     captureMaxLength: 24000,
@@ -34,13 +38,17 @@ function client(overrides = {}) {
 
 async function withPendingDir(fn) {
   const previous = process.env.OPENVIKING_PENDING_DIR;
+  const previousState = process.env.OPENVIKING_STATE_DIR;
   const dir = await mkdtemp(join(tmpdir(), "ov-pi-pending-"));
   process.env.OPENVIKING_PENDING_DIR = dir;
+  process.env.OPENVIKING_STATE_DIR = join(dir, "state");
   try {
     return await fn(dir);
   } finally {
     if (previous === undefined) delete process.env.OPENVIKING_PENDING_DIR;
     else process.env.OPENVIKING_PENDING_DIR = previous;
+    if (previousState === undefined) delete process.env.OPENVIKING_STATE_DIR;
+    else process.env.OPENVIKING_STATE_DIR = previousState;
     await rm(dir, { recursive: true, force: true });
   }
 }
@@ -59,6 +67,41 @@ test("syncBranch returns added token accounting and delivered status", async () 
     assert.ok(result.tokens > 0);
     assert.equal(result.allDelivered, true);
     assert.equal(sync.syncedCount, 1);
+  });
+});
+
+test("applyAutoCommitPolicy sends the idle-only session policy", async () => {
+  await withPendingDir(async () => {
+    const calls = [];
+    const c = client({
+      fetchJSON: async (path, init) => {
+        calls.push({ path, body: JSON.parse(init.body) });
+        return {
+          ok: true,
+          status: 200,
+          result: {
+            auto_commit_policy: JSON.parse(init.body).auto_commit_policy,
+            auto_commit_idle_enabled: true,
+          },
+        };
+      },
+    });
+    const sync = new SyncManager(c, config());
+    await sync.ensureSession("pi-policy");
+
+    await sync.applyAutoCommitPolicy();
+
+    assert.deepEqual(calls, [{
+      path: "/api/v1/sessions",
+      body: {
+        session_id: "pi-pi-policy",
+        auto_commit_policy: {
+          idle_timeout_seconds: 3600,
+          pending_token_threshold: 0,
+          message_count_threshold: 0,
+        },
+      },
+    }]);
   });
 });
 
