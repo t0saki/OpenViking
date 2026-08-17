@@ -42,7 +42,7 @@ bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/memory-plugin-shar
 - `beforeSubmitPrompt`：根据当前问题召回记忆并通过 `additional_context` 注入。
 - `beforeReadFile` 和 `beforeShellExecution`：阻止把 `viking://` 虚拟路径当作本地文件访问，并提示改用 OpenViking MCP 工具。
 - `stop`：增量捕获本轮新增的用户与助手消息，默认每个已捕获 turn 都会 commit。
-- `preCompact` / `sessionEnd`：提交尚未处理的消息，触发记忆抽取。
+- `preCompact`：提交尚未处理的消息，触发记忆抽取。`sessionEnd` 同样已注册，但目前 Cursor 无法真正执行它（见下文），因此真正保住会话尾巴的是每轮 commit。
 
 项目身份优先使用 Cursor 提供的 `workspace_roots`，因此不同项目会使用不同的 workspace peer。连接信息统一读取 `~/.openviking/ovcli.conf`。
 

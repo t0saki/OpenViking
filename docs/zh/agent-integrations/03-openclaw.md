@@ -107,7 +107,8 @@ openclaw config set plugins.entries.openviking.config.apiKey your-api-key
 
 插件现在会在 gateway 关闭、重启和 session supersession 时，通过 awaited
 `session_end` 与 `gateway_stop` hook commit 活跃 session。若对话只是长时间无
-新消息，则要等下一条入站消息或 reset 才会结束；可为这个缺口启用服务端 backstop：
+新消息，则要等下一条入站消息或 reset 才会结束。要覆盖这个缺口，请在 OpenViking
+**服务端**的 `ov.conf` 中启用 backstop（不是上面的插件配置）：
 
 ```json
 {

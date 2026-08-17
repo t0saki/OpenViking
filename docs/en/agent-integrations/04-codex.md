@@ -76,7 +76,8 @@ If recall latency matters most, see [Low-latency recall](./01-overview.md#low-la
 
 Additional tuning options (e.g., `OPENVIKING_RECALL_LIMIT`, `OPENVIKING_CAPTURE_ASSISTANT_TURNS`) are documented in the [plugin README](https://github.com/volcengine/OpenViking/blob/main/examples/codex-memory-plugin/README.md#tuning-the-plugin).
 
-Enable the server-side backstop:
+Enable the backstop in the OpenViking **server's** `ov.conf` (this is a server
+setting, not a plugin one):
 
 ```json
 {

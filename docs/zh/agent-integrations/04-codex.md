@@ -76,7 +76,7 @@ codex              # 首次启动需进入 /hooks 完成一次审批
 
 更多调参说明（如 `OPENVIKING_RECALL_LIMIT`、`OPENVIKING_CAPTURE_ASSISTANT_TURNS` 等），请参考 [插件 README](https://github.com/volcengine/OpenViking/blob/main/examples/codex-memory-plugin/README.md#tuning-the-plugin)。
 
-启用服务端 backstop：
+在 OpenViking **服务端**的 `ov.conf` 中启用 backstop（这是服务端配置，不是插件配置）：
 
 ```json
 {

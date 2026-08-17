@@ -108,7 +108,8 @@ openclaw config set plugins.entries.openviking.config.apiKey your-api-key
 The plugin now commits active sessions from the awaited `session_end` and
 `gateway_stop` hooks on gateway shutdown, restart, and session supersession.
 A conversation that simply goes quiet is still not ended until the next
-inbound message or reset. Enable the server-side backstop for that gap:
+inbound message or reset. To cover that gap, enable the backstop in the
+OpenViking **server's** `ov.conf` (not in the plugin config above):
 
 ```json
 {

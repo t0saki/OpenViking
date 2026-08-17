@@ -42,7 +42,7 @@ Quit Cursor completely and restart it after installation.
 - `beforeSubmitPrompt` recalls context for the current request and injects it through `additional_context`.
 - `beforeReadFile` and `beforeShellExecution` redirect accidental local access to `viking://` paths back to OpenViking MCP tools.
 - `stop` incrementally captures new user and assistant messages and commits after every captured turn by default.
-- `preCompact` and `sessionEnd` commit pending messages for memory extraction.
+- `preCompact` commits pending messages for memory extraction. `sessionEnd` is registered too, but Cursor cannot currently execute it (see below), so commit-on-every-turn is what actually protects the session tail.
 
 Project identity uses Cursor's `workspace_roots`, keeping workspace peers separate. Hooks and MCP share credentials from `~/.openviking/ovcli.conf`.
 

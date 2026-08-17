@@ -65,7 +65,6 @@ interface OVConfig {
   captureMaxLength: number;     // Max sanitized text length for capture decision (default: 24000)
   captureAssistantTurns: boolean; // Include assistant turns in capture (default: true — memory extraction needs both sides)
   commitTokenThreshold: number;  // Commit after N pending tokens synced (default: 20000)
-  mirrorMemoryWrites: boolean;   // Mirror MEMORY.md to OV at commit time (default: true)
   writeQueueFlushInterval: number; // Write queue flush interval in ms (default: 5000)
   writeQueueFlushThreshold: number; // Write queue flush after N queued turns (default: 5)
   bypassPatterns: string[];      // Glob patterns for cwd to skip (default: [])
@@ -898,7 +897,6 @@ Default: `~/.pi/agent/extensions/openviking/config.json`
   "captureMode": "semantic",
   "captureMaxLength": 24000,
   "captureAssistantTurns": true,
-  "mirrorMemoryWrites": true,
   "writeQueueFlushInterval": 5000,
   "writeQueueFlushThreshold": 5,
   "bypassPatterns": [],
