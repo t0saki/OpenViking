@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 #
 # OpenViking Memory Plugin shared installer for Claude Code, Codex, Cursor,
-# TRAE / TRAE CN, TRAE CLI, ZCode, OpenCode, and pi.
+# TRAE / TRAE CN, TraeCode CLI 2.0, ZCode, OpenCode, and pi.
 #
 # One-liner (GitHub):
 #   bash <(curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/main/examples/memory-plugin-shared/install.sh)
 # One-liner (TOS mirror, for regions where GitHub is unreachable):
 #   bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/memory-plugin-shared/install.sh) --dist tos
 # Non-interactive:
-#   bash install.sh --harness claude,codex,cursor,trae,trae-cn,trae-cli,zcode,opencode,pi --dist github --lang en --url http://127.0.0.1:1933
+#   bash install.sh --harness claude,codex,cursor,trae,trae-cn,zcode,opencode,pi --dist github --lang en --url http://127.0.0.1:1933
 # Format-compatible CLI aliases:
-#   bash install.sh --harness codex --codex-bin codex,traex
+#   bash install.sh --harness codex --codex-bin codex,trae-cli
 #   bash install.sh --harness claude --claude-bin claude,seed
 # Fork / branch verification:
 #   OPENVIKING_REPO_URL=https://github.com/you/OpenViking.git \
@@ -143,7 +143,8 @@ usage() {
 Usage: install.sh [options]
 
 Options:
-  --harness LIST     Comma-separated harnesses: claude, codex, cursor, trae, trae-cn, trae-cli, zcode, opencode, pi.
+  --harness LIST     Comma-separated harnesses: claude, codex, cursor, trae, trae-cn, zcode, opencode, pi.
+                     Legacy trae-cli is accepted as codex --codex-bin trae-cli.
   --claude-bin LIST  Comma-separated Claude-format CLI commands (default: claude).
   --codex-bin LIST   Comma-separated Codex-format CLI commands (default: codex).
   --dist CHANNEL     github (default) | tos (mirror for GitHub-blocked regions).
@@ -156,6 +157,7 @@ Options:
   --statusline       Register the Claude Code statusline without asking.
   --no-statusline    Skip the statusline prompt.
   --uninstall        Remove Cursor/TRAE OpenViking integration files and config.
+                     For Codex-format plugins, use the client's plugin uninstall command.
   --yes, -y          Use defaults for prompts when possible.
 EOF
 }
@@ -375,11 +377,65 @@ refresh_available_harnesses() {
   { command -v cursor >/dev/null 2>&1 || command -v cursor-agent >/dev/null 2>&1 || [ -d "/Applications/Cursor.app" ] || [ -d "$HOME/.cursor" ]; } && HAVE_CURSOR=1
   { [ -d "/Applications/Trae.app" ] || [ -d "/Applications/TRAE.app" ] || [ -d "$HOME/.trae" ]; } && HAVE_TRAE=1
   { [ -d "/Applications/Trae CN.app" ] || [ -d "/Applications/TRAE SOLO CN.app" ] || [ -d "$HOME/.trae-cn" ]; } && HAVE_TRAE_CN=1
-  { command -v traecli >/dev/null 2>&1 || command -v traex >/dev/null 2>&1; } && HAVE_TRAE_CLI=1
+  { command -v trae-cli >/dev/null 2>&1 || command -v traecli >/dev/null 2>&1 || command -v traex >/dev/null 2>&1; } && HAVE_TRAE_CLI=1
   command -v opencode >/dev/null 2>&1 && HAVE_OPENCODE=1
   command -v pi >/dev/null 2>&1 && HAVE_PI=1
   { command -v zcode >/dev/null 2>&1 || [ -d "$HOME/.zcode" ]; } && HAVE_ZCODE=1
   return 0
+}
+
+resolve_traecode_cli_bin() {
+  local bin
+  for bin in trae-cli traecli traex; do
+    if command -v "$bin" >/dev/null 2>&1; then
+      printf '%s' "$bin"
+      return 0
+    fi
+  done
+  printf '%s' 'trae-cli'
+}
+
+normalize_legacy_trae_cli_harness() {
+  local h normalized="" found=0 trae_cli_bin
+  while IFS= read -r h; do
+    [ -n "$h" ] || continue
+    if [ "$h" = "trae-cli" ]; then
+      found=1
+      continue
+    fi
+    list_contains_line "$(split_harnesses "$normalized")" "$h" \
+      || normalized="${normalized:+$normalized,}$h"
+  done <<EOF
+$(split_harnesses "$SELECTED_HARNESSES")
+EOF
+  [ "$found" -eq 1 ] || return 0
+  [ "$UNINSTALL" -eq 0 ] || return 0
+
+  trae_cli_bin="$(resolve_traecode_cli_bin)"
+  if [ -z "$CODEX_BINS_ARG" ] \
+    && ! list_contains_line "$(split_harnesses "$normalized")" codex; then
+    CODEX_BINS="$trae_cli_bin"
+    TUI_CODEX_BINS="$trae_cli_bin"
+  else
+    CODEX_BINS="$(append_csv_list "$CODEX_BINS" "$trae_cli_bin")"
+    TUI_CODEX_BINS="$(append_csv_list "$TUI_CODEX_BINS" "$trae_cli_bin")"
+  fi
+  if list_contains_line "$(split_harnesses "$normalized")" codex; then
+    SELECTED_HARNESSES="$normalized"
+  else
+    SELECTED_HARNESSES="${normalized:+$normalized,}codex"
+  fi
+  warn "$(t 'The trae-cli harness is deprecated; installing the Codex-format plugin for TraeCode CLI 2.0 instead.' 'trae-cli harness 已弃用；将改为给 TraeCode CLI 2.0 安装 Codex 格式插件。')"
+}
+
+add_detected_traecode_cli_alias() {
+  local trae_cli_bin
+  [ -z "$CODEX_BINS_ARG" ] || return 0
+  [ "$HAVE_TRAE_CLI" -eq 1 ] || return 0
+  [ -z "$REQUESTED_HARNESSES" ] || return 0
+  trae_cli_bin="$(resolve_traecode_cli_bin)"
+  CODEX_BINS="$(append_csv_list "$CODEX_BINS" "$trae_cli_bin")"
+  TUI_CODEX_BINS="$(append_csv_list "$TUI_CODEX_BINS" "$trae_cli_bin")"
 }
 
 bin_basename() {
@@ -450,6 +506,8 @@ refresh_available_harnesses
 
 TUI_CLAUDE_BINS="$CLAUDE_BINS"
 TUI_CODEX_BINS="$CODEX_BINS"
+add_detected_traecode_cli_alias
+refresh_available_harnesses
 SEL_CLAUDE_BINS=""
 SEL_CODEX_BINS=""
 SEL_OPENCODE=0
@@ -457,7 +515,6 @@ SEL_PI=0
 SEL_CURSOR_APP=0
 SEL_TRAE=0
 SEL_TRAE_CN=0
-SEL_TRAE_CLI=0
 SEL_ZCODE=0
 TUI_CURSOR=0; TUI_LINES=0
 
@@ -472,7 +529,7 @@ EOF
 }
 
 tui_selectable_count() {
-  printf '%s' $(( $(list_count "$TUI_CLAUDE_BINS") + $(list_count "$TUI_CODEX_BINS") + 7 ))
+  printf '%s' $(( $(list_count "$TUI_CLAUDE_BINS") + $(list_count "$TUI_CODEX_BINS") + 6 ))
 }
 
 tui_total_count() {
@@ -505,8 +562,6 @@ EOF
   i=$((i + 1))
   if [ "$i" -eq "$idx" ]; then printf 'trae-cn|trae-cn'; return 0; fi
   i=$((i + 1))
-  if [ "$i" -eq "$idx" ]; then printf 'trae-cli|trae-cli'; return 0; fi
-  i=$((i + 1))
   if [ "$i" -eq "$idx" ]; then printf 'zcode|zcode'; return 0; fi
   printf 'add|'
 }
@@ -532,12 +587,12 @@ tui_bin_label() {
   case "$kind:$bin" in
     claude:claude) printf 'Claude Code' ;;
     codex:codex) printf 'Codex' ;;
+    codex:trae-cli|codex:traecli|codex:traex) printf 'TraeCode CLI 2.0' ;;
     opencode:*) printf 'OpenCode' ;;
     pi:*) printf 'pi' ;;
     cursor:*) printf 'Cursor' ;;
     trae:*) printf 'TRAE' ;;
     trae-cn:*) printf 'TRAE CN' ;;
-    trae-cli:*) printf 'TRAE CLI' ;;
     zcode:*) printf 'ZCode' ;;
     claude:*) printf '%s %s' "$bin" "$(t '(Claude-format)' '（Claude 格式）')" ;;
     codex:*) printf '%s %s' "$bin" "$(t '(Codex-format)' '（Codex 格式）')" ;;
@@ -560,8 +615,6 @@ tui_bin_selected() {
     [ "$SEL_TRAE" -eq 1 ]
   elif [ "$kind" = "trae-cn" ]; then
     [ "$SEL_TRAE_CN" -eq 1 ]
-  elif [ "$kind" = "trae-cli" ]; then
-    [ "$SEL_TRAE_CLI" -eq 1 ]
   else
     [ "$SEL_ZCODE" -eq 1 ]
   fi
@@ -572,7 +625,6 @@ tui_bin_detected() { # tui_bin_detected <kind> <bin>
     cursor) [ "$HAVE_CURSOR" -eq 1 ] ;;
     trae) [ "$HAVE_TRAE" -eq 1 ] ;;
     trae-cn) [ "$HAVE_TRAE_CN" -eq 1 ] ;;
-    trae-cli) [ "$HAVE_TRAE_CLI" -eq 1 ] ;;
     zcode) [ "$HAVE_ZCODE" -eq 1 ] ;;
     *) command -v "$2" >/dev/null 2>&1 ;;
   esac
@@ -586,7 +638,6 @@ tui_set_all_bins() {
   SEL_CURSOR_APP=1
   SEL_TRAE=1
   SEL_TRAE_CN=1
-  SEL_TRAE_CLI=1
   SEL_ZCODE=1
 }
 
@@ -608,8 +659,6 @@ tui_toggle_bin() {
     SEL_TRAE=$((1 - SEL_TRAE)); return 0
   elif [ "$kind" = "trae-cn" ]; then
     SEL_TRAE_CN=$((1 - SEL_TRAE_CN)); return 0
-  elif [ "$kind" = "trae-cli" ]; then
-    SEL_TRAE_CLI=$((1 - SEL_TRAE_CLI)); return 0
   else
     SEL_ZCODE=$((1 - SEL_ZCODE)); return 0
   fi
@@ -680,7 +729,6 @@ tui_reset_bin_selection() {
   SEL_CURSOR_APP=0
   SEL_TRAE=0
   SEL_TRAE_CN=0
-  SEL_TRAE_CLI=0
   SEL_ZCODE=0
   while IFS= read -r bin; do
     [ -n "$bin" ] || continue
@@ -705,7 +753,6 @@ EOF
   if [ "$HAVE_CURSOR" -eq 1 ]; then SEL_CURSOR_APP=1; any=1; fi
   if [ "$HAVE_TRAE" -eq 1 ]; then SEL_TRAE=1; any=1; fi
   if [ "$HAVE_TRAE_CN" -eq 1 ]; then SEL_TRAE_CN=1; any=1; fi
-  if [ "$HAVE_TRAE_CLI" -eq 1 ]; then SEL_TRAE_CLI=1; any=1; fi
   if [ "$HAVE_ZCODE" -eq 1 ]; then SEL_ZCODE=1; any=1; fi
   if [ "$any" -ne 1 ]; then
     SEL_CLAUDE_BINS="$TUI_CLAUDE_BINS"
@@ -794,7 +841,7 @@ tui_add_compatible_cli() {
 tui_has_selection() {
   [ -n "$(list_words "$SEL_CLAUDE_BINS")" ] || [ -n "$(list_words "$SEL_CODEX_BINS")" ] \
     || [ "$SEL_OPENCODE" -eq 1 ] || [ "$SEL_PI" -eq 1 ] || [ "$SEL_CURSOR_APP" -eq 1 ] \
-    || [ "$SEL_TRAE" -eq 1 ] || [ "$SEL_TRAE_CN" -eq 1 ] || [ "$SEL_TRAE_CLI" -eq 1 ] || [ "$SEL_ZCODE" -eq 1 ]
+    || [ "$SEL_TRAE" -eq 1 ] || [ "$SEL_TRAE_CN" -eq 1 ] || [ "$SEL_ZCODE" -eq 1 ]
 }
 
 tui_finish_selection() {
@@ -808,7 +855,6 @@ tui_finish_selection() {
   [ "$SEL_CURSOR_APP" -eq 1 ] && SELECTED_HARNESSES="${SELECTED_HARNESSES:+$SELECTED_HARNESSES,}cursor"
   [ "$SEL_TRAE" -eq 1 ] && SELECTED_HARNESSES="${SELECTED_HARNESSES:+$SELECTED_HARNESSES,}trae"
   [ "$SEL_TRAE_CN" -eq 1 ] && SELECTED_HARNESSES="${SELECTED_HARNESSES:+$SELECTED_HARNESSES,}trae-cn"
-  [ "$SEL_TRAE_CLI" -eq 1 ] && SELECTED_HARNESSES="${SELECTED_HARNESSES:+$SELECTED_HARNESSES,}trae-cli"
   [ "$SEL_ZCODE" -eq 1 ] && SELECTED_HARNESSES="${SELECTED_HARNESSES:+$SELECTED_HARNESSES,}zcode"
   return 0
 }
@@ -878,13 +924,13 @@ select_harnesses() {
   [ "$HAVE_CURSOR" -eq 1 ] && detected="${detected:+$detected,}cursor"
   [ "$HAVE_TRAE" -eq 1 ] && detected="${detected:+$detected,}trae"
   [ "$HAVE_TRAE_CN" -eq 1 ] && detected="${detected:+$detected,}trae-cn"
-  [ "$HAVE_TRAE_CLI" -eq 1 ] && detected="${detected:+$detected,}trae-cli"
   [ "$HAVE_OPENCODE" -eq 1 ] && detected="${detected:+$detected,}opencode"
   [ "$HAVE_PI" -eq 1 ] && detected="${detected:+$detected,}pi"
   [ "$HAVE_ZCODE" -eq 1 ] && detected="${detected:+$detected,}zcode"
 
   if [ -n "$REQUESTED_HARNESSES" ]; then
     SELECTED_HARNESSES="$REQUESTED_HARNESSES"
+    normalize_legacy_trae_cli_harness
     return
   fi
   default="${detected:-claude,codex}"
@@ -927,7 +973,8 @@ validate_selected_harnesses() {
   local h bad=0
   while IFS= read -r h; do
     case "$h" in
-      claude|codex|cursor|trae|trae-cn|trae-cli|opencode|pi|zcode) ;;
+      claude|codex|cursor|trae|trae-cn|opencode|pi|zcode) ;;
+      trae-cli) [ "$UNINSTALL" -eq 1 ] || bad=1 ;;
       *) err "Unsupported harness: $h"; bad=1 ;;
     esac
   done <<EOF
@@ -1549,6 +1596,37 @@ codex_cmd() {
   command "$CODEX_BIN" "$@"
 }
 
+codex_bin_label() {
+  case "$(bin_basename "$CODEX_BIN")" in
+    trae-cli|traecli|traex) printf 'TraeCode CLI 2.0' ;;
+    codex) printf 'Codex' ;;
+    *) printf '%s %s' "$CODEX_BIN" "$(t '(Codex-format)' '（Codex 格式）')" ;;
+  esac
+}
+
+remove_legacy_trae_cli_integration() {
+  case "$(bin_basename "$CODEX_BIN")" in
+    trae-cli|traecli|traex) ;;
+    *) return 0 ;;
+  esac
+  local trae_home="${TRAE_HOME:-$HOME/.trae}"
+  local trae_cli_home="${TRAECLI_HOME:-$trae_home/cli}"
+  if grep -qi 'openviking' "$trae_cli_home/hooks.json" 2>/dev/null \
+    || [ -d "$OV_HOME/agent-integrations/trae-cli" ] \
+    || grep -qF '[mcp_servers."openviking-memory"]' "$trae_home/traecli.toml" 2>/dev/null; then
+    agent_remove_trae_cli_configs "$trae_cli_home/hooks.json" "$trae_home/traecli.toml"
+    rm -rf "$OV_HOME/agent-integrations/trae-cli"
+    info "$(t 'Removed the deprecated TRAE CLI Hooks integration after installing the TraeCode CLI 2.0 plugin.' 'TraeCode CLI 2.0 插件安装成功后，已移除弃用的 TRAE CLI Hooks 集成。')"
+  fi
+  if [ ! -d "$OV_HOME/agent-integrations/cursor" ] \
+    && [ ! -d "$OV_HOME/agent-integrations/trae" ] \
+    && [ ! -d "$OV_HOME/agent-integrations/trae-cn" ] \
+    && [ ! -d "$OV_HOME/agent-integrations/trae-cli" ] \
+    && [ ! -d "$OV_HOME/agent-integrations/zcode" ]; then
+    rm -rf "$OV_HOME/agent-integrations/memory-plugin-shared"
+  fi
+}
+
 codex_marketplace_current_source() {
   local raw
   raw="$(codex_cmd plugin marketplace list --json 2>/dev/null || true)"
@@ -1658,7 +1736,12 @@ NODE
 }
 
 install_codex() {
-  heading "$(t '4. Codex plugin' '4. Codex 插件')"
+  local plugin_installed=0
+  if is_native_codex_bin; then
+    heading "$(t '4. Codex plugin' '4. Codex 插件')"
+  else
+    heading "4. $(codex_bin_label)"
+  fi
   command -v "$CODEX_BIN" >/dev/null 2>&1 || {
     warn "$(t 'Codex-format CLI not found; skipping:' '未找到 Codex 格式 CLI，跳过：') $CODEX_BIN"
     return 0
@@ -1693,11 +1776,20 @@ install_codex() {
       codex_marketplace_sync "$MKT_DIR" "$MKT_DIR" || return 1
       ;;
   esac
-  if ! codex_cmd plugin add "$PLUGIN_ID" >/dev/null 2>&1; then
-    codex_cmd plugin install "$PLUGIN_ID" >/dev/null 2>&1 || \
-      warn "$CODEX_BIN plugin add/install returned non-zero for $PLUGIN_ID"
+  if codex_cmd plugin add "$PLUGIN_ID" >/dev/null 2>&1; then
+    plugin_installed=1
+  elif codex_cmd plugin install "$PLUGIN_ID" >/dev/null 2>&1; then
+    plugin_installed=1
+  else
+    warn "$CODEX_BIN plugin add/install returned non-zero for $PLUGIN_ID"
   fi
-  codex_cmd plugin enable "$PLUGIN_ID" >/dev/null 2>&1 || true
+  if [ "$plugin_installed" -eq 1 ]; then
+    if codex_cmd plugin enable "$PLUGIN_ID" >/dev/null 2>&1; then
+      remove_legacy_trae_cli_integration
+    elif ! is_native_codex_bin; then
+      warn "$(t 'Plugin installed but could not be enabled; keeping the deprecated TRAE CLI Hooks integration.' '插件已安装但未能启用；保留弃用的 TRAE CLI Hooks 集成。')"
+    fi
+  fi
   if is_native_codex_bin; then
     ensure_codex_config
     info "$(t 'Codex plugin enabled in' 'Codex 插件已在配置中启用：') $CODEX_CONFIG"
