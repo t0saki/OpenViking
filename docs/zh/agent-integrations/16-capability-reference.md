@@ -181,7 +181,7 @@ per-harness 章节（档案卡）只写差异；所有共享事实均在本章�
 - 官方 docs 的规范一键命令是不带 `--harness` 的裸命令（执行后进入 TUI 多选）；而各插件自带的 setup-helper 转发脚本在调用时会自动补 `--harness`。
 - 幂等合并：hooks/mcp 条目按 `OPENVIKING_INTEGRATION_ID` 标记识别自有条目，做到剔旧追新的同时不动第三方；写入采用原子操作——先备份 `.bak`，写 tmp 后 rename 覆盖，权限 0600。
 - 凭据向导写 `~/.openviking/ovcli.conf`：三选一（本地 `http://127.0.0.1:1933` / 火山云 `https://api.vikingdb.cn-beijing.volces.com/openviking` / 自定义），已有配置先展示当前值再问"沿用/重配"，API key 掩码。
-- 卸载：`--uninstall` 覆盖 cursor / trae / trae-cn / zcode；claude / codex / trae-cli / opencode / pi 则通过各自宿主的插件管理卸载。
+- 卸载：`--uninstall` 覆盖 cursor / trae / trae-cn / zcode，并顺带清理 trae-cli 遗留的旧 hook 配置；claude / codex / trae-cli / opencode / pi 这些 Codex 格式或宿主托管的插件，通过各自宿主的插件管理卸载。
 - 安装后自检：grep 配置 + `node --check` + 一次 `OPENVIKING_MEMORY_ENABLED=0` 的 smoke run。
 - Node 门槛：安装器检查 18+。
 
