@@ -113,8 +113,10 @@ exit 0
       TRAE_CLI_TEST_LOG: cliLog,
     });
     assert.equal(installed.status, 0, `${installed.stdout}\n${installed.stderr}`);
+    assert.match(installed.stdout, /Selected harnesses: trae-cli/u);
+    assert.doesNotMatch(installed.stdout, /Selected harnesses: codex/u);
     assert.match(installed.stdout, /TraeCode CLI 2.0/);
-    assert.match(installed.stdout, /trae-cli harness is deprecated/);
+    assert.doesNotMatch(installed.stdout, /trae-cli harness is deprecated/);
 
     const hooks = JSON.parse(readFileSync(hooksPath, "utf8"));
     assert.ok(hooks.hooks.Stop.some((entry) => JSON.stringify(entry).includes("third-party stop")));

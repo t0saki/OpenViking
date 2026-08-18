@@ -23,7 +23,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/main/e
 
 # TraeCode CLI 2.0
 bash <(curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/main/examples/memory-plugin-shared/install.sh) \
-  --harness codex --codex-bin trae-cli
+  --harness trae-cli
 ```
 
 If GitHub is unavailable, use the TOS mirror:
@@ -34,7 +34,7 @@ bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/memory-plugin-shar
 
 # TraeCode CLI 2.0
 bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/memory-plugin-shared/install.sh) \
-  --harness codex --codex-bin trae-cli --dist tos
+  --harness trae-cli --dist tos
 ```
 
 Quit and restart the corresponding client after installation.
@@ -75,7 +75,7 @@ bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/memory-plugin-shar
   --harness trae-cn --uninstall --yes
 ```
 
-Replace `trae-cn` with `trae` for TRAE. For TraeCode CLI 2.0, use `trae-cli plugin uninstall openviking-memory@openviking`. The legacy `--harness trae-cli --uninstall` spelling remains available to remove the deprecated standalone Hooks integration.
+Replace `trae-cn` with `trae` for TRAE. For TraeCode CLI 2.0, use `trae-cli plugin uninstall openviking-memory@openviking`. Running the installer with `--harness trae-cli --uninstall` only removes the deprecated standalone Hooks integration from older installations.
 
 ## Troubleshooting
 
@@ -85,7 +85,7 @@ Replace `trae-cn` with `trae` for TRAE. For TraeCode CLI 2.0, use `trae-cli plug
 | MCP does not connect | Check the URL/API key in `~/.openviking/ovcli.conf`, then restart the client. |
 | A new session cannot recall the previous turn | Inspect the Hook log and confirm that `Stop` ran without `/commit` connection or authentication errors. |
 | The same content is captured more than once | Check user and project Hooks for older `trae-auto-recall.mjs` or `trae-auto-capture.mjs` entries. Re-running the installer removes OpenViking-managed legacy entries. |
-| TraeCode CLI 2.0 does not list the plugin | Run `trae-cli plugin list`; if `openviking-memory` is absent, rerun the installer with `--harness codex --codex-bin trae-cli`. |
+| TraeCode CLI 2.0 does not list the plugin | Run `trae-cli plugin list`; if `openviking-memory` is absent, rerun the installer with `--harness trae-cli`. |
 
 ## See also
 

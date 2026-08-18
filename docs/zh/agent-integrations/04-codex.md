@@ -12,11 +12,11 @@ Claude Code 和 Codex 共用同一个安装脚本。它会依次询问界面语�
 bash <(curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/main/examples/memory-plugin-shared/install.sh)
 ```
 
-TraeCode CLI 2.0 可以通过 `trae-cli` 命令别名直接安装这一 Codex 格式插件：
+TraeCode CLI 2.0 可以直接安装这一 Codex 格式插件，默认安装入口是 `--harness trae-cli`：
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/main/examples/memory-plugin-shared/install.sh) \
-  --harness codex --codex-bin trae-cli
+  --harness trae-cli
 ```
 
 GitHub 访问受限的地区，从火山引擎 TOS 镜像运行同一个安装脚本（或在下载源提问时选择「TOS 镜像」）。Codex 走 TOS 时安装自 TOS 托管的 git 仓库，保留远程更新能力：

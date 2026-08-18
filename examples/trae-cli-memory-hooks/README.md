@@ -14,15 +14,12 @@ MCP server.
 Install the supported TraeCode CLI 2.0 plugin through the shared installer:
 
 ```bash
-bash examples/memory-plugin-shared/install.sh --harness codex --codex-bin trae-cli
-```
-
-The legacy spelling below remains accepted and resolves to the same Codex-format
-plugin installation:
-
-```bash
 bash examples/memory-plugin-shared/install.sh --harness trae-cli
 ```
+
+The installer keeps `trae-cli` as the user-facing harness name and resolves it
+internally to the Codex-format plugin installation. The deprecated component is
+this standalone Hooks adapter, not the `trae-cli` harness.
 
 It no longer installs this adapter. The previous installer behavior was to:
 

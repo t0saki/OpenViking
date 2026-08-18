@@ -23,7 +23,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/main/e
 
 # TraeCode CLI 2.0
 bash <(curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/main/examples/memory-plugin-shared/install.sh) \
-  --harness codex --codex-bin trae-cli
+  --harness trae-cli
 ```
 
 GitHub 访问受限时使用 TOS 镜像：
@@ -34,7 +34,7 @@ bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/memory-plugin-shar
 
 # TraeCode CLI 2.0
 bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/memory-plugin-shared/install.sh) \
-  --harness codex --codex-bin trae-cli --dist tos
+  --harness trae-cli --dist tos
 ```
 
 安装后完全退出并重启对应客户端。
@@ -75,7 +75,7 @@ bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/memory-plugin-shar
   --harness trae-cn --uninstall --yes
 ```
 
-将 `trae-cn` 替换为 `trae` 可管理 TRAE 集成。TraeCode CLI 2.0 请执行 `trae-cli plugin uninstall openviking-memory@openviking`。旧的 `--harness trae-cli --uninstall` 写法仍可用于移除已弃用的独立 Hooks 集成。
+将 `trae-cn` 替换为 `trae` 可管理 TRAE 集成。TraeCode CLI 2.0 请执行 `trae-cli plugin uninstall openviking-memory@openviking`。安装器的 `--harness trae-cli --uninstall` 只用于移除旧安装中已弃用的独立 Hooks 集成。
 
 ## 故障排查
 
@@ -85,7 +85,7 @@ bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/memory-plugin-shar
 | MCP 未连接 | 检查 `~/.openviking/ovcli.conf` 中的 URL/API Key，然后重启客户端。 |
 | 新会话无法回忆上一轮内容 | 查看 Hook 日志，确认 `Stop` 已执行且 `/commit` 没有连接或鉴权错误。 |
 | 同一内容被捕获多次 | 检查用户级与项目级 Hook 中是否仍有旧版 `trae-auto-recall.mjs` 或 `trae-auto-capture.mjs`；重跑安装器会移除由 OpenViking 管理的旧条目。 |
-| TraeCode CLI 2.0 未列出插件 | 运行 `trae-cli plugin list`；若没有 `openviking-memory`，使用 `--harness codex --codex-bin trae-cli` 重跑安装器。 |
+| TraeCode CLI 2.0 未列出插件 | 运行 `trae-cli plugin list`；若没有 `openviking-memory`，使用 `--harness trae-cli` 重跑安装器。 |
 
 ## 参见
 

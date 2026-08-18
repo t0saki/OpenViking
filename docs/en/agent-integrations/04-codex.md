@@ -12,12 +12,12 @@ Claude Code and Codex share one installer. It asks for your language (English/ä¸
 bash <(curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/main/examples/memory-plugin-shared/install.sh)
 ```
 
-TraeCode CLI 2.0 accepts this Codex-format plugin directly through its
-`trae-cli` command alias:
+TraeCode CLI 2.0 accepts this Codex-format plugin directly. Its default
+installer entry is `--harness trae-cli`:
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/main/examples/memory-plugin-shared/install.sh) \
-  --harness codex --codex-bin trae-cli
+  --harness trae-cli
 ```
 
 In regions where GitHub is hard to reach, run the same installer from the Volcengine TOS mirror (or pick "TOS mirror" at the download-source prompt). Codex installs from a TOS-hosted git repo and keeps remote update support:

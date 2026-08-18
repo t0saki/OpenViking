@@ -131,7 +131,7 @@ printf '%s:%s:%s\\n' "$SELECTED_HARNESSES" "$detected" "$label"
   }
 });
 
-test("legacy trae-cli harness resolves to only the TraeCode CLI Codex alias", (t) => {
+test("trae-cli is the public harness and resolves to the Codex plugin internally", (t) => {
   const home = makeTempHome(t);
   const bin = join(home, "bin");
   mkdirSync(bin);
@@ -146,10 +146,9 @@ TUI_CODEX_BINS="$CODEX_BINS"
 INTERACTIVE=0
 REQUESTED_HARNESSES="trae-cli"
 select_harnesses
-printf '%s:%s\\n' "$SELECTED_HARNESSES" "$(list_words "$CODEX_BINS")"
+printf '%s:%s:%s\\n' "$SELECTED_HARNESSES" "$(list_words "$CODEX_BINS")" "$(tui_bin_label codex trae-cli)"
 `);
 
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /codex:trae-cli$/mu);
-  assert.match(result.stdout, /TraeCode CLI 2.0/);
+  assert.equal(result.stdout.trim(), "codex:trae-cli:TraeCode CLI 2.0");
 });

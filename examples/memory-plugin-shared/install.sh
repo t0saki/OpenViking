@@ -8,9 +8,9 @@
 # One-liner (TOS mirror, for regions where GitHub is unreachable):
 #   bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/memory-plugin-shared/install.sh) --dist tos
 # Non-interactive:
-#   bash install.sh --harness claude,codex,cursor,trae,trae-cn,zcode,opencode,pi --dist github --lang en --url http://127.0.0.1:1933
+#   bash install.sh --harness claude,codex,cursor,trae,trae-cn,trae-cli,zcode,opencode,pi --dist github --lang en --url http://127.0.0.1:1933
 # Format-compatible CLI aliases:
-#   bash install.sh --harness codex --codex-bin codex,trae-cli
+#   bash install.sh --harness trae-cli
 #   bash install.sh --harness claude --claude-bin claude,seed
 # Fork / branch verification:
 #   OPENVIKING_REPO_URL=https://github.com/you/OpenViking.git \
@@ -79,6 +79,8 @@ CC_REMOTE_MKT_DIR="$OV_HOME/marketplaces/openviking-claude"
 CC_REMOTE_MANIFEST="$CC_REMOTE_MKT_DIR/.claude-plugin/marketplace.json"
 
 REQUESTED_HARNESSES=""
+PUBLIC_SELECTED_HARNESSES=""
+TRAECODE_CLI_BIN=""
 CLAUDE_BINS_ARG="${OPENVIKING_CLAUDE_BINS:-${OPENVIKING_CLAUDE_BIN:-}}"
 CODEX_BINS_ARG="${OPENVIKING_CODEX_BINS:-${OPENVIKING_CODEX_BIN:-}}"
 SOURCE_ARG=""
@@ -143,8 +145,8 @@ usage() {
 Usage: install.sh [options]
 
 Options:
-  --harness LIST     Comma-separated harnesses: claude, codex, cursor, trae, trae-cn, zcode, opencode, pi.
-                     Legacy trae-cli is accepted as codex --codex-bin trae-cli.
+  --harness LIST     Comma-separated harnesses: claude, codex, cursor, trae, trae-cn, trae-cli, zcode, opencode, pi.
+                     Use trae-cli for TraeCode CLI 2.0 (installed through its Codex-compatible plugin format).
   --claude-bin LIST  Comma-separated Claude-format CLI commands (default: claude).
   --codex-bin LIST   Comma-separated Codex-format CLI commands (default: codex).
   --dist CHANNEL     github (default) | tos (mirror for GitHub-blocked regions).
@@ -395,7 +397,7 @@ resolve_traecode_cli_bin() {
   printf '%s' 'trae-cli'
 }
 
-normalize_legacy_trae_cli_harness() {
+normalize_trae_cli_harness() {
   local h normalized="" found=0 trae_cli_bin
   while IFS= read -r h; do
     [ -n "$h" ] || continue
@@ -409,9 +411,11 @@ normalize_legacy_trae_cli_harness() {
 $(split_harnesses "$SELECTED_HARNESSES")
 EOF
   [ "$found" -eq 1 ] || return 0
+  PUBLIC_SELECTED_HARNESSES="$SELECTED_HARNESSES"
   [ "$UNINSTALL" -eq 0 ] || return 0
 
   trae_cli_bin="$(resolve_traecode_cli_bin)"
+  TRAECODE_CLI_BIN="$trae_cli_bin"
   if [ -z "$CODEX_BINS_ARG" ] \
     && ! list_contains_line "$(split_harnesses "$normalized")" codex; then
     CODEX_BINS="$trae_cli_bin"
@@ -425,7 +429,6 @@ EOF
   else
     SELECTED_HARNESSES="${normalized:+$normalized,}codex"
   fi
-  warn "$(t 'The trae-cli harness is deprecated; installing the Codex-format plugin for TraeCode CLI 2.0 instead.' 'trae-cli harness 已弃用；将改为给 TraeCode CLI 2.0 安装 Codex 格式插件。')"
 }
 
 add_detected_traecode_cli_alias() {
@@ -930,7 +933,7 @@ select_harnesses() {
 
   if [ -n "$REQUESTED_HARNESSES" ]; then
     SELECTED_HARNESSES="$REQUESTED_HARNESSES"
-    normalize_legacy_trae_cli_harness
+    normalize_trae_cli_harness
     return
   fi
   default="${detected:-claude,codex}"
@@ -3288,9 +3291,10 @@ select_harnesses
 validate_selected_harnesses
 select_compatible_bins
 refresh_available_harnesses
-info "$(t 'Selected harnesses:' '已选择：') $(printf '%s' "$SELECTED_HARNESSES" | tr ',' ' ')"
+info "$(t 'Selected harnesses:' '已选择：') $(printf '%s' "${PUBLIC_SELECTED_HARNESSES:-$SELECTED_HARNESSES}" | tr ',' ' ')"
 if contains_harness claude; then info "$(t 'Claude-format commands:' 'Claude 格式命令：') $(list_words "$CLAUDE_BINS")"; fi
-if contains_harness codex; then info "$(t 'Codex-format commands:' 'Codex 格式命令：') $(list_words "$CODEX_BINS")"; fi
+if [ -n "$TRAECODE_CLI_BIN" ]; then info "TraeCode CLI 2.0: $TRAECODE_CLI_BIN"; fi
+if contains_harness codex && [ -z "$TRAECODE_CLI_BIN" ]; then info "$(t 'Codex-format commands:' 'Codex 格式命令：') $(list_words "$CODEX_BINS")"; fi
 validate_selected_bins
 if [ "$UNINSTALL" -eq 1 ]; then
   uninstall_agent_integrations
@@ -3322,7 +3326,6 @@ fi
 if contains_harness cursor; then install_cursor; fi
 if contains_harness trae; then install_trae_variant trae; fi
 if contains_harness trae-cn; then install_trae_variant trae-cn; fi
-if contains_harness trae-cli; then install_trae_cli; fi
 if contains_harness zcode; then install_zcode; fi
 if contains_harness opencode; then install_opencode; fi
 if contains_harness pi; then install_pi; fi
@@ -3335,11 +3338,14 @@ case "$SOURCE_MODE" in
   *) if contains_harness claude || contains_harness codex; then info "Marketplace: ${MKT_DIR:-$CODEX_TOS_GIT_URL}"; fi ;;
 esac
 if contains_harness claude; then info "Claude-format: $(list_words "$CLAUDE_BINS") -> $PLUGIN_ID"; fi
-if contains_harness codex; then info "Codex-format:  $(list_words "$CODEX_BINS") -> $PLUGIN_ID"; fi
+if [ -n "$TRAECODE_CLI_BIN" ]; then
+  info "TraeCode CLI 2.0: $TRAECODE_CLI_BIN -> $PLUGIN_ID"
+elif contains_harness codex; then
+  info "Codex-format:  $(list_words "$CODEX_BINS") -> $PLUGIN_ID"
+fi
 if contains_harness cursor; then info "Cursor: Hooks + MCP + Rule + Skill"; fi
 if contains_harness trae; then info "TRAE: ~/.trae/hooks.json + MCP"; fi
 if contains_harness trae-cn; then info "TRAE CN: ~/.trae-cn/hooks.json + MCP"; fi
-if contains_harness trae-cli; then info "TRAE CLI: ${TRAECLI_HOME:-${TRAE_HOME:-~/.trae}/cli}/hooks.json + ${TRAE_HOME:-~/.trae}/traecli.toml"; fi
 if contains_harness zcode; then info "ZCode: ~/.zcode/cli/config.json (hooks + MCP)"; fi
 if contains_harness opencode; then info "OpenCode: @openviking/opencode-plugin"; fi
 if contains_harness pi; then info "pi: ~/.pi/agent/extensions/openviking"; fi
