@@ -29,8 +29,9 @@ to assemble an injection-ready context block across memories, resources, and
 skills. The same capability is available through the MCP `search` tool with
 `mode="context"`.
 
-The deprecated `POST /api/v1/search/recall` compatibility endpoint has been
-removed. Clients that still use its v1 fields must migrate them explicitly:
+The deprecated `/api/v1/search/recall` compatibility endpoint, which accepted
+POST requests, has been removed. Clients that still use its v1 fields must
+migrate them explicitly:
 
 | Removed v1 field | Context search field | Migration |
 |------------------|----------------------|-----------|
