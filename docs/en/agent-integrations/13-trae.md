@@ -45,7 +45,7 @@ Quit and restart the corresponding client after installation.
 - `UserPromptSubmit` recalls and injects context for the current request.
 - `PreToolUse` redirects accidental local access to `viking://` paths back to OpenViking MCP tools.
 - `Stop` captures and immediately commits the completed turn, including short sessions.
-- The OpenViking MCP server transparently exposes the full server MCP tool set (16 tools): `find`, `search`, `recall`, `read`, `list`, `tree`, `remember`, `write`, `edit`, `add_resource`, `list_watches`, `cancel_watch`, `grep`, `glob`, `forget`, and `health`.
+- The OpenViking MCP server transparently exposes the full server MCP tool set (15 tools): `find`, `search`, `read`, `list`, `tree`, `remember`, `write`, `edit`, `add_resource`, `list_watches`, `cancel_watch`, `grep`, `glob`, `forget`, and `health`.
 
 ## Verify
 
@@ -89,4 +89,5 @@ Replace `trae-cn` with `trae` or `trae-cli` for TRAE or TRAE CLI. Uninstall remo
 
 ## See also
 
+- [Capability Reference](./16-capability-reference.md)
 - [Authentication](../guides/04-authentication.md)

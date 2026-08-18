@@ -89,6 +89,7 @@ codex              # 首次启动需进入 /hooks 完成一次审批
 
 ## 参见
 
+- [集成能力参考](./16-capability-reference.md)
 - [博客：在 Claude Code / Codex 中接入 OpenViking](https://blog.openviking.ai/post/openviking-coding-agent/) — 为什么以及如何给你的 Coding Agent 加上长期记忆
 - [插件 README](https://github.com/volcengine/OpenViking/blob/main/examples/codex-memory-plugin/README.md) — 完整的环境变量说明与架构图
 - [DESIGN.md](https://github.com/volcengine/OpenViking/blob/main/examples/codex-memory-plugin/DESIGN.md) — 提交（commit）决策树
