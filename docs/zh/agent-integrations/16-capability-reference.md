@@ -84,7 +84,7 @@ per-harness 章节（档案卡）只写差异；所有共享事实均在本章�
 
 ## 2.1 服务端 MCP 工具面
 
-这些工具定义在 `openviking/server/mcp_endpoint.py`，通过 `FastMCP("openviking", stateless_http=True)` 实例化，并挂载于 `/mcp`（`app.py:800-802`）。15 个工具默认全量开放，无 per-tool 开关与 allowlist；如需收窄工具面，必须在服务端定制。服务端组装的记忆块由 `search`（`mode="context"`）提供，MCP 面不另设 recall 工具。
+这些工具定义在服务端，后续更新也会在服务端统一发布，Harness 只需通过插件代理 MCP 拿到最新的 `~/.openviking/ovcli.conf` 即可。
 
 | # | 工具名 | 功能 | 参数要点（定义行号） |
 |---|---|---|---|

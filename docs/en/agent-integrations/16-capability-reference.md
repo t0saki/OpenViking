@@ -83,7 +83,7 @@
 The individual harness sections (profile cards) focus exclusively on differences and specific implementations. All shared capabilities and universal behaviors are documented once in this section.
 ## 2.1 Server-side MCP tool surface
 
-These tools are defined in `openviking/server/mcp_endpoint.py`, instantiated via `FastMCP("openviking", stateless_http=True)`, and mounted at `/mcp` (`app.py:800-802`). By default, all 15 tools are exposed without per-tool toggles or allowlists; restricting this tool surface requires customizing the server. Server-assembled memory blocks are provided by the `search` tool (`mode="context"`), as the MCP surface lacks a dedicated recall tool.
+These tools are defined on the server side, and future updates will be centrally published there. Harnesses only need to proxy the MCP to obtain the latest `~/.openviking/ovcli.conf`.
 
 | # | Tool | What it does | Key parameters (definition line) |
 |---|---|---|---|
