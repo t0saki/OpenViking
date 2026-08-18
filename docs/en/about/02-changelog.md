@@ -5,6 +5,11 @@ This changelog is automatically generated from [GitHub Releases](https://github.
 
 ## Unreleased
 
+- **Filesystem deletion hardening**: Upgrade promptly when filesystem or MCP access is
+  available to non-root identities. Broad recursive deletion is now blocked at user and
+  shared-resource namespace boundaries, while deletion of explicitly selected content is
+  unchanged. Before rollout, confirm current backups and, where retained, review recent
+  access and destructive-operation logs according to your incident-response policy.
 - **Session policy compatibility**: String `"false"` memory-policy switches now disable
   extraction correctly. Existing boolean-like values remain temporarily compatible and
   emit deprecation warnings; use JSON booleans for new configurations.
