@@ -110,7 +110,7 @@ Credentials given in the patch win over the environment; behavior toggles read t
 | Nothing injected, no OpenViking tools | `dsh --profile web --dump-config` should list `openviking-memory`; re-run the installer or `dsh plugin --profile web add …` |
 | Installed into the wrong profile | The installer defaults to `web`; re-run it with `--dsh-profile <name>` |
 | `ERESOLVE` during install | The `@deepseek-ai/dsh-*` prerelease tags drift apart; install `@deepseek-ai/dsh@0.1.0-rc.6` exactly |
-| Install says the package is "not in the npm registry" | pnpm refuses releases younger than 24 hours by default (`minimumReleaseAge`). Wait it out, or add the exact version to `minimumReleaseAgeExclude` in the profile's `pnpm-workspace.yaml` |
+| An older version got installed, or the package reads as "not in the npm registry" | pnpm refuses releases younger than 24 hours by default (`minimumReleaseAge`) and resolves `latest` to the newest version that passes. Name the version — `dsh plugin --profile web add @openviking/dsh-memory-plugin@<version>` — and pnpm installs it and records the exemption in the profile's `pnpm-workspace.yaml`. The installer already pins the version for you |
 | Recall is empty | `curl http://localhost:1933/health`; check the endpoint and that the prompt is longer than the minimum query length (3 characters) |
 | 401 / 403 from OpenViking | Verify `OPENVIKING_API_KEY`; for trusted-mode deployments also verify `OPENVIKING_ACCOUNT` and `OPENVIKING_USER` |
 | Memories from other projects leak in | Set `OPENVIKING_RECALL_PEER_SCOPE=actor` |

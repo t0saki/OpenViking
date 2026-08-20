@@ -991,10 +991,16 @@ install_dsh() {
     warn "$(t 'dsh CLI not found; skipping DeepSeek Harness install.' '未找到 dsh 命令，跳过 DeepSeek Harness 安装。')"
     return 0
   fi
-  # `@latest` rather than a bare name: pnpm keeps an already-satisfying install
-  # when the name carries no version, so a profile holding a dev build would
-  # never fall back to the published package.
-  local profile="${DSH_PROFILE:-$DSH_PROFILE_DEFAULT}" spec="$DSH_PACKAGE@latest" origin="npm" local_dir
+  # Pinned to the exact published version, for two reasons. A bare name lets
+  # pnpm keep an already-satisfying install, so a profile holding a dev build
+  # would never fall back to the published package. And pnpm refuses releases
+  # younger than minimumReleaseAge (24h by default), silently resolving `latest`
+  # to the newest version that passes — a fresh release would install as its
+  # predecessor with no error. Naming the version makes pnpm install it and
+  # record the exemption in the profile's pnpm-workspace.yaml itself.
+  local profile="${DSH_PROFILE:-$DSH_PROFILE_DEFAULT}" spec="$DSH_PACKAGE@latest" origin="npm" local_dir published
+  published="$(npm view "$DSH_PACKAGE" version 2>/dev/null)"
+  [ -n "$published" ] && spec="$DSH_PACKAGE@$published"
   # npm is the bundle's only distribution channel, so the github/tos choice does
   # not apply here; only dev mode installs something other than the published
   # package. It still has to arrive as a real package rather than a link: a
@@ -1050,6 +1056,17 @@ dsh_source_fingerprint() { # dsh_source_fingerprint <plugin-dir>
     dsh_source_files "$dir" | tr '\0' '\n'
     dsh_source_files "$dir" | ( cd "$dir" && xargs -0 cat 2>/dev/null )
   } | dsh_sha256 | cut -c1-12
+}
+
+dsh_profile_dir() { # dsh_profile_dir <profile>
+  printf '%s' "${DSH_HOME:-$HOME/.dsh}/profiles/$1"
+}
+
+dsh_installed_version() { # dsh_installed_version <profile> -> version or ""
+  local manifest
+  manifest="$(dsh_profile_dir "$1")/node_modules/$DSH_PACKAGE/package.json"
+  [ -f "$manifest" ] || return 0
+  "$NODE_BIN" -e "process.stdout.write(require('$manifest').version || '')" 2>/dev/null
 }
 
 dsh_pack_local() { # dsh_pack_local <plugin-dir> -> tarball path
@@ -3387,12 +3404,24 @@ EOF
     fi
   fi
   if contains_harness dsh && command -v dsh >/dev/null 2>&1; then
-    local dsh_profile="${DSH_PROFILE:-$DSH_PROFILE_DEFAULT}"
-    if dsh plugin --profile "$dsh_profile" ls 2>/dev/null | grep -q "$DSH_PACKAGE"; then
-      info "dsh: $DSH_PACKAGE $(t 'installed in profile' '已安装到 profile') $dsh_profile"
+    local dsh_profile="${DSH_PROFILE:-$DSH_PROFILE_DEFAULT}" dsh_installed dsh_latest
+    dsh_installed="$(dsh_installed_version "$dsh_profile")"
+    if [ -n "$dsh_installed" ]; then
+      info "dsh: $DSH_PACKAGE@$dsh_installed $(t 'installed in profile' '已安装到 profile') $dsh_profile"
     else
       warn "dsh: $DSH_PACKAGE $(t 'not found in profile' '未在 profile 中找到') $dsh_profile"
       ok=0
+    fi
+    # pnpm refuses releases younger than minimumReleaseAge (24h by default) and
+    # silently resolves to the newest version that passes instead, so a fresh
+    # release installs as its predecessor with no error anywhere.
+    if [ -n "$dsh_installed" ] && [ "$SOURCE_MODE" != "dev" ]; then
+      dsh_latest="$(npm view "$DSH_PACKAGE" version 2>/dev/null)"
+      if [ -n "$dsh_latest" ] && [ "$dsh_installed" != "$dsh_latest" ]; then
+        warn "dsh: $(t 'installed' '已安装') $dsh_installed, $(t 'but the registry latest is' '但 registry 上最新是') $dsh_latest"
+        warn "dsh: $(t 'pnpm refuses releases younger than minimumReleaseAge (24h by default). Re-run this installer later, or allow it now:' 'pnpm 会拒绝发布不满 minimumReleaseAge（默认 24 小时）的版本。可稍后重跑本安装器，或立即放行：')"
+        warn "     $(dsh_profile_dir "$dsh_profile")/pnpm-workspace.yaml -> minimumReleaseAgeExclude: ['$DSH_PACKAGE@$dsh_latest']"
+      fi
     fi
     if dsh --profile "$dsh_profile" --dump-config 2>/dev/null | grep -q 'openviking-memory'; then
       info "dsh: $(t 'plugin group composed into the profile' '插件组已合入 profile')"
