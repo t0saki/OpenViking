@@ -1,8 +1,8 @@
 import { OpenVikingClient } from "./client.mjs";
 import { resolveConfig } from "./config.mjs";
 import { injectStartupProfile } from "./lifecycle.mjs";
+import { mountOpenVikingMcp } from "./mcp.mjs";
 import { OpenVikingRuntime } from "./runtime.mjs";
-import { registerOpenVikingTools } from "./tools.mjs";
 import { guardVikingUri } from "./uri-guard.mjs";
 
 export const name = "openviking-memory";
@@ -17,8 +17,6 @@ export function apply(ctx, input = {}) {
     () => () => runtime.disposeAll(),
     "openvikingMemory.disposeAll()",
   );
-
-  registerOpenVikingTools(ctx, client, runtime);
 
   ctx.on("agent/session-start", ({ agent }) => {
     agent.ctx.effect(
@@ -53,4 +51,9 @@ export function apply(ctx, input = {}) {
   });
 
   ctx.on("tools/pre-execute", guardVikingUri);
+
+  // Mounted last, and deliberately not awaited: the bridge's apply blocks on
+  // its first tools/list, so a server that accepts the connection but never
+  // answers would otherwise hold up every registration above it.
+  mountOpenVikingMcp(ctx, config);
 }
