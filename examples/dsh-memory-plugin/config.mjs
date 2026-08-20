@@ -1,7 +1,7 @@
 import { buildUserAgent, resolveOpenVikingCredentials } from "./shared/credentials.mjs";
 import { resolveEffectivePeerId } from "./shared/workspace-peer.mjs";
 
-export const PLUGIN_VERSION = "0.1.0";
+export const PLUGIN_VERSION = "0.2.0";
 
 /**
  * Namespace for the bridged OpenViking MCP tools. DSH publishes every MCP tool
