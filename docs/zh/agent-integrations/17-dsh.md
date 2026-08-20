@@ -1,77 +1,86 @@
 # DeepSeek Harness 记忆插件
 
-为 [DeepSeek Harness](https://www.npmjs.com/package/@deepseek-ai/dsh)（`dsh`）接入跨会话长期记忆。该插件是进程内的 Cordis 插件：会话开始时注入 OpenViking 画像，每个模型步骤前做语义召回，实时捕获会话，按 token 阈值 commit，并挂载 OpenViking 的 MCP 工具面。
+为 [DeepSeek Harness](https://www.npmjs.com/package/@deepseek-ai/dsh)（`dsh`）接入跨项目、跨会话的长期记忆。安装后每次对话都会自动召回相关记忆并捕获新内容，模型也会直接拿到 OpenViking 工具和 `openviking-memory` 技能，无需额外配置。
 
-npm 包：[`@openviking/dsh-memory-plugin`](https://www.npmjs.com/package/@openviking/dsh-memory-plugin) · 源码：[examples/dsh-memory-plugin](https://github.com/volcengine/OpenViking/tree/main/examples/dsh-memory-plugin)
-
-## 工作方式
-
-- **会话开始**（`agent/session-start`）通过 `agent.inject()` 注入 OpenViking 画像块与可用记忆索引。
-- **每个步骤**（`agent/pre-step`）用当前步骤输入做语义召回，并把结果作为带来源标记的持久 user 消息追加到同一步骤。它以 `prepend: true` 注册，因此能看到最终成型的消息批次，并排在所有其他贡献者之后追加。
-- **每个事件**（`session/event`）直接从 DSH 事件流捕获 user、assistant 以及（可选的）工具结果消息，无需扒取 transcript。
-- **回合结束**时，待同步 token 超过 `commitTokenThreshold`（默认 `20000`）即 commit，并保留最近 10 条消息在本地上下文中。
-- **工具**来自 OpenViking 的 MCP 工具面，走的是与其他记忆集成同一个 stdio 代理，由 `@deepseek-ai/dsh-mcp-client` 桥接进 DSH，以 `mcp__openviking__search`、`mcp__openviking__read`、`mcp__openviking__remember`、`mcp__openviking__write` 等名字发布给模型——具体有哪些取决于所连服务端。
-- **URI 保护**（`tools/pre-execute`）阻止 DSH 的文件系统与 shell 工具把 `viking://` URI 当作本地路径，并提示模型改用桥接过来的 `mcp__openviking__*` 工具。
-- 写入失败会进入共享的 OpenViking 待写队列，在下次会话开始时重放。
-
-每个 DSH 会话映射为 OpenViking 中的 `dsh-<session-id>`，子 agent 各自拥有独立会话。工作区推导出的 actor peer 按会话解析，并随每个会话级请求发送。
-
-### 为什么召回不走 system prompt
-
-召回以 pre-step user 消息而非 system prompt 段落注入：DSH 中 persona 声明了 `complete: true` 的 preset（自带的 `minimal` 就是）会在组装后把该 persona 恢复为唯一的 prompt 段落，静默丢弃其他所有贡献。pre-step 注入还让每次注入成为可重放、且对压缩可见的会话事件。
-
-### 工具面是怎么挂上去的
-
-插件不再手写一份工具子集，而是把 DSH 自带的 MCP 桥接挂到 `servers/mcp-proxy.mjs` —— Claude Code、Codex、Cursor、OpenCode 启动的是同一个 stdio 代理：模型拿到的就是所连服务端广告的全部工具，服务端升级即可增加工具而无需插件发版。插件解析好的凭证通过子进程环境变量传给代理，profile 里不需要额外的 MCP 配置；桥接本身随 `@deepseek-ai/dsh` 一起安装，也不用额外装包。
-
-由于代理是每个 profile 一个进程，工具调用带的是启动时解析的 actor peer 而非按会话解析；`mcp__openviking__remember` 也是写进服务端一个短生命周期的会话，而不是当前的 `dsh-<session-id>` 消息流——这与 Claude Code、Codex、Cursor 几个集成的行为一致。召回、捕获、commit 不受影响，仍按每个会话自己的工作区解析 peer。若一个进程要服务多个工作区且需要精确归属工具调用，请显式设置 `OPENVIKING_PEER_ID`。
-
-启动失败是被兜住的：即使服务端的 MCP 端点连不上，召回、捕获、commit 照常工作，桥接自己会重连。
-
-## 前置条件
-
-- `@deepseek-ai/dsh` `0.1.0-rc.6` —— 请安装这个精确版本，`@deepseek-ai/dsh-*` 各包的预发布 tag 并非同步发布
-- Node.js `^22.19.0` 或 `>=24`
-- 一个可访问的 OpenViking HTTP 服务 —— 用 `curl http://localhost:1933/health` 验证
+源码：[examples/dsh-memory-plugin](https://github.com/volcengine/OpenViking/tree/main/examples/dsh-memory-plugin)
 
 ## 安装
 
-把已发布的包装入 profile（默认 profile 是 `web`）：
+DSH 与其他记忆插件共用同一个安装器。它会依次询问语言（English/中文）、要安装的 harness、下载源和 OpenViking 凭据；每一步都是幂等的，重复运行完全安全。
 
 ```bash
-dsh plugin --profile web add @openviking/dsh-memory-plugin
+bash <(curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/main/examples/memory-plugin-shared/install.sh)
 ```
 
-或从 OpenViking 仓库检出安装：
+GitHub 访问困难的地区，可以从火山引擎 TOS 镜像运行同一个安装器（或在下载源选项里选「TOS 镜像」）：
 
 ```bash
-git clone https://github.com/volcengine/OpenViking.git
-cd OpenViking
-dsh plugin --profile web add ./examples/dsh-memory-plugin
+bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/memory-plugin-shared/install.sh)
 ```
 
-包内自带的 `cordis.patch.yml` 会把运行时挂载到一个 Cordis 插件组中，并隔离 `openvikingMemory` 服务。确认已生效：
+选择 DSH 后，安装器会询问装到哪个 profile，默认 `web`。也可以用 `--dsh-profile <name>` 提前指定。
 
-```bash
-dsh --profile web --dump-config
-```
+用一段时间后，开一个新会话问问之前提过的事情——它会记得。
 
-DSH 不在统一记忆插件安装器的覆盖范围内，`dsh plugin add` 就是安装方式。
+<details>
+<summary><b>手动安装</b></summary>
 
-## 配置
+1. **配置连接** —— 写 `~/.openviking/ovcli.conf`（`url`、`api_key`，可选 `account`/`user`），或设置 `OPENVIKING_URL` 和 `OPENVIKING_API_KEY`。如果用纯本地模式（`http://127.0.0.1:1933`，无鉴权），这步可以跳过，插件默认就指向本地。
 
-凭证解析顺序为 `OPENVIKING_*` 环境变量 → `~/.openviking/ovcli.conf` → `~/.openviking/ov.conf`，与 Claude Code、Codex、OpenCode、pi 插件共用同一条链路。
+2. **把插件装进 profile**：
 
-| 变量 | 用途 |
-|------|------|
-| `OPENVIKING_URL` / `OPENVIKING_BASE_URL` | 服务端点（默认 `http://127.0.0.1:1933`） |
-| `OPENVIKING_API_KEY` / `OPENVIKING_BEARER_TOKEN` | Bearer 凭证 |
-| `OPENVIKING_ACCOUNT` / `OPENVIKING_USER` | 可信模式下的 account 与 user |
-| `OPENVIKING_PEER_ID` | 显式指定 actor peer |
-| `OPENVIKING_WORKSPACE_PEER` | 按 DSH 会话工作区推导 peer（默认开启） |
-| `OPENVIKING_RECALL_PEER_SCOPE` | `all` 跨工作区召回，`actor` 隔离召回 |
+   ```bash
+   dsh plugin --profile web add @openviking/dsh-memory-plugin
+   ```
 
-行为参数写在 Cordis patch 条目里：
+   `dsh plugin` 会转发给 profile 目录下的 pnpm，所以任何 profile 名都可以；`web` 是 `dsh` 首次运行时自动创建的那个。
+
+3. **确认 profile 已生效**：
+
+   ```bash
+   dsh --profile web --dump-config
+   ```
+
+   输出里应该能看到 `openviking-memory` 插件组。
+
+> 还没有 `ovcli.conf`？见[部署指南 → CLI](../guides/03-deployment.md#cli)。
+>
+> 卸载：`dsh plugin --profile web rm @openviking/dsh-memory-plugin`。
+
+</details>
+
+## 验证
+
+启动 `dsh --profile web` 打开一个会话，会话开头应该能看到一条 OpenViking 上下文注入，模型也应该具备 `mcp__openviking__*` 工具。问一句更早会话里聊过的事，确认召回生效。
+
+如果什么都没有，设置 `OV_DEBUG_LOG=/tmp/ov-dsh.log` 后查看该文件。
+
+## 工作方式
+
+插件以 Cordis 插件的形式跑在 DSH 进程内，而不是外挂 hook，因此能贴着会话走。会话开始时注入 OpenViking 画像块和可用记忆索引；每个模型步骤前用当前输入做语义检索，把结果作为持久消息追加到同一步骤——因此注入会随会话重放，也对压缩可见。它直接从 DSH 的事件流捕获 user、assistant 以及（可选的）工具结果消息，待同步 token 超过阈值即 commit，并保留最近十条消息在本地上下文中。写入失败会进入待写队列，在下次会话开始时重放。
+
+每个 DSH 会话映射为 OpenViking 中的 `dsh-<session-id>`，子 agent 各自拥有独立会话。
+
+模型看到的工具面就是 OpenViking 的 MCP 工具集，经由与其他记忆集成相同的 stdio 代理接入，以 `mcp__openviking__` 前缀发布。由于该代理每个 profile 只起一个进程，`mcp__openviking__remember` 写入的是服务端一个短生命周期的会话而不是当前会话（对话本身仍由自动捕获记录），工具调用带的也是启动时解析的 actor peer。若一个进程要服务多个工作区且需要精确归属工具调用，请显式设置 `OPENVIKING_PEER_ID`。插件同时附带共享的 `openviking-memory` 技能，让模型知道何时该检索、读取和写入。
+
+误把 `viking://` URI 当本地路径的文件或 shell 调用会被拦截，并提示改用对应的 OpenViking 工具。
+
+<details>
+<summary><b>配置</b></summary>
+
+凭证解析顺序为 `OPENVIKING_*` 环境变量 → `~/.openviking/ovcli.conf` → `~/.openviking/ov.conf`，与 Claude Code、Codex、OpenCode、pi 共用同一条链路；这些文件变更后会自动重载。
+
+| 环境变量 | 默认值 | 说明 |
+|---------|--------|------|
+| `OPENVIKING_URL` / `OPENVIKING_BASE_URL` | `http://127.0.0.1:1933` | 服务端点 |
+| `OPENVIKING_API_KEY` / `OPENVIKING_BEARER_TOKEN` | — | API Key（以 `Authorization: Bearer` 发送） |
+| `OPENVIKING_ACCOUNT` / `OPENVIKING_USER` | — | 可信模式下的 account 与 user |
+| `OPENVIKING_PEER_ID` | — | 显式指定 actor peer |
+| `OPENVIKING_WORKSPACE_PEER` | `true` | 按每个会话的工作区推导 peer |
+| `OPENVIKING_RECALL_PEER_SCOPE` | `all` | 设为 `actor` 可将召回限制在当前工作区 |
+| `OV_DEBUG_LOG` | — | 把调试日志写到该路径 |
+
+行为参数写在 profile 的 Cordis patch 条目里：
 
 ```yaml
 - insert:
@@ -84,33 +93,27 @@ DSH 不在统一记忆插件安装器的覆盖范围内，`dsh plugin add` 就�
         - id: openviking-memory-runtime
           name: '@openviking/dsh-memory-plugin'
           config:
-            endpoint: http://127.0.0.1:1933
             recallTokenBudget: 2000
             scoreThreshold: 0.35
             captureToolResults: false
             commitTokenThreshold: 20000
-            mcpToolCallTimeoutMs: 60000
 ```
 
-patch 中写的凭证优先于环境变量；行为开关则优先读环境变量。
+patch 中写的凭证优先于环境变量；行为开关则优先读环境变量。完整参数列表见[插件 README](https://github.com/volcengine/OpenViking/tree/main/examples/dsh-memory-plugin)。
 
-## 验证
-
-启动 `dsh --profile web`，提一句你在更早会话里说过的事，看回答是否用上了那条记忆。`dsh --profile web --dump-config` 可以确认插件组是否挂载；设置 `OV_DEBUG_LOG=/tmp/ov-dsh.log` 可以追踪召回与捕获的决策过程。
+</details>
 
 ## 常见问题
 
 | 现象 | 排查方向 |
 |------|----------|
-| 插件没加载 | `dsh --profile web --dump-config` 里应能看到 `openviking-memory`；重新执行 `dsh plugin --profile web add …` |
+| 没有注入，也没有 OpenViking 工具 | `dsh --profile web --dump-config` 里应能看到 `openviking-memory`；重新运行安装器或 `dsh plugin --profile web add …` |
+| 装到了错误的 profile | 安装器默认 `web`；用 `--dsh-profile <name>` 重新运行 |
 | 安装时报 `ERESOLVE` | `@deepseek-ai/dsh-*` 各包预发布 tag 不同步；请精确安装 `@deepseek-ai/dsh@0.1.0-rc.6` |
-| 召不回任何内容 | `curl http://localhost:1933/health`；检查端点配置，以及 prompt 是否长于 `minQueryLength`（默认 3） |
-| 模型看不到 `mcp__openviking__*` 工具 | 桥接会兜住启动失败——看 DSH 日志里的 `mcp-client(openviking)`，并设 `OV_DEBUG_LOG=/tmp/ov-dsh.log` 追踪代理 |
+| 召不回任何内容 | `curl http://localhost:1933/health`；检查端点配置，以及 prompt 是否长于最小查询长度（3 个字符） |
 | OpenViking 返回 401 / 403 | 检查 `OPENVIKING_API_KEY`；可信模式部署还要检查 `OPENVIKING_ACCOUNT` 与 `OPENVIKING_USER` |
 | 串入了其他项目的记忆 | 设置 `OPENVIKING_RECALL_PEER_SCOPE=actor` |
 | 崩溃后没有 commit | commit 由 token 阈值和 teardown 触发；排队的写入会在下次会话开始时重放 |
-
-完整的工具、配置与发布说明见[插件 README](https://github.com/volcengine/OpenViking/tree/main/examples/dsh-memory-plugin)。
 
 ## 延伸阅读
 

@@ -101,6 +101,7 @@ test("apply mounts the tool surface instead of registering tools itself", () => 
   }, { endpoint: "http://127.0.0.1:1933", workspacePeer: false });
 
   assert.deepEqual(registered, []);
-  assert.equal(mounted.length, 1);
-  assert.equal(mounted[0].config.env.OPENVIKING_URL, "http://127.0.0.1:1933");
+  const bridge = mounted.find(entry => entry.plugin.name === "mcp-client");
+  assert.ok(bridge, "the MCP bridge must be mounted");
+  assert.equal(bridge.config.env.OPENVIKING_URL, "http://127.0.0.1:1933");
 });

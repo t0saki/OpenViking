@@ -1,77 +1,86 @@
 # DeepSeek Harness Memory Bundle
 
-Give [DeepSeek Harness](https://www.npmjs.com/package/@deepseek-ai/dsh) (`dsh`) cross-session long-term memory. The bundle is an in-process Cordis plugin: it injects your OpenViking profile at session start, retrieves before every model step, captures the session as it happens, commits on a token threshold, and mounts the OpenViking MCP tool surface.
+Give [DeepSeek Harness](https://www.npmjs.com/package/@deepseek-ai/dsh) (`dsh`) cross-project and cross-session long-term memory. Once installed, every conversation automatically recalls relevant memories and captures new content, and the model gets the OpenViking tools and the `openviking-memory` skill without any extra setup.
 
-Package: [`@openviking/dsh-memory-plugin`](https://www.npmjs.com/package/@openviking/dsh-memory-plugin) · Source: [examples/dsh-memory-plugin](https://github.com/volcengine/OpenViking/tree/main/examples/dsh-memory-plugin)
-
-## How it works
-
-- **Session start** (`agent/session-start`) injects your OpenViking profile block and the available-memory index through `agent.inject()`.
-- **Every step** (`agent/pre-step`) runs semantic recall against the step input and appends the result to that same step as a durable, source-attributed user message. It runs with `prepend: true` so it sees the final claimed batch and appends after every other contributor.
-- **Every event** (`session/event`) captures user, assistant, and — when enabled — tool-result messages directly from DSH's event stream, with no transcript scraping.
-- **Turn end** commits to OpenViking once pending tokens cross `commitTokenThreshold` (default `20000`), keeping the 10 most recent messages live.
-- **Tools** come from the OpenViking MCP surface through the same stdio proxy the other memory integrations use, bridged into DSH by `@deepseek-ai/dsh-mcp-client` and published to the model as `mcp__openviking__search`, `mcp__openviking__read`, `mcp__openviking__remember`, `mcp__openviking__write`, and the rest of what the connected server advertises.
-- **URI guard** (`tools/pre-execute`) blocks DSH filesystem and shell tools from treating a `viking://` URI as a local path, pointing the model at the bridged `mcp__openviking__*` tools instead.
-- Failed writes land in the shared OpenViking pending queue and replay at the next session start.
-
-Each DSH session maps to `dsh-<session-id>` in OpenViking; every subagent gets its own session. Workspace-derived actor peers resolve per session and travel on every session-specific request.
-
-### Why recall bypasses the system prompt
-
-Recall enters as pre-step user messages rather than system-prompt sections because a DSH preset whose persona declares `complete: true` (the stock `minimal` preset does) restores that persona as the sole prompt section after assembly, silently discarding every other contribution. Pre-step injection also makes each injection a replayable session event that compaction can see.
-
-### How the tool surface is mounted
-
-The bundle mounts DSH's own MCP bridge on `servers/mcp-proxy.mjs` — the same stdio proxy Claude Code, Codex, Cursor, and OpenCode start — instead of hand-registering a tool subset, so the model gets whatever the connected server advertises and a server upgrade adds tools without a plugin release. The bundle's resolved credentials reach the proxy through the child environment, so no MCP configuration is needed in the profile, and the bridge ships with `@deepseek-ai/dsh` itself — there is nothing extra to install.
-
-Because the proxy is one process per profile, tool calls carry the actor peer resolved at boot rather than per session, and `mcp__openviking__remember` stores into a short-lived server-side session rather than the live `dsh-<session-id>` stream — the same behavior the Claude Code, Codex, and Cursor integrations have. Recall, capture, and commit are unaffected: they still resolve a peer from each session's own workspace. Set `OPENVIKING_PEER_ID` when one process serves several workspaces and tool calls need exact attribution.
-
-Startup failure is contained: recall, capture, and commit keep working against a server whose MCP endpoint is unreachable, and the bridge reconnects on its own.
-
-## Prerequisites
-
-- `@deepseek-ai/dsh` `0.1.0-rc.6` — install that exact release; the `@deepseek-ai/dsh-*` prerelease tags are not published in lockstep
-- Node.js `^22.19.0` or `>=24`
-- An OpenViking HTTP server — verify with `curl http://localhost:1933/health`
+Source: [examples/dsh-memory-plugin](https://github.com/volcengine/OpenViking/tree/main/examples/dsh-memory-plugin)
 
 ## Install
 
-Add the published package to a profile (`web` is the default profile):
+DSH shares the installer with the other memory plugins. It asks for your language (English/中文), which harnesses to install, the download source, and your OpenViking credentials; every step is idempotent—re-running it is entirely safe.
 
 ```bash
-dsh plugin --profile web add @openviking/dsh-memory-plugin
+bash <(curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/main/examples/memory-plugin-shared/install.sh)
 ```
 
-From an OpenViking repository checkout instead:
+In regions where GitHub is hard to reach, run the same installer from the Volcengine TOS mirror (or pick "TOS mirror" at the download-source prompt):
 
 ```bash
-git clone https://github.com/volcengine/OpenViking.git
-cd OpenViking
-dsh plugin --profile web add ./examples/dsh-memory-plugin
+bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/memory-plugin-shared/install.sh)
 ```
 
-The package ships a `cordis.patch.yml` that mounts the runtime inside a Cordis plugin group with an isolated `openvikingMemory` service. Confirm it landed:
+When DSH is selected, the installer asks which profile to install into and defaults to `web`. Pass `--dsh-profile <name>` to answer it up front.
 
-```bash
-dsh --profile web --dump-config
-```
+After using it for a while, start a new conversation and ask about something you mentioned earlier—it will remember.
 
-DSH is not covered by the unified memory-plugin installer; `dsh plugin add` is the install path.
+<details>
+<summary><b>Manual setup</b></summary>
 
-## Configure
+1. **Configure the connection** — write `~/.openviking/ovcli.conf` (`url`, `api_key`, optional `account`/`user`), or set `OPENVIKING_URL` and `OPENVIKING_API_KEY`. Using pure local mode (`http://127.0.0.1:1933`, no authentication)? Skip this—the bundle defaults to the local setup.
 
-Credentials resolve from `OPENVIKING_*` environment variables, then `~/.openviking/ovcli.conf`, then `~/.openviking/ov.conf` — the same chain the Claude Code, Codex, OpenCode, and pi plugins use.
+2. **Add the bundle to a profile**:
 
-| Variable | Purpose |
-|----------|---------|
-| `OPENVIKING_URL` / `OPENVIKING_BASE_URL` | Server endpoint (default `http://127.0.0.1:1933`) |
-| `OPENVIKING_API_KEY` / `OPENVIKING_BEARER_TOKEN` | Bearer credential |
-| `OPENVIKING_ACCOUNT` / `OPENVIKING_USER` | Trusted-mode account and user |
-| `OPENVIKING_PEER_ID` | Explicit actor peer |
-| `OPENVIKING_WORKSPACE_PEER` | Derive a peer from each DSH session workspace (default on) |
-| `OPENVIKING_RECALL_PEER_SCOPE` | `all` for cross-workspace recall, `actor` for isolation |
+   ```bash
+   dsh plugin --profile web add @openviking/dsh-memory-plugin
+   ```
 
-Behavior knobs go in the Cordis patch entry:
+   `dsh plugin` forwards to pnpm inside the profile directory, so any profile name works; `web` is the one `dsh` creates for you on first use.
+
+3. **Check that the profile picked it up**:
+
+   ```bash
+   dsh --profile web --dump-config
+   ```
+
+   The output should contain an `openviking-memory` plugin group.
+
+> Don't have `ovcli.conf` yet? See the [Deployment Guide → CLI](../guides/03-deployment.md#cli).
+>
+> To remove it: `dsh plugin --profile web rm @openviking/dsh-memory-plugin`.
+
+</details>
+
+## Verify
+
+Start `dsh --profile web` and open a conversation. You should see an OpenViking context injection at the top of the session, and the model should have `mcp__openviking__*` tools available. Ask it about something from an earlier session to confirm recall.
+
+If nothing appears, set `OV_DEBUG_LOG=/tmp/ov-dsh.log` and check that file.
+
+## How it works
+
+The bundle runs inside DSH as a Cordis plugin rather than as external hooks, so it follows the session in-process. At session start it injects your OpenViking profile block and an index of available memories. Before every model step it searches OpenViking with the current input and appends what it finds to that step as a durable message, so the injection replays with the session and is visible to compaction. It captures user, assistant, and (optionally) tool-result messages straight from DSH's event stream, and commits to OpenViking once pending tokens cross the threshold, keeping the ten most recent messages live. Writes that fail land in a pending queue and replay at the next session start.
+
+Each DSH session maps to `dsh-<session-id>` in OpenViking, and every subagent gets its own session.
+
+The model-facing surface is the OpenViking MCP tool set, reached through the same stdio proxy the other memory integrations use and published under an `mcp__openviking__` prefix. Because that proxy runs once per profile, `mcp__openviking__remember` stores into a short-lived server-side session rather than the current one—automatic capture still records the conversation itself—and tool calls carry the actor peer resolved at startup. Set `OPENVIKING_PEER_ID` when one process serves several workspaces and tool calls need exact attribution. The bundle also ships the shared `openviking-memory` skill, so the model knows when to search, read, and write.
+
+Accidental filesystem or shell calls on `viking://` URIs are blocked with a hint pointing at the right OpenViking tool.
+
+<details>
+<summary><b>Configuration</b></summary>
+
+Credentials resolve from `OPENVIKING_*` environment variables, then `~/.openviking/ovcli.conf`, then `~/.openviking/ov.conf` — the same chain the Claude Code, Codex, OpenCode, and pi integrations use. The bundle reloads them when those files change.
+
+| Env Var | Default | Description |
+|---------|---------|-------------|
+| `OPENVIKING_URL` / `OPENVIKING_BASE_URL` | `http://127.0.0.1:1933` | Server endpoint |
+| `OPENVIKING_API_KEY` / `OPENVIKING_BEARER_TOKEN` | — | API key (sent as `Authorization: Bearer`) |
+| `OPENVIKING_ACCOUNT` / `OPENVIKING_USER` | — | Trusted-mode account and user |
+| `OPENVIKING_PEER_ID` | — | Explicit actor peer |
+| `OPENVIKING_WORKSPACE_PEER` | `true` | Derive a peer from each session's workspace |
+| `OPENVIKING_RECALL_PEER_SCOPE` | `all` | `actor` isolates recall to the current workspace |
+| `OV_DEBUG_LOG` | — | Write debug logs to this path |
+
+Behavior knobs live in the profile's Cordis patch entry:
 
 ```yaml
 - insert:
@@ -84,33 +93,27 @@ Behavior knobs go in the Cordis patch entry:
         - id: openviking-memory-runtime
           name: '@openviking/dsh-memory-plugin'
           config:
-            endpoint: http://127.0.0.1:1933
             recallTokenBudget: 2000
             scoreThreshold: 0.35
             captureToolResults: false
             commitTokenThreshold: 20000
-            mcpToolCallTimeoutMs: 60000
 ```
 
-Credentials given in the patch win over the environment; behavior toggles read from the environment first.
+Credentials given in the patch win over the environment; behavior toggles read the environment first. The full list is documented in the [bundle README](https://github.com/volcengine/OpenViking/tree/main/examples/dsh-memory-plugin).
 
-## Verify
-
-Start `dsh --profile web`, mention something you told it in an earlier session, and confirm the answer draws on that memory. `dsh --profile web --dump-config` shows whether the plugin group is mounted; set `OV_DEBUG_LOG=/tmp/ov-dsh.log` to trace recall and capture decisions.
+</details>
 
 ## Troubleshooting
 
 | Issue | What to check |
 |-------|---------------|
-| Plugin does not load | `dsh --profile web --dump-config` should list `openviking-memory`; re-run `dsh plugin --profile web add …` |
+| Nothing injected, no OpenViking tools | `dsh --profile web --dump-config` should list `openviking-memory`; re-run the installer or `dsh plugin --profile web add …` |
+| Installed into the wrong profile | The installer defaults to `web`; re-run it with `--dsh-profile <name>` |
 | `ERESOLVE` during install | The `@deepseek-ai/dsh-*` prerelease tags drift apart; install `@deepseek-ai/dsh@0.1.0-rc.6` exactly |
-| Nothing is recalled | `curl http://localhost:1933/health`; check the endpoint and that the prompt is longer than `minQueryLength` (default 3) |
-| No `mcp__openviking__*` tools offered | The bridge contains startup failures — check the DSH log for `mcp-client(openviking)`, and set `OV_DEBUG_LOG=/tmp/ov-dsh.log` to trace the proxy |
+| Recall is empty | `curl http://localhost:1933/health`; check the endpoint and that the prompt is longer than the minimum query length (3 characters) |
 | 401 / 403 from OpenViking | Verify `OPENVIKING_API_KEY`; for trusted-mode deployments also verify `OPENVIKING_ACCOUNT` and `OPENVIKING_USER` |
 | Memories from other projects leak in | Set `OPENVIKING_RECALL_PEER_SCOPE=actor` |
-| Nothing was committed after a crash | Commit happens on a token threshold and on teardown; queued writes replay at the next session start |
-
-For the full tool, configuration, and release reference, see the [bundle README](https://github.com/volcengine/OpenViking/tree/main/examples/dsh-memory-plugin).
+| Nothing committed after a crash | Commit runs on a token threshold and at teardown; queued writes replay at the next session start |
 
 ## See also
 

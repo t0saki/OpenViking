@@ -54,6 +54,7 @@ const SKILL_TARGETS = [
       join(ROOT, "examples", "codex-memory-plugin", "skills"),
       join(ROOT, "examples", "claude-code-memory-plugin", "skills"),
       join(ROOT, "examples", "cursor-memory-plugin", "skills"),
+      join(ROOT, "examples", "dsh-memory-plugin", "skills"),
     ],
   },
 ];

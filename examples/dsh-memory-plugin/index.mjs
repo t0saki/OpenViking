@@ -3,6 +3,7 @@ import { resolveConfig } from "./config.mjs";
 import { injectStartupProfile } from "./lifecycle.mjs";
 import { mountOpenVikingMcp } from "./mcp.mjs";
 import { OpenVikingRuntime } from "./runtime.mjs";
+import { mountOpenVikingSkills } from "./skills.mjs";
 import { guardVikingUri } from "./uri-guard.mjs";
 
 export const name = "openviking-memory";
@@ -56,4 +57,5 @@ export function apply(ctx, input = {}) {
   // its first tools/list, so a server that accepts the connection but never
   // answers would otherwise hold up every registration above it.
   mountOpenVikingMcp(ctx, config);
+  mountOpenVikingSkills(ctx);
 }
