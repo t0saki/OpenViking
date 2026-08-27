@@ -11,13 +11,16 @@ description: >
   installing/updating the plugin or switching servers/keys, or when the user
   asks for the plugin's status. Trigger phrases include "memory not working",
   "check OpenViking", "plugin status", "记忆没生效", "插件状态", "连不上
-  OpenViking", "recall 为空", "401". Not for server-side health (embedding,
-  VLM, storage) — that is `ov doctor`.
+  OpenViking", "recall 为空", "401", "0 memories
+  extracted". When the server runs on this machine (loopback url) it also
+  covers the server side: ov.conf startup blockers, the server process and
+  port, workspace, server log and `GET /ready`; provider-level validation
+  stays with `openviking-server doctor`.
 ---
 
 # OpenViking Memory Doctor (Codex)
 
-Client-side troubleshooting for the OpenViking memory plugin. Three things go
+Troubleshooting for the OpenViking memory plugin. Three things go
 wrong on a user's machine, each silently:
 
 - **Install** — marketplace registration, `[plugins."openviking-memory@openviking"]`
@@ -31,9 +34,15 @@ wrong on a user's machine, each silently:
 - **Connection** — `/health` answers 200 even with a bad key, so everything
   can look reachable while every real request 401s.
 
-Server-side problems (embedding/VLM misconfiguration, storage, "0 memories
-extracted") are outside this skill: point the user at `ov doctor` on the
-server host or at their OpenViking admin.
+When the resolved url is loopback, the server runs on this machine and the
+doctor adds a **Server health** section: ov.conf lint for what stops the
+server from starting, the server process and who owns the port (native or
+docker), the workspace and its vector index vs the configured embedding, the
+server log, and `GET /ready` — the server's own per-subsystem verdict
+(agfs, vectordb, api keys, embedding, ollama). For a remote server only
+`/ready` is probed. Provider-level validation (live embedding probe, native
+engine, disk) stays with `openviking-server doctor`, which runs in the
+server's Python environment.
 
 ## Step 1 — run the doctor
 
@@ -52,8 +61,9 @@ or to a source checkout's `examples/codex-memory-plugin`.
 Options: `--json` (machine-readable), `--offline` (skip network probes),
 `--timeout <ms>` (per probe, default 5000), `--no-color`.
 
-The report has five sections — Environment, Plugin install, Configuration,
-Connection, Recent activity — and a Summary listing every ✗/⚠ with a fix.
+The report has six sections — Environment, Plugin install, Configuration,
+Connection, Server health, Recent activity — and a Summary listing every ✗/⚠
+with a fix.
 Read the whole report before acting: one root cause usually shows up in
 several sections (a bad key → "api key rejected" + "system/status → 401").
 
@@ -92,6 +102,18 @@ Work top-down; fix the first ✗ and rerun before chasing the next.
 | `proxy variables set` + curl works but hooks fail | Node's fetch ignores `HTTP(S)_PROXY`; no CA handling | `NODE_USE_ENV_PROXY=1` or `NODE_EXTRA_CA_CERTS=<ca.pem>` in the environment that launches Codex. |
 | `no session has ever captured a turn` / idle sessions piling up | Stop hook runs but writes fail, or commits fail | Fix the Connection findings; state files are kept and replay when the server is back. |
 | `MCP proxy last started against <other url>` | The proxy is a long-lived process; a changed url only takes effect after restart | Restart Codex. |
+| `ov.conf has a top-level 'claude_code' block` / `'codex' block` / `server.url is rejected` | Plugin-only keys in the server's own config; the server refuses to start at its next restart (`Unknown config field` / `Extra inputs are not permitted`) | Move them to ovcli.conf (`plugin.<harness>`, `url`) and delete them from ov.conf. Ignore only if this ov.conf never starts a server. |
+| `auth mode resolves to 'dev' but server.host is '0.0.0.0'` / `root_api_key is an empty string` | Startup blockers — the server exits before it listens | Set `server.root_api_key` (api_key mode) or bind to 127.0.0.1; use `null`, never `""`. |
+| `the plugin talks to port X, but this ov.conf starts the server on port Y` | The server on X runs from another config file or `--port` | Inspect that config (its `--config` / `OPENVIKING_CONFIG_FILE`), or align `server.port` with the url. |
+| `nothing listens on port … — the server is not running` | Server down or never started; a stale `.openviking.pid` means it died | Start it (`openviking-server`; first time `openviking-server init`) in a terminal and read the startup output. Ask before restarting a server the user runs. |
+| `vector index was built with dimension N … ov.conf now says M` | Embedding model changed on an existing workspace — the server refuses to start after a restart (`EmbeddingRebuildRequiredError`) | Restore the previous model, or point `storage.workspace` at a fresh directory and re-ingest. |
+| `/ready: embedding → error …` | The running server cannot call its embedding provider: recall searches nothing, commits extract nothing | Fix `embedding.*` (api_key/api_base/model) in ov.conf and restart; `openviking-server doctor` prints the provider's reply. |
+| `/ready: vectordb → …` / `/ready: agfs → …` | Storage broken: disk full, two servers on one workspace, corrupted index | Server log; stop the duplicate; free disk. |
+| `server is still initializing (503 /ready)` | First start downloads a local embedding model, or init is slow | Wait and rerun; if it never finishes, the server log. |
+| `server log shows a fatal startup error` / `server errors in the last day of logging` | `log.output: "file"` captured the failure | Fix the cause the line names (port in use, workspace locked by another pid, auth health check, provider 401). |
+| `no vlm section` | Turns are captured but never extracted into memories | Add `vlm.provider/model/api_key` to ov.conf and restart. |
+| `docker container is up but has no ov.conf` | Official image started without a config mount (every request 503s) | Mount `~/.openviking` at `/app/.openviking`, or `docker exec -it openviking openviking-server init`. |
+| `container mounts … at /app/.openviking, not ~/.openviking` | The container reads a different ov.conf than the one on this machine | Edit the mounted copy, or re-run the container with `-v ~/.openviking:/app/.openviking`. |
 
 More symptoms, exact error strings and log stage names: [reference.md](reference.md).
 
@@ -132,6 +154,22 @@ same `~/.openviking/ovcli.conf` (they show account/user/role for the key).
 `ov config list` reveals whether a different profile was switched in with
 `ov config switch` — that retargets the plugin too, unless env vars win.
 
+Server side (only meaningful when the server runs on this machine):
+
+```bash
+curl -sS "$URL/ready"                       # agfs / vectordb / api_key_manager / embedding (live probe, ≤10s) / ollama
+openviking-server doctor                    # in the server's own environment: config, native engine, embedding probe, VLM key, disk
+lsof -nP -iTCP:1933 -sTCP:LISTEN            # who owns the port
+docker logs --tail 100 openviking           # container deployments
+```
+
+`log.output` defaults to stdout, so the server log is the terminal/tmux pane
+it runs in, the nohup file, `journalctl -u openviking`, or `docker logs`;
+with `"file"` it is `<storage.workspace>/log/openviking.log`. A server that
+exits at startup prints the reason right there — running `openviking-server`
+in the foreground is the quickest way to see it. It is the user's process:
+ask before stopping or restarting it.
+
 ## Fixing
 
 - Edit `~/.openviking/ovcli.conf` only with the user's agreement; show the
@@ -159,8 +197,12 @@ same `~/.openviking/ovcli.conf` (they show account/user/role for the key).
   `ovcli.conf`; on a fresh machine write the file directly or re-run the installer.
 - `/health` returning 200 proves reachability only. Auth is proven by the
   identity fields with a key, or by `/api/v1/system/status`.
-- `ov doctor` checks the server host's own config; it says nothing about this
-  plugin.
+- `ov doctor` is `openviking-server doctor`: it validates the server's own
+  config and providers in the server's Python environment, makes a live
+  embedding call, and says nothing about this plugin. Run it for provider-level
+  failures, not first.
+- The doctor only reads. Never stop, restart or `kill` the user's server, or
+  edit `ov.conf`, without asking.
 - Older proxy versions say "check that 'ov serve' is running" — there is no
   such command; the server is started with `openviking-server`.
 - Do not read `~/.openviking/state/*.json` for a Codex verdict — those files

@@ -299,7 +299,7 @@ Start with the bundled doctor — it checks the install (marketplace, `config.to
 node "$(ls -d ~/.codex/plugins/cache/openviking/openviking-memory/*/ | sort -V | tail -1)scripts/ov-memory-doctor.mjs"
 ```
 
-Or invoke the `$ov-memory-doctor` skill in Codex, which runs the same script and walks the report. Server-side health (embedding, VLM, storage) is `ov doctor`'s job.
+Or invoke the `$ov-memory-doctor` skill in Codex, which runs the same script and walks the report. When the server runs on the same machine (loopback url) the report adds a Server health section — ov.conf startup blockers, the server process and port, workspace, server log and `GET /ready`; provider-level validation (live embedding probe, native engine, disk) stays with `openviking-server doctor`.
 
 ## Plugin Structure
 
@@ -314,10 +314,10 @@ codex-memory-plugin/
 ├── skills/
 │   ├── openviking-memory/       # How to use the memory tools
 │   ├── ov-experience-memory/
-│   └── ov-memory-doctor/        # Install / config / connection troubleshooting
+│   └── ov-memory-doctor/        # Install / config / connection / local-server troubleshooting
 ├── scripts/
 │   ├── config.mjs               # Shared config loader (ovcli.conf + env)
-│   ├── ov-memory-doctor.mjs     # Client-side diagnostics ($ov-memory-doctor skill)
+│   ├── ov-memory-doctor.mjs     # Diagnostics script ($ov-memory-doctor skill)
 │   ├── capture-utils.mjs        # Transcript text extraction, filtering, tool compression
 │   ├── debug-log.mjs            # Structured JSONL logger
 │   ├── recall-compressor-profile.mjs # Compressor profile detection/cache

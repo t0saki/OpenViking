@@ -1,17 +1,26 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
 import {
   assessProbes,
+  assessReady,
   classifyFetchError,
   createReport,
   describeApiKey,
+  effectiveServerAuthMode,
   inspectJsonFile,
+  isPlaceholderSecret,
   lintBaseUrl,
+  lintServerConf,
+  readCollectionMeta,
+  readyCheckState,
   scanDebugLog,
+  scanServerLog,
+  serverLogTarget,
+  serverWorkspace,
   unknownOvcliKeys,
 } from "./lib/doctor-core.mjs";
 
@@ -141,4 +150,129 @@ test("report render lists problems in the summary and sets the exit code", () =>
   assert.match(text, /== Summary ==\n  1 failure\(s\), 1 warning\(s\)/);
   assert.match(text, /✗ bad → do that/);
   assert.match(text, /⚠ meh → do this/);
+});
+
+test("lintServerConf flags what stops a local server from starting", () => {
+  const findings = lintServerConf({
+    _comment: "from the example",
+    claude_code: { enabled: true },
+    server: { host: "0.0.0.0", port: 1933, url: "http://x", workers: 2, root_api_key: "" },
+    storage: { workspace: "./data", vectordb: { dimension: 768 } },
+    embedding: { dense: { provider: "ollama", model: "nomic-embed-text", api_base: "http://localhost:11434", dimension: 1024, api_key: "$UNSET_DOCTOR_TEST_VAR" } },
+  }, { baseUrl: "http://127.0.0.1:1934", env: {} });
+  const messages = findings.map((f) => `${f.level}:${f.message}`);
+  const has = (level, re) => assert.ok(messages.some((m) => m.startsWith(`${level}:`) && re.test(m)), `missing ${level} ${re}\n${messages.join("\n")}`);
+  has("warn", /'claude_code' block/);
+  has("warn", /server\.url is rejected/);
+  has("warn", /template keys.*_comment/);
+  has("fail", /root_api_key is an empty string/);
+  has("fail", /auth mode resolves to 'dev' but server\.host is '0\.0\.0\.0'/);
+  has("warn", /talks to port 1934, but this ov\.conf starts the server on port 1933/);
+  has("warn", /workspace '\.\/data' is relative/);
+  has("warn", /\$UNSET_DOCTOR_TEST_VAR, which is unset/);
+  has("warn", /lacks the \/v1 suffix/);
+  has("warn", /vectordb\.dimension \(768\) differs/);
+  has("warn", /no vlm section/);
+  has("warn", /workers = 2/);
+});
+
+test("lintServerConf accepts a sane local config and enforces provider credentials", () => {
+  const good = lintServerConf({
+    server: { host: "127.0.0.1", port: 1933 },
+    storage: { workspace: "/srv/ov/data" },
+    embedding: { dense: { provider: "volcengine", model: "m", api_key: "$DOCTOR_TEST_KEY", dimension: 1024 } },
+    vlm: { provider: "volcengine", model: "v", api_key: "k" },
+  }, { baseUrl: "http://127.0.0.1:1933", env: { DOCTOR_TEST_KEY: "x" } });
+  assert.deepEqual(good.filter((f) => f.level !== "info"), []);
+  assert.ok(good.some((f) => f.level === "info" && /\$DOCTOR_TEST_KEY \(set in this environment/.test(f.message)));
+
+  const bad = lintServerConf({
+    embedding: { dense: { provider: "volcengine", model: "m", api_key: "{your-api-key}" }, },
+    vlm: { provider: "openai", model: "gpt" },
+  }, { baseUrl: "http://127.0.0.1:1933", env: {} });
+  assert.ok(bad.some((f) => f.level === "fail" && /embedding\.dense\.api_key is required/.test(f.message)));
+  assert.ok(bad.some((f) => f.level === "warn" && /looks like a placeholder/.test(f.message)));
+  assert.ok(bad.some((f) => f.level === "fail" && /vlm\.api_key is required/.test(f.message)));
+  assert.ok(bad.some((f) => f.level === "warn" && /storage\.workspace is not set/.test(f.message)));
+  assert.ok(lintServerConf({ embedding: { dense: { provider: "litellm", model: "x/y" } } }, { baseUrl: "http://127.0.0.1:1933", env: {} }).some((f) => /dimension is required for provider 'litellm'/.test(f.message)));
+  assert.equal(effectiveServerAuthMode({ root_api_key: "abc" }), "api_key");
+  assert.equal(effectiveServerAuthMode({ auth_mode: " trusted " }), "trusted");
+  assert.equal(effectiveServerAuthMode({}), "dev");
+});
+
+test("assessReady interprets the readiness checks", () => {
+  const ok = { ok: true, status: 200, json: { status: "ready", checks: { agfs: { status: "ok", checks: { filesystem: "ok", multiwrite_sync: "not_supported" } }, vectordb: "ok", api_key_manager: "not_configured", embedding: "ok", ollama: "not_configured" } } };
+  let report = createReport();
+  assert.equal(assessReady(report, ok).ready, true);
+  assert.equal(report.exitCode(), 0);
+  assert.match(report.render(), /\/ready: agfs ok, vectordb ok/);
+
+  const failing = { ok: false, status: 503, json: { status: "not_ready", checks: { agfs: { status: "error", checks: { filesystem: "error: boom" } }, vectordb: "ok", api_key_manager: "ok", embedding: "error: probe timed out (provider unreachable)", ollama: "not_configured" } } };
+  report = createReport();
+  const res = assessReady(report, failing, { workspace: "~/.openviking/data" });
+  assert.equal(res.ready, false);
+  assert.equal(res.checks.agfs, "error (filesystem: error: boom)");
+  const titles = report.problems().map((p) => p.title);
+  assert.ok(titles.some((t) => t.startsWith("/ready: embedding →")));
+  assert.ok(titles.some((t) => t.startsWith("/ready: agfs →")));
+  assert.ok(report.problems().some((p) => /~\/\.openviking\/data\/viking/.test(p.fix)));
+
+  report = createReport();
+  assert.equal(assessReady(report, { ok: false, status: 503, json: { status: "not_ready", reason: "initializing" } }).ready, false);
+  assert.ok(report.problems().some((p) => p.level === "warn" && /still initializing/.test(p.title)));
+  report = createReport();
+  assert.equal(assessReady(report, { ok: false, status: 404, json: { detail: "Not Found" } }).ready, null);
+  assert.equal(report.exitCode(), 0);
+  assert.equal(readyCheckState("not_supported").ok, true);
+  assert.equal(readyCheckState({ status: "ok", checks: { a: "ok", b: "error: x" } }).ok, false);
+});
+
+test("assessProbes recognises the docker pending-config stub", () => {
+  const report = createReport();
+  const health = { ok: false, status: 503, latencyMs: 3, json: { status: "pending_initialization", error: "OpenViking config file not found", config_file: "/app/.openviking/ov.conf", fix: ["mount ~/.openviking on the host to /app/.openviking"] } };
+  const summary = assessProbes(report, { health }, { baseUrl: "http://127.0.0.1:1933" }, describeApiKey(""));
+  assert.equal(summary.reachable, true);
+  const problem = report.problems()[0];
+  assert.match(problem.title, /docker container is up but has no ov\.conf/);
+  assert.match(problem.detail, /mount ~\/\.openviking on the host/);
+});
+
+test("workspace, collection metadata and server log helpers read what the server writes", () => {
+  const dir = mkdtempSync(join(tmpdir(), "ov-doctor-ws-"));
+  const conf = join(dir, "ov.conf");
+  writeFileSync(conf, "{}");
+  assert.equal(serverWorkspace({ storage: { workspace: "./data" } }, { confPath: conf }).path, null);
+  mkdirSync(join(dir, "data", "vectordb", "context"), { recursive: true });
+  assert.equal(serverWorkspace({}, { confPath: conf }).source.startsWith("guessed"), true);
+  assert.equal(serverWorkspace({ storage: { workspace: join(dir, "data") } }).source, "storage.workspace");
+
+  writeFileSync(join(dir, "data", "vectordb", "context", "collection_meta.json"), JSON.stringify({
+    CollectionName: "context",
+    Description: 'Unified context collection\n\n[openviking.embedding]\n{"dimension": 1024, "model": "m", "model_identity": "m", "provider": "volcengine"}',
+    Dimension: 1024,
+  }));
+  const meta = readCollectionMeta(join(dir, "data"));
+  assert.equal(meta.exists, true);
+  assert.equal(meta.dimension, 1024);
+  assert.deepEqual(meta.embedding, { dimension: 1024, model: "m", model_identity: "m", provider: "volcengine" });
+  assert.equal(readCollectionMeta(join(dir, "nope")).exists, false);
+
+  assert.deepEqual(serverLogTarget({}, "/ws"), { kind: "stdout", path: null });
+  assert.deepEqual(serverLogTarget({ log: { output: "file" } }, "/ws"), { kind: "file", path: "/ws/log/openviking.log" });
+  assert.equal(serverLogTarget({ log: { output: "/var/log/ov.log" } }, "/ws").path, "/var/log/ov.log");
+
+  const logPath = join(dir, "openviking.log");
+  const stamp = (msAgo) => new Date(Date.now() - msAgo).toISOString().slice(0, 19).replace("T", " ");
+  writeFileSync(logPath, [
+    `${stamp(9 * 86400000)},001 - openviking.storage - ERROR - old failure`,
+    `${stamp(3600000)},002 - openviking.server - INFO - fine`,
+    `${stamp(60000)},003 - openviking.models.vlm.base - ERROR - Backup VLM also failed with error: 401`,
+    "ERROR:    Application startup failed. Exiting.",
+  ].join("\n"));
+  const scan = scanServerLog(logPath);
+  assert.equal(scan.errors.length, 2);
+  assert.deepEqual(scan.recentErrors.map((e) => e.message), ["Backup VLM also failed with error: 401"]);
+  assert.deepEqual(scan.fatal, ["ERROR:    Application startup failed. Exiting."]);
+  assert.equal(isPlaceholderSecret("<paste>"), true);
+  assert.equal(isPlaceholderSecret("sk-real"), false);
 });

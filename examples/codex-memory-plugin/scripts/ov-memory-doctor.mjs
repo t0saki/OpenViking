@@ -7,8 +7,10 @@
  * state, MCP wiring), the client config (which file won, is the JSON valid,
  * what the key claims) and the connection to the server (reachability, auth,
  * tenant-data access, /mcp), plus the runtime evidence the hooks leave in
- * ~/.openviking/codex-plugin-state. Server-side health (embedding, VLM,
- * storage) is `ov doctor`'s job, not this script's.
+ * ~/.openviking/codex-plugin-state. When the server runs on this machine
+ * (loopback url) it also checks the server side: ov.conf startup blockers,
+ * the server process and port, the workspace, the server log and
+ * `GET /ready`. Provider-level validation stays with `openviking-server doctor`.
  *
  * Usage:
  *   node ov-memory-doctor.mjs [--json] [--offline] [--timeout <ms>] [--no-color]
@@ -25,6 +27,7 @@ import { loadConfig } from "./config.mjs";
 import { getStateDir } from "./session-state.mjs";
 import {
   assessProbes,
+  checkServerHealth,
   collectEnv,
   createReport,
   describeApiKey,
@@ -343,7 +346,7 @@ function checkConfig(report, cfg) {
   }
   if (env.proxy.length) report.warn(`proxy variables set: ${env.proxy.map((e) => e.name).join(", ")}`, "Node's fetch ignores HTTP(S)_PROXY unless NODE_USE_ENV_PROXY=1 (Node 24+); curl honours them, so curl may succeed while hooks fail", isLoopbackUrl(cfg.baseUrl) ? "harmless for a local server" : "set NODE_USE_ENV_PROXY=1 (or reach the server without the proxy) in the environment that launches Codex");
   if (env.node.length) report.info(`node TLS/proxy env: ${env.node.map((e) => `${e.name}=${e.value}`).join(", ")}`);
-  return { keyInfo, peer };
+  return { keyInfo, peer, ovConf };
 }
 
 async function checkConnection(report, cfg, { keyInfo, peer }, opts) {
@@ -418,6 +421,7 @@ async function main() {
   const cfg = loadConfig();
   const configInfo = checkConfig(report, cfg);
   const connection = await checkConnection(report, cfg, configInfo, opts);
+  const serverHealth = await checkServerHealth(report, { baseUrl: cfg.baseUrl, ovConf: configInfo.ovConf, health: connection?.probes?.health, offline: opts.offline, timeoutMs: opts.timeoutMs });
   checkActivity(report, cfg, connection);
 
   if (opts.json) {
@@ -436,6 +440,7 @@ async function main() {
         authMode: cfg.authMode,
       },
       server: connection?.summary || null,
+      serverHealth,
       ...report.toJSON(),
     }, null, 2));
   } else {

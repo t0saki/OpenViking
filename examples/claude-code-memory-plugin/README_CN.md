@@ -305,7 +305,7 @@ OV ✓ │ 🔗 resumed │ +3 today               session 已恢复上下文；
 node "$(jq -r '.plugins["openviking-memory@openviking"][0].installPath' ~/.claude/plugins/installed_plugins.json)/scripts/ov-memory-doctor.mjs"
 ```
 
-也可以直接让 Claude 检查插件：`ov-memory-doctor` skill 会运行同一个脚本并解读报告。服务端自身的健康（embedding、VLM、存储）由 `ov doctor` 负责。
+也可以直接让 Claude 检查插件：`ov-memory-doctor` skill 会运行同一个脚本并解读报告。当 server 与插件在同一台机器上（loopback url）时，报告还会多一节 Server health：ov.conf 里会让 server 起不来的配置、server 进程与端口归属、workspace、server 日志以及 `GET /ready`；provider 级校验（实际 embedding 探测、native engine、磁盘）仍由 `openviking-server doctor` 负责。
 
 | 症状                                         | 原因                                                  | 解决方案                                                                                       |
 |----------------------------------------------|------------------------------------------------------|-----------------------------------------------------------------------------------------------|
@@ -404,7 +404,7 @@ claude-code-memory-plugin/
 ├── skills/
 │   ├── openviking-memory/   # 记忆工具使用指南
 │   ├── ov-experience-memory/
-│   └── ov-memory-doctor/    # 安装 / 配置 / 连接排障
+│   └── ov-memory-doctor/    # 安装 / 配置 / 连接 / 本机 server 排障
 ├── servers/
 │   └── mcp-proxy.mjs        # stdio -> OpenViking /mcp 桥接
 ├── scripts/
@@ -420,7 +420,7 @@ claude-code-memory-plugin/
 │   ├── debug-recall.mjs     # 召回独立诊断
 │   ├── debug-capture.mjs    # 捕获独立诊断
 │   ├── ov-status.mjs        # /ov 状态报告
-│   ├── ov-memory-doctor.mjs # 客户端体检（ov-memory-doctor skill）
+│   ├── ov-memory-doctor.mjs # 体检脚本（ov-memory-doctor skill）
 │   └── lib/
 │       ├── ov-session.mjs   # OV HTTP 客户端 + session 帮助 + bypass 检查
 │       └── async-writer.mjs # 写路径 detach-worker 帮助

@@ -7,8 +7,10 @@
  * install (marketplace / enablement / hooks / MCP wiring), the client config
  * (which file won, is the JSON valid, what the key claims) and the connection
  * to the server (reachability, auth, tenant-data access, /mcp) — plus the
- * runtime evidence the hooks leave behind. Server-side health (embedding,
- * VLM, storage) is `ov doctor`'s job, not this script's.
+ * runtime evidence the hooks leave behind. When the server runs on this
+ * machine (loopback url) it also checks the server side: ov.conf startup
+ * blockers, the server process and port, the workspace, the server log and
+ * `GET /ready`. Provider-level validation stays with `openviking-server doctor`.
  *
  * Usage:
  *   node ov-memory-doctor.mjs [--json] [--offline] [--timeout <ms>] [--no-color]
@@ -25,6 +27,7 @@ import { isPluginEnabled, loadConfig } from "./config.mjs";
 import { STATE_DIR } from "./lib/state.mjs";
 import {
   assessProbes,
+  checkServerHealth,
   collectEnv,
   countDirEntries,
   createReport,
@@ -479,6 +482,7 @@ async function main() {
   const cfg = loadConfig();
   const configInfo = checkConfig(report, cfg);
   const connection = await checkConnection(report, cfg, configInfo, opts);
+  const serverHealth = await checkServerHealth(report, { baseUrl: cfg.baseUrl, ovConf: configInfo.ovConf, health: connection?.probes?.health, offline: opts.offline, timeoutMs: opts.timeoutMs });
   checkActivity(report, cfg, connection);
 
   if (opts.json) {
@@ -495,6 +499,7 @@ async function main() {
         peerId: configInfo.peer.peerId,
       },
       server: connection?.summary || null,
+      serverHealth,
       ...report.toJSON(),
     };
     console.log(JSON.stringify(out, null, 2));

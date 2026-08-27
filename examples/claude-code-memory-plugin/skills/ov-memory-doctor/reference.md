@@ -112,6 +112,54 @@ Statusline: `OV ✓` = `/health` 200 within 1s (says nothing about auth);
 `OV ⚡ bypass` = bypass matched; `✗ N dropped` = `turns_failed`. Segments
 disappear after 30 minutes of inactivity — a bare `OV ✓` means idle, not broken.
 
+## Local server (loopback url only)
+
+| Path | What |
+|---|---|
+| `~/.openviking/ov.conf` (or `OPENVIKING_CONFIG_FILE`, then `/etc/openviking/ov.conf`) | The server's config. The doctor lints the copy the plugin resolves; a server started with another `--config` runs from that file instead. |
+| `<storage.workspace>/` | Data: `viking/` (content), `vectordb/context/` (index; `collection_meta.json` records the embedding it was built with), `_system/queue/queue.db`. `storage.workspace` defaults to `./data` relative to the server's cwd. |
+| `<workspace>/.openviking.pid` | Workspace lock, bare pid; stale after a hard kill, reclaimed on the next start. |
+| `<workspace>/log/openviking.log` | Only with `log.output: "file"`. Default is stdout (terminal / tmux / nohup file / `journalctl -u openviking` / `docker logs openviking`). Time-rotated as `openviking.log.YYYY-MM-DD`. |
+| docker | Container `openviking`, image `ghcr.io/volcengine/openviking`, `~/.openviking` mounted at `/app/.openviking` (config, ovcli.conf and data). `docker exec openviking openviking-server doctor` works. |
+
+Process: `<python> -E …/bin/openviking-server` — match `openviking-server` in
+the command line, never the process name (`Python`). Default bind
+`127.0.0.1:1933`; `--host`/`--port` override `server.host`/`server.port`. The
+port is bound only after initialization finishes, so "connection refused"
+during startup is normal; `/health` 200 says nothing about embedding or VLM.
+
+`GET /ready` (no auth, 200 or 503):
+`{"status":"ready"|"not_ready","checks":{"agfs":{"status":…,"checks":{"filesystem":…,"multiwrite_sync":…}},"vectordb":…,"api_key_manager":…,"embedding":…,"ollama":…}}`.
+`ok`, `not_configured` and `not_supported` count as healthy; `embedding` is a
+real embed call with a 10s cap. `503 {"status":"not_ready","reason":"initializing"}`
+while booting; 404 on servers that predate the endpoint. The official docker
+image answers every route with `503 {"status":"pending_initialization", "fix":[…]}`
+until it has an ov.conf.
+
+Startup failures (printed by the server; exit 1 unless noted):
+
+| Text | Cause |
+|---|---|
+| `OpenViking configuration file not found.` | No ov.conf at any resolved path |
+| `Unknown config field '…' in OpenVikingConfig` / `Extra inputs are not permitted` | Unknown key — including `claude_code`, `codex` and `server.url`, which only the plugins read |
+| `SECURITY: server.auth_mode='dev' requires server.host to be localhost` | Dev mode (no `auth_mode`, no `root_api_key`) on a non-loopback bind |
+| `Invalid server.root_api_key: empty string is not allowed` | `""` instead of `null` |
+| `Another OpenViking process (PID n) is already using the data directory` | Two servers on one workspace (exit 3, `Application startup failed. Exiting.`) |
+| `EmbeddingRebuildRequiredError` / `embedding dimension (…) does not match current configuration` | Embedding model changed on an existing workspace (exit 3) |
+| `[Errno 48] / [Errno 98] Address already in use` | Port taken — `lsof -nP -iTCP:1933 -sTCP:LISTEN` |
+| `FATAL: AUTHENTICATION HEALTH CHECK FAILED` | OIDC/LDAP backend unreachable |
+
+Runtime signatures in the server log: `Dimension mismatch` (config), `Dense
+vector dimension mismatch` (writes dropped), `Credential … failed with auth`
+and `Backup VLM also failed` (VLM key), `Embedding circuit breaker is open`
+(provider down, messages re-queued).
+
+`openviking-server doctor` (same as `ov doctor`) checks Config, Python,
+Native Engine, AGFS, Authentication, Embedding (live probe), VLM (key presence
+only), Ollama, VikingBot and Disk. Text only, exit 1 on FAIL, needs the
+server's Python environment; the bare Rust `ov` binary (npm / cargo install)
+reports `unknown command`.
+
 ## Symptom catalogue
 
 | Symptom | Likely cause | Detect | Fix |
@@ -133,7 +181,9 @@ disappear after 30 minutes of inactivity — a bare `OV ✓` means idle, not bro
 | Local `Write`/`Edit` denied with "viking:// URIs are OpenViking virtual paths" | Old uri-guard in a stale cache | `grep -c DEFAULT_CONTENT_KEYS <installPath>/scripts/shared/uri-guard.mjs` → 0 | Update the plugin |
 | Installer exits silently | Pre-2026-07 installer | No `OpenViking installer stopped unexpectedly.` line | Re-fetch the installer |
 | Installer: `Unsupported OS` | Windows | — | Manual marketplace install |
-| `0 memories extracted` after commits | Server-side embedding/VLM | `ov doctor` on the server host | Server admin |
+| `0 memories extracted` / commits never produce memories | VLM missing or failing, or embedding failing on the server | doctor `/ready: embedding`, `no vlm section`; server log `Backup VLM also failed` / `Credential … failed with auth` | Fix vlm/embedding in ov.conf, restart the server |
+| "server unreachable" right after editing ov.conf | The server exited at its restart because of the edit | doctor Server health lint; the startup text in the server's terminal | Fix the finding, start it again |
+| Recall empty and the index never grows after switching the embedding model | Dimension mismatch — every vector write is dropped | doctor "vector index was built with dimension …"; log `Dense vector dimension mismatch` | Original model, or a fresh workspace |
 
 ## Links
 
