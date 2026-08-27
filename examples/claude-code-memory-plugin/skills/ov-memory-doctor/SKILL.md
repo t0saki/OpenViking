@@ -149,6 +149,12 @@ corpus check, not a replay of the hook's exact ranking.
 - Confirm the fix by rerunning the doctor, then by observing an
   `<openviking-context>` block on the next prompt.
 
+## Documentation
+
+- Source and issues: <https://github.com/volcengine/OpenViking> — plugin code lives under `examples/`, the shared installer under `examples/memory-plugin-shared/`.
+- Documentation index (LLM-friendly): <https://docs.openviking.ai/llms.txt>; the harness integration pages under it cover install paths, configuration keys and known limitations.
+- `https://api.vikingdb.cn-beijing.volces.com/openviking` is the Volcengine-hosted OpenViking Service (OpenViking Cloud): the path prefix is part of the base url, it accepts `Authorization: Bearer` only, and its keys are issued from the Volcengine console rather than by a self-hosted admin.
+
 ## Rules
 
 - Never print a full API key or the raw contents of `ovcli.conf`; the

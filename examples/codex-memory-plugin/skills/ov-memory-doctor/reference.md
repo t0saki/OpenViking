@@ -48,7 +48,7 @@ Stop 30s, PreCompact 60s. `recallTimeoutMs` (default 120000) must stay below
 Sent headers: `Authorization: Bearer <key>`, `X-OpenViking-Account/User` (trusted
 mode only), `X-OpenViking-Actor-Peer`, `User-Agent: openviking-memory-codex/<version>`.
 The open-source server also accepts `X-API-Key` (and prefers it when both are
-sent); OpenViking Cloud accepts Bearer only.
+sent); the Volcengine-hosted OpenViking Service (`https://api.vikingdb.cn-beijing.volces.com/openviking`) accepts Bearer only.
 
 ## Server auth modes (from `GET /health` → `auth_mode`)
 
@@ -116,3 +116,8 @@ on stdout is the artifact.
 | Every prompt is slow | Local compressor (`codex exec`) on each recall | `recall-compressor-profile.json`; `OPENVIKING_RECALL_COMPRESS=0` to test | Disable compression or fix the model |
 | curl works, plugin says offline | Corporate proxy or private CA; Node ignores both | doctor proxy/TLS hints; `node -e "fetch('<url>/health')"` | `NODE_USE_ENV_PROXY=1` / `NODE_EXTRA_CA_CERTS` in the launching environment |
 | `0 memories extracted` after commits | Server-side embedding/VLM | `ov doctor` on the server host | Server admin |
+
+## Links
+
+- Source: <https://github.com/volcengine/OpenViking>
+- Docs index: <https://docs.openviking.ai/llms.txt>

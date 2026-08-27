@@ -36,13 +36,13 @@ and `OPENVIKING_PENDING_DIR` relocate individual pieces.
 | tuning | env → `ovcli.conf plugin.claude_code.*` → `ovcli.conf plugin.*` → `ov.conf claude_code.*` → defaults |
 
 Only trailing slashes are stripped from the url; no scheme check, no path
-normalisation. `https://api.vikingdb.cn-beijing.volces.com/openviking` (Cloud)
+normalisation. `https://api.vikingdb.cn-beijing.volces.com/openviking` (the Volcengine-hosted OpenViking Service)
 is a legitimate path prefix; `/api/v1` or `/mcp` suffixes are not.
 
 Sent headers: `Authorization: Bearer <key>`, `X-OpenViking-Account`,
 `X-OpenViking-User`, `X-OpenViking-Actor-Peer`, `User-Agent: openviking-memory-claude-code/<version>`.
 The open-source server also accepts `X-API-Key` (and prefers it when both are
-sent); OpenViking Cloud accepts Bearer only.
+sent); the Volcengine-hosted OpenViking Service (`https://api.vikingdb.cn-beijing.volces.com/openviking`) accepts Bearer only.
 
 ## Server auth modes (from `GET /health` → `auth_mode`)
 
@@ -134,3 +134,8 @@ disappear after 30 minutes of inactivity — a bare `OV ✓` means idle, not bro
 | Installer exits silently | Pre-2026-07 installer | No `OpenViking installer stopped unexpectedly.` line | Re-fetch the installer |
 | Installer: `Unsupported OS` | Windows | — | Manual marketplace install |
 | `0 memories extracted` after commits | Server-side embedding/VLM | `ov doctor` on the server host | Server admin |
+
+## Links
+
+- Source: <https://github.com/volcengine/OpenViking>
+- Docs index: <https://docs.openviking.ai/llms.txt>
