@@ -21,7 +21,7 @@ const HARNESS_SHARED_FILES = [
   "profile-inject.mjs",
   "uri-guard.mjs",
 ];
-const OPENCODE_SHARED_FILES = [...HARNESS_SHARED_FILES, "mcp-proxy-core.mjs", "mcp-proxy-config.mjs", "async-writer.mjs", "batch-send.mjs"];
+const OPENCODE_SHARED_FILES = [...HARNESS_SHARED_FILES, "doctor-core.mjs", "mcp-proxy-core.mjs", "mcp-proxy-config.mjs", "async-writer.mjs", "batch-send.mjs"];
 const DSH_SHARED_FILES = [...HARNESS_SHARED_FILES, "mcp-proxy-core.mjs", "mcp-proxy-config.mjs"];
 const AGENT_PLUGINS_SHARED_FILES = [
   "credentials.mjs",
