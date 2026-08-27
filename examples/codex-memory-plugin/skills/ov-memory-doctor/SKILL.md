@@ -13,9 +13,9 @@ description: >
   "check OpenViking", "plugin status", "记忆没生效", "插件状态", "连不上
   OpenViking", "recall 为空", "401", "0 memories
   extracted". When the server runs on this machine (loopback url) it also
-  covers the server side: ov.conf startup blockers, the server process and
-  port, workspace, server log and `GET /ready`; provider-level validation
-  stays with `openviking-server doctor`.
+  checks the port, plugin-only keys in ov.conf that stop the server from
+  starting, and `GET /ready`; everything else server-side stays with
+  `openviking-server doctor`.
 ---
 
 # OpenViking Memory Doctor (Codex)
@@ -35,14 +35,13 @@ wrong on a user's machine, each silently:
   can look reachable while every real request 401s.
 
 When the resolved url is loopback, the server runs on this machine and the
-doctor adds a **Server health** section: ov.conf lint for what stops the
-server from starting, the server process and who owns the port (native or
-docker), the workspace and its vector index vs the configured embedding, the
-server log, and `GET /ready` — the server's own per-subsystem verdict
-(agfs, vectordb, api keys, embedding, ollama). For a remote server only
-`/ready` is probed. Provider-level validation (live embedding probe, native
-engine, disk) stays with `openviking-server doctor`, which runs in the
-server's Python environment.
+doctor adds a **Server health** section: whether anything listens on the
+port, plugin-only keys in `ov.conf` (`claude_code`, `codex`, `server.url`)
+that make the server refuse to start, and `GET /ready` — the server's own
+per-subsystem verdict (agfs, vectordb, api keys, embedding, ollama). For a
+remote server only `/ready` is probed. Everything else on the server side —
+config validation, live embedding probe, native engine, disk — is
+`openviking-server doctor`, run in the server's Python environment.
 
 ## Step 1 — run the doctor
 
@@ -103,17 +102,11 @@ Work top-down; fix the first ✗ and rerun before chasing the next.
 | `no session has ever captured a turn` / idle sessions piling up | Stop hook runs but writes fail, or commits fail | Fix the Connection findings; state files are kept and replay when the server is back. |
 | `MCP proxy last started against <other url>` | The proxy is a long-lived process; a changed url only takes effect after restart | Restart Codex. |
 | `ov.conf has a top-level 'claude_code' block` / `'codex' block` / `server.url is rejected` | Plugin-only keys in the server's own config; the server refuses to start at its next restart (`Unknown config field` / `Extra inputs are not permitted`) | Move them to ovcli.conf (`plugin.<harness>`, `url`) and delete them from ov.conf. Ignore only if this ov.conf never starts a server. |
-| `auth mode resolves to 'dev' but server.host is '0.0.0.0'` / `root_api_key is an empty string` | Startup blockers — the server exits before it listens | Set `server.root_api_key` (api_key mode) or bind to 127.0.0.1; use `null`, never `""`. |
-| `the plugin talks to port X, but this ov.conf starts the server on port Y` | The server on X runs from another config file or `--port` | Inspect that config (its `--config` / `OPENVIKING_CONFIG_FILE`), or align `server.port` with the url. |
 | `nothing listens on port … — the server is not running` | Server down or never started; a stale `.openviking.pid` means it died | Start it (`openviking-server`; first time `openviking-server init`) in a terminal and read the startup output. Ask before restarting a server the user runs. |
-| `vector index was built with dimension N … ov.conf now says M` | Embedding model changed on an existing workspace — the server refuses to start after a restart (`EmbeddingRebuildRequiredError`) | Restore the previous model, or point `storage.workspace` at a fresh directory and re-ingest. |
 | `/ready: embedding → error …` | The running server cannot call its embedding provider: recall searches nothing, commits extract nothing | Fix `embedding.*` (api_key/api_base/model) in ov.conf and restart; `openviking-server doctor` prints the provider's reply. |
 | `/ready: vectordb → …` / `/ready: agfs → …` | Storage broken: disk full, two servers on one workspace, corrupted index | Server log; stop the duplicate; free disk. |
 | `server is still initializing (503 /ready)` | First start downloads a local embedding model, or init is slow | Wait and rerun; if it never finishes, the server log. |
-| `server log shows a fatal startup error` / `server errors in the last day of logging` | `log.output: "file"` captured the failure | Fix the cause the line names (port in use, workspace locked by another pid, auth health check, provider 401). |
-| `no vlm section` | Turns are captured but never extracted into memories | Add `vlm.provider/model/api_key` to ov.conf and restart. |
 | `docker container is up but has no ov.conf` | Official image started without a config mount (every request 503s) | Mount `~/.openviking` at `/app/.openviking`, or `docker exec -it openviking openviking-server init`. |
-| `container mounts … at /app/.openviking, not ~/.openviking` | The container reads a different ov.conf than the one on this machine | Edit the mounted copy, or re-run the container with `-v ~/.openviking:/app/.openviking`. |
 
 More symptoms, exact error strings and log stage names: [reference.md](reference.md).
 

@@ -14,9 +14,9 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { closeSync, existsSync, openSync, readFileSync, readSync, readdirSync, realpathSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { join } from "node:path";
 
 // ---------------------------------------------------------------------------
 // Formatting helpers
@@ -713,38 +713,20 @@ export function existsPath(path) {
 // ---------------------------------------------------------------------------
 // Server health
 //
-// `GET /ready` is the server's own view of its subsystems and works against
-// any deployment. The process / config / workspace / log checks only make
-// sense when the server runs on this machine, i.e. the resolved url is
-// loopback. Provider-level validation (live embedding probe, native engine,
-// disk) stays with `openviking-server doctor`, which runs in the server's
-// Python environment.
+// `GET /ready` is the server's own verdict on its subsystems and works
+// against any deployment. The port and ov.conf checks only apply when the
+// server runs on this machine (loopback url). Everything else server-side —
+// config validation, live embedding probe, native engine, disk — is
+// `openviking-server doctor`, which runs in the server's Python environment.
 // ---------------------------------------------------------------------------
 
-const SERVER_LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1"]);
-const OV_CONF_TOP_LEVEL_KEYS = new Set([
-  "default_account", "default_user", "default_agent", "storage", "embedding", "vlm", "query_planner", "rerank",
-  "retrieval", "grep", "encryption", "git", "pdf", "code", "image", "audio", "video", "markdown", "anydoc", "html",
-  "text", "directory", "feishu", "webfeed", "semantic", "queue_workers", "reindex", "parser_api", "connector",
-  "enable_watch_scheduler", "auto_generate_l0", "auto_generate_l1", "default_search_mode", "default_search_limit",
-  "language_fallback", "output_language_override", "allow_private_networks", "log", "memory", "oauth", "telemetry",
-  "prompts", "ingest", "server", "bot", "parsers",
-]);
-const OV_CONF_SERVER_KEYS = new Set([
-  "host", "port", "workers", "timeout_keep_alive", "auth_mode", "root_api_key", "oidc", "ldap", "profile_enabled",
-  "cors_origins", "with_bot", "bot_api_url", "encryption_enabled", "api_key_hashing_enabled", "api_key_watch_enabled",
-  "api_key_watch_interval_seconds", "observability", "usage_reporter", "public_base_url", "upload_signed_ttl_seconds",
-  "temp_upload", "user_config_defaults", "agent_evolution", "tool_output_externalization",
-]);
 const PLUGIN_ONLY_OV_CONF_KEYS = { claude_code: "ovcli.conf plugin.claude_code", codex: "ovcli.conf plugin.codex" };
-const EMBEDDING_PROVIDERS = new Set(["openai", "azure", "volcengine", "vikingdb", "jina", "ollama", "gemini", "voyage", "dashscope", "minimax", "cohere", "litellm", "local"]);
-const EMBEDDING_KEY_REQUIRED = new Set(["volcengine", "jina", "gemini", "voyage", "minimax", "cohere", "dashscope"]);
 const READY_OK_VALUES = new Set(["ok", "not_configured", "not_supported"]);
 const READY_FIXES = {
   embedding: "the server cannot embed with the configured provider — check embedding.dense.{provider,model,api_key,api_base} in ov.conf; `openviking-server doctor` shows the provider's reply",
-  vectordb: "the vector index is unhealthy — check <workspace>/vectordb and the server log; stop duplicate servers on the same workspace",
-  agfs: "the content filesystem failed — check <workspace>/viking, free disk space and the server log",
-  api_key_manager: "the api key store failed to load — check <workspace>/viking/_system and the server log",
+  vectordb: "the vector index is unhealthy — check <storage.workspace>/vectordb and the server log; stop duplicate servers on the same workspace",
+  agfs: "the content filesystem failed — check <storage.workspace>/viking, free disk space and the server log",
+  api_key_manager: "the api key store failed to load — check <storage.workspace>/viking/_system and the server log",
   ollama: "start Ollama (or fix its host/port in ov.conf) — the server cannot reach it",
 };
 
@@ -752,225 +734,31 @@ function isObject(v) {
   return Boolean(v) && typeof v === "object" && !Array.isArray(v);
 }
 
-function expandUserHome(p) {
-  return String(p).replace(/^~(?=$|\/)/, homedir());
-}
-
-/** Same rule as `openviking-server doctor`: empty, `{...}`, `<...>` or `$VAR`. */
-export function isPlaceholderSecret(value) {
-  const v = String(value ?? "").trim();
-  return !v || v.startsWith("{") || v.startsWith("<") || v.startsWith("$");
-}
-
-/** A secret the server can use: non-empty and not a template placeholder ($VAR is expanded server-side). */
-function secretPresent(value) {
-  const v = typeof value === "string" ? value.trim() : "";
-  return Boolean(v) && !v.startsWith("{") && !v.startsWith("<");
-}
-
-/** Mirrors ServerConfig.get_effective_auth_mode(). */
-export function effectiveServerAuthMode(server) {
-  const explicit = typeof server?.auth_mode === "string" ? server.auth_mode.trim() : "";
-  if (explicit) return explicit;
-  return typeof server?.root_api_key === "string" && server.root_api_key ? "api_key" : "dev";
-}
-
-function secretFields(data) {
-  const out = [];
-  const emb = isObject(data.embedding) ? data.embedding : {};
-  for (const kind of ["dense", "sparse", "hybrid"]) {
-    if (isObject(emb[kind])) out.push({ path: `embedding.${kind}.api_key`, value: emb[kind].api_key });
-  }
-  const vlm = isObject(data.vlm) ? data.vlm : {};
-  out.push({ path: "vlm.api_key", value: vlm.api_key });
-  (Array.isArray(vlm.credentials) ? vlm.credentials : []).forEach((c, i) => out.push({ path: `vlm.credentials[${i}].api_key`, value: c?.api_key }));
-  for (const [name, p] of Object.entries(isObject(vlm.providers) ? vlm.providers : {})) out.push({ path: `vlm.providers.${name}.api_key`, value: p?.api_key });
-  out.push({ path: "server.root_api_key", value: data.server?.root_api_key });
-  return out.filter((f) => typeof f.value === "string");
-}
-
 /**
- * Static lint of ov.conf as the config a *local* server starts from. Only
- * conditions that stop the server from starting (or silently misroute it)
- * are reported; everything provider-level is left to `openviking-server doctor`.
- * Returns [{ level, message, detail, fix }].
+ * ov.conf keys that only the plugins read. The server validates its config
+ * strictly and refuses to start on them, which shows up as "the server is
+ * gone since I edited ov.conf". Returns [{ level, message, detail, fix }].
  */
-export function lintServerConf(data, { baseUrl = "", env = process.env } = {}) {
+export function lintServerConf(data) {
   const out = [];
   if (!isObject(data)) return out;
-  const add = (level, message, detail = "", fix = "") => out.push({ level, message, detail, fix });
-  const server = isObject(data.server) ? data.server : {};
-
   for (const [key, dest] of Object.entries(PLUGIN_ONLY_OV_CONF_KEYS)) {
-    if (key in data) {
-      add("warn", `ov.conf has a top-level '${key}' block, which the server rejects at startup ("Unknown config field '${key}'")`,
-        "the plugin reads it, openviking-server does not; a server that is already running is unaffected until its next restart",
-        `move those settings to ${dest} (or OPENVIKING_* env) and delete the block; if this ov.conf never starts a server, ignore`);
-    }
+    if (!(key in data)) continue;
+    out.push({
+      level: "warn",
+      message: `ov.conf has a top-level '${key}' block, which the server rejects at startup ("Unknown config field '${key}'")`,
+      detail: "the plugin reads it, openviking-server does not; a server that is already running is unaffected until its next restart",
+      fix: `move those settings to ${dest} (or OPENVIKING_* env) and delete the block; if this ov.conf never starts a server, ignore`,
+    });
   }
-  if ("url" in server) {
-    add("warn", "ov.conf server.url is rejected by the server at startup (\"Extra inputs are not permitted\")",
-      "only the plugin and the CLI read server.url; the server validates its section strictly",
-      "put the url in ovcli.conf (url) and remove server.url; if this ov.conf never starts a server, ignore");
+  if (isObject(data.server) && "url" in data.server) {
+    out.push({
+      level: "warn",
+      message: "ov.conf server.url is rejected by the server at startup (\"Extra inputs are not permitted\")",
+      detail: "only the plugin and the CLI read server.url; the server validates its section strictly",
+      fix: "put the url in ovcli.conf (url) and remove server.url; if this ov.conf never starts a server, ignore",
+    });
   }
-  const unknownTop = Object.keys(data).filter((k) => !OV_CONF_TOP_LEVEL_KEYS.has(k) && !(k in PLUGIN_ONLY_OV_CONF_KEYS));
-  const templateKeys = unknownTop.filter((k) => k.startsWith("_comment") || k.endsWith("_example"));
-  if (templateKeys.length) {
-    add("warn", `ov.conf still carries template keys from ov.conf.example: ${templateKeys.join(", ")}`,
-      "ov.conf.example is an annotated template, not a loadable config; the server exits on keys it does not know",
-      "delete the _comment / *_example entries");
-  }
-  const otherTop = unknownTop.filter((k) => !templateKeys.includes(k));
-  if (otherTop.length) add("info", `ov.conf top-level keys this doctor does not know: ${otherTop.join(", ")}`, "a newer server may accept them; otherwise it exits with 'Unknown config field'");
-  const unknownServer = Object.keys(server).filter((k) => !OV_CONF_SERVER_KEYS.has(k) && k !== "url");
-  if (unknownServer.length) add("info", `ov.conf server.* keys this doctor does not know: ${unknownServer.join(", ")}`, "the server section is validated strictly ('Extra inputs are not permitted')");
-
-  if (server.root_api_key === "") {
-    add("fail", "server.root_api_key is an empty string — the server exits at startup", "", "set a real key (api_key mode), or remove the field / set it to null (dev mode)");
-  }
-  const authMode = effectiveServerAuthMode(server);
-  const host = typeof server.host === "string" ? server.host.trim() : "127.0.0.1";
-  if (authMode === "dev" && !SERVER_LOOPBACK_HOSTS.has(host)) {
-    add("fail", `auth mode resolves to 'dev' but server.host is '${host}' — the server refuses to start`,
-      "dev mode (no auth_mode, no root_api_key) is only allowed on 127.0.0.1/localhost/::1; the server exits with a SECURITY message",
-      "set server.root_api_key (switches to api_key mode), or bind to 127.0.0.1");
-  }
-  const port = Number.isInteger(server.port) ? server.port : 1933;
-  if ("port" in server && !Number.isInteger(server.port)) add("fail", `server.port must be an integer (got ${JSON.stringify(server.port)})`, "", "fix server.port");
-  let urlPort = null;
-  try {
-    const u = new URL(baseUrl);
-    urlPort = Number(u.port || (u.protocol === "https:" ? 443 : 80));
-  } catch { /* unparseable url is reported elsewhere */ }
-  if (urlPort !== null && urlPort !== port) {
-    add("warn", `the plugin talks to port ${urlPort}, but this ov.conf starts the server on port ${port}`,
-      `a server on ${urlPort} was started with --port or from another config file; that config, not this one, is what it runs with`,
-      "align server.port with the url, or inspect the config the running server actually loaded (its --config / OPENVIKING_CONFIG_FILE)");
-  }
-
-  const ws = data.storage?.workspace;
-  if (!isObject(data.storage) || typeof ws !== "string" || !ws.trim()) {
-    add("warn", "storage.workspace is not set — the server uses ./data relative to its own working directory",
-      "a service started from another directory silently gets an empty, separate workspace",
-      "set storage.workspace to an absolute path (the setup wizard uses ~/.openviking/data)");
-  } else if (!isAbsolute(expandUserHome(ws)) && !ws.startsWith("$")) {
-    add("warn", `storage.workspace '${ws}' is relative — resolved against the server's working directory`, "", "use an absolute path");
-  }
-
-  for (const f of secretFields(data)) {
-    const v = f.value.trim();
-    const m = v.match(/^\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?$/);
-    if (m) {
-      const name = m[1];
-      if (env[name]) add("info", `${f.path} = $${name} (set in this environment; the server expands it from the environment it was started in)`);
-      else add("warn", `${f.path} = $${name}, which is unset in this environment`,
-        `the server expands $VAR from its own environment; if the variable is missing there too, the literal text '$${name}' becomes the secret and every call fails`,
-        `export ${name} where the server starts (systemd Environment=, docker -e, or the shell running openviking-server)`);
-    } else if (f.path !== "server.root_api_key" && isPlaceholderSecret(v)) {
-      add("warn", `${f.path} looks like a placeholder${v ? ` (${v.slice(0, 24)})` : " (empty)"}`, "", "paste the real key");
-    }
-  }
-
-  const emb = data.embedding;
-  if (emb === undefined) {
-    add("info", "no embedding section — the server uses the built-in local model (bge-small-zh-v1.5-f16), downloaded on first start");
-  } else if (isObject(emb) && isObject(emb.dense)) {
-    const dense = emb.dense;
-    const provider = String(dense.provider || "").trim().toLowerCase();
-    const hasKey = secretPresent(dense.api_key);
-    if (!provider) add("fail", "embedding.dense.provider is missing — the server refuses to start", "", "set provider and model");
-    else if (!EMBEDDING_PROVIDERS.has(provider)) add("warn", `embedding.dense.provider '${provider}' is not one this doctor knows`, `known: ${[...EMBEDDING_PROVIDERS].join(", ")}; the server exits on providers it does not support`, "check the spelling, or use provider 'litellm' with a litellm model name");
-    if (!dense.model && !dense.credentials) add("fail", "embedding.dense.model is missing — the server refuses to start", "", "set embedding.dense.model");
-    if (EMBEDDING_KEY_REQUIRED.has(provider) && !hasKey) add("fail", `embedding.dense.api_key is required for provider '${provider}' — the server refuses to start`, "", "set embedding.dense.api_key");
-    if (provider === "openai" && !hasKey && !dense.api_base) add("fail", "embedding.dense.api_key is required for provider 'openai' unless api_base points at a local OpenAI-compatible server", "", "set api_key (or api_base)");
-    if (provider === "litellm" && !(Number.isInteger(dense.dimension) && dense.dimension > 0)) add("fail", "embedding.dense.dimension is required for provider 'litellm' — the server refuses to start", "", "set dimension to the model's output size");
-    const base = typeof dense.api_base === "string" ? dense.api_base.trim().replace(/\/+$/, "") : "";
-    if (base && (provider === "ollama" || /:11434$/.test(base)) && !/\/v1$/.test(base)) {
-      add("warn", `embedding.dense.api_base '${dense.api_base}' lacks the /v1 suffix`, "Ollama is used through its OpenAI-compatible API under /v1; without it every embedding call 404s", `set api_base to ${base}/v1`);
-    }
-    const vdim = data.storage?.vectordb?.dimension;
-    if (Number.isInteger(vdim) && vdim > 0 && Number.isInteger(dense.dimension) && dense.dimension > 0 && vdim !== dense.dimension) {
-      add("warn", `storage.vectordb.dimension (${vdim}) differs from embedding.dense.dimension (${dense.dimension})`, "the server logs 'Dimension mismatch' and drops every vector write", "remove storage.vectordb.dimension (it follows the embedding), or make them equal");
-    }
-  }
-
-  const vlm = data.vlm;
-  if (vlm === undefined) {
-    add("warn", "no vlm section — memory extraction needs a VLM; captured turns are stored but never become memories", "", "add vlm.provider / vlm.model / vlm.api_key");
-  } else if (isObject(vlm)) {
-    const provider = String(vlm.provider || vlm.backend || "").trim().toLowerCase();
-    const hasKey = secretPresent(vlm.api_key);
-    const hasAlternatives = (Array.isArray(vlm.credentials) && vlm.credentials.length > 0) || (isObject(vlm.providers) && Object.keys(vlm.providers).length > 0);
-    if (!vlm.model && !hasAlternatives) add("fail", "vlm.model is missing — the server refuses to start", "", "set vlm.model");
-    if (provider && provider !== "litellm" && provider !== "openai-codex" && !hasKey && !hasAlternatives) add("fail", `vlm.api_key is required for provider '${provider}' — the server refuses to start`, "", "set vlm.api_key");
-  }
-
-  if (Number.isInteger(server.workers) && server.workers > 1 && (data.storage?.agfs?.backend ?? "local") === "local" && !data.storage?.skip_process_lock) {
-    add("warn", `server.workers = ${server.workers} with the local storage backend`, "every worker takes the workspace lock; the 2nd and later fail with 'Another OpenViking process … is already using the data directory'", "set server.workers to 1");
-  }
-  return out;
-}
-
-/**
- * Where the server keeps its data. `storage.workspace` defaults to the
- * relative `./data` (against the server's cwd), which cannot be located from
- * here; the setup wizard's `<ov.conf dir>/data` is tried as a fallback.
- */
-export function serverWorkspace(data, { confPath = "" } = {}) {
-  const raw = data?.storage?.workspace;
-  const out = { path: null, source: "", raw: typeof raw === "string" ? raw : "" };
-  if (typeof raw === "string" && raw.trim() && !raw.includes("$")) {
-    const expanded = expandUserHome(raw.trim());
-    if (isAbsolute(expanded)) {
-      out.path = resolve(expanded);
-      out.source = "storage.workspace";
-      return out;
-    }
-  }
-  const guess = confPath ? join(dirname(confPath), "data") : "";
-  if (guess && existsSync(guess)) {
-    out.path = guess;
-    out.source = "guessed (next to ov.conf, the wizard default)";
-  }
-  return out;
-}
-
-export function isPidAlive(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err) {
-    return err?.code === "EPERM";
-  }
-}
-
-export function describeProcess(pid) {
-  const out = { command: "", etime: "", rss: 0 };
-  if (process.platform === "win32") return out;
-  const r = runCommand("ps", ["-p", String(pid), "-o", "etime=,rss=,command="], { timeoutMs: 5000 });
-  const line = r.stdout.trim().split("\n").pop() || "";
-  const m = line.match(/^(\S+)\s+(\d+)\s+(.*)$/);
-  if (m) Object.assign(out, { etime: m[1], rss: Number(m[2]) * 1024, command: m[3] });
-  else if (line) out.command = line;
-  return out;
-}
-
-/** `<workspace>/.openviking.pid` — written by the server's workspace lock. */
-export function readPidFile(workspace) {
-  const path = join(workspace, ".openviking.pid");
-  const out = { path, exists: false, pid: null, alive: false, command: "", etime: "", rss: 0 };
-  let raw;
-  try {
-    raw = readFileSync(path, "utf-8");
-  } catch {
-    return out;
-  }
-  out.exists = true;
-  const pid = Number.parseInt(raw.trim(), 10);
-  if (!Number.isInteger(pid) || pid <= 0) return out;
-  out.pid = pid;
-  out.alive = isPidAlive(pid);
-  if (out.alive) Object.assign(out, describeProcess(pid));
   return out;
 }
 
@@ -1006,114 +794,6 @@ export function findPortListener(port) {
   return out;
 }
 
-/** Running docker containers that look like an OpenViking server. */
-export function findDockerContainer({ port } = {}) {
-  const out = { available: false, containers: [], match: null, error: "" };
-  if (!whichCommand("docker")) return out;
-  out.available = true;
-  const r = runCommand("docker", ["ps", "--format", "{{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}"], { timeoutMs: 8000 });
-  if (!r.ok) {
-    const first = (r.stderr || r.error || "").split("\n")[0];
-    out.error = /daemon|docker\.sock|connect:/i.test(first) ? "the docker daemon is not running" : first.split(";")[0].slice(0, 160);
-    return out;
-  }
-  for (const line of r.stdout.split("\n")) {
-    const [name, image = "", status = "", ports = ""] = line.split("\t");
-    if (!name) continue;
-    out.containers.push({
-      name, image, status, ports,
-      byName: name === "openviking",
-      byImage: /openviking(?::|$)/i.test(image),
-      byPort: Boolean(port) && new RegExp(`:${port}->`).test(ports),
-    });
-  }
-  out.match = out.containers.find((c) => c.byPort) || out.containers.find((c) => c.byName) || out.containers.find((c) => c.byImage) || null;
-  return out;
-}
-
-export function dockerMounts(name) {
-  const r = runCommand("docker", ["inspect", "--format", "{{json .Mounts}}", name], { timeoutMs: 8000 });
-  if (!r.ok) return [];
-  try {
-    return (JSON.parse(r.stdout) || []).map((m) => ({ source: m.Source, destination: m.Destination }));
-  } catch {
-    return [];
-  }
-}
-
-/** The on-disk vector collection's embedding identity, written by the server. */
-export function readCollectionMeta(workspace, name = "context") {
-  const path = join(workspace, "vectordb", name, "collection_meta.json");
-  const out = { path, exists: false, dimension: null, embedding: null };
-  let data;
-  try {
-    data = JSON.parse(readFileSync(path, "utf-8"));
-  } catch {
-    out.exists = existsSync(path);
-    return out;
-  }
-  out.exists = true;
-  if (Number.isInteger(data.Dimension)) out.dimension = data.Dimension;
-  const desc = typeof data.Description === "string" ? data.Description : "";
-  const marker = "[openviking.embedding]\n";
-  const idx = desc.indexOf(marker);
-  if (idx >= 0) {
-    try {
-      out.embedding = JSON.parse(desc.slice(idx + marker.length));
-    } catch { /* keep null */ }
-  }
-  return out;
-}
-
-/** Where `log.output` sends the server log. */
-export function serverLogTarget(data, workspace) {
-  const output = typeof data?.log?.output === "string" ? data.log.output.trim() : "stdout";
-  if (!output || output === "stdout" || output === "stderr") return { kind: output || "stdout", path: null };
-  if (output === "file") return { kind: "file", path: workspace ? join(workspace, "log", "openviking.log") : null };
-  return { kind: "file", path: resolve(expandUserHome(output)) };
-}
-
-function readTail(path, maxBytes) {
-  const fd = openSync(path, "r");
-  try {
-    const size = statSync(path).size;
-    const len = Math.min(size, maxBytes);
-    const buf = Buffer.alloc(len);
-    readSync(fd, buf, 0, len, size - len);
-    return buf.toString("utf-8");
-  } finally {
-    closeSync(fd);
-  }
-}
-
-const LOG_LINE = /^(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2})(?:[,.]\d+)?\s+-\s+\S+\s+-\s+(ERROR|CRITICAL)\s+-\s+(.*)$/;
-const LOG_FATAL = /Application startup failed|Address already in use|FATAL: AUTHENTICATION HEALTH CHECK FAILED|Another OpenViking process \(PID/;
-
-/** Plain-text server log (`%(asctime)s - %(name)s - %(levelname)s - %(message)s`). */
-export function scanServerLog(path, { maxErrors = 5, maxBytes = 512 * 1024 } = {}) {
-  const out = { path, exists: false, size: 0, mtimeMs: 0, errors: [], recentErrors: [], fatal: [] };
-  const info = fileInfo(path);
-  if (!info.exists) return out;
-  Object.assign(out, { exists: true, size: info.size, mtimeMs: info.mtimeMs });
-  let text;
-  try {
-    text = readTail(path, maxBytes);
-  } catch {
-    return out;
-  }
-  const errors = [];
-  for (const line of text.split("\n")) {
-    const m = line.match(LOG_LINE);
-    if (m) errors.push({ ts: m[1].replace(" ", "T"), level: m[2], message: m[3].slice(0, 300) });
-    if (LOG_FATAL.test(line)) out.fatal.push(line.trim().slice(0, 300));
-  }
-  const cutoff = out.mtimeMs - 24 * 60 * 60 * 1000;
-  out.errors = errors.slice(-maxErrors);
-  out.recentErrors = errors.filter((e) => Date.parse(e.ts) >= cutoff).slice(-maxErrors);
-  out.fatal = out.fatal.slice(-maxErrors);
-  return out;
-}
-
 export async function probeReady(baseUrl, { timeoutMs = 15000 } = {}) {
   const base = String(baseUrl || "").replace(/\/+$/, "");
   return httpProbe({ url: `${base}/ready`, timeoutMs: Math.max(timeoutMs, 15000) });
@@ -1135,10 +815,9 @@ export function readyCheckState(value) {
 }
 
 /** Turn the `/ready` probe into findings. Returns { ready, checks } (ready null when unknown). */
-export function assessReady(report, probe, { workspace = "" } = {}) {
+export function assessReady(report, probe) {
   const out = { ready: null, checks: {} };
   if (!probe) return out;
-  const wsText = (s) => s.replace(/<workspace>/g, workspace || "<workspace>");
   if (probe.error) {
     if (probe.errorKind === "timeout") report.warn(`GET /ready timed out after ${probe.latencyMs}ms`, "the readiness check embeds one token with the configured provider (10s cap) — a timeout usually means that provider hangs", "run `openviking-server doctor` in the server's environment to see the provider's reply");
     else report.info(`GET /ready failed: ${probe.error}`);
@@ -1170,171 +849,53 @@ export function assessReady(report, probe, { workspace = "" } = {}) {
   if (out.ready) {
     report.ok(`/ready: ${summary}`);
   } else {
-    for (const [key, s] of failed) report.fail(`/ready: ${key} → ${s.text}`, "", wsText(READY_FIXES[key] || "see the server log"));
+    for (const [key, s] of failed) report.fail(`/ready: ${key} → ${s.text}`, "", READY_FIXES[key] || "see the server log");
     if (!failed.length) report.warn(`/ready → ${probe.status}: ${summary}`, "", "read the server log");
   }
   return out;
+}
+
+function urlHostPort(baseUrl) {
+  try {
+    const u = new URL(baseUrl);
+    return { host: u.host, port: Number(u.port || (u.protocol === "https:" ? 443 : 80)) };
+  } catch {
+    return null;
+  }
 }
 
 /**
  * The "Server health" section. `health` is the /health probe already taken
  * for the Connection section; `ovConf` is inspectJsonFile(<ov.conf path>).
  */
-export async function checkServerHealth(report, { baseUrl, ovConf, health, offline = false, timeoutMs = 5000, env = process.env } = {}) {
+export async function checkServerHealth(report, { baseUrl, ovConf, health, offline = false, timeoutMs = 5000 } = {}) {
   report.section("Server health");
-  const summary = { local: isLoopbackUrl(baseUrl), reachable: false, ready: null, workspace: null, pid: null, listener: null, container: null };
   const answered = Boolean(health && !health.error && health.ok && isObject(health.json));
-  const pendingConfig = Boolean(health?.json?.status === "pending_initialization");
-  summary.reachable = answered;
-  let urlPort = 1933;
-  try {
-    const u = new URL(baseUrl);
-    urlPort = Number(u.port || (u.protocol === "https:" ? 443 : 80));
-  } catch { /* reported by lintBaseUrl */ }
+  const summary = { local: isLoopbackUrl(baseUrl), reachable: answered, ready: null, listener: null };
+  const target = urlHostPort(baseUrl);
 
   if (!summary.local) {
-    let hostText = baseUrl;
-    try { hostText = new URL(baseUrl).host; } catch { /* keep */ }
-    report.info(`server at ${hostText} is not on this machine — process, ov.conf, workspace and log checks skipped`);
-    if (offline) report.info("skipped /ready (--offline)");
-    else if (answered) summary.ready = assessReady(report, await probeReady(baseUrl, { timeoutMs })).ready;
-    report.info("provider-level checks (embedding probe, VLM key, native engine, disk): `openviking-server doctor` on the server host");
-    return summary;
-  }
-
-  // --- ov.conf as the local server's config -------------------------------
-  const conf = ovConf || { exists: false, ok: false, path: "", data: null };
-  const confShort = conf.path ? homeShort(conf.path) : "ov.conf";
-  if (!conf.exists) {
-    report.info(`no ${confShort} — a local server would read it from there, from OPENVIKING_CONFIG_FILE, /etc/openviking/ov.conf, or a docker mount; config lint skipped`);
-  } else if (!conf.ok) {
-    report.fail(`${confShort} does not parse — the server cannot start from it either`, conf.error, "fix the JSON (`python3 -m json.tool` on the file shows the exact position)");
+    report.info(`server at ${target?.host || baseUrl} is not on this machine — only /ready is probed; \`openviking-server doctor\` on the server host covers the rest`);
   } else {
-    const findings = lintServerConf(conf.data, { baseUrl, env });
-    for (const f of findings) report[f.level](f.message, f.detail, f.fix);
-    if (!findings.some((f) => f.level === "fail" || f.level === "warn")) report.ok(`${confShort} passes the startup lint (auth mode ${effectiveServerAuthMode(conf.data.server)}, embedding ${conf.data.embedding?.dense?.provider || "local"}/${conf.data.embedding?.dense?.model || "default"}, vlm ${conf.data.vlm?.provider || conf.data.vlm?.backend || "?"}/${conf.data.vlm?.model || "?"})`);
-  }
-  const data = conf.ok ? conf.data : {};
-
-  // --- workspace + process -------------------------------------------------
-  const ws = serverWorkspace(data, { confPath: conf.path });
-  summary.workspace = ws.path;
-  let pidInfo = null;
-  if (ws.path) {
-    const exists = existsSync(ws.path);
-    report.info(`workspace ${homeShort(ws.path)}${ws.source.startsWith("guessed") ? ` ← ${ws.source}` : ""}${exists ? "" : " (does not exist yet — the server creates it on first start)"}`);
-    if (exists) {
-      pidInfo = readPidFile(ws.path);
-      summary.pid = pidInfo.alive ? pidInfo.pid : null;
-      if (!pidInfo.exists) report.info("no .openviking.pid in the workspace — no server has started from it since the last clean shutdown (or storage.skip_process_lock is on, or it runs in a container)");
-      else if (pidInfo.pid === null) report.warn(`${homeShort(pidInfo.path)} does not contain a pid`, "", "delete the file; the server rewrites it on start");
-      else if (!pidInfo.alive) report.info(`stale ${homeShort(pidInfo.path)} (pid ${pidInfo.pid} is gone) — the last server on this workspace was killed hard; harmless, the next start reclaims it`);
-      else if (pidInfo.command && !/openviking/i.test(pidInfo.command)) report.warn(`pid ${pidInfo.pid} from ${homeShort(pidInfo.path)} is alive but is not an OpenViking server`, pidInfo.command, "the pid was recycled; delete the file before starting the server");
-      else report.ok(`server process pid ${pidInfo.pid}, up ${pidInfo.etime || "?"}, rss ${pidInfo.rss ? fmtBytes(pidInfo.rss) : "?"}`, pidInfo.command ? pidInfo.command.slice(0, 200) : "");
+    if (ovConf?.ok) {
+      for (const f of lintServerConf(ovConf.data)) report[f.level](f.message, f.detail, f.fix);
     }
-  } else {
-    report.info("workspace location unknown (see the storage.workspace finding) — pid, vector index and log checks skipped");
-  }
-
-  const listener = findPortListener(urlPort);
-  summary.listener = listener.pid ? { pid: listener.pid, command: listener.command } : null;
-  const docker = findDockerContainer({ port: urlPort });
-  summary.container = docker.match ? { name: docker.match.name, image: docker.match.image, status: docker.match.status } : null;
-  const dockerish = /docker|com\.docker|containerd|podman|vpnkit/i.test(listener.command || "");
-  if (listener.pid) {
-    const owned = pidInfo?.alive && pidInfo.pid === listener.pid;
-    if (owned) report.ok(`port ${urlPort} is served by that process (${listener.tool})`);
-    else if (dockerish) report.info(`port ${urlPort} is published by ${listener.command} (pid ${listener.pid}) — a container`);
-    else if (pidInfo?.alive) report.warn(`port ${urlPort} is served by pid ${listener.pid} (${listener.command}), not by the pid in the workspace lock (${pidInfo.pid})`, "two servers, or the one on this port runs from a different workspace/config", `ps -p ${listener.pid} -o command= ; compare its --config / OPENVIKING_CONFIG_FILE with ${confShort}`);
-    else report.info(`port ${urlPort} is served by pid ${listener.pid} (${listener.command})${/python|openviking/i.test(listener.command) ? "" : " — does not look like openviking-server"}`);
-  } else if (listener.error) {
-    report.info(`could not determine who listens on port ${urlPort} (${listener.error})`);
-  } else if (!answered && !docker.match) {
-    if (pidInfo?.alive) {
-      report.fail(`nothing listens on port ${urlPort}, yet a server from this workspace is running (pid ${pidInfo.pid})`, "it listens on another port", `compare the url with server.port in ${confShort} and the server's --port; \`lsof -nP -p ${pidInfo.pid} | grep LISTEN\` shows where it listens`);
-    } else {
-      const fix = docker.available && !docker.error
-        ? "start it: `openviking-server` (first time: `openviking-server init`), or `docker start openviking`"
-        : "start it: `openviking-server` (first time: `openviking-server init`); the startup error, if any, is printed in that terminal";
-      report.fail(`nothing listens on port ${urlPort} — the server is not running`, pidInfo?.exists && !pidInfo.alive ? "the workspace lock is stale, i.e. the last server died" : "", fix);
+    const listener = findPortListener(target.port);
+    if (listener.pid) {
+      summary.listener = { pid: listener.pid, command: listener.command };
+      report.info(`port ${target.port} is served by pid ${listener.pid} (${listener.command})`);
+    } else if (listener.error) {
+      report.info(`could not determine who listens on port ${target.port} (${listener.error})`);
+    } else if (!answered) {
+      report.fail(`nothing listens on port ${target.port} — the server is not running`, "",
+        "start it: `openviking-server` (first time: `openviking-server init`), or `docker start openviking` for a container install; a startup error is printed right there");
     }
+    report.info("provider-level checks (embedding probe, VLM key, native engine, disk): `openviking-server doctor` in the server's own environment");
   }
 
-  if (docker.error) report.info(`docker present but not usable (${docker.error})`);
-  if (docker.match) {
-    const c = docker.match;
-    const how = c.byPort ? `publishes port ${urlPort}` : c.byName ? "named openviking" : "openviking image";
-    report.info(`docker container ${c.name} (${c.image}) — ${c.status}; ${how}${c.ports ? `; ports ${c.ports}` : ""}`, `logs: docker logs --tail 100 ${c.name}`);
-    if (!c.byPort && !listener.pid && !answered) report.warn(`container ${c.name} is running but does not publish port ${urlPort}`, c.ports ? `it publishes ${c.ports}` : "no published ports", "fix the url/port, or re-run the container with -p 1933:1933");
-    const mounts = dockerMounts(c.name);
-    const confMount = mounts.find((m) => m.destination === "/app/.openviking");
-    if (conf.exists && confMount) {
-      let same = false;
-      try { same = realpathSync(confMount.source) === realpathSync(dirname(conf.path)); } catch { /* keep false */ }
-      if (same) report.ok(`container mounts ${homeShort(confMount.source)} at /app/.openviking — it runs from this ov.conf`);
-      else report.warn(`container mounts ${confMount.source} at /app/.openviking, not ${homeShort(dirname(conf.path))}`, `the container reads its own ov.conf from that directory; edits to ${confShort} do not reach it`, "edit the mounted directory's ov.conf, or restart the container with -v ~/.openviking:/app/.openviking");
-    } else if (conf.exists && mounts.length && !confMount) {
-      report.warn("container has no mount at /app/.openviking", mounts.map((m) => `${m.source} → ${m.destination}`).join("\n"), "data and config live inside the container and vanish with it — mount ~/.openviking at /app/.openviking");
-    }
-  }
-
-  const serverBin = whichCommand("openviking-server");
-  if (serverBin) report.info(`openviking-server binary: ${serverBin}`, "`openviking-server doctor` runs the provider-level checks (embedding probe, VLM key, native engine, disk)");
-  else if (docker.match) report.info(`server-side doctor: docker exec ${docker.match.name} openviking-server doctor`);
-  else report.info("openviking-server is not on PATH here — the server runs from another venv or container; run `openviking-server doctor` there for provider-level checks");
-  if (process.platform === "linux" && whichCommand("systemctl")) {
-    const unit = runCommand("systemctl", ["is-active", "openviking"], { timeoutMs: 5000 });
-    const state = unit.stdout.trim();
-    if (state && state !== "inactive" && state !== "unknown") report.info(`systemd unit openviking: ${state}`, state === "failed" ? "journalctl -u openviking -n 100" : "logs: journalctl -u openviking -f");
-  }
-
-  // --- vector index vs config ---------------------------------------------
-  if (ws.path && conf.ok && (data.storage?.vectordb?.backend ?? "local") === "local") {
-    const meta = readCollectionMeta(ws.path, data.storage?.vectordb?.name || "context");
-    const dense = isObject(data.embedding?.dense) ? data.embedding.dense : null;
-    if (meta.exists && meta.embedding && dense) {
-      const onDisk = meta.embedding;
-      const dimCfg = Number.isInteger(dense.dimension) && dense.dimension > 0 ? dense.dimension : null;
-      const dimDisk = Number.isInteger(onDisk.dimension) ? onDisk.dimension : meta.dimension;
-      const provCfg = String(dense.provider || "").toLowerCase();
-      const modelCfg = String(dense.model || "");
-      if (dimCfg && dimDisk && dimCfg !== dimDisk) {
-        report.fail(`vector index was built with dimension ${dimDisk} (${onDisk.provider}/${onDisk.model}); ov.conf now says ${dimCfg}`, "the server refuses to start on this workspace with a different dimension (EmbeddingRebuildRequiredError)", "restore the previous embedding model, or point storage.workspace at a fresh directory (existing memories need re-ingestion)");
-      } else if ((onDisk.provider && provCfg && onDisk.provider !== provCfg) || (onDisk.model && modelCfg && onDisk.model !== modelCfg && onDisk.model_identity !== modelCfg)) {
-        report[data.embedding?.allow_metadata_override ? "info" : "warn"](`vector index was built with ${onDisk.provider}/${onDisk.model} (dim ${dimDisk}); ov.conf now says ${provCfg}/${modelCfg}`,
-          data.embedding?.allow_metadata_override ? "embedding.allow_metadata_override is on, so the server accepts the change" : "the server refuses to start after a restart unless embedding.allow_metadata_override is true and the dimension is unchanged",
-          "keep the original model, set embedding.allow_metadata_override: true (same dimension only), or start a fresh workspace");
-      } else {
-        report.ok(`vector index matches the configured embedding (${onDisk.provider}/${onDisk.model}, dim ${dimDisk})`);
-      }
-    } else if (meta.exists) {
-      report.info(`vector index present (dim ${meta.dimension ?? "?"}); no embedding identity recorded — older server, cannot compare with ov.conf`);
-    } else if (existsSync(ws.path)) {
-      report.info("no vector index in the workspace yet — nothing has been ingested, or the server never finished initializing");
-    }
-  }
-
-  // --- logs ----------------------------------------------------------------
-  const logTarget = serverLogTarget(data, ws.path);
-  if (logTarget.kind !== "file") {
-    report.info(`server log goes to ${logTarget.kind} (log.output) — no log file; read the terminal/tmux pane it runs in, the nohup file, \`journalctl -u openviking\`, or \`docker logs openviking\``, "set log.output to \"file\" for <workspace>/log/openviking.log");
-  } else if (!logTarget.path) {
-    report.info("log.output is \"file\" but the workspace is unknown — cannot locate <workspace>/log/openviking.log");
-  } else {
-    const log = scanServerLog(logTarget.path);
-    if (!log.exists) report.info(`server log ${homeShort(logTarget.path)} does not exist yet`);
-    else {
-      report.info(`server log ${homeShort(logTarget.path)} — ${fmtBytes(log.size)}, last write ${fmtAge(log.mtimeMs)}`);
-      if (log.fatal.length) report.fail("server log shows a fatal startup error", log.fatal.join("\n"), "fix the cause named in the message, then restart the server");
-      if (log.recentErrors.length) report.warn(`server errors in the last day of logging (${log.recentErrors.length} shown)`, log.recentErrors.map((e) => `${e.ts} ${e.level}: ${e.message}`).join("\n"), `tail -n 200 ${homeShort(logTarget.path)}`);
-      else if (log.errors.length) report.info("only older errors in the server log (more than a day before its last write)");
-    }
-  }
-
-  // --- /ready --------------------------------------------------------------
   if (offline) report.info("skipped /ready (--offline)");
-  else if (pendingConfig) report.info("skipped /ready — the container has no config yet");
+  else if (health?.json?.status === "pending_initialization") report.info("skipped /ready — the container has no config yet");
   else if (!answered) report.info("skipped /ready — the server did not answer /health");
-  else summary.ready = assessReady(report, await probeReady(baseUrl, { timeoutMs }), { workspace: ws.path ? homeShort(ws.path) : "" }).ready;
+  else summary.ready = assessReady(report, await probeReady(baseUrl, { timeoutMs })).ready;
   return summary;
 }

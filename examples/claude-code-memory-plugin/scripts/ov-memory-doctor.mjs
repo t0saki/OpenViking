@@ -8,9 +8,8 @@
  * (which file won, is the JSON valid, what the key claims) and the connection
  * to the server (reachability, auth, tenant-data access, /mcp) — plus the
  * runtime evidence the hooks leave behind. When the server runs on this
- * machine (loopback url) it also checks the server side: ov.conf startup
- * blockers, the server process and port, the workspace, the server log and
- * `GET /ready`. Provider-level validation stays with `openviking-server doctor`.
+ * machine (loopback url) it also checks
+ * the port, plugin-only keys in ov.conf and `GET /ready`. Provider-level validation stays with `openviking-server doctor`.
  *
  * Usage:
  *   node ov-memory-doctor.mjs [--json] [--offline] [--timeout <ms>] [--no-color]

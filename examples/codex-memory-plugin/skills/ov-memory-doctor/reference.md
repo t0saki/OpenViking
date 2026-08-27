@@ -104,9 +104,8 @@ on stdout is the artifact.
 
 | Path | What |
 |---|---|
-| `~/.openviking/ov.conf` (or `OPENVIKING_CONFIG_FILE`, then `/etc/openviking/ov.conf`) | The server's config. The doctor lints the copy the plugin resolves; a server started with another `--config` runs from that file instead. |
-| `<storage.workspace>/` | Data: `viking/` (content), `vectordb/context/` (index; `collection_meta.json` records the embedding it was built with), `_system/queue/queue.db`. `storage.workspace` defaults to `./data` relative to the server's cwd. |
-| `<workspace>/.openviking.pid` | Workspace lock, bare pid; stale after a hard kill, reclaimed on the next start. |
+| `~/.openviking/ov.conf` (or `OPENVIKING_CONFIG_FILE`, then `/etc/openviking/ov.conf`) | The server's config. The doctor checks the copy the plugin resolves for plugin-only keys; a server started with another `--config` runs from that file instead. |
+| `<storage.workspace>/` | Data: `viking/` (content), `vectordb/context/` (index), `_system/queue/queue.db`. `storage.workspace` defaults to `./data` relative to the server's cwd. |
 | `<workspace>/log/openviking.log` | Only with `log.output: "file"`. Default is stdout (terminal / tmux / nohup file / `journalctl -u openviking` / `docker logs openviking`). Time-rotated as `openviking.log.YYYY-MM-DD`. |
 | docker | Container `openviking`, image `ghcr.io/volcengine/openviking`, `~/.openviking` mounted at `/app/.openviking` (config, ovcli.conf and data). `docker exec openviking openviking-server doctor` works. |
 
@@ -163,9 +162,9 @@ reports `unknown command`.
 | `codex plugin marketplace upgrade` says up to date but bug persists | Version-keyed cache, version string unchanged | doctor cache versions vs marketplace copy | Re-run the installer (re-registers the marketplace) |
 | Every prompt is slow | Local compressor (`codex exec`) on each recall | `recall-compressor-profile.json`; `OPENVIKING_RECALL_COMPRESS=0` to test | Disable compression or fix the model |
 | curl works, plugin says offline | Corporate proxy or private CA; Node ignores both | doctor proxy/TLS hints; `node -e "fetch('<url>/health')"` | `NODE_USE_ENV_PROXY=1` / `NODE_EXTRA_CA_CERTS` in the launching environment |
-| `0 memories extracted` / commits never produce memories | VLM missing or failing, or embedding failing on the server | doctor `/ready: embedding`, `no vlm section`; server log `Backup VLM also failed` / `Credential … failed with auth` | Fix vlm/embedding in ov.conf, restart the server |
+| `0 memories extracted` / commits never produce memories | VLM missing or failing, or embedding failing on the server | doctor `/ready: embedding`; ov.conf without a `vlm` section; server log `Backup VLM also failed` / `Credential … failed with auth` | Fix vlm/embedding in ov.conf, restart the server |
 | "server unreachable" right after editing ov.conf | The server exited at its restart because of the edit | doctor Server health lint; the startup text in the server's terminal | Fix the finding, start it again |
-| Recall empty and the index never grows after switching the embedding model | Dimension mismatch — every vector write is dropped | doctor "vector index was built with dimension …"; log `Dense vector dimension mismatch` | Original model, or a fresh workspace |
+| Recall empty and the index never grows after switching the embedding model | Dimension mismatch — every vector write is dropped | startup `EmbeddingRebuildRequiredError`, or log `Dense vector dimension mismatch` while it still runs | Original model, or a fresh workspace |
 
 ## Links
 
