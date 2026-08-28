@@ -444,3 +444,89 @@ test("session-end without a session_id writes nothing", async () => {
     await rm(stateDir, { recursive: true, force: true });
   }
 });
+
+test("a partial catch-up keeps the live session and the end marker instead of committing", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "ov-session-end-partial-"));
+  const transcriptPath = join(stateDir, "transcript.jsonl");
+  const calls = [];
+  try {
+    await writeState(stateDir, "s11", { capturedTurnCount: 0 });
+    await writeTranscript(transcriptPath, 2);
+
+    // Batch is unavailable, so the sender falls back to serial; the second
+    // message then fails, leaving the tail turn unsent.
+    let serial = 0;
+    await withMockOpenViking(async (req, res) => {
+      const url = new URL(req.url, "http://127.0.0.1");
+      calls.push({ method: req.method, path: url.pathname, body: null });
+      if (req.method === "GET" && url.pathname === "/health") {
+        writeJson(res, { status: "ok", result: { ok: true } });
+        return;
+      }
+      if (req.method === "POST" && url.pathname.endsWith("/messages/batch")) {
+        res.writeHead(404, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ status: "error", error: "no batch endpoint" }));
+        return;
+      }
+      if (req.method === "POST" && url.pathname.endsWith("/messages")) {
+        calls[calls.length - 1].body = await readRequestBody(req);
+        serial += 1;
+        if (serial === 1) {
+          writeJson(res, { status: "ok", result: { ok: true } });
+          return;
+        }
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ status: "error", error: { message: "boom" } }));
+        return;
+      }
+      writeJson(res, { status: "ok", result: {} });
+    }, async (baseUrl) => {
+      await runSessionEnd(
+        { session_id: "s11", transcript_path: transcriptPath },
+        workerEnv(baseUrl, stateDir),
+      );
+    });
+
+    assert.equal(sentMessages(calls).length, 2, "both serial attempts are made");
+    assert.equal(calls.some((c) => c.path.endsWith("/commit")), false, "an incomplete append must not commit");
+    const state = await readState(stateDir, "s11");
+    assert.equal(state.ovSessionId, "cx-s11");
+    assert.equal(state.capturedTurnCount, 1, "the cursor advances only past what landed");
+    assert.equal(await exists(join(stateDir, "s11.ended")), true);
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("a worker whose end token no longer matches the marker does nothing", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "ov-session-end-superseded-"));
+  const transcriptPath = join(stateDir, "transcript.jsonl");
+  const calls = [];
+  try {
+    await writeState(stateDir, "s12", { capturedTurnCount: 0 });
+    await writeTranscript(transcriptPath, 2);
+    const markerAt = Date.now();
+    await writeFile(join(stateDir, "s12.ended"), String(markerAt));
+
+    await withMockOpenViking(mockHandler(calls), async (baseUrl) => {
+      await runSessionEnd(
+        { session_id: "s12", transcript_path: transcriptPath },
+        workerEnv(baseUrl, stateDir, {
+          OPENVIKING_SESSION_END_TOKEN: String(markerAt - 5_000),
+        }),
+      );
+    });
+
+    assert.equal(calls.length, 0, "a superseded worker makes no HTTP calls at all");
+    const state = await readState(stateDir, "s12");
+    assert.equal(state.ovSessionId, "cx-s12");
+    assert.equal(state.capturedTurnCount, 0);
+    assert.equal(
+      (await readFile(join(stateDir, "s12.ended"), "utf-8")).trim(),
+      String(markerAt),
+      "the newer marker survives",
+    );
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});

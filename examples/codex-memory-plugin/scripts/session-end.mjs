@@ -23,7 +23,14 @@
 import { loadConfig } from "./config.mjs";
 import { createLogger } from "./debug-log.mjs";
 import { catchUpTurns, commitOvSession, hasCaptureKeyword, makeFetchJSON } from "./ov-session.mjs";
-import { clearEnded, loadState, markEnded, saveState, withSessionLock } from "./session-state.mjs";
+import {
+  clearEnded,
+  loadState,
+  markEnded,
+  readEndedAt,
+  saveState,
+  withSessionLock,
+} from "./session-state.mjs";
 import { maybeDetach, readHookStdin } from "./shared/async-writer.mjs";
 import { resolveEffectivePeerId } from "./shared/workspace-peer.mjs";
 
@@ -42,7 +49,16 @@ function output(obj) {
   process.stdout.write(JSON.stringify(obj) + "\n");
 }
 
-async function finish(sessionId, transcriptPath, heartbeat) {
+async function finish(sessionId, transcriptPath, endToken, heartbeat) {
+  // Verify the marker this worker was launched for before doing any work. A
+  // marker that is gone means the thread was resumed; a different one belongs
+  // to a later exit whose own worker will commit.
+  const marker = await readEndedAt(sessionId);
+  if (marker !== endToken) {
+    log("superseded", { sessionId, token: endToken, marker: marker ?? null });
+    return;
+  }
+
   const state = await loadState(sessionId);
   activePeerId = cfg.peerId || state.workspacePeerId || resolveEffectivePeerId({ cfg, cwd: process.cwd() }).peerId;
   log("start", { sessionId, transcriptPath, hasPeer: Boolean(activePeerId) });
@@ -54,7 +70,7 @@ async function finish(sessionId, transcriptPath, heartbeat) {
     return;
   }
 
-  const { added } = await catchUpTurns({
+  const { newTurns, added, skipped } = await catchUpTurns({
     state,
     transcriptPath,
     fetchJSONRes,
@@ -68,10 +84,23 @@ async function finish(sessionId, transcriptPath, heartbeat) {
   });
   if (added > 0) log("appended_catchup", { ovSessionId: state.ovSessionId, added });
 
+  // Committing now would archive a session missing its tail turns and release
+  // the live id. Keep the live id and the marker so the sweep retries; the
+  // cursor already advanced past the prefix that landed.
+  if (newTurns.length > 0 && !skipped && added < newTurns.length) {
+    logError("append_incomplete", {
+      ovSessionId: state.ovSessionId,
+      attempted: newTurns.length,
+      added,
+    });
+    await saveState(state, { touch: false });
+    return;
+  }
+
   if (!state.ovSessionId) {
     log("skip", { stage: "commit", reason: "no live OV session for this codex session" });
     if (added > 0) await saveState(state, { touch: false });
-    await clearEnded(sessionId);
+    await clearEnded(sessionId, { before: endToken + 1 });
     return;
   }
 
@@ -102,7 +131,7 @@ async function finish(sessionId, transcriptPath, heartbeat) {
   });
   state.ovSessionId = null;
   await saveState(state, { touch: false });
-  await clearEnded(sessionId);
+  await clearEnded(sessionId, { before: endToken + 1 });
 }
 
 async function main() {
@@ -133,8 +162,13 @@ async function main() {
 
   // Lock-free and first: even if the worker never runs (job-object kill on
   // Windows, crash, disabled server) the sweep can still find and commit this
-  // session at the next SessionStart.
-  await markEnded(sessionId);
+  // session at the next SessionStart. The marker's timestamp is the token the
+  // worker verifies before committing, inherited through the environment.
+  const inherited = Number(process.env.OPENVIKING_SESSION_END_TOKEN);
+  const endToken = process.env.OV_HOOK_WORKER === "1" && Number.isFinite(inherited) && inherited > 0
+    ? inherited
+    : await markEnded(sessionId);
+  process.env.OPENVIKING_SESSION_END_TOKEN = String(endToken);
 
   if (process.env.OV_HOOK_WORKER !== "1") {
     // stdin is already drained; hand the payload to the worker through the
@@ -151,7 +185,7 @@ async function main() {
 
   const outcome = await withSessionLock(
     sessionId,
-    ({ heartbeat }) => finish(sessionId, transcriptPath, heartbeat),
+    ({ heartbeat }) => finish(sessionId, transcriptPath, endToken, heartbeat),
     { waitMs: LOCK_WAIT_MS },
   );
   if (outcome.skipped) {

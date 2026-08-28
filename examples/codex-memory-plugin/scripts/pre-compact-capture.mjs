@@ -40,6 +40,8 @@ const LOCK_WAIT_MS = (() => {
   return Number.isFinite(v) && v >= 0 ? Math.floor(v) : 40_000;
 })();
 
+const HOOK_STARTED_AT = Date.now();
+
 const { fetchJSONRes, fetchJSON } = makeFetchJSON(cfg, { getActorPeerId: () => activePeerId });
 
 function output(obj) {
@@ -147,8 +149,8 @@ async function main() {
   const transcriptPath = input.transcript_path || null;
   const trigger = input.trigger || "auto";
 
-  // Compaction means the thread is running, so any end marker is stale.
-  await clearEnded(sessionId);
+  // Compaction means the thread is running, so any earlier end marker is stale.
+  await clearEnded(sessionId, { before: HOOK_STARTED_AT });
 
   const outcome = await withSessionLock(
     sessionId,

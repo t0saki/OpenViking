@@ -35,6 +35,13 @@ let activePeerId = cfg.peerId || "";
 
 const LOCK_WAIT_MS = 120_000;
 
+// A detached worker can boot long after the turn ended, so it clears end
+// markers against the parent's start time rather than its own.
+const HOOK_STARTED_AT = (() => {
+  const inherited = Number(process.env.OPENVIKING_HOOK_STARTED_AT);
+  return Number.isFinite(inherited) && inherited > 0 ? inherited : Date.now();
+})();
+
 const { fetchJSONRes, fetchJSON } = makeFetchJSON(cfg, { getActorPeerId: () => activePeerId });
 
 function output(obj) {
@@ -137,6 +144,7 @@ async function main() {
 
   // Async write mode returns a no-op response immediately; worker stdout is
   // intentionally discarded, so appended-count systemMessage is sync-only.
+  process.env.OPENVIKING_HOOK_STARTED_AT = String(HOOK_STARTED_AT);
   if (await maybeDetach(cfg, { approve: () => output({}) })) return;
 
   let input;
@@ -151,8 +159,9 @@ async function main() {
   const sessionId = input.session_id || "unknown";
   const transcriptPath = input.transcript_path || null;
 
-  // A turn ended for this session, so it is alive again after any resume.
-  await clearEnded(sessionId);
+  // A turn ended for this session, so it is alive again after any resume — but
+  // only for markers older than this hook run.
+  await clearEnded(sessionId, { before: HOOK_STARTED_AT });
 
   const outcome = await withSessionLock(
     sessionId,

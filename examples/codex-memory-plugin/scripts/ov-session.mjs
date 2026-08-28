@@ -138,6 +138,10 @@ export async function catchUpTurns({
   heartbeat,
   shouldSend,
 }) {
+  // Remember the rollout path so the SessionStart sweep can catch up turns for
+  // a session whose Stop/SessionEnd workers never ran.
+  if (transcriptPath) state.transcriptPath = transcriptPath;
+
   const { turns, ok } = await readTranscriptTurns(transcriptPath, cfg, logError);
 
   if (!ok || turns.length === 0) {

@@ -447,3 +447,169 @@ test("resume clears a stale SessionEnd marker for the resumed session", async ()
     await rm(stateDir, { recursive: true, force: true });
   }
 });
+
+function readRequestBody(req) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    req.on("data", (chunk) => chunks.push(chunk));
+    req.on("end", () => {
+      const raw = Buffer.concat(chunks).toString("utf-8");
+      try { resolve(raw ? JSON.parse(raw) : null); } catch (error) { reject(error); }
+    });
+    req.on("error", reject);
+  });
+}
+
+function turn(role, content) {
+  return JSON.stringify({ payload: { message: { role, content } } });
+}
+
+/** profileHandler plus the session message endpoints the sweep catch-up needs. */
+function sweepHandler(requests, { onBatch, batchStatus = 200 } = {}) {
+  const base = profileHandler(requests);
+  return async (req, res) => {
+    const url = new URL(req.url, "http://127.0.0.1");
+    if (req.method === "POST" && url.pathname.endsWith("/messages/batch")) {
+      const body = await readRequestBody(req);
+      requests.push({ method: req.method, path: url.pathname, body });
+      await onBatch?.(body);
+      if (batchStatus !== 200) {
+        res.writeHead(batchStatus, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ status: "error", error: { message: "batch failed" } }));
+        return;
+      }
+      writeJson(res, { status: "ok", result: { ok: true } });
+      return;
+    }
+    return base(req, res);
+  };
+}
+
+test("the sweep catches up the recorded transcript before committing", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "ov-codex-sweep-catchup-"));
+  const transcriptPath = join(stateDir, "orphan.jsonl");
+  const requests = [];
+  try {
+    const now = Date.now();
+    await writeFile(transcriptPath, [
+      turn("user", "first request"),
+      turn("assistant", "first reply"),
+      turn("user", "second request"),
+    ].join("\n"));
+    await writeFile(join(stateDir, "orphan.json"), JSON.stringify({
+      codexSessionId: "orphan",
+      ovSessionId: "cx-orphan",
+      transcriptPath,
+      capturedTurnCount: 1,
+      createdAt: now - 5_000,
+      lastUpdatedAt: now,
+    }));
+    await writeFile(join(stateDir, "orphan.ended"), String(now));
+
+    await withMockOpenViking(sweepHandler(requests), async (baseUrl) => {
+      const { output } = await runSessionStart(
+        { session_id: "new-session", source: "startup", cwd: "/tmp/codex-sweep-catchup" },
+        { ...baseEnv(baseUrl, stateDir), OPENVIKING_CAPTURE_ASSISTANT_TURNS: "1" },
+      );
+      assert.match(output.systemMessage, /cx-orphan is committed/);
+    });
+
+    const sent = requests
+      .filter((r) => r.path === "/api/v1/sessions/cx-orphan/messages/batch")
+      .flatMap((r) => r.body?.messages ?? []);
+    assert.equal(sent.length, 2);
+    assert.equal(sent[0].parts?.[0]?.text ?? sent[0].content, "first reply");
+    assert.ok(requests.some((r) => r.path === "/api/v1/sessions/cx-orphan/commit"));
+
+    const state = JSON.parse(await readFile(join(stateDir, "orphan.json"), "utf-8"));
+    assert.equal(state.ovSessionId, null);
+    assert.equal(state.capturedTurnCount, 3);
+    assert.equal(await exists(join(stateDir, "orphan.ended")), false);
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("the sweep keeps a session live when its catch-up is incomplete", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "ov-codex-sweep-partial-"));
+  const transcriptPath = join(stateDir, "partial.jsonl");
+  const requests = [];
+  try {
+    const now = Date.now();
+    await writeFile(transcriptPath, [
+      turn("user", "first request"),
+      turn("user", "second request"),
+    ].join("\n"));
+    await writeFile(join(stateDir, "partial.json"), JSON.stringify({
+      codexSessionId: "partial",
+      ovSessionId: "cx-partial",
+      transcriptPath,
+      capturedTurnCount: 0,
+      createdAt: now - 5_000,
+      lastUpdatedAt: now,
+    }));
+    await writeFile(join(stateDir, "partial.ended"), String(now));
+
+    await withMockOpenViking(sweepHandler(requests, { batchStatus: 500 }), async (baseUrl) => {
+      const { output } = await runSessionStart(
+        { session_id: "new-session", source: "startup", cwd: "/tmp/codex-sweep-partial" },
+        baseEnv(baseUrl, stateDir),
+      );
+      assert.equal(output.systemMessage, undefined);
+    });
+
+    assert.equal(requests.some((r) => r.path.endsWith("/commit")), false);
+    const state = JSON.parse(await readFile(join(stateDir, "partial.json"), "utf-8"));
+    assert.equal(state.ovSessionId, "cx-partial");
+    assert.equal(state.capturedTurnCount, 0);
+    assert.equal(await exists(join(stateDir, "partial.ended")), true);
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("a marker that disappears under the lock falls back to the idle rule", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "ov-codex-sweep-marker-gone-"));
+  const transcriptPath = join(stateDir, "twins.jsonl");
+  const requests = [];
+  try {
+    const now = Date.now();
+    await writeFile(transcriptPath, turn("user", "only request"));
+    for (const id of ["twin-a", "twin-b"]) {
+      await writeFile(join(stateDir, `${id}.json`), JSON.stringify({
+        codexSessionId: id,
+        ovSessionId: `cx-${id}`,
+        transcriptPath,
+        capturedTurnCount: 0,
+        createdAt: now - 5_000,
+        lastUpdatedAt: now,
+      }));
+      await writeFile(join(stateDir, `${id}.ended`), String(now));
+    }
+
+    // Whichever twin the sweep reaches first wipes both markers mid-catch-up;
+    // the other one is fresh, so with its marker gone it must be left alone.
+    const onBatch = async () => {
+      await Promise.all([
+        rm(join(stateDir, "twin-a.ended"), { force: true }),
+        rm(join(stateDir, "twin-b.ended"), { force: true }),
+      ]);
+    };
+
+    await withMockOpenViking(sweepHandler(requests, { onBatch }), async (baseUrl) => {
+      await runSessionStart(
+        { session_id: "new-session", source: "startup", cwd: "/tmp/codex-sweep-marker-gone" },
+        { ...baseEnv(baseUrl, stateDir), OPENVIKING_CODEX_IDLE_TTL_MS: "1800000" },
+      );
+    });
+
+    const commits = requests.filter((r) => r.path.endsWith("/commit"));
+    assert.equal(commits.length, 1, "only the twin that still had its marker commits");
+    const live = await Promise.all(["twin-a", "twin-b"].map(async (id) =>
+      JSON.parse(await readFile(join(stateDir, `${id}.json`), "utf-8")).ovSessionId
+    ));
+    assert.equal(live.filter(Boolean).length, 1, "the other twin stays live for a later sweep");
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});

@@ -15,7 +15,7 @@ and `CODEX_CONFIG_FILE` relocate individual pieces.
 | `~/.codex/config.toml` | `[features] plugin_hooks`, `[plugins."openviking-memory@openviking"] enabled`, `[marketplaces.openviking]` (source, ref), `[hooks.state."openviking-memory@openviking:hooks/hooks.json:<event>:0:0"] trusted_hash` for `session_start`, `user_prompt_submit`, `stop`, `session_end`, `pre_compact`. |
 | `~/.codex/plugins/cache/openviking/openviking-memory/<version>/` | The copy Codex runs hooks from. Keyed by `plugin.json` version. |
 | `~/.codex/.tmp/marketplaces/openviking/` | Git clone of the marketplace (GitHub/TOS dist); `examples/codex-memory-plugin` inside it is what `codex plugin list` reports as the source path. |
-| `~/.openviking/codex-plugin-state/<session_id>.json` | Per-session state: `ovSessionId` (`cx-<session_id>`, null once committed), `capturedTurnCount`, `lastUpdatedAt`. |
+| `~/.openviking/codex-plugin-state/<session_id>.json` | Per-session state: `ovSessionId` (`cx-<session_id>`, null once committed), `transcriptPath` (last rollout seen, used by the SessionStart sweep to catch up unsent turns), `capturedTurnCount`, `lastUpdatedAt`. |
 | `~/.openviking/codex-plugin-state/<session_id>.ended` / `.lock` | Sidecars: `.ended` marks a thread whose SessionEnd fired but whose commit has not succeeded yet; `.lock` is the directory lock serializing the capture hooks. |
 | `~/.openviking/codex-plugin-state/recall-compressor-profile.json` | Cached local-compressor detection (`profile.enabled`, `model`, `source`). |
 | `~/.openviking/logs/codex-hooks.log` | JSONL hook + proxy log; written only when `OPENVIKING_DEBUG=1` or `codex.debug: true`. |

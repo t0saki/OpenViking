@@ -24,6 +24,10 @@
  *
  *   Each candidate is committed under its session lock with no waiting: a lock
  *   we cannot take means a SessionEnd or Stop worker already owns the session.
+ *   Under the lock the sweep first appends whatever the state's recorded
+ *   transcript still holds past the cursor, so a session whose workers never
+ *   ran is not archived without its tail turns; an incomplete append keeps the
+ *   session live for the next sweep instead of committing.
  *
  *   The same pass retires cursor-only states (no live OV session): a cursor
  *   that was never used is dropped after IDLE_TTL_MS, and a real cursor is
@@ -42,6 +46,7 @@
 
 import { loadConfig } from "./config.mjs";
 import { createLogger } from "./debug-log.mjs";
+import { catchUpTurns, makeFetchJSON } from "./ov-session.mjs";
 import { detectRecallCompressorProfile } from "./recall-compressor-profile.mjs";
 import {
   clearEnded,
@@ -49,6 +54,7 @@ import {
   deriveOvSessionId,
   listStates,
   loadState,
+  readEndedAt,
   saveState,
   withSessionLock,
 } from "./session-state.mjs";
@@ -63,6 +69,12 @@ const IDLE_TTL_MS = (() => {
   const v = Number(process.env.OPENVIKING_CODEX_IDLE_TTL_MS);
   return Number.isFinite(v) && v > 0 ? Math.floor(v) : 1_800_000;
 })();
+
+const HOOK_STARTED_AT = Date.now();
+
+// The sweep catches up unsent turns before committing, so it needs the same
+// HTTP helper the capture hooks use.
+const { fetchJSONRes } = makeFetchJSON(cfg, { getActorPeerId: () => activePeerId });
 
 const COMMITTED_TTL_MS = (() => {
   const v = Number(process.env.OPENVIKING_CODEX_COMMITTED_TTL_MS);
@@ -249,7 +261,7 @@ async function buildResumeArchiveContext(newSessionId) {
  *
  * Returns { committed: bool, ovSessionId: string|null, traceId: string }.
  */
-async function commitAndRelease(state, reason) {
+async function commitAndRelease(state, reason, endToken) {
   const ovSessionId = state.ovSessionId;
   const commit = await commitOvSession(ovSessionId);
   if (!commit?.ok) {
@@ -276,7 +288,12 @@ async function commitAndRelease(state, reason) {
   });
   state.ovSessionId = null;
   await saveState(state, { touch: false });
-  await clearEnded(state.codexSessionId);
+  // Only retire the marker this pass verified; a newer one belongs to an exit
+  // that happened while we were committing.
+  await clearEnded(
+    state.codexSessionId,
+    typeof endToken === "number" ? { before: endToken + 1 } : {},
+  );
   return { committed: true, ovSessionId, traceId };
 }
 
@@ -349,7 +366,7 @@ async function main() {
   if (source === "resume") {
     // Earliest liveness signal after `codex resume`: the thread is running
     // again, so a marker left by its previous exit must not trigger the sweep.
-    await clearEnded(newSessionId);
+    await clearEnded(newSessionId, { before: HOOK_STARTED_AT });
     const health = await fetchJSON("/health");
     if (!health) {
       logError("health_check", "server unreachable; skipping profile + archive injection");
@@ -395,7 +412,7 @@ async function main() {
     if (!s.ovSessionId) {
       // A marker with nothing live left is a worker that died after its
       // commit; drop it so the doctor does not report a pending session.
-      if (s.endedAt) await clearEnded(s.codexSessionId);
+      if (s.endedAt) await clearEnded(s.codexSessionId, { before: s.endedAt + 1 });
       if (await maybeRetireCursorState(s, ageMs)) retired += 1;
       continue;
     }
@@ -405,10 +422,49 @@ async function main() {
     log("sweep", { codexSessionId: s.codexSessionId, ovSessionId: s.ovSessionId, ageMs, reason });
     // Try-lock only: a held lock means a SessionEnd or Stop worker is already
     // committing this session (user quit and relaunched within seconds).
-    const outcome = await withSessionLock(s.codexSessionId, async () => {
+    const outcome = await withSessionLock(s.codexSessionId, async ({ heartbeat }) => {
       const fresh = await loadState(s.codexSessionId);
       if (!fresh.ovSessionId) return null;
-      return commitAndRelease(fresh, reason);
+
+      // Re-read the marker under the lock: it may have been cleared by a
+      // resume or replaced by a newer exit since listStates() sampled it.
+      const endToken = await readEndedAt(s.codexSessionId);
+      if (reason === "ended_retry" && (endToken === undefined || endToken > s.endedAt)) {
+        if (ageMs <= IDLE_TTL_MS) {
+          log("sweep_skip", {
+            codexSessionId: s.codexSessionId,
+            reason: endToken === undefined ? "marker cleared under the lock" : "newer end marker",
+          });
+          return null;
+        }
+      }
+
+      // Turns the session's own workers never sent would be lost by an
+      // archive-now commit, so catch them up first and keep the session live
+      // for the next sweep if any of them failed to land.
+      const { newTurns, added, skipped } = await catchUpTurns({
+        state: fresh,
+        transcriptPath: fresh.transcriptPath,
+        fetchJSONRes,
+        activePeerId: fresh.workspacePeerId || activePeerId,
+        cfg,
+        log,
+        logError,
+        heartbeat,
+      });
+      if (added > 0) log("appended_catchup", { ovSessionId: fresh.ovSessionId, added });
+      if (newTurns.length > 0 && !skipped && added < newTurns.length) {
+        logError("append_incomplete", {
+          codexSessionId: s.codexSessionId,
+          ovSessionId: fresh.ovSessionId,
+          attempted: newTurns.length,
+          added,
+        });
+        await saveState(fresh, { touch: false });
+        return null;
+      }
+
+      return commitAndRelease(fresh, reason, endToken);
     }, { waitMs: 0 });
 
     if (outcome.skipped) {
