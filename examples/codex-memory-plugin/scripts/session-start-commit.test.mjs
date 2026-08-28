@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import http from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -188,7 +188,11 @@ test("startup injects the shared profile block with workspace peer routing", asy
   }
 });
 
-test("startup preserves the existing commit systemMessage alongside profile context", async () => {
+async function exists(path) {
+  try { await stat(path); return true; } catch { return false; }
+}
+
+test("startup commits a session whose SessionEnd marker is still present", async () => {
   const stateDir = await mkdtemp(join(tmpdir(), "ov-codex-session-commit-"));
   const requests = [];
   try {
@@ -201,6 +205,7 @@ test("startup preserves the existing commit systemMessage alongside profile cont
       createdAt: now - 1000,
       lastUpdatedAt: now,
     }));
+    await writeFile(join(stateDir, "old-session.ended"), String(now));
 
     await withMockOpenViking(profileHandler(requests), async (baseUrl) => {
       const { output } = await runSessionStart(
@@ -227,6 +232,7 @@ test("startup preserves the existing commit systemMessage alongside profile cont
     const state = JSON.parse(await readFile(join(stateDir, "old-session.json"), "utf-8"));
     assert.equal(state.ovSessionId, null);
     assert.equal(state.capturedTurnCount, 2);
+    assert.equal(await exists(join(stateDir, "old-session.ended")), false);
   } finally {
     await rm(stateDir, { recursive: true, force: true });
   }
@@ -259,7 +265,6 @@ test("startup ignores committed cursor-only states", async () => {
         { session_id: "new-session", source: "startup", cwd: "/tmp/codex-cursor-only" },
         {
           ...baseEnv(baseUrl, stateDir),
-          OPENVIKING_CODEX_ACTIVE_WINDOW_MS: "1000",
           OPENVIKING_CODEX_IDLE_TTL_MS: "5000",
         },
       );
@@ -311,7 +316,6 @@ test("startup retires cursor-only states once their retention window closes", as
         { session_id: "new-session", source: "startup", cwd: "/tmp/codex-cursor-retention" },
         {
           ...baseEnv(baseUrl, stateDir),
-          OPENVIKING_CODEX_ACTIVE_WINDOW_MS: "500",
           OPENVIKING_CODEX_IDLE_TTL_MS: "5000",
           OPENVIKING_CODEX_COMMITTED_TTL_MS: "8000",
         },
@@ -328,45 +332,117 @@ test("startup retires cursor-only states once their retention window closes", as
   }
 });
 
-test("startup defers to idle TTL when a cursor-only session is still active", async () => {
-  const stateDir = await mkdtemp(join(tmpdir(), "ov-codex-active-cursor-"));
+test("startup leaves a fresh live session alone until it ends or goes idle", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "ov-codex-active-live-"));
   const requests = [];
   try {
     const now = Date.now();
-    await Promise.all([
-      writeFile(join(stateDir, "live.json"), JSON.stringify({
-        codexSessionId: "live",
-        ovSessionId: "cx-live",
-        capturedTurnCount: 2,
-        createdAt: now - 2_000,
-        lastUpdatedAt: now - 100,
-      })),
-      // Just committed by PreCompact, so cursor-only — but still running.
-      writeFile(join(stateDir, "compacted.json"), JSON.stringify({
-        codexSessionId: "compacted",
-        ovSessionId: null,
-        capturedTurnCount: 5,
-        createdAt: now - 2_000,
-        lastUpdatedAt: now - 100,
-      })),
-    ]);
+    await writeFile(join(stateDir, "live.json"), JSON.stringify({
+      codexSessionId: "live",
+      ovSessionId: "cx-live",
+      capturedTurnCount: 2,
+      createdAt: now - 2_000,
+      lastUpdatedAt: now - 100,
+    }));
 
     await withMockOpenViking(profileHandler(requests), async (baseUrl) => {
       const { output } = await runSessionStart(
-        { session_id: "new-session", source: "startup", cwd: "/tmp/codex-active-cursor" },
-        {
-          ...baseEnv(baseUrl, stateDir),
-          OPENVIKING_CODEX_ACTIVE_WINDOW_MS: "60000",
-          OPENVIKING_CODEX_IDLE_TTL_MS: "1800000",
-        },
+        { session_id: "new-session", source: "startup", cwd: "/tmp/codex-active-live" },
+        { ...baseEnv(baseUrl, stateDir), OPENVIKING_CODEX_IDLE_TTL_MS: "1800000" },
       );
       assert.equal(output.systemMessage, undefined);
     });
 
     assert.equal(requests.some((request) => request.path.endsWith("/commit")), false);
-    const live = JSON.parse(await readFile(join(stateDir, "live.json"), "utf-8"));
-    assert.equal(live.ovSessionId, "cx-live");
-    assert.equal(JSON.parse(await readFile(join(stateDir, "compacted.json"), "utf-8")).capturedTurnCount, 5);
+    assert.equal(JSON.parse(await readFile(join(stateDir, "live.json"), "utf-8")).ovSessionId, "cx-live");
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("startup commits a live session once it passes the idle TTL", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "ov-codex-idle-commit-"));
+  const requests = [];
+  try {
+    const now = Date.now();
+    await writeFile(join(stateDir, "idle.json"), JSON.stringify({
+      codexSessionId: "idle",
+      ovSessionId: "cx-idle",
+      capturedTurnCount: 3,
+      createdAt: now - 60_000,
+      lastUpdatedAt: now - 30_000,
+    }));
+
+    await withMockOpenViking(profileHandler(requests), async (baseUrl) => {
+      const { output } = await runSessionStart(
+        { session_id: "new-session", source: "startup", cwd: "/tmp/codex-idle-commit" },
+        { ...baseEnv(baseUrl, stateDir), OPENVIKING_CODEX_IDLE_TTL_MS: "5000" },
+      );
+      assert.match(output.systemMessage, /cx-idle is committed/);
+    });
+
+    const state = JSON.parse(await readFile(join(stateDir, "idle.json"), "utf-8"));
+    assert.equal(state.ovSessionId, null);
+    assert.equal(state.capturedTurnCount, 3);
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("startup skips a session another writer already holds the lock for", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "ov-codex-sweep-lock-"));
+  const requests = [];
+  try {
+    const now = Date.now();
+    await writeFile(join(stateDir, "locked.json"), JSON.stringify({
+      codexSessionId: "locked",
+      ovSessionId: "cx-locked",
+      capturedTurnCount: 2,
+      createdAt: now - 2_000,
+      lastUpdatedAt: now - 100,
+    }));
+    await writeFile(join(stateDir, "locked.ended"), String(now));
+    await mkdir(join(stateDir, "locked.lock"), { recursive: true });
+
+    await withMockOpenViking(profileHandler(requests), async (baseUrl) => {
+      const { output } = await runSessionStart(
+        { session_id: "new-session", source: "startup", cwd: "/tmp/codex-sweep-lock" },
+        baseEnv(baseUrl, stateDir),
+      );
+      assert.equal(output.systemMessage, undefined);
+    });
+
+    assert.equal(requests.some((request) => request.path.endsWith("/commit")), false);
+    const state = JSON.parse(await readFile(join(stateDir, "locked.json"), "utf-8"));
+    assert.equal(state.ovSessionId, "cx-locked");
+    assert.equal(await exists(join(stateDir, "locked.ended")), true);
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("resume clears a stale SessionEnd marker for the resumed session", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "ov-codex-resume-ended-"));
+  const requests = [];
+  try {
+    const now = Date.now();
+    await writeFile(join(stateDir, "resumed.json"), JSON.stringify({
+      codexSessionId: "resumed",
+      ovSessionId: null,
+      capturedTurnCount: 3,
+      createdAt: now - 2_000,
+      lastUpdatedAt: now - 100,
+    }));
+    await writeFile(join(stateDir, "resumed.ended"), String(now));
+
+    await withMockOpenViking(profileHandler(requests), async (baseUrl) => {
+      await runSessionStart(
+        { session_id: "resumed", source: "resume", cwd: "/tmp/codex-resume-ended" },
+        baseEnv(baseUrl, stateDir),
+      );
+    });
+
+    assert.equal(await exists(join(stateDir, "resumed.ended")), false);
   } finally {
     await rm(stateDir, { recursive: true, force: true });
   }
