@@ -19,11 +19,13 @@ events imply "context for a particular codex `session_id` is gone".
   auto-creates the OV session, so the plugin does not call session create.
 - **State file** — `~/.openviking/codex-plugin-state/<safe-codex-session-id>.json`,
   shape `{ codexSessionId, ovSessionId, transcriptPath, capturedTurnCount, createdAt, lastUpdatedAt }`.
-- **End marker** — `<safe-codex-session-id>.ended`, a sidecar written by the
+- **End marker** — `<safe-codex-session-id>.ended.<timestamp>`, a sidecar written by the
   `SessionEnd` parent hook, containing the timestamp at which it was
   written. Its presence means "the thread ended and its commit has not been
   confirmed yet"; its timestamp is the token that tells one exit's marker
-  from another's.
+  from another's, and it lives in the filename so a conditional removal
+  targets an immutable path. A bare `<safe-codex-session-id>.ended` is a
+  pre-0.8.1 marker and is still read back.
 - **Session lock** — `<safe-codex-session-id>.lock`, an exclusive mkdir lock
   serializing the four writers that persist the whole state object. It holds
   an `owner` file so a holder only ever releases its own lock.
@@ -139,7 +141,7 @@ of two reasons:
 
 | Reason | Condition | What it means |
 |---|---|---|
-| `ended_retry` | an `.ended` sidecar is present | `SessionEnd` fired but its commit never completed: OV was unreachable, `/commit` failed, or the worker was killed (Windows job objects kill detached children) |
+| `ended_retry` | an `.ended.<timestamp>` sidecar is present | `SessionEnd` fired but its commit never completed: OV was unreachable, `/commit` failed, or the worker was killed (Windows job objects kill detached children) |
 | `idle_ttl` | no marker and `lastUpdatedAt` older than `IDLE_TTL_MS` (default 30 min) | no `SessionEnd` was ever going to arrive: signals, crashes, Codex older than 0.145 / TraeCode CLI, app-server deferral, or a mid-turn zouk reset that cancelled `Stop` |
 
 Before committing, the sweep appends whatever the state's recorded
@@ -147,6 +149,10 @@ Before committing, the sweep appends whatever the state's recorded
 own workers never ran is not archived without its tail turns. If part of
 that append fails, the sweep keeps `ovSessionId` and the marker and skips
 the commit; the next sweep retries from the advanced cursor.
+
+A marker enters the lock even when the state carries no live `ovSessionId`. `PreCompact` releases the id but leaves the cursor and `transcriptPath` behind, so the tail turns of a thread whose `SessionEnd` worker was killed are only reachable through that catch-up — the catch-up derives a live id by itself as soon as it has something to send. Only when the catch-up finds nothing new and there is still no live id is the marker cleared.
+
+An unreadable transcript is never treated as an empty one. If the state records a `transcriptPath` that cannot be read, the sweep logs `transcript_unreadable`, keeps the live id and the marker, and skips the commit, exactly like a partial append — otherwise a transient read failure would archive a session without turns nobody has seen yet. `SessionEnd` and `PreCompact` apply the same guard.
 
 Their transcript cursor is preserved while `ovSessionId` is cleared. Mental
 model for the idle case: a session not touched for 30 min is "temporarily
@@ -264,7 +270,8 @@ When OV `/commit` returns non-2xx or times out, we log the `trace_id` and
 keep `ovSessionId` set. We must NOT call `clearState` on failure — keep the
 state file, and in the `SessionEnd` path keep the `.ended` marker too, so
 the next sweep retries. A transient OV outage shouldn't lose a session's
-worth of memory.
+worth of memory. An unreadable transcript is handled the same way: no
+commit, state and marker preserved.
 
 ### Race: exit before Stop completes
 
@@ -297,11 +304,13 @@ touches nothing), and 0 for the sweep.
 Ownership makes the lock safe to abandon. The holder writes an `owner` file
 inside the directory containing `<pid>:<uuid>`, and only releases (or
 refreshes) a lock whose `owner` still matches its own — otherwise a taker
-that lost a race would release a lock somebody else now holds. Taking over a
-stale lock renames the directory to `<safe-id>.lock.stale-<uuid>` and then
-removes it: the rename is atomic, so exactly one racer wins and the losers
-get `ENOENT` and simply retry `mkdir`. Renamed-aside directories are ignored
-by `listStates()` and the doctor, which read `.json` only.
+that lost a race would release a lock somebody else now holds. Takeover
+happens in place, on that same `owner` file: the taker renames it aside and
+then creates its own exclusively, two atomic steps that exactly one racer can
+complete, and a racer that loses either one leaves the winner's lock intact.
+The directory itself is never moved or removed during a takeover, because a
+lock path that is momentarily absent would let another racer's `mkdir` succeed
+alongside the taker.
 
 ### Race: a marker and a worker that outlive each other
 
@@ -311,7 +320,10 @@ passes the timestamp it wrote to the detached worker through
 any network call, re-reads the marker and returns without committing unless
 it still matches — a cleared marker means the thread was resumed, a
 different one belongs to a newer exit whose own worker will commit. A
-commit only clears the marker it verified.
+commit only clears the marker it verified. Because each marker's timestamp
+is part of its filename, a conditional removal enumerates the markers older
+than its cutoff and unlinks exactly those paths — a marker written between
+the enumeration and the unlink is a different file and survives untouched.
 
 `Stop` and `PreCompact` clear the `.ended` marker at entry, because a turn
 for this session proves the thread is alive again after a resume. They clear
@@ -353,8 +365,8 @@ Two sidecars live next to `<safe-codex-session-id>.json`:
 
 | Path | Written by | Meaning |
 |---|---|---|
-| `<safe-id>.ended` | `SessionEnd` parent hook (atomic, content = timestamp) | the thread ended; its commit is not confirmed. Read back by `listStates()` as `endedAt`. Removed by a commit that verified this exact timestamp, or by a `Stop` / `PreCompact` / `resume` that started after it was written |
-| `<safe-id>.lock` | whichever writer currently holds the session | exclusive `mkdir` lock holding an `owner` file; abandoned when its mtime is older than 5 min, and taken over by renaming it to `<safe-id>.lock.stale-<uuid>` |
+| `<safe-id>.ended.<timestamp>` | `SessionEnd` parent hook (timestamp in the name, also the content) | the thread ended; its commit is not confirmed. Read back by `listStates()` as `endedAt`, which takes the largest timestamp when several markers exist. Removed by a commit that verified this exact timestamp, or by a `Stop` / `PreCompact` / `resume` that started after it was written — each removal unlinks the exact marker paths older than its cutoff, so it can never take out a newer exit's marker. A bare `<safe-id>.ended` (pre-0.8.1) is still honoured, with the timestamp read from its content |
+| `<safe-id>.lock` | whichever writer currently holds the session | exclusive `mkdir` lock holding an `owner` file; abandoned when its mtime is older than 5 min, and taken over in place by claiming that `owner` file |
 
 Keeping the end marker out of the JSON is deliberate: a whole-object
 `saveState` from a concurrent worker cannot clobber a separate file, and the

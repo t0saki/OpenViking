@@ -9,6 +9,24 @@ import { fileURLToPath } from "node:url";
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 
+async function endedMarkerStamps(dir, id) {
+  const prefix = `${id}.ended.`;
+  const files = await readdir(dir).catch(() => []);
+  return files
+    .filter((name) => name.startsWith(prefix))
+    .map((name) => Number(name.slice(prefix.length)))
+    .filter((ts) => Number.isFinite(ts));
+}
+
+async function endedMarkerExists(dir, id) {
+  return (await endedMarkerStamps(dir, id)).length > 0;
+}
+
+function writeEndedMarker(dir, id, ts) {
+  return writeFile(join(dir, `${id}.ended.${ts}`), String(ts));
+}
+
+
 function readRequestBody(req) {
   return new Promise((resolve, reject) => {
     const chunks = [];
@@ -177,7 +195,7 @@ test("session-end catches up the missing turns then commits", async () => {
     const state = await readState(stateDir, "s1");
     assert.equal(state.ovSessionId, null);
     assert.equal(state.capturedTurnCount, 4);
-    assert.equal(await exists(join(stateDir, "s1.ended")), false);
+    assert.equal(await endedMarkerExists(stateDir, "s1"), false);
   } finally {
     await rm(stateDir, { recursive: true, force: true });
   }
@@ -202,7 +220,7 @@ test("a second session-end on an unchanged transcript neither sends nor commits"
     const state = await readState(stateDir, "s2");
     assert.equal(state.capturedTurnCount, 4);
     assert.equal(state.ovSessionId, null);
-    assert.equal(await exists(join(stateDir, "s2.ended")), false);
+    assert.equal(await endedMarkerExists(stateDir, "s2"), false);
   } finally {
     await rm(stateDir, { recursive: true, force: true });
   }
@@ -225,7 +243,7 @@ test("a failed commit keeps the live session and the end marker", async () => {
     const state = await readState(stateDir, "s3");
     assert.equal(state.ovSessionId, "cx-s3");
     assert.equal(state.capturedTurnCount, 2);
-    assert.equal(await exists(join(stateDir, "s3.ended")), true);
+    assert.equal(await endedMarkerExists(stateDir, "s3"), true);
   } finally {
     await rm(stateDir, { recursive: true, force: true });
   }
@@ -246,7 +264,7 @@ test("an unreachable server leaves the cursor and the end marker alone", async (
     const state = await readState(stateDir, "s4");
     assert.equal(state.capturedTurnCount, 2);
     assert.equal(state.ovSessionId, "cx-s4");
-    assert.equal(await exists(join(stateDir, "s4.ended")), true);
+    assert.equal(await endedMarkerExists(stateDir, "s4"), true);
   } finally {
     await rm(stateDir, { recursive: true, force: true });
   }
@@ -267,6 +285,29 @@ test("a missing transcript never resets the cursor", async () => {
     assert.equal(sentMessages(calls).length, 0);
     const state = await readState(stateDir, "s5");
     assert.equal(state.capturedTurnCount, 8);
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("an unreadable transcript never commits the live session", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "ov-session-end-unreadable-"));
+  const calls = [];
+  try {
+    await writeState(stateDir, "s13", { capturedTurnCount: 3 });
+    await withMockOpenViking(mockHandler(calls), async (baseUrl) => {
+      await runSessionEnd(
+        { session_id: "s13", transcript_path: join(stateDir, "gone.jsonl") },
+        workerEnv(baseUrl, stateDir),
+      );
+    });
+
+    assert.equal(sentMessages(calls).length, 0);
+    assert.equal(calls.some((c) => c.path.endsWith("/commit")), false);
+    const state = await readState(stateDir, "s13");
+    assert.equal(state.ovSessionId, "cx-s13");
+    assert.equal(state.capturedTurnCount, 3);
+    assert.equal(await endedMarkerExists(stateDir, "s13"), true);
   } finally {
     await rm(stateDir, { recursive: true, force: true });
   }
@@ -396,7 +437,7 @@ test("session-end is inert when auto-capture is disabled", async () => {
       assert.deepEqual(JSON.parse(stdout.trim()), {});
     });
     assert.equal(calls.length, 0);
-    assert.equal(await exists(join(stateDir, "s9.ended")), false);
+    assert.equal(await endedMarkerExists(stateDir, "s9"), false);
   } finally {
     await rm(stateDir, { recursive: true, force: true });
   }
@@ -420,7 +461,7 @@ test("the parent hook returns immediately and leaves the end marker behind", asy
       const elapsed = Date.now() - started;
       assert.deepEqual(JSON.parse(stdout.trim()), {});
       assert.ok(elapsed < 1000, `parent hook took ${elapsed}ms; Codex budgets 1s`);
-      assert.equal(await exists(join(stateDir, "s10.ended")), true);
+      assert.equal(await endedMarkerExists(stateDir, "s10"), true);
     });
   } finally {
     await rm(stateDir, { recursive: true, force: true });
@@ -492,7 +533,7 @@ test("a partial catch-up keeps the live session and the end marker instead of co
     const state = await readState(stateDir, "s11");
     assert.equal(state.ovSessionId, "cx-s11");
     assert.equal(state.capturedTurnCount, 1, "the cursor advances only past what landed");
-    assert.equal(await exists(join(stateDir, "s11.ended")), true);
+    assert.equal(await endedMarkerExists(stateDir, "s11"), true);
   } finally {
     await rm(stateDir, { recursive: true, force: true });
   }
@@ -506,7 +547,7 @@ test("a worker whose end token no longer matches the marker does nothing", async
     await writeState(stateDir, "s12", { capturedTurnCount: 0 });
     await writeTranscript(transcriptPath, 2);
     const markerAt = Date.now();
-    await writeFile(join(stateDir, "s12.ended"), String(markerAt));
+    await writeEndedMarker(stateDir, "s12", markerAt);
 
     await withMockOpenViking(mockHandler(calls), async (baseUrl) => {
       await runSessionEnd(
@@ -521,9 +562,9 @@ test("a worker whose end token no longer matches the marker does nothing", async
     const state = await readState(stateDir, "s12");
     assert.equal(state.ovSessionId, "cx-s12");
     assert.equal(state.capturedTurnCount, 0);
-    assert.equal(
-      (await readFile(join(stateDir, "s12.ended"), "utf-8")).trim(),
-      String(markerAt),
+    assert.deepEqual(
+      await endedMarkerStamps(stateDir, "s12"),
+      [markerAt],
       "the newer marker survives",
     );
   } finally {

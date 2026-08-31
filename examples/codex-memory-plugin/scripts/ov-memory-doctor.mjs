@@ -382,7 +382,12 @@ function checkActivity(report, cfg, connection) {
     report.info(`${states.length} session state file(s) in ${homeShort(stateDir)}; newest ${fmtAge(newest.mtimeMs)}: ${d.ovSessionId || "(committed)"} captured ${d.capturedTurnCount ?? "?"} turns`);
     if (states.length > 3 && states.every((s) => (s.data?.capturedTurnCount ?? 0) === 0)) report.warn("no session has ever captured a turn", "the Stop hook runs but never appends messages", "check the Connection section; enable OPENVIKING_DEBUG=1 and read the hook log");
     const idleTtl = Number(process.env.OPENVIKING_CODEX_IDLE_TTL_MS) || 30 * 60 * 1000;
-    const ended = new Set(readdirSync(stateDir).filter((n) => n.endsWith(".ended")).map((n) => n.slice(0, -6)));
+    // Markers are `<id>.ended.<ts>`; the bare `<id>.ended` is a pre-0.8.1 leftover.
+    const ended = new Set(
+      readdirSync(stateDir)
+        .map((n) => /^(.*)\.ended(?:\.\d+)?$/.exec(n)?.[1])
+        .filter(Boolean),
+    );
     const orphans = states.filter((s) => s.data?.ovSessionId
       && (ended.has(s.name.slice(0, -5)) || Date.now() - (s.data.lastUpdatedAt || s.mtimeMs) > idleTtl));
     if (orphans.length > 10) report.warn(`${orphans.length} sessions still uncommitted`, "SessionEnd commits a thread when it exits; the SessionStart sweep retries ended and idle ones, so a growing pile usually means commits are failing", "check the Connection section, then start a new Codex session to trigger the sweep");

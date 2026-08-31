@@ -63,7 +63,7 @@ async function compact(sessionId, transcriptPath, trigger, heartbeat) {
     return "";
   }
 
-  const { newTurns, added, ovSessionId, skipped } = await catchUpTurns({
+  const { newTurns, added, ovSessionId, skipped, unreadable } = await catchUpTurns({
     state,
     transcriptPath,
     fetchJSONRes,
@@ -79,6 +79,15 @@ async function compact(sessionId, transcriptPath, trigger, heartbeat) {
   });
 
   if (added > 0) log("appended_catchup", { ovSessionId, added });
+
+  // An unreadable transcript is not an empty one: the tail turns may still be
+  // there. Keep the live id and the marker so a later commit retries.
+  if (unreadable) {
+    logError("transcript_unreadable", { ovSessionId: state.ovSessionId, transcriptPath });
+    await saveState(state, { touch: false });
+    return `pre-compact transcript unreadable for ${state.ovSessionId || sessionId}; state preserved for retry`;
+  }
+
   if (newTurns.length > 0 && !skipped && added < newTurns.length) {
     logError("append_failed_keep_state", { ovSessionId, attempted: newTurns.length, added });
     await saveState(state);

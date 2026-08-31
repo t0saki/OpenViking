@@ -16,7 +16,7 @@ and `CODEX_CONFIG_FILE` relocate individual pieces.
 | `~/.codex/plugins/cache/openviking/openviking-memory/<version>/` | The copy Codex runs hooks from. Keyed by `plugin.json` version. |
 | `~/.codex/.tmp/marketplaces/openviking/` | Git clone of the marketplace (GitHub/TOS dist); `examples/codex-memory-plugin` inside it is what `codex plugin list` reports as the source path. |
 | `~/.openviking/codex-plugin-state/<session_id>.json` | Per-session state: `ovSessionId` (`cx-<session_id>`, null once committed), `transcriptPath` (last rollout seen, used by the SessionStart sweep to catch up unsent turns), `capturedTurnCount`, `lastUpdatedAt`. |
-| `~/.openviking/codex-plugin-state/<session_id>.ended` / `.lock` | Sidecars: `.ended` marks a thread whose SessionEnd fired but whose commit has not succeeded yet; `.lock` is the directory lock serializing the capture hooks. |
+| `~/.openviking/codex-plugin-state/<session_id>.ended.<timestamp>` / `.lock` | Sidecars: `.ended.<timestamp>` marks a thread whose SessionEnd fired but whose commit has not succeeded yet (the timestamp is in the filename so a conditional removal cannot delete a newer exit's marker; a bare `.ended` is a pre-0.8.1 leftover); `.lock` is the directory lock serializing the capture hooks. |
 | `~/.openviking/codex-plugin-state/recall-compressor-profile.json` | Cached local-compressor detection (`profile.enabled`, `model`, `source`). |
 | `~/.openviking/logs/codex-hooks.log` | JSONL hook + proxy log; written only when `OPENVIKING_DEBUG=1` or `codex.debug: true`. |
 | `~/.openviking/codex-plugin.rc.sh`, `~/.openviking/codex-memory-plugin/runtime/` | Residue of the pre-marketplace installer. The rc script, if still sourced, exports `OPENVIKING_*` and pins credentials to env mode. |

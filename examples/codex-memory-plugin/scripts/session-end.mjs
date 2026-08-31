@@ -70,7 +70,7 @@ async function finish(sessionId, transcriptPath, endToken, heartbeat) {
     return;
   }
 
-  const { newTurns, added, skipped } = await catchUpTurns({
+  const { newTurns, added, skipped, unreadable } = await catchUpTurns({
     state,
     transcriptPath,
     fetchJSONRes,
@@ -83,6 +83,14 @@ async function finish(sessionId, transcriptPath, endToken, heartbeat) {
       Boolean(state.ovSessionId) || cfg.captureMode !== "keyword" || hasCaptureKeyword(turns),
   });
   if (added > 0) log("appended_catchup", { ovSessionId: state.ovSessionId, added });
+
+  // An unreadable transcript is not an empty one: the tail turns may still be
+  // there. Keep the live id and the marker so the sweep retries.
+  if (unreadable) {
+    logError("transcript_unreadable", { ovSessionId: state.ovSessionId, transcriptPath });
+    await saveState(state, { touch: false });
+    return;
+  }
 
   // Committing now would archive a session missing its tail turns and release
   // the live id. Keep the live id and the marker so the sweep retries; the

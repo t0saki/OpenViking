@@ -409,10 +409,11 @@ async function main() {
     if (typeof s.lastUpdatedAt !== "number") continue;
     const ageMs = now - s.lastUpdatedAt;
 
-    if (!s.ovSessionId) {
-      // A marker with nothing live left is a worker that died after its
-      // commit; drop it so the doctor does not report a pending session.
-      if (s.endedAt) await clearEnded(s.codexSessionId, { before: s.endedAt + 1 });
+    // A marker must always enter the lock, even with no live id: PreCompact
+    // releases the id while leaving a cursor behind, so the tail turns of a
+    // session whose SessionEnd worker died are only reachable through a
+    // catch-up under the lock.
+    if (!s.ovSessionId && !s.endedAt) {
       if (await maybeRetireCursorState(s, ageMs)) retired += 1;
       continue;
     }
@@ -424,7 +425,6 @@ async function main() {
     // committing this session (user quit and relaunched within seconds).
     const outcome = await withSessionLock(s.codexSessionId, async ({ heartbeat }) => {
       const fresh = await loadState(s.codexSessionId);
-      if (!fresh.ovSessionId) return null;
 
       // Re-read the marker under the lock: it may have been cleared by a
       // resume or replaced by a newer exit since listStates() sampled it.
@@ -442,7 +442,7 @@ async function main() {
       // Turns the session's own workers never sent would be lost by an
       // archive-now commit, so catch them up first and keep the session live
       // for the next sweep if any of them failed to land.
-      const { newTurns, added, skipped } = await catchUpTurns({
+      const { newTurns, added, skipped, unreadable } = await catchUpTurns({
         state: fresh,
         transcriptPath: fresh.transcriptPath,
         fetchJSONRes,
@@ -453,6 +453,19 @@ async function main() {
         heartbeat,
       });
       if (added > 0) log("appended_catchup", { ovSessionId: fresh.ovSessionId, added });
+
+      // An unreadable transcript is not an empty one: the tail turns may still
+      // be there. Keep the live id and the marker for the next sweep.
+      if (unreadable) {
+        logError("transcript_unreadable", {
+          codexSessionId: s.codexSessionId,
+          ovSessionId: fresh.ovSessionId,
+          transcriptPath: fresh.transcriptPath,
+        });
+        await saveState(fresh, { touch: false });
+        return null;
+      }
+
       if (newTurns.length > 0 && !skipped && added < newTurns.length) {
         logError("append_incomplete", {
           codexSessionId: s.codexSessionId,
@@ -461,6 +474,23 @@ async function main() {
           added,
         });
         await saveState(fresh, { touch: false });
+        return null;
+      }
+
+      // The catch-up derives a live id whenever it sends something; still
+      // having none means there is genuinely nothing to commit, so the marker
+      // can go.
+      if (!fresh.ovSessionId) {
+        if (added > 0) await saveState(fresh, { touch: false });
+        await clearEnded(
+          s.codexSessionId,
+          typeof endToken === "number" ? { before: endToken + 1 } : {},
+        );
+        log("skip", {
+          stage: "commit",
+          codexSessionId: s.codexSessionId,
+          reason: "no live OV session for this codex session",
+        });
         return null;
       }
 

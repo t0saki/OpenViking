@@ -8,13 +8,15 @@
  * PreCompact, or by the fallback sweep at SessionStart.
  *
  * Two sidecars live next to `<safeId>.json`:
- *   - `<safeId>.ended` — written by the SessionEnd parent hook, lock-free, so
- *     the sweep can still commit the session if the worker never ran. A
- *     whole-object saveState from a concurrent worker cannot clobber it.
+ *   - `<safeId>.ended.<ts>` — written by the SessionEnd parent hook, lock-free,
+ *     so the sweep can still commit the session if the worker never ran. A
+ *     whole-object saveState from a concurrent worker cannot clobber it. The
+ *     timestamp is in the name so a conditional removal always targets an
+ *     immutable path and can never delete a marker written by a later exit.
  *   - `<safeId>.lock`  — an exclusive mkdir lock serializing the writers
  *     (Stop worker, PreCompact, SessionEnd worker, SessionStart sweep) that
- *     all persist the whole state object. Taking over a stale lock renames it
- *     to `<safeId>.lock.stale-<uuid>` before deleting it.
+ *     all persist the whole state object. A stale lock is taken over in place,
+ *     by claiming the `owner` file inside it.
  *
  * State directory: $OPENVIKING_CODEX_STATE_DIR or ~/.openviking/codex-plugin-state
  */
@@ -52,8 +54,56 @@ function statePath(codexSessionId) {
   return join(getStateDir(), `${safeId(codexSessionId)}.json`);
 }
 
-function endedPath(codexSessionId) {
+function endedPath(codexSessionId, ts) {
+  return join(getStateDir(), `${safeId(codexSessionId)}.ended.${ts}`);
+}
+
+// Pre-0.8.1 marker: a bare `<safeId>.ended` whose content is the timestamp.
+function legacyEndedPath(codexSessionId) {
   return join(getStateDir(), `${safeId(codexSessionId)}.ended`);
+}
+
+/**
+ * Marker files for one session, newest first, from an optional pre-read dir
+ * listing (`listStates()` already has one).
+ */
+function endedMarkersFrom(files, codexSessionId) {
+  const prefix = `${safeId(codexSessionId)}.ended.`;
+  const out = [];
+  for (const file of files) {
+    if (!file.startsWith(prefix)) continue;
+    const ts = Number(file.slice(prefix.length));
+    if (Number.isFinite(ts) && ts > 0) out.push({ file, ts });
+  }
+  return out.sort((a, b) => b.ts - a.ts);
+}
+
+async function endedMarkers(codexSessionId) {
+  try {
+    return endedMarkersFrom(await readdir(getStateDir()), codexSessionId);
+  } catch {
+    return [];
+  }
+}
+
+/** Newest marker timestamp for one session, from a pre-read dir listing. */
+async function endedAtFrom(files, codexSessionId) {
+  const stamps = endedMarkersFrom(files, codexSessionId).map((m) => m.ts);
+  if (files.includes(`${safeId(codexSessionId)}.ended`)) {
+    const legacy = await legacyEndedAt(codexSessionId);
+    if (legacy !== undefined) stamps.push(legacy);
+  }
+  return stamps.length ? Math.max(...stamps) : undefined;
+}
+
+async function legacyEndedAt(codexSessionId) {
+  try {
+    const raw = await readFile(legacyEndedPath(codexSessionId), "utf-8");
+    const ts = Number(raw.trim());
+    return Number.isFinite(ts) && ts > 0 ? ts : Date.now();
+  } catch {
+    return undefined;
+  }
 }
 
 function lockPath(codexSessionId) {
@@ -125,10 +175,7 @@ export async function markEnded(codexSessionId) {
   const ts = Date.now();
   try {
     await mkdir(getStateDir(), { recursive: true });
-    const final = endedPath(codexSessionId);
-    const tmp = `${final}.tmp`;
-    await writeFile(tmp, String(ts));
-    await rename(tmp, final);
+    await writeFile(endedPath(codexSessionId, ts), String(ts));
   } catch { /* best effort */ }
   return ts;
 }
@@ -142,26 +189,61 @@ export async function markEnded(codexSessionId) {
  */
 export async function clearEnded(codexSessionId, { before } = {}) {
   if (!codexSessionId) return;
-  if (typeof before === "number") {
-    const at = await readEndedAt(codexSessionId);
-    if (at === undefined || at >= before) return;
+  const cutoff = typeof before === "number" ? before : Infinity;
+  const dir = getStateDir();
+  for (const marker of await endedMarkers(codexSessionId)) {
+    if (marker.ts >= cutoff) continue;
+    // Each marker path carries its own timestamp, so removing one can never
+    // take out a marker a later exit wrote.
+    await rm(join(dir, marker.file), { force: true }).catch(() => {});
   }
-  try {
-    await rm(endedPath(codexSessionId), { force: true });
-  } catch { /* best effort */ }
+  const legacy = await legacyEndedAt(codexSessionId);
+  if (legacy !== undefined && legacy < cutoff) {
+    // Pre-0.8.1 leftover: still read-then-remove, races included.
+    await rm(legacyEndedPath(codexSessionId), { force: true }).catch(() => {});
+  }
 }
 
 export async function readEndedAt(codexSessionId) {
   try {
-    const raw = await readFile(endedPath(codexSessionId), "utf-8");
-    const ts = Number(raw.trim());
-    return Number.isFinite(ts) && ts > 0 ? ts : Date.now();
+    return await endedAtFrom(await readdir(getStateDir()), codexSessionId);
   } catch {
     return undefined;
   }
 }
 
 const LOCK_POLL_MS = 100;
+
+/**
+ * Take a stale lock over by claiming its `owner` file.
+ *
+ * Both steps are atomic and exactly one racer can complete them: the rename
+ * removes the dead holder's stamp, and the exclusive create installs ours.
+ * A racer that loses either step leaves the winner's lock intact.
+ */
+async function claimStaleLock(ownerFile, token) {
+  const aside = `${ownerFile}.taken-${randomUUID()}`;
+  try {
+    await rename(ownerFile, aside);
+  } catch {
+    // No stamp to displace: the holder died before writing one, or a racer
+    // already displaced it. The exclusive create alone decides the winner.
+    try {
+      await writeFile(ownerFile, token, { flag: "wx" });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  try {
+    await writeFile(ownerFile, token, { flag: "wx" });
+  } catch {
+    await rm(aside, { force: true }).catch(() => {});
+    return false;
+  }
+  await rm(aside, { force: true }).catch(() => {});
+  return true;
+}
 
 /**
  * Run `fn` while holding an exclusive per-session lock.
@@ -175,8 +257,9 @@ const LOCK_POLL_MS = 100;
  * The holder stamps an `owner` file inside the directory and only ever
  * releases (or refreshes) a lock whose owner is still its own, so a stale
  * takeover cannot make one taker drop the lock another taker now holds.
- * Takeover renames the directory aside instead of removing it: the rename is
- * atomic, so exactly one racer wins and the losers simply retry `mkdir`.
+ * Takeover never removes or moves the directory — the lock path must never be
+ * momentarily absent, or a racer's `mkdir` would succeed alongside the taker.
+ * Instead the takers race for the `owner` file itself; see `claimStaleLock`.
  */
 export async function withSessionLock(codexSessionId, fn, { waitMs = 0, staleMs = 300_000 } = {}) {
   const dir = lockPath(codexSessionId);
@@ -194,27 +277,20 @@ export async function withSessionLock(codexSessionId, fn, { waitMs = 0, staleMs 
     } catch (err) {
       if (err?.code !== "EEXIST") throw err;
       let ageMs = 0;
-      let staleIno = 0;
       try {
-        const info = await stat(dir);
-        ageMs = Date.now() - info.mtimeMs;
-        staleIno = info.ino;
+        ageMs = Date.now() - (await stat(dir)).mtimeMs;
       } catch {
         continue; // holder released between mkdir and stat; retry immediately
       }
       if (ageMs > staleMs) {
-        const aside = `${dir}.stale-${randomUUID()}`;
-        try {
-          await rename(dir, aside);
-          // Another taker may have already replaced the stale directory with a
-          // fresh lock between our stat and rename; the inode tells them apart.
-          if ((await stat(aside)).ino === staleIno) {
-            await rm(aside, { recursive: true, force: true });
-          } else {
-            await rename(aside, dir);
-          }
-        } catch { /* another racer won the rename; retry mkdir */ }
-        continue;
+        if (await claimStaleLock(ownerFile, token)) {
+          // Stop the other waiters from reading this lock as stale too.
+          const now = new Date();
+          await utimes(dir, now, now).catch(() => {});
+          held = true;
+          break;
+        }
+        continue; // another taker claimed it; re-read the lock from the top
       }
       if (Date.now() >= deadline) break;
       await new Promise((resolve) => setTimeout(resolve, LOCK_POLL_MS));
@@ -256,7 +332,9 @@ export async function listStates() {
         const raw = await readFile(join(dir, file), "utf-8");
         const parsed = JSON.parse(raw);
         if (!parsed?.codexSessionId) continue;
-        const endedAt = await readEndedAt(parsed.codexSessionId);
+        // Resolve the marker from the listing we already have instead of
+        // re-reading the directory once per state file.
+        const endedAt = await endedAtFrom(files, parsed.codexSessionId);
         out.push(endedAt ? { ...parsed, endedAt } : parsed);
       } catch { /* skip */ }
     }

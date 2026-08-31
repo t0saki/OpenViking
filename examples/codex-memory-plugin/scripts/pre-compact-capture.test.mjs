@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import http from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -8,6 +8,24 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
+
+async function endedMarkerStamps(dir, id) {
+  const prefix = `${id}.ended.`;
+  const files = await readdir(dir).catch(() => []);
+  return files
+    .filter((name) => name.startsWith(prefix))
+    .map((name) => Number(name.slice(prefix.length)))
+    .filter((ts) => Number.isFinite(ts));
+}
+
+async function endedMarkerExists(dir, id) {
+  return (await endedMarkerStamps(dir, id)).length > 0;
+}
+
+function writeEndedMarker(dir, id, ts) {
+  return writeFile(join(dir, `${id}.ended.${ts}`), String(ts));
+}
+
 
 function readRequestBody(req) {
   return new Promise((resolve, reject) => {
@@ -129,7 +147,7 @@ test("pre-compact catches up, commits and keeps the cursor", async () => {
       createdAt: now - 1000,
       lastUpdatedAt: now,
     }));
-    await writeFile(join(stateDir, "pc1.ended"), String(now));
+    await writeEndedMarker(stateDir, "pc1", now);
     await writeFile(transcriptPath, [
       turn("user", "turn-0"),
       turn("assistant", "turn-1"),
@@ -154,7 +172,7 @@ test("pre-compact catches up, commits and keeps the cursor", async () => {
     const state = JSON.parse(await readFile(join(stateDir, "pc1.json"), "utf-8"));
     assert.equal(state.ovSessionId, null);
     assert.equal(state.capturedTurnCount, 4);
-    assert.equal(await exists(join(stateDir, "pc1.ended")), false, "compaction proves the thread is alive");
+    assert.equal(await endedMarkerExists(stateDir, "pc1"), false, "compaction proves the thread is alive");
   } finally {
     await rm(stateDir, { recursive: true, force: true });
   }

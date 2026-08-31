@@ -70,6 +70,39 @@ test("clearEnded honours the `before` cutoff", async () => {
   assert.equal(await readEndedAt("cutoff"), undefined, "no cutoff clears unconditionally");
 });
 
+test("a clearEnded racing a newer markEnded leaves the newer marker", async () => {
+  for (let i = 0; i < 100; i += 1) {
+    const id = `race-${i}`;
+    const at = await markEnded(id);
+    // Guarantee the second exit gets a strictly later timestamp, then let it
+    // land while the old caller's removal of everything up to `at` is in flight.
+    await new Promise((resolve) => setTimeout(resolve, 2));
+    const [, newer] = await Promise.all([
+      clearEnded(id, { before: at + 1 }),
+      markEnded(id),
+    ]);
+    const left = await readEndedAt(id);
+    assert.equal(left, newer, "the newer marker must survive the concurrent clear");
+    await clearEnded(id);
+  }
+});
+
+test("markEnded / readEndedAt still honour a pre-0.8.1 bare marker", async () => {
+  const at = Date.now() - 5_000;
+  await writeFile(join(STATE_DIR, "legacy.ended"), String(at));
+  assert.equal(await readEndedAt("legacy"), at);
+
+  const newer = await markEnded("legacy");
+  assert.equal(await readEndedAt("legacy"), newer, "the newest marker wins");
+
+  await clearEnded("legacy", { before: at + 1 });
+  assert.equal(await readEndedAt("legacy"), newer, "only the legacy marker was old enough");
+  assert.equal(await exists(join(STATE_DIR, "legacy.ended")), false);
+
+  await clearEnded("legacy");
+  assert.equal(await readEndedAt("legacy"), undefined);
+});
+
 test.after(async () => {
   await rm(STATE_DIR, { recursive: true, force: true });
 });

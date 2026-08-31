@@ -125,7 +125,10 @@ export function hasCaptureKeyword(turns) {
  * `shouldSend(newTurns)` lets a caller veto the send (keyword capture mode)
  * without disturbing the cursor.
  *
- * Returns `{ newTurns, added, ovSessionId, skipped }`.
+ * Returns `{ newTurns, added, ovSessionId, skipped, unreadable }`. `unreadable`
+ * separates "the transcript is empty" from "the transcript could not be read":
+ * committing on the latter would archive a session whose tail turns were never
+ * seen, so callers must keep the session live instead.
  */
 export async function catchUpTurns({
   state,
@@ -149,7 +152,7 @@ export async function catchUpTurns({
       readable: ok,
       previouslyCaptured: state.capturedTurnCount,
     });
-    return { newTurns: [], added: 0, ovSessionId: "" };
+    return { newTurns: [], added: 0, ovSessionId: "", unreadable: Boolean(transcriptPath) && !ok };
   }
 
   // Post-compact transcript-shrink defense: codex's /compact may rewrite or

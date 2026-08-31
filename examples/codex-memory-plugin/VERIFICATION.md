@@ -160,7 +160,7 @@ then `commit` with `"reason":"session_end"`.
 ```bash
 cat $STATE_DIR/state/verify-sess.json
 # ovSessionId is null, capturedTurnCount is 8 (cursor preserved for resume)
-ls $STATE_DIR/state/verify-sess.ended   # no such file — the marker was cleared
+ls $STATE_DIR/state/verify-sess.ended.*   # no such file — the marker was cleared
 ```
 
 ### 6b. SessionEnd parent — marker first, work detached
@@ -174,10 +174,10 @@ time (echo '{"session_id":"verify-sess","transcript_path":"'"$STATE_DIR"'/transc
 ```
 
 Expect: `{}` well under 1 s — the parent only writes
-`$STATE_DIR/state/verify-sess.ended` and detaches the worker. The worker
+`$STATE_DIR/state/verify-sess.ended.<timestamp>` and detaches the worker. The worker
 finds nothing live to commit and removes the marker again shortly after.
 
-### 6c. `.ended` marker → next SessionStart commits immediately
+### 6c. `.ended.<ts>` marker → next SessionStart commits immediately
 
 ```bash
 # A live session whose SessionEnd worker never finished: fresh timestamp,
@@ -187,7 +187,7 @@ mkdir -p "$STATE_DIR/state"
 cat > "$STATE_DIR/state/sess-ended.json" <<EOF
 {"codexSessionId":"sess-ended","ovSessionId":"cx-sess-ended","capturedTurnCount":2,"createdAt":$NOW,"lastUpdatedAt":$NOW}
 EOF
-printf '%s' "$NOW" > "$STATE_DIR/state/sess-ended.ended"
+printf '%s' "$NOW" > "$STATE_DIR/state/sess-ended.ended.$NOW"
 
 echo '{"session_id":"sess-ccc","source":"startup","cwd":"/tmp","model":"x","permission_mode":"default","transcript_path":null,"hook_event_name":"SessionStart"}' \
   | OPENVIKING_CONFIG_FILE=$OV_CONF \
@@ -200,7 +200,7 @@ echo '{"session_id":"sess-ccc","source":"startup","cwd":"/tmp","model":"x","perm
 Expect: `systemMessage` reports `cx-sess-ended` committed, and the log shows
 `"reason":"ended_retry"` despite the fresh `lastUpdatedAt`. Afterwards
 `sess-ended.json` has `ovSessionId: null` with `capturedTurnCount: 2`, and
-`sess-ended.ended` is gone.
+`sess-ended.ended.$NOW` is gone.
 
 ### 6c-2. Held lock → sweep skips instead of racing
 
@@ -209,7 +209,7 @@ Expect: `systemMessage` reports `cx-sess-ended` committed, and the log shows
 cat > "$STATE_DIR/state/sess-ended.json" <<EOF
 {"codexSessionId":"sess-ended","ovSessionId":"cx-sess-ended","capturedTurnCount":2,"createdAt":$NOW,"lastUpdatedAt":$NOW}
 EOF
-printf '%s' "$NOW" > "$STATE_DIR/state/sess-ended.ended"
+printf '%s' "$NOW" > "$STATE_DIR/state/sess-ended.ended.$NOW"
 mkdir "$STATE_DIR/state/sess-ended.lock"
 
 echo '{"session_id":"sess-fff","source":"startup","cwd":"/tmp","model":"x","permission_mode":"default","transcript_path":null,"hook_event_name":"SessionStart"}' \

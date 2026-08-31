@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import http from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -8,6 +8,24 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
+
+async function endedMarkerStamps(dir, id) {
+  const prefix = `${id}.ended.`;
+  const files = await readdir(dir).catch(() => []);
+  return files
+    .filter((name) => name.startsWith(prefix))
+    .map((name) => Number(name.slice(prefix.length)))
+    .filter((ts) => Number.isFinite(ts));
+}
+
+async function endedMarkerExists(dir, id) {
+  return (await endedMarkerStamps(dir, id)).length > 0;
+}
+
+function writeEndedMarker(dir, id, ts) {
+  return writeFile(join(dir, `${id}.ended.${ts}`), String(ts));
+}
+
 
 function readRequestBody(req) {
   return new Promise((resolve, reject) => {
@@ -478,7 +496,7 @@ test("auto-capture clears a stale session-end marker and never resets the cursor
       createdAt: now - 1000,
       lastUpdatedAt: now,
     }));
-    await writeFile(join(stateDir, "resumed.ended"), String(now));
+    await writeEndedMarker(stateDir, "resumed", now);
     await writeFile(
       transcriptPath,
       [
@@ -519,7 +537,7 @@ test("auto-capture clears a stale session-end marker and never resets the cursor
     }, async (baseUrl) => {
       await runAutoCapture({ session_id: "resumed", transcript_path: transcriptPath }, env(baseUrl));
 
-      const marker = await stat(join(stateDir, "resumed.ended")).then(() => true, () => false);
+      const marker = await endedMarkerExists(stateDir, "resumed");
       assert.equal(marker, false, "a Stop proves the thread is alive again");
       assert.equal(
         JSON.parse(await readFile(join(stateDir, "resumed.json"), "utf-8")).capturedTurnCount,
@@ -586,18 +604,18 @@ test("a Stop clears only end markers older than the hook run", async () => {
       res.end(JSON.stringify({ status: "error", error: "not found" }));
     }, async (baseUrl) => {
       // A marker written after this hook started belongs to a later exit.
-      await writeFile(join(stateDir, "newer.ended"), String(startedAt + 10_000));
+      await writeEndedMarker(stateDir, "newer", startedAt + 10_000);
       await runAutoCapture({ session_id: "newer", transcript_path: transcriptPath }, env(baseUrl));
-      assert.equal(
-        (await readFile(join(stateDir, "newer.ended"), "utf-8")).trim(),
-        String(startedAt + 10_000),
+      assert.deepEqual(
+        await endedMarkerStamps(stateDir, "newer"),
+        [startedAt + 10_000],
         "a fresher marker survives a late Stop worker",
       );
 
-      await writeFile(join(stateDir, "older.ended"), String(startedAt - 10_000));
+      await writeEndedMarker(stateDir, "older", startedAt - 10_000);
       await runAutoCapture({ session_id: "older", transcript_path: transcriptPath }, env(baseUrl));
       assert.equal(
-        await stat(join(stateDir, "older.ended")).then(() => true, () => false),
+        await endedMarkerExists(stateDir, "older"),
         false,
         "an older marker is cleared: the thread is alive again",
       );
