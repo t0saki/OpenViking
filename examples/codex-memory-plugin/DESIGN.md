@@ -365,7 +365,7 @@ Two sidecars live next to `<safe-codex-session-id>.json`:
 
 | Path | Written by | Meaning |
 |---|---|---|
-| `<safe-id>.ended.<timestamp>` | `SessionEnd` parent hook (timestamp in the name, also the content) | the thread ended; its commit is not confirmed. Read back by `listStates()` as `endedAt`, which takes the largest timestamp when several markers exist. Removed by a commit that verified this exact timestamp, or by a `Stop` / `PreCompact` / `resume` that started after it was written — each removal unlinks the exact marker paths older than its cutoff, so it can never take out a newer exit's marker. A bare `<safe-id>.ended` (pre-0.8.1) is still honoured, with the timestamp read from its content |
+| `<safe-id>.ended.<timestamp>` | `SessionEnd` parent hook (timestamp in the name, also the content; created exclusively, and bumped by a millisecond until that succeeds, so two exits in the same millisecond still get distinct markers) | the thread ended; its commit is not confirmed. Read back by `listStates()` as `endedAt`, which takes the largest timestamp when several markers exist. Removed by a commit that verified this exact timestamp, or by a `Stop` / `PreCompact` / `resume` that started after it was written — each removal unlinks the exact marker paths older than its cutoff, so it can never take out a newer exit's marker. A bare `<safe-id>.ended` (pre-0.8.1) is still honoured, with the timestamp read from its content |
 | `<safe-id>.lock` | whichever writer currently holds the session | exclusive `mkdir` lock holding an `owner` file; abandoned when its mtime is older than 5 min, and taken over in place by claiming that `owner` file |
 
 Keeping the end marker out of the JSON is deliberate: a whole-object

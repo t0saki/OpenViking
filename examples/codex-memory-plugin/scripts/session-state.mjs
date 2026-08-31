@@ -169,13 +169,27 @@ export async function clearState(codexSessionId) {
  * Record that the codex thread ended. Written lock-free by the SessionEnd
  * parent. The returned timestamp is the marker's identity: workers carry it as
  * a token and only act on a marker that still matches it.
+ *
+ * `Date.now()` is only the starting point. Two exits within the same
+ * millisecond would otherwise share a marker path, and the first one's
+ * conditional removal would take the second one's marker with it, so the
+ * timestamp is bumped until an exclusive create succeeds. Bumping rather than
+ * randomizing keeps the names ordered, which is what `before` compares.
  */
 export async function markEnded(codexSessionId) {
   if (!codexSessionId) return 0;
-  const ts = Date.now();
+  let ts = Date.now();
   try {
     await mkdir(getStateDir(), { recursive: true });
-    await writeFile(endedPath(codexSessionId, ts), String(ts));
+    while (true) {
+      try {
+        await writeFile(endedPath(codexSessionId, ts), String(ts), { flag: "wx" });
+        break;
+      } catch (err) {
+        if (err?.code !== "EEXIST") throw err;
+        ts += 1;
+      }
+    }
   } catch { /* best effort */ }
   return ts;
 }

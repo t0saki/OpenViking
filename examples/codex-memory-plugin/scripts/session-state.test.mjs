@@ -71,12 +71,11 @@ test("clearEnded honours the `before` cutoff", async () => {
 });
 
 test("a clearEnded racing a newer markEnded leaves the newer marker", async () => {
-  for (let i = 0; i < 100; i += 1) {
+  for (let i = 0; i < 500; i += 1) {
     const id = `race-${i}`;
     const at = await markEnded(id);
-    // Guarantee the second exit gets a strictly later timestamp, then let it
-    // land while the old caller's removal of everything up to `at` is in flight.
-    await new Promise((resolve) => setTimeout(resolve, 2));
+    // No artificial gap: the second exit lands in the same millisecond, while
+    // the old caller's removal of everything up to `at` is in flight.
     const [, newer] = await Promise.all([
       clearEnded(id, { before: at + 1 }),
       markEnded(id),
