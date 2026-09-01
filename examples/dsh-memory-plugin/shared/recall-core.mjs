@@ -617,7 +617,31 @@ export async function postRecall(fetchJSON, body, opts = {}) {
   }, { actorPeerId });
 }
 
+/**
+ * Recall, plus whatever is still filed under the peer this workspace used
+ * before the identity rule changed.
+ *
+ * Under the default `peer_scope: "all"` this costs nothing: the server's own
+ * sweep of `{user_root}/peers` already reaches the old peer's memories. Under
+ * `"actor"` that sweep is off by definition, so the old peer is asked for
+ * separately — as itself, which is both cheaper and wider than a bare
+ * cross-peer read (that would need the user id, and reaches memories only).
+ */
 export async function buildRecallBlock(fetchJSON, cfg, query, options = {}) {
+  const primary = await recallForPeer(fetchJSON, cfg, query, options);
+
+  const legacyPeerId = String(options.legacyPeerId || "").trim();
+  const actorPeerId = options.actorPeerId ?? cfg.peerId ?? "";
+  if (cfg.recallPeerScope !== "actor" || !legacyPeerId || legacyPeerId === actorPeerId) return primary;
+
+  const log = options.log || (() => {});
+  const legacy = await recallForPeer(fetchJSON, cfg, query, { ...options, actorPeerId: legacyPeerId });
+  if (!legacy) return primary;
+  log("recall_legacy_peer_hit", { legacyPeerId });
+  return primary ? `${primary}\n${legacy}` : legacy;
+}
+
+async function recallForPeer(fetchJSON, cfg, query, options = {}) {
   const actorPeerId = options.actorPeerId ?? cfg.peerId ?? "";
   const log = options.log || (() => {});
   const trimmed = String(query || "").trim();

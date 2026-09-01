@@ -341,6 +341,23 @@ async function recallViaServerAssembly(query, ovSessionId = "") {
     log,
   });
   if (assembled) {
+    // `peer_scope: "all"` already sweeps every peer under this user; only
+    // under "actor" does the pre-git peer need asking separately.
+    const legacyPeerId = effectivePeer.legacyPeerId;
+    if (cfg.recallPeerScope === "actor" && legacyPeerId && legacyPeerId !== effectivePeer.peerId) {
+      const legacy = await fetchAssembledContext(fetchJSON, assembleCfg, query, {
+        actorPeerId: legacyPeerId,
+        sessionId: ovSessionId,
+        log,
+      });
+      if (legacy) {
+        log("recall_legacy_peer_hit", { legacyPeerId });
+        return assembledToRecallResult(
+          [assembled.rendered, legacy.rendered].filter(Boolean).join("\n"),
+          [...(assembled.entries || []), ...(legacy.entries || [])],
+        );
+      }
+    }
     return assembledToRecallResult(assembled.rendered, assembled.entries);
   }
 

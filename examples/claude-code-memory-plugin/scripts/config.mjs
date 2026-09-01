@@ -253,6 +253,7 @@ export function loadConfig() {
     userId,
     peerId,
     workspacePeer,
+    peerSource: str(process.env.OPENVIKING_PEER_SOURCE, null) ?? cc.peerSource,
     timeoutMs,
     userAgent: USER_AGENT,
 

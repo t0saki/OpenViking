@@ -128,6 +128,7 @@ export class OpenVikingRuntime {
       query,
       {
         actorPeerId: state.config.peerId,
+        legacyPeerId: state.config.legacyPeerId,
         sessionId: state.ovSessionId,
         log: (stage, data) => this.log(stage, data),
       },

@@ -370,7 +370,22 @@ function checkConfig(report, cfg) {
     if (cfg.userId && keyInfo.user && cfg.userId !== keyInfo.user) report.warn(`configured user '${cfg.userId}' differs from the key's user '${keyInfo.user}'`, "in api_key mode the key wins");
   }
   const peer = resolveEffectivePeerId({ cfg, cwd: process.cwd() });
-  report.info(`peer     ${peer.peerId || "(none)"}  ← ${peer.source}${peer.source === "workspace" ? " (derived from cwd; changes when the directory moves)" : ""}`);
+  report.info(`peer     ${peer.peerId || "(none)"}  ← ${peer.source} (${peer.origin})`);
+  if (peer.source === "none") {
+    report.warn(
+      "no peer is sent, so recall defaults to every memory under this user",
+      "sending a peer narrows the search to this workspace",
+      'unset OPENVIKING_WORKSPACE_PEER, or set peer.source to "git"',
+    );
+  }
+  if (peer.legacyPeerId) {
+    report.info(
+      `previous peer  ${peer.legacyPeerId}`,
+      cfg.recallPeerScope === "actor"
+        ? "recall asks it separately, because peer_scope actor turns off the server's cross-peer sweep"
+        : "already covered by the server's cross-peer sweep under peer_scope all",
+    );
+  }
   for (const p of lintPeerScopeDowngrade()) report[p.level](p.message, p.detail, p.fix);
   report.info(`timeouts ${cfg.timeoutMs}ms request, ${cfg.captureTimeoutMs}ms capture; recall limit ${cfg.recallLimit}, threshold ${cfg.scoreThreshold}`);
 

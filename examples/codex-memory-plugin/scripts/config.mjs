@@ -171,6 +171,7 @@ export function loadConfig() {
     user: creds.user,
     peerId: creds.peerId,
     workspacePeer,
+    peerSource: str(process.env.OPENVIKING_PEER_SOURCE, null) ?? cx.peerSource,
     userAgent: USER_AGENT,
     timeoutMs,
     recallTimeoutMs,

@@ -81,7 +81,8 @@ test("loadConfig prefers env credentials over ovcli and legacy config", async ()
       assert.equal(cfg.account, "env-account")
       assert.equal(cfg.user, "env-user")
       assert.equal(cfg.peerId, "env-peer")
-      assert.deepEqual(cfg.effectivePeer, { peerId: "env-peer", source: "explicit" })
+      assert.equal(cfg.effectivePeer.peerId, "env-peer")
+      assert.equal(cfg.effectivePeer.source, "explicit")
       assert.equal(cfg.legacyCredentialsUsed, false)
     } finally {
       restoreOpenVikingEnv(snapshot)
@@ -114,7 +115,8 @@ test("loadConfig reads legacy credentials as fallback and marks deprecation", as
       assert.equal(cfg.account, "legacy-account")
       assert.equal(cfg.user, "legacy-user")
       assert.equal(cfg.peerId, "legacy-peer")
-      assert.deepEqual(cfg.effectivePeer, { peerId: "legacy-peer", source: "explicit" })
+      assert.equal(cfg.effectivePeer.peerId, "legacy-peer")
+      assert.equal(cfg.effectivePeer.source, "explicit")
       assert.equal(cfg.legacyCredentialsUsed, true)
     } finally {
       restoreOpenVikingEnv(snapshot)
@@ -134,10 +136,11 @@ test("loadConfig derives workspace peer by default", async () => {
       const project = join(dir, "Project A")
 
       const cfg = loadConfig(dir, project)
-      assert.deepEqual(cfg.effectivePeer, {
-        peerId: project.replace(/[^A-Za-z0-9]/g, "-"),
-        source: "workspace",
-      })
+      // A temp directory is not a repository, so the git preset falls all the
+      // way through to the working directory — the pre-existing identity.
+      assert.equal(cfg.effectivePeer.peerId, project.replace(/[^A-Za-z0-9]/g, "-"))
+      assert.equal(cfg.effectivePeer.source, "workspace")
+      assert.equal(cfg.effectivePeer.origin, "{cwd}")
     } finally {
       restoreOpenVikingEnv(snapshot)
     }
@@ -156,7 +159,8 @@ test("loadConfig can disable workspace peer", async () => {
       process.env.OPENVIKING_WORKSPACE_PEER = "0"
 
       const cfg = loadConfig(dir, join(dir, "project"))
-      assert.deepEqual(cfg.effectivePeer, { peerId: "", source: "none" })
+      assert.equal(cfg.effectivePeer.peerId, "")
+      assert.equal(cfg.effectivePeer.source, "none")
     } finally {
       restoreOpenVikingEnv(snapshot)
     }

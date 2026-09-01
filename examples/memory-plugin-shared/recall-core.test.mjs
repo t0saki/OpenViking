@@ -351,3 +351,60 @@ test("a request without peer_scope is never retried", async () => {
 
   assert.equal(sent.length, 1);
 });
+
+test("under actor scope, recall also asks the peer this workspace used before", async () => {
+  const asked = [];
+  const fetchJSON = async (path, init, options) => {
+    asked.push(options?.actorPeerId || "");
+    return {
+      ok: true,
+      result: {
+        rendered: `<memory uri="viking://${options?.actorPeerId}/a.md">from ${options?.actorPeerId}</memory>`,
+        entries: [{ uri: `viking://${options?.actorPeerId}/a.md` }],
+        stats: {},
+      },
+    };
+  };
+
+  const block = await buildRecallBlock(fetchJSON, { recallPeerScope: "actor" }, "hello", {
+    actorPeerId: "github.com-o-r",
+    legacyPeerId: "-Users-x-src-r",
+    legacyCachePath: await tempPath("context-face.json"),
+  });
+
+  assert.deepEqual(asked, ["github.com-o-r", "-Users-x-src-r"]);
+  assert.match(block, /from github\.com-o-r/);
+  assert.match(block, /from -Users-x-src-r/);
+});
+
+test("under the default scope the server's own sweep covers it, so nothing extra is sent", async () => {
+  const asked = [];
+  const fetchJSON = async (_path, _init, options) => {
+    asked.push(options?.actorPeerId || "");
+    return { ok: true, result: { rendered: '<memory uri="viking://a">body</memory>', entries: [{ uri: "viking://a" }] } };
+  };
+
+  await buildRecallBlock(fetchJSON, { recallPeerScope: "all" }, "hello", {
+    actorPeerId: "github.com-o-r",
+    legacyPeerId: "-Users-x-src-r",
+    legacyCachePath: await tempPath("context-face.json"),
+  });
+
+  assert.deepEqual(asked, ["github.com-o-r"]);
+});
+
+test("a legacy id equal to the effective one is not asked twice", async () => {
+  const asked = [];
+  const fetchJSON = async (_path, _init, options) => {
+    asked.push(options?.actorPeerId || "");
+    return { ok: true, result: { rendered: '<memory uri="viking://a">body</memory>', entries: [{ uri: "viking://a" }] } };
+  };
+
+  await buildRecallBlock(fetchJSON, { recallPeerScope: "actor" }, "hello", {
+    actorPeerId: "same",
+    legacyPeerId: "same",
+    legacyCachePath: await tempPath("context-face.json"),
+  });
+
+  assert.deepEqual(asked, ["same"]);
+});
