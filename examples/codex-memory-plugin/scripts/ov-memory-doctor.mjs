@@ -44,6 +44,7 @@ import {
   scanRcFiles,
   unknownOvcliKeys,
   whichCommand,
+  lintPeerScopeDowngrade,
 } from "./shared/doctor-core.mjs";
 import { resolveEffectivePeerId } from "./shared/workspace-peer.mjs";
 
@@ -323,6 +324,7 @@ function checkConfig(report, cfg) {
   report.info(`auth mode ${cfg.authMode} (identity headers ${cfg.sendIdentityHeaders ? "sent" : "not sent"}; trusted is implied when account/user are set)`);
   const peer = resolveEffectivePeerId({ cfg, cwd: process.cwd() });
   report.info(`peer     ${peer.peerId || "(none)"}  ← ${peer.source}${peer.source === "workspace" ? " (derived from cwd; changes when the directory moves)" : ""}`);
+  for (const p of lintPeerScopeDowngrade()) report[p.level](p.message, p.detail, p.fix);
 
   report.info(`timeouts ${cfg.timeoutMs}ms request, ${cfg.recallTimeoutMs}ms recall, ${cfg.captureTimeoutMs}ms capture; recall limit ${cfg.recallLimit}, threshold ${cfg.scoreThreshold}`);
   const hooks = tryJson(join(PLUGIN_ROOT, "hooks", "hooks.json"))?.hooks || {};

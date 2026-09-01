@@ -47,6 +47,7 @@ import {
   scanRcFiles,
   unknownOvcliKeys,
   whichCommand,
+  lintPeerScopeDowngrade,
 } from "./shared/doctor-core.mjs";
 import { isBypassed } from "./shared/session-model.mjs";
 import { resolveEffectivePeerId } from "./shared/workspace-peer.mjs";
@@ -369,6 +370,7 @@ function checkConfig(report, cfg) {
   }
   const peer = resolveEffectivePeerId({ cfg, cwd: process.cwd() });
   report.info(`peer     ${peer.peerId || "(none)"}  ← ${peer.source}${peer.source === "workspace" ? " (derived from cwd; changes when the directory moves)" : ""}`);
+  for (const p of lintPeerScopeDowngrade()) report[p.level](p.message, p.detail, p.fix);
   report.info(`timeouts ${cfg.timeoutMs}ms request, ${cfg.captureTimeoutMs}ms capture; recall limit ${cfg.recallLimit}, threshold ${cfg.scoreThreshold}`);
 
   const toggles = [`auto-inject ${cfg.noAutoInject ? "OFF" : "on"}`, `auto-recall ${cfg.autoRecall ? "on" : "OFF"}`, `auto-capture ${cfg.autoCapture ? "on" : "OFF"}`, `recall compress ${cfg.recallRewrite}`, `write path ${cfg.writePathAsync ? "async" : "sync"}`];

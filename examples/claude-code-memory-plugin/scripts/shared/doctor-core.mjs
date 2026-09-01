@@ -18,6 +18,8 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+import { peerScopeMemoPath } from "./recall-core.mjs";
+
 // ---------------------------------------------------------------------------
 // Formatting helpers
 // ---------------------------------------------------------------------------
@@ -645,6 +647,28 @@ export function readStateFiles(stateDir, names) {
     out[name] = entry;
   }
   return out;
+}
+
+/**
+ * `peer_scope: "actor"` narrows recall to this workspace's own peer. A server
+ * that predates the field rejects it, and the plugin retries without it — so
+ * recall quietly runs against every peer under the user instead. `postRecall`
+ * records that in a state file; without this the widening is invisible.
+ */
+export function lintPeerScopeDowngrade(path = peerScopeMemoPath(), now = Date.now()) {
+  let data;
+  try {
+    data = JSON.parse(readFileSync(path, "utf-8"));
+  } catch {
+    return [];
+  }
+  if (!data?.legacyUntil || Number(data.legacyUntil) <= now) return [];
+  return [{
+    level: "warn",
+    message: `recall peer_scope "${str(data.scope, "actor")}" was rejected by the server (HTTP ${Number(data.status) || 0})`,
+    detail: "recall runs against every peer under this user, not just this workspace's",
+    fix: 'upgrade the OpenViking server, or set recallPeerScope to "all" so the wider search is deliberate',
+  }];
 }
 
 export function countDirEntries(dir, filter = () => true) {

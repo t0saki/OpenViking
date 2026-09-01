@@ -9,6 +9,8 @@ import {
   buildRecallBlock,
   contextRequestTimeoutMs,
   isContextFaceLegacy,
+  postRecall,
+  readPeerScopeDowngrade,
 } from "./lib/recall-core.mjs";
 
 async function tempPath(name) {
@@ -280,4 +282,72 @@ test("buildRecallBlock falls back to find when neither context endpoint works", 
   assert.ok(calls.includes("/api/v1/search/find"));
   assert.match(block, /^<openviking-context>/);
   assert.match(block, /\[memory 90%\]/);
+});
+
+function recordingFetch(responses) {
+  const sent = [];
+  const queue = [...responses];
+  return {
+    sent,
+    fetchJSON: async (_path, init) => {
+      sent.push(JSON.parse(init.body));
+      return queue.shift() ?? { ok: true, status: 200, result: {} };
+    },
+  };
+}
+
+test("postRecall drops peer_scope only when the server rejects the field itself", async () => {
+  const memoPath = await tempPath("peer-scope.json");
+  const { sent, fetchJSON } = recordingFetch([
+    { ok: false, status: 422, error: "unexpected keyword argument 'peer_scope'" },
+    { ok: true, status: 200, result: {} },
+  ]);
+
+  const res = await postRecall(fetchJSON, { query: "q", peer_scope: "actor" }, { peerScopeMemoPath: memoPath });
+
+  assert.equal(res.ok, true);
+  assert.equal(sent.length, 2);
+  assert.equal(sent[0].peer_scope, "actor");
+  assert.equal(sent[1].peer_scope, undefined);
+
+  const memo = await readPeerScopeDowngrade(memoPath);
+  assert.equal(memo.scope, "actor");
+  assert.equal(memo.status, 422);
+});
+
+test("postRecall keeps peer_scope when a 400 is about something else", async () => {
+  const memoPath = await tempPath("peer-scope.json");
+  const { sent, fetchJSON } = recordingFetch([
+    { ok: false, status: 400, error: "query must not be empty" },
+  ]);
+
+  const res = await postRecall(fetchJSON, { query: "", peer_scope: "actor" }, { peerScopeMemoPath: memoPath });
+
+  assert.equal(res.ok, false);
+  assert.equal(sent.length, 1, "an unrelated 400 must not be retried at a wider scope");
+  assert.equal(await readPeerScopeDowngrade(memoPath), null);
+});
+
+test("a remembered downgrade skips the rejected request on later turns", async () => {
+  const memoPath = await tempPath("peer-scope.json");
+  const first = recordingFetch([
+    { ok: false, status: 400, error: "extra fields not permitted" },
+    { ok: true, status: 200, result: {} },
+  ]);
+  await postRecall(first.fetchJSON, { query: "q", peer_scope: "actor" }, { peerScopeMemoPath: memoPath });
+
+  const second = recordingFetch([{ ok: true, status: 200, result: {} }]);
+  await postRecall(second.fetchJSON, { query: "q", peer_scope: "actor" }, { peerScopeMemoPath: memoPath });
+
+  assert.equal(second.sent.length, 1);
+  assert.equal(second.sent[0].peer_scope, undefined);
+});
+
+test("a request without peer_scope is never retried", async () => {
+  const memoPath = await tempPath("peer-scope.json");
+  const { sent, fetchJSON } = recordingFetch([{ ok: false, status: 422, error: "extra fields not permitted" }]);
+
+  await postRecall(fetchJSON, { query: "q" }, { peerScopeMemoPath: memoPath });
+
+  assert.equal(sent.length, 1);
 });

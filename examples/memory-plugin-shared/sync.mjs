@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
-import { dirname, join, relative } from "node:path";
+import { dirname, join, relative, resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
-const SHARED_DIR = join(ROOT, "examples", "memory-plugin-shared", "lib");
+export const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
+export const SHARED_DIR = join(ROOT, "examples", "memory-plugin-shared", "lib");
 const HARNESS_SHARED_FILES = [
   "credentials.mjs",
   "capture-utils.mjs",
@@ -36,7 +36,7 @@ const OPENCLAW_SHARED_FILES = [
   "recall-compress-core.mjs",
   "recall-core.mjs",
 ];
-const TARGETS = [
+export const TARGETS = [
   { dir: join(ROOT, "examples", "claude-code-memory-plugin", "scripts", "shared"), files: DOCTOR_SHARED_FILES },
   { dir: join(ROOT, "examples", "codex-memory-plugin", "scripts", "shared"), files: DOCTOR_SHARED_FILES },
   { dir: join(ROOT, "examples", "opencode-plugin", "lib", "shared"), files: OPENCODE_SHARED_FILES },
@@ -47,12 +47,12 @@ const TARGETS = [
   { dir: join(ROOT, "examples", "openclaw-plugin", "shared"), files: OPENCLAW_SHARED_FILES },
 ];
 
-const GENERATED_HEADER = "// GENERATED FROM examples/memory-plugin-shared/lib. DO NOT EDIT.\n";
+export const GENERATED_HEADER = "// GENERATED FROM examples/memory-plugin-shared/lib. DO NOT EDIT.\n";
 
 // Skills are copied verbatim — a generated-from banner ahead of the `---`
 // frontmatter would break every skill loader.
-const SKILLS_DIR = join(ROOT, "examples", "skills");
-const SKILL_TARGETS = [
+export const SKILLS_DIR = join(ROOT, "examples", "skills");
+export const SKILL_TARGETS = [
   {
     // Not shipped to openclaw-plugin: its REST tool surface has its own
     // operator skill (openviking-context-database) with different tool names.
@@ -116,7 +116,12 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  process.stderr.write(`${err?.stack || err}\n`);
-  process.exit(1);
-});
+// Guard the sync behind the entrypoint check so sync.test.mjs can import the
+// target lists as the single source of truth instead of keeping its own copy —
+// the duplicated lists had drifted, and a drifted vendored file passed CI.
+if (process.argv[1] && fileURLToPath(import.meta.url) === resolvePath(process.argv[1])) {
+  main().catch((err) => {
+    process.stderr.write(`${err?.stack || err}\n`);
+    process.exit(1);
+  });
+}
