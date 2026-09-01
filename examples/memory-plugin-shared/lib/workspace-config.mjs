@@ -68,6 +68,23 @@ export const FORBIDDEN_KEYS = [
   "credential_source",
   "cli_config_file",
   "config_file",
+  // The camelCase spellings the harness loaders use. The projection into
+  // harness knobs is an allowlist, so these could never take effect anyway —
+  // but someone who writes `apiKey` here deserves to be told it was ignored,
+  // not to have it vanish.
+  "baseUrl",
+  "mcpUrl",
+  "apiKey",
+  "bearerToken",
+  "rootApiKey",
+  "gatewayToken",
+  "accountId",
+  "userId",
+  "authMode",
+  "extraHeaders",
+  "credentialSource",
+  "credentialPath",
+  "configPath",
 ];
 
 /**

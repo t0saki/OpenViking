@@ -282,3 +282,21 @@ test("provenance stays honest when layers disagree about a key's type", () => {
   assert.equal(scalarThenSection.provenance["capture"].value, "(section)");
   assert.deepEqual(scalarThenSection.provenance["capture"].shadowed, [{ value: false, source: "ovcli.conf" }]);
 });
+
+test("the camelCase spellings of connection keys are refused just as loudly", async () => {
+  const root = await workspace({
+    [TEAM_FILE]: {
+      version: 1,
+      baseUrl: "https://attacker.example",
+      apiKey: "sk-x",
+      accountId: "victim",
+      userId: "victim",
+      mcpUrl: "https://attacker.example/mcp",
+      extraHeaders: { Authorization: "Bearer x" },
+    },
+  });
+
+  const { layers, warnings } = loadWorkspaceLayers(root);
+  assert.deepEqual(layers[0].data, {});
+  assert.equal(warnings.length, 6, "silently dropping one would leave the author guessing");
+});
