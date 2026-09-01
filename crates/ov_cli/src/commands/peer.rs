@@ -35,9 +35,7 @@ pub fn link(cwd: &str, peer_id: &str, output_format: OutputFormat, compact: bool
     validate_peer_id(peer_id)?;
 
     let previous = resolved.peer.peer_id.clone();
-    let mut patch = Map::new();
-    patch.insert("peer".to_string(), serde_json::json!({ "id": peer_id }));
-    let (path, _) = write_entry(&root, patch, Some(&resolved.identity), &env, now_millis())?;
+    let path = pin_peer(&root, peer_id, &resolved, &env, now_millis())?;
 
     if matches!(output_format, OutputFormat::Json) {
         output_success(
@@ -74,6 +72,29 @@ pub fn link(cwd: &str, peer_id: &str, output_format: OutputFormat, compact: bool
     );
     println!("  {}", theme::muted(path.display().to_string()));
     Ok(())
+}
+
+/// Pin `peer_id` for this workspace, recording the peer it replaces.
+///
+/// The peer being linked away from is exactly what a later `ov peer migrate`
+/// with no `--from` has to move; without it recorded, migrate falls back to the
+/// recomputed cwd legacy id and misses everything written under the peer the
+/// user just left.
+fn pin_peer(
+    root: &str,
+    peer_id: &str,
+    resolved: &ResolvedWorkspace,
+    env: &WorkspaceEnv,
+    now: i64,
+) -> Result<std::path::PathBuf> {
+    let previous = resolved.peer.peer_id.as_str();
+    if previous != peer_id {
+        remember_previous_peer(root, previous, Some(&resolved.identity), env, now)?;
+    }
+    let mut patch = Map::new();
+    patch.insert("peer".to_string(), serde_json::json!({ "id": peer_id }));
+    let (path, _) = write_entry(root, patch, Some(&resolved.identity), env, now)?;
+    Ok(path)
 }
 
 pub fn forget_previous(cwd: &str, output_format: OutputFormat, compact: bool) -> Result<()> {
@@ -186,10 +207,10 @@ pub async fn migrate(
     for subtree in PEER_SUBTREES {
         let source = peer_uri(&user, &from, subtree);
         let target = peer_uri(&user, &to, subtree);
-        if client.stat(&source).await.is_err() {
+        if !exists(client, &source).await? {
             continue;
         }
-        if client.stat(&target).await.is_err() {
+        if !exists(client, &target).await? {
             moves.push(Move {
                 from: source,
                 to: target,
@@ -337,6 +358,40 @@ fn peer_uri(user: &str, peer: &str, subtree: &str) -> String {
     format!("viking://user/{user}/peers/{peer}/{subtree}")
 }
 
+/// Does this path exist?
+///
+/// Only a genuine "not found" answers no. Every other failure — an expired key,
+/// a peer-scoped read the server refuses, a timeout — is a failure to answer,
+/// and reporting it as an empty source would tell the user their memories are
+/// gone when they are merely unreachable.
+async fn exists(client: &HttpClient, uri: &str) -> Result<bool> {
+    classify_stat(client.stat(uri).await, uri)
+}
+
+fn classify_stat(result: Result<Value>, uri: &str) -> Result<bool> {
+    match result {
+        Ok(_) => Ok(true),
+        Err(error) if error.code() == "NOT_FOUND" => Ok(false),
+        // Rebuilt rather than wrapped, so the code and HTTP status `ov` renders
+        // survive alongside the path that could not be read.
+        Err(Error::Api {
+            code,
+            message,
+            details,
+            status,
+        }) => Err(Error::Api {
+            code,
+            message: match status {
+                Some(status) => format!("could not read {uri} (HTTP {status}): {message}"),
+                None => format!("could not read {uri}: {message}"),
+            },
+            details,
+            status,
+        }),
+        Err(error) => Err(error),
+    }
+}
+
 /// Walk two subtrees that both exist, planning the moves that can be made and
 /// collecting the names that cannot.
 async fn plan_merge(
@@ -425,7 +480,7 @@ async fn ensure_parent(client: &HttpClient, uri: &str) -> Result<()> {
     let Some((parent, _)) = uri.rsplit_once('/') else {
         return Ok(());
     };
-    if client.stat(parent).await.is_ok() {
+    if exists(client, parent).await? {
         return Ok(());
     }
     Box::pin(ensure_parent(client, parent)).await?;
@@ -442,6 +497,27 @@ async fn ensure_parent(client: &HttpClient, uri: &str) -> Result<()> {
 mod tests {
     use super::*;
     use crate::commands::workspace::{EffectivePeer, MergeResult, WorkspaceIdentity};
+    use std::path::{Path, PathBuf};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn unique_dir(name: &str) -> PathBuf {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be valid")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("ov-peer-{name}-{suffix}"));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        std::fs::canonicalize(&dir).expect("temp dir should resolve")
+    }
+
+    fn test_env(home: &Path) -> WorkspaceEnv {
+        WorkspaceEnv {
+            home: home.to_path_buf(),
+            openviking_home: home.join(".openviking"),
+            cli_config_file: home.join(".openviking").join("ovcli.conf"),
+            vars: std::collections::BTreeMap::new(),
+        }
+    }
 
     fn resolved(previous: &[&str], legacy: &str, effective: &str, cwd: &str) -> ResolvedWorkspace {
         let identity = WorkspaceIdentity {
@@ -493,6 +569,78 @@ mod tests {
             peer_uri("alice", "github.com-o-r", "resources"),
             "viking://user/alice/peers/github.com-o-r/resources"
         );
+    }
+
+    // The whole failure this guards against: a 403 read as "the source peer is
+    // empty" turns a broken migration into a cheerful "Nothing to migrate."
+    #[test]
+    fn only_a_real_not_found_answers_that_a_peer_holds_nothing() {
+        let uri = "viking://user/alice/peers/old/memories";
+        assert!(classify_stat(Ok(serde_json::json!({ "isDir": true })), uri).unwrap());
+        assert!(!classify_stat(Err(Error::api_with_status("no such node", 404)), uri).unwrap());
+
+        for status in [401, 403, 500] {
+            let error =
+                classify_stat(Err(Error::api_with_status("nope", status)), uri).unwrap_err();
+            assert_eq!(error.code(), Error::api_with_status("nope", status).code());
+            let message = error.to_string();
+            assert!(
+                message.contains(uri) && message.contains(&status.to_string()),
+                "{message}"
+            );
+        }
+
+        let timeout = classify_stat(Err(Error::Timeout("stat".to_string())), uri).unwrap_err();
+        assert_eq!(timeout.code(), "DEADLINE_EXCEEDED");
+    }
+
+    #[test]
+    fn linking_records_the_peer_it_replaced_so_migrate_can_find_it() {
+        let home = unique_dir("peer-link-home");
+        let root = unique_dir("peer-link-root");
+        let git_dir = root.join(".git");
+        std::fs::create_dir_all(&git_dir).expect("git dir");
+        std::fs::write(
+            git_dir.join("config"),
+            "[remote \"origin\"]\n\turl = git@github.com:volcengine/OpenViking.git\n",
+        )
+        .expect("git config");
+        let env = test_env(&home);
+        let cwd = root.to_string_lossy().to_string();
+
+        let derived = resolve_workspace(&cwd, None, &env);
+        assert_eq!(derived.peer.peer_id, "github.com-volcengine-openviking");
+        pin_peer(&cwd, "team-api", &derived, &env, 1).expect("link");
+
+        let linked = resolve_workspace(&cwd, None, &env);
+        assert_eq!(linked.peer.peer_id, "team-api");
+        assert_eq!(
+            linked.previous_peer_ids,
+            vec!["github.com-volcengine-openviking".to_string()],
+            "the derived peer the user linked away from has to be migratable"
+        );
+        assert_eq!(default_from(&linked), "github.com-volcengine-openviking");
+
+        // Re-linking the same id records nothing: `--from` and `--to` would name
+        // one peer, which migrate refuses.
+        pin_peer(&cwd, "team-api", &linked, &env, 2).expect("relink");
+        let again = resolve_workspace(&cwd, None, &env);
+        assert_eq!(
+            again.previous_peer_ids,
+            vec!["github.com-volcengine-openviking".to_string()]
+        );
+
+        pin_peer(&cwd, "team-web", &again, &env, 3).expect("link again");
+        let moved = resolve_workspace(&cwd, None, &env);
+        assert_eq!(
+            moved.previous_peer_ids,
+            vec![
+                "github.com-volcengine-openviking".to_string(),
+                "team-api".to_string()
+            ]
+        );
+        std::fs::remove_dir_all(&home).ok();
+        std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]

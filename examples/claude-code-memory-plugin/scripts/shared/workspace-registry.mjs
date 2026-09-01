@@ -31,19 +31,26 @@ export function registryDir(env = process.env) {
 }
 
 /**
- * A readable slot name plus a hash of the full path, so two `~/src/api` clones
- * on one machine never share an entry and the filename still says which is
- * which at a glance.
+ * A readable name plus a hash, keyed on the workspace's identity rather than
+ * its path wherever git supplies one.
+ *
+ * Two linked worktrees of one repository are one workspace — the same peer, so
+ * the same settings and the same `ov peer link` — and keying on the checkout
+ * path would silently split them in two. Outside a repository there is no
+ * identity but the path, so two `~/src/api` clones still get separate entries.
  */
-export function slotName(root) {
+export function slotName(root, identity = null) {
   const path = String(root || "");
-  const readable = basename(path).replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
-  const digest = createHash("sha256").update(path).digest("hex").slice(0, 12);
+  const key = identity ? identityKey(identity) : "path";
+  const source = key === "path" ? path : key;
+  const label = key.startsWith("remote:") ? key.split("/").pop() : basename(path);
+  const readable = String(label || "").replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
+  const digest = createHash("sha256").update(source).digest("hex").slice(0, 12);
   return `${readable ? `${readable}-` : ""}${digest}.json`;
 }
 
-export function entryPath(root, env = process.env) {
-  return join(registryDir(env), slotName(root));
+export function entryPath(root, env = process.env, identity = null) {
+  return join(registryDir(env), slotName(root, identity));
 }
 
 function readRawEntry(path) {
@@ -77,7 +84,7 @@ export function identityKey(identity) {
  * replaces it.
  */
 export function readEntry(root, { identity = null, env = process.env } = {}) {
-  const path = entryPath(root, env);
+  const path = entryPath(root, env, identity);
   const file = readWorkspaceFile(path, { layer: "registry", registry: true });
   if (!file.data) return { path, entry: null, warnings: file.warnings, conflict: false };
 
@@ -106,7 +113,7 @@ export function readEntry(root, { identity = null, env = process.env } = {}) {
  * erase settings and vice versa.
  */
 export function writeEntry(root, patch, { identity = null, env = process.env, now = Date.now() } = {}) {
-  const path = entryPath(root, env);
+  const path = entryPath(root, env, identity);
   // Eight copies of this module ship independently, so a newer client's entry
   // can be sitting here. Refuse rather than flatten it: an unreadable entry is
   // someone else's data, not a blank slate.

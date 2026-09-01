@@ -43,6 +43,7 @@ import {
   scanDebugLog,
   scanRcFiles,
   unknownOvcliKeys,
+  unknownPluginKeys,
   whichCommand,
   checkWorkspace,
   lintPeerScopeDowngrade,
@@ -292,6 +293,11 @@ function checkConfig(report, cfg) {
         if (conf.mode !== "600" && conf.mode !== "400") report.warn("ovcli.conf is not private", `mode ${conf.mode}; it holds the api key`, `chmod 600 ${homeShort(conf.path)}`);
         const unknown = unknownOvcliKeys(conf.data);
         if (unknown.length) report.warn("ovcli.conf has keys nobody reads", unknown.join(", "), "typos such as apiKey/base_url/token are silently ignored — use url, api_key, account, user");
+        // `plugin` is on the allowlist above, so until now nothing inside it
+        // was ever checked and a misspelled knob just sat there doing nothing.
+        for (const { key, suggestion } of unknownPluginKeys(conf.data.plugin)) {
+          report.warn(`ovcli.conf ${key} is not a knob any plugin reads`, "", suggestion ? `did you mean ${suggestion}?` : "remove it, or check the plugin README for the knob you meant");
+        }
         if (conf.data.plugin?.claude_code && !conf.data.plugin?.codex) report.info("ovcli.conf plugin.claude_code settings do not apply to Codex (use plugin.codex)");
       }
       if (label === "ov.conf" && conf.data.codex) report.info("ov.conf has a legacy codex block (still honoured; prefer ovcli.conf plugin.codex or env vars)");

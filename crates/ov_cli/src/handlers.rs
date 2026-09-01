@@ -1002,7 +1002,7 @@ pub async fn handle_peer(cmd: crate::PeerCommands, ctx: CliContext) -> Result<()
             apply,
             dry_run: _,
         } => {
-            let client = ctx.get_client();
+            let client = ctx.get_client_without_actor_peer();
             commands::peer::migrate(
                 &client,
                 &cwd,

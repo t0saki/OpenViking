@@ -131,8 +131,28 @@ test("$HOME and the filesystem root are never workspace roots", async () => {
   const inside = join(home, "notes");
   await mkdir(inside, { recursive: true });
 
-  assert.equal(findWorkspaceRoot(inside, { HOME: home }).root, "");
+  // $HOME itself is not a workspace, and a stray repository there must not
+  // claim the directories beneath it — `notes` is its own workspace with no
+  // git identity, not a checkout of the dotfiles repo.
   assert.equal(findWorkspaceRoot(home, { HOME: home }).root, "");
+  const below = findWorkspaceRoot(inside, { HOME: home });
+  assert.equal(below.root, inside);
+  assert.equal(below.git, null, "it must not inherit the repository at $HOME");
+  assert.equal(findWorkspaceRoot("/", { HOME: home }).root, "");
+});
+
+test("a directory outside any repository is still its own workspace", async () => {
+  const plain = await tempRoot("plain-workspace");
+  const env = { HOME: "/nonexistent-home", OPENVIKING_STATE_DIR: join(plain, ".state") };
+
+  const found = findWorkspaceRoot(plain, env);
+  assert.equal(found.root, plain, "a config file here has to be readable");
+  assert.equal(found.git, null);
+
+  const identity = resolveWorkspaceIdentity({ cwd: plain, env, cache: false });
+  assert.equal(identity.isGit, false);
+  assert.equal(identity.vars.git_root, "", "no repository means no repository root");
+  assert.equal(identity.vars.cwd, legacySanitize(plain));
 });
 
 test("readGitRemoteUrl reads only origin, and does not follow includes", async () => {
@@ -325,4 +345,15 @@ test("a shallow clone derives the same identity as a full one", async () => {
     resolveWorkspaceIdentity({ cwd: shallow, env, cache: false }).vars.git_remote,
     resolveWorkspaceIdentity({ cwd: full, env, cache: false }).vars.git_remote,
   );
+});
+
+test("git folds section and key case, but not a quoted subsection", async () => {
+  const root = await tempRoot("case");
+  const gitDir = join(root, ".git");
+  await mkdir(gitDir, { recursive: true });
+  await writeFile(join(gitDir, "config"), '[Remote "origin"]\n\tURL = git@github.com:Org/Repo.git\n');
+
+  assert.equal(readGitRemoteUrl(gitDir), "git@github.com:Org/Repo.git", "`git config` reads this file fine");
+  assert.equal(normalizeGitRemote(readGitRemoteUrl(gitDir)), "github.com/org/repo");
+  assert.equal(readGitRemoteUrl(gitDir, "Origin"), "", "a quoted subsection stays case-sensitive");
 });

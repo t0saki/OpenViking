@@ -135,12 +135,15 @@ export function readGitRemoteUrl(commonDir, remote = "origin") {
     const section = /^\[([^\]]+)\]/.exec(trimmed);
     if (section) {
       const header = section[1].trim();
-      const quoted = /^remote\s+"(.*)"$/.exec(header);
+      // git folds section and key names to lower case but keeps a quoted
+      // subsection exact, so `[Remote "origin"]` is the same section and
+      // `[remote "Origin"]` is not.
+      const quoted = /^remote\s+"(.*)"$/i.exec(header);
       inSection = Boolean(quoted && quoted[1] === remote);
       continue;
     }
     if (!inSection) continue;
-    const pair = /^url\s*=\s*(.*)$/.exec(trimmed);
+    const pair = /^url\s*=\s*(.*)$/i.exec(trimmed);
     // git treats an unquoted `#` or `;` as starting a comment anywhere on the
     // line, so a trailing note is not part of the URL.
     if (pair) return pair[1].split(/[#;]/)[0].trim().replace(/^["']|["']$/g, "");
@@ -214,6 +217,11 @@ export function findWorkspaceRoot(cwd, env = process.env) {
     stopAt = home;
   }
   const filesystemRoot = parse(current).root;
+  // Judged on the directory itself, not on where the walk happens to stop: a
+  // walk that reaches `/` without finding a repository has still started
+  // somewhere legitimate.
+  if (current === stopAt || current === filesystemRoot) return { root: "", git: null };
+  const workingDirectory = current;
 
   while (current && current !== filesystemRoot && current !== stopAt) {
     const git = resolveGitDir(current);
@@ -222,7 +230,11 @@ export function findWorkspaceRoot(cwd, env = process.env) {
     if (parent === current) break;
     current = parent;
   }
-  return { root: "", git: null };
+
+  // Outside a repository the working directory is the workspace, so a
+  // `.openviking/config.json` there still applies — only the git-shaped
+  // template variables go empty.
+  return { root: workingDirectory, git: null };
 }
 
 function cachePath(cwd, env) {
@@ -281,7 +293,10 @@ export function resolveWorkspaceIdentity({ cwd = "", env = process.env, cache = 
     remote,
     vars: {
       git_remote: sanitizePeerId(remote),
-      git_root: root ? legacySanitize(root) : "",
+      // Empty outside a repository even though `root` is now set there, so the
+      // `git` preset still falls through to `{cwd}` rather than stopping at a
+      // repository root that does not exist.
+      git_root: git ? legacySanitize(root) : "",
       cwd: legacySanitize(key),
       dir: root ? sanitizePeerId(root.split(/[/\\]/).filter(Boolean).pop() || "") : "",
     },

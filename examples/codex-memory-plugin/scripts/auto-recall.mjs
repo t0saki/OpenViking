@@ -34,9 +34,9 @@ import {
 } from "./shared/recall-core.mjs";
 import { resolveEffectivePeerId } from "./shared/workspace-peer.mjs";
 
-const cfg = loadConfig();
+let cfg = loadConfig();
 const { log, logError } = createLogger("auto-recall");
-const effectivePeer = resolveEffectivePeerId({ cfg, cwd: process.cwd() });
+let effectivePeer = resolveEffectivePeerId({ cfg, cwd: process.cwd() });
 
 let emitted = false;
 let activeCompressor = null;
@@ -565,12 +565,6 @@ ${JSON.stringify(payload, null, 2)}
 }
 
 async function main() {
-  if (!cfg.autoRecall) {
-    log("skip", { stage: "init", reason: "autoRecall disabled" });
-    emit();
-    return;
-  }
-
   let input;
   try {
     const chunks = [];
@@ -578,6 +572,18 @@ async function main() {
     input = JSON.parse(Buffer.concat(chunks).toString());
   } catch {
     log("skip", { stage: "stdin_parse", reason: "invalid input" });
+    emit();
+    return;
+  }
+
+  // The workspace layer belongs to the session's directory, which only the
+  // payload knows; see loadConfig for why re-resolving this late is safe.
+  const cwd = typeof input.cwd === "string" && input.cwd.trim() ? input.cwd : process.cwd();
+  cfg = loadConfig(cwd);
+  effectivePeer = resolveEffectivePeerId({ cfg, cwd });
+
+  if (!cfg.autoRecall) {
+    log("skip", { stage: "init", reason: "autoRecall disabled" });
     emit();
     return;
   }

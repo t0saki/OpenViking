@@ -92,6 +92,19 @@ impl CliContext {
         self.get_client_with_timeout(None)
     }
 
+    /// A client that speaks for the account rather than for one peer.
+    ///
+    /// The server hides another peer's paths from any request carrying
+    /// `X-OpenViking-Actor-Peer` (`is_hidden_by_actor_peer_view`), so a command
+    /// whose whole job is to read across peers has to drop the header — with it
+    /// set, every read of the peer being migrated away from is a 403.
+    pub fn get_client_without_actor_peer(&self) -> client::HttpClient {
+        let mut ctx = self.clone();
+        ctx.config.actor_peer_id = None;
+        ctx.config.agent_id = None;
+        ctx.get_client()
+    }
+
     pub fn get_client_with_timeout(&self, timeout_secs: Option<f64>) -> client::HttpClient {
         let auth = self.config.effective_auth(self.sudo);
         let mut client = client::HttpClient::new(
@@ -2908,6 +2921,7 @@ fn language_gate_action(
     if has_saved_language
         || is_language_command_request(args)
         || is_config_agent_command_request(args)
+        || is_workspace_show_command_request(args)
     {
         LanguageGateAction::Continue
     } else if is_interactive {
@@ -2940,6 +2954,15 @@ fn is_language_command_request(args: &[OsString]) -> bool {
         first_command_token(args).as_deref(),
         Some("language" | "lang")
     )
+}
+
+/// `ov workspace show` is a diagnostic, like a doctor command: it has to answer
+/// on a machine where nobody has chosen a language — CI, a fresh container. The
+/// `peer` subcommands mutate state, so they can reasonably ask first.
+fn is_workspace_show_command_request(args: &[OsString]) -> bool {
+    let tokens = command_tokens_for_config_gate(args);
+    tokens.first().map(String::as_str) == Some("workspace")
+        && tokens.get(1).map(String::as_str) == Some("show")
 }
 
 fn first_command_token(args: &[OsString]) -> Option<String> {
@@ -5216,6 +5239,34 @@ mod tests {
             language_gate_action(&os_args(&["ov", "config"]), false, false),
             LanguageGateAction::ExitNonInteractive
         );
+    }
+
+    #[test]
+    fn language_gate_lets_workspace_show_diagnose_but_not_the_peer_mutations() {
+        for args in [
+            &["ov", "workspace", "show"][..],
+            &["ov", "workspace", "show", "--harness", "codex"],
+            &["ov", "--output", "json", "workspace", "show"],
+        ] {
+            assert_eq!(
+                language_gate_action(&os_args(args), false, false),
+                LanguageGateAction::Continue,
+                "{args:?} should bypass first-run language selection"
+            );
+        }
+
+        for args in [
+            &["ov", "peer", "link", "team-api"][..],
+            &["ov", "peer", "migrate", "--apply"],
+            &["ov", "peer", "forget-previous"],
+            &["ov", "workspace"],
+        ] {
+            assert_eq!(
+                language_gate_action(&os_args(args), false, false),
+                LanguageGateAction::ExitNonInteractive,
+                "{args:?} may ask for a language first"
+            );
+        }
     }
 
     #[test]

@@ -31,6 +31,22 @@ test("a slot is readable and still unique per absolute path", () => {
   assert.match(slotName("/"), /^[0-9a-f]{12}\.json$/);
 });
 
+test("two worktrees of one repository share a slot; two clones do not", () => {
+  // A linked worktree is a second checkout of the same repository — same peer,
+  // so the same settings and the same `ov peer link`.
+  const main = slotName("/Users/x/src/api", repo);
+  const worktree = slotName("/Users/x/wt/api-feature", repo);
+  assert.equal(worktree, main, "the checkout path must not split one workspace in two");
+  assert.match(main, /^openviking-[0-9a-f]{12}\.json$/);
+
+  assert.notEqual(slotName("/Users/x/src/api", otherRepo), main, "a different repository is a different slot");
+
+  // Without a repository there is no identity but the path.
+  const plainA = slotName("/Users/x/src/notes", { isGit: false });
+  const plainB = slotName("/Users/x/work/notes", { isGit: false });
+  assert.notEqual(plainA, plainB);
+});
+
 test("an entry round-trips and only the caller's keys change", async () => {
   const env = await home();
   const root = "/Users/x/src/api";
@@ -44,7 +60,7 @@ test("an entry round-trips and only the caller's keys change", async () => {
   assert.equal(entry.root, root);
   assert.equal(entry.label, repo.remote);
 
-  const raw = JSON.parse(await readFile(entryPath(root, env), "utf-8"));
+  const raw = JSON.parse(await readFile(entryPath(root, env, repo), "utf-8"));
   assert.equal(raw.version, 1);
   assert.equal(raw.first_seen_at, 1000, "first_seen_at survives later writes");
   assert.equal(raw.last_seen_at, 2000);
@@ -53,7 +69,7 @@ test("an entry round-trips and only the caller's keys change", async () => {
 test("entries are written 0600 — nobody else on the machine reads them", async () => {
   const env = await home();
   writeEntry("/Users/x/src/api", { peer: { id: "p" } }, { identity: repo, env });
-  const mode = (await stat(entryPath("/Users/x/src/api", env))).mode & 0o777;
+  const mode = (await stat(entryPath("/Users/x/src/api", env, repo))).mode & 0o777;
   assert.equal(mode, 0o600, `expected 0600, got ${mode.toString(8)}`);
 });
 
@@ -62,13 +78,31 @@ test("a path reused by a different repository does not inherit the old peer", as
   const root = "/Users/x/src/api";
   writeEntry(root, { peer: { id: "from-the-old-repo" } }, { identity: repo, env });
 
+  // Keying the slot on identity makes the crossing physically impossible: the
+  // new repository looks in a different file and finds nothing.
   const miss = readEntry(root, { identity: otherRepo, env });
-  assert.equal(miss.entry, null, "conflicting git identity is a miss, not a match");
-  assert.equal(miss.conflict, true);
-  assert.ok(miss.warnings.some((w) => w.includes("different repository")));
+  assert.equal(miss.entry, null);
+  assert.notEqual(entryPath(root, env, otherRepo), entryPath(root, env, repo));
 
   const hit = readEntry(root, { identity: repo, env });
   assert.equal(hit.entry.peer.id, "from-the-old-repo", "the matching identity still reads it");
+});
+
+test("an entry whose recorded identity contradicts the caller is still refused", async () => {
+  // Slot isolation is the first defence; this is the second, for a file that
+  // was hand-edited or moved.
+  const env = await home();
+  const root = "/Users/x/src/api";
+  await mkdir(registryDir(env), { recursive: true });
+  await writeFile(
+    entryPath(root, env, repo),
+    JSON.stringify({ version: 1, identity: identityKey(otherRepo), peer: { id: "someone-elses" } }),
+  );
+
+  const miss = readEntry(root, { identity: repo, env });
+  assert.equal(miss.entry, null);
+  assert.equal(miss.conflict, true);
+  assert.ok(miss.warnings.some((w) => w.includes("different repository")));
 });
 
 test("writing after a conflict replaces the entry instead of merging into it", async () => {
@@ -110,7 +144,7 @@ test("a profile name that got into the file by other means is dropped on read", 
   const root = "/Users/x/src/api";
   await mkdir(registryDir(env), { recursive: true });
   await writeFile(
-    entryPath(root, env),
+    entryPath(root, env, repo),
     JSON.stringify({ version: 1, identity: identityKey(repo), cli_config_profile: "../../elsewhere", peer: { id: "p" } }),
   );
 
@@ -136,7 +170,7 @@ test("previous peers accumulate without duplicates", async () => {
 test("listEntries reports what is there and skips what is not readable", async () => {
   const env = await home();
   writeEntry("/Users/x/b", { peer: { id: "b" } }, { identity: repo, env });
-  writeEntry("/Users/x/a", { peer: { id: "a" } }, { identity: repo, env });
+  writeEntry("/Users/x/a", { peer: { id: "a" } }, { identity: otherRepo, env });
   await writeFile(join(registryDir(env), "corrupt.json"), "{ nope");
 
   const entries = listEntries(env);
@@ -160,13 +194,13 @@ test("an entry from a newer client is refused, not flattened", async () => {
   const root = "/Users/x/src/api";
   await mkdir(registryDir(env), { recursive: true });
   const future = { version: 2, cli_config_profile: "prod", peer: { id: "pinned" }, important: "future" };
-  await writeFile(entryPath(root, env), JSON.stringify(future));
+  await writeFile(entryPath(root, env, repo), JSON.stringify(future));
 
   assert.throws(
     () => writeEntry(root, { peer: { id: "mine" } }, { identity: repo, env }),
     /newer client/,
   );
-  assert.deepEqual(JSON.parse(await readFile(entryPath(root, env), "utf-8")), future);
+  assert.deepEqual(JSON.parse(await readFile(entryPath(root, env, repo), "utf-8")), future);
 });
 
 test("a free-form section in the registry survives a round trip", async () => {

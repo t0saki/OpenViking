@@ -20,7 +20,7 @@ import { join } from "node:path";
 import { resolveWorkspaceSettings } from "./plugin-config.mjs";
 import { peerScopeMemoPath } from "./recall-core.mjs";
 import { CONFIG_DIR_NAME, LOCAL_FILE, TEAM_FILE, workspaceConfigPaths } from "./workspace-config.mjs";
-import { findWorkspaceRoot } from "./workspace-identity.mjs";
+import { findWorkspaceRoot, resolveWorkspaceIdentity } from "./workspace-identity.mjs";
 import { entryPath } from "./workspace-registry.mjs";
 
 // ---------------------------------------------------------------------------
@@ -296,6 +296,73 @@ const KNOWN_OVCLI_KEYS = new Set([
 export function unknownOvcliKeys(data) {
   if (!data || typeof data !== "object") return [];
   return Object.keys(data).filter((k) => !KNOWN_OVCLI_KEYS.has(k));
+}
+
+/**
+ * Every knob a harness loader reads out of `ovcli.conf`'s `plugin` section.
+ *
+ * `plugin` is on the allowlist above, which used to mean everything inside it
+ * went unchecked — so `peerSorce` sat there doing nothing with no complaint.
+ * `plugin-known-keys.test.mjs` derives this set from the two loaders and fails
+ * when they diverge, so it cannot rot into a list that rejects a real knob.
+ */
+export const KNOWN_PLUGIN_KEYS = new Set([
+  "apiKey", "accountId", "userId", "auth_mode", "authMode", "enabled", "debug", "timeoutMs",
+  "peerId", "peer_id", "peerSource", "workspacePeer",
+  "autoRecall", "autoCapture", "noAutoInject", "writePathAsync", "minQueryLength",
+  "bypassSessionPatterns",
+  "recallLimit", "recallMaxTokens", "recallMaxContentChars", "recallTokenBudget",
+  "recallPeerScope", "recallDedupTurns", "recallQueryExpansion", "recallPreferAbstract",
+  "recallRewrite", "recallContextTimeoutMs", "recallTimeoutMs", "scoreThreshold",
+  "recallCompress", "recallCompressMaxBullets", "recallCompressMaxInputChars",
+  "recallCompressMinInputChars", "recallCompressBaseUrl", "recallCompressModel",
+  "recallCompressThinking", "recallCompressReasoningEffort", "recallCompressTimeoutMs",
+  "recallCompressDetectOnStartup", "recallCompressDetectTimeoutMs", "recallCompressDetectTtlMs",
+  "captureMode", "captureMaxLength", "captureTimeoutMs", "captureToolMaxChars",
+  "captureAssistantTurns", "captureLastAssistantOnStop", "logRankingDetails",
+  "commitTokenThreshold", "commitKeepRecentCount", "autoCommitOnCompact",
+  "profileTokenBudget", "resumeContextBudget", "resumeArchiveInject",
+  "resumeArchiveMaxChars", "resumeArchiveTokenBudget",
+  "skillExperience", "skillExperienceLimit",
+]);
+
+/** Nested objects in `plugin` are per-harness overrides, not knobs. */
+const PLUGIN_HARNESS_KEYS = new Set(["claude_code", "codex"]);
+
+function nearestKnownKey(key) {
+  // Levenshtein would be overkill; a typo that matters is almost always one
+  // edit away, and case-folding alone catches the most common one.
+  const folded = key.toLowerCase();
+  for (const known of KNOWN_PLUGIN_KEYS) {
+    if (known.toLowerCase() === folded) return known;
+  }
+  for (const known of KNOWN_PLUGIN_KEYS) {
+    if (known.length >= 4 && (known.toLowerCase().startsWith(folded.slice(0, 5)) || folded.startsWith(known.toLowerCase().slice(0, 5)))) {
+      return known;
+    }
+  }
+  return "";
+}
+
+/**
+ * Misspelled knobs inside `plugin`, and inside each per-harness override.
+ * Each result carries the closest real key so the fix is one glance away.
+ */
+export function unknownPluginKeys(plugin) {
+  if (!plugin || typeof plugin !== "object" || Array.isArray(plugin)) return [];
+  const found = [];
+  const walk = (object, prefix) => {
+    for (const [key, value] of Object.entries(object)) {
+      if (!prefix && PLUGIN_HARNESS_KEYS.has(key)) {
+        if (value && typeof value === "object" && !Array.isArray(value)) walk(value, `${key}.`);
+        continue;
+      }
+      if (KNOWN_PLUGIN_KEYS.has(key)) continue;
+      found.push({ key: `plugin.${prefix}${key}`, suggestion: nearestKnownKey(key) });
+    }
+  };
+  walk(plugin, "");
+  return found;
 }
 
 const SECRET_ENV = /KEY|TOKEN|SECRET|PASSWORD/i;
@@ -719,10 +786,12 @@ export function checkWorkspace(report, { cwd = process.cwd(), env = process.env 
   const resolved = resolveWorkspaceSettings(cwd, env);
   summary.settings = resolved.settings;
   summary.provenance = resolved.provenance;
+  const identity = resolveWorkspaceIdentity({ cwd, env });
+  const registryPath = entryPath(root, env, identity);
 
   for (const { layer, path } of [
     ...workspaceConfigPaths(root),
-    { layer: "registry", path: entryPath(root, env) },
+    { layer: "registry", path: registryPath },
   ]) {
     const info = fileInfo(path);
     summary.files.push({ layer, path, exists: info.exists });
@@ -747,7 +816,7 @@ export function checkWorkspace(report, { cwd = process.cwd(), env = process.env 
     report.warn(
       `${source} sets ${key} = ${JSON.stringify(value)}`,
       "a committed workspace file is trusted without a prompt, so what it changes is announced",
-      `override it in ${LOCAL_FILE} or in ${homeShort(entryPath(root, env))}`,
+      `override it in ${LOCAL_FILE} or in ${homeShort(registryPath)}`,
     );
   }
 

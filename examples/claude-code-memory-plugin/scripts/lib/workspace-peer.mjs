@@ -21,7 +21,16 @@ export function getEffectivePeerId(cfg, { sessionId = "", cwd = "" } = {}) {
       return resolveEffectivePeerId({ cfg, cwd });
     }
     if (cached.source === "workspace" && cfg.workspacePeer !== false) {
-      return { peerId: String(cached.peerId), source: "workspace" };
+      // The whole resolution, not just the id: `legacyPeerId` is what dual-read
+      // asks for the memories written before the derivation changed, and
+      // dropping it here silently switched that off from the second hook of the
+      // session onward.
+      return {
+        peerId: String(cached.peerId),
+        source: "workspace",
+        origin: String(cached.origin || "workspace"),
+        legacyPeerId: String(cached.legacyPeerId || ""),
+      };
     }
   }
 
@@ -31,6 +40,8 @@ export function getEffectivePeerId(cfg, { sessionId = "", cwd = "" } = {}) {
       version: PIN_VERSION,
       peerId: resolved.peerId,
       source: resolved.source,
+      origin: resolved.origin,
+      legacyPeerId: resolved.legacyPeerId,
       cwd: String(cwd || ""),
     });
   }

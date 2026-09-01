@@ -141,6 +141,36 @@ export function isValidProfileName(value) {
   return PROFILE_NAME_RE.test(String(value || ""));
 }
 
+/** -1, 0 or 1 over dotted numeric versions; a non-numeric tail is ignored. */
+function compareVersions(left, right) {
+  const parse = (value) => String(value || "").split(".").map((part) => Number.parseInt(part, 10) || 0);
+  const a = parse(left);
+  const b = parse(right);
+  for (let i = 0; i < Math.max(a.length, b.length); i += 1) {
+    const diff = (a[i] || 0) - (b[i] || 0);
+    if (diff) return diff < 0 ? -1 : 1;
+  }
+  return 0;
+}
+
+/**
+ * `min_client_version` warns and never blocks. A committed file that could stop
+ * an older plugin from running would be a denial of service anyone with commit
+ * access could mount, so it says "this was written for a newer client" and the
+ * settings still apply.
+ */
+export function checkMinClientVersion(declared, clientVersion, warnings = []) {
+  const required = String(declared || "").trim();
+  const current = String(clientVersion || "").trim();
+  if (!required || !current) return true;
+  if (compareVersions(current, required) >= 0) return true;
+  warnings.push(
+    `this workspace asks for OpenViking plugin ${required} and this one is ${current}; `
+    + "settings it introduced will be ignored rather than blocking the session",
+  );
+  return false;
+}
+
 function isPlainObject(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
@@ -406,13 +436,16 @@ export function workspaceConfigPaths(root) {
  * The two workspace-file layers, lowest precedence first. Callers stack the
  * registry above these and the ovcli.conf plugin section below them.
  */
-export function loadWorkspaceLayers(root) {
+export function loadWorkspaceLayers(root, { clientVersion = "" } = {}) {
   const warnings = [];
   const layers = [];
   for (const { layer, path } of workspaceConfigPaths(root)) {
     const file = readWorkspaceFile(path, { root, layer });
     warnings.push(...file.warnings);
-    if (file.data) layers.push({ layer, data: file.data, path });
+    if (!file.data) continue;
+    const { min_client_version: declared, ...data } = file.data;
+    checkMinClientVersion(declared, clientVersion, warnings);
+    layers.push({ layer, data, path });
   }
   return { layers, warnings };
 }

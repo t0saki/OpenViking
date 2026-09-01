@@ -10,6 +10,7 @@ import {
   LOCAL_FILE,
   TEAM_FILE,
   announcedOverrides,
+  checkMinClientVersion,
   loadWorkspaceLayers,
   mergeConfigLayers,
   normalizeWorkspaceConfig,
@@ -299,4 +300,35 @@ test("the camelCase spellings of connection keys are refused just as loudly", as
   const { layers, warnings } = loadWorkspaceLayers(root);
   assert.deepEqual(layers[0].data, {});
   assert.equal(warnings.length, 6, "silently dropping one would leave the author guessing");
+});
+
+test("min_client_version warns and still applies the settings", async () => {
+  const root = await workspace({
+    [TEAM_FILE]: { version: 1, min_client_version: "9.9.0", recall: { max_items: 7 } },
+  });
+
+  const { layers, warnings } = loadWorkspaceLayers(root, { clientVersion: "0.8.1" });
+  assert.equal(layers[0].data.recall.max_items, 7, "a version note must never disable a workspace");
+  assert.equal(layers[0].data.min_client_version, undefined, "it is metadata, not a setting");
+  assert.ok(warnings.some((w) => w.includes("9.9.0") && w.includes("0.8.1")));
+
+  assert.deepEqual(loadWorkspaceLayers(root, { clientVersion: "9.9.0" }).warnings, [], "equal is new enough");
+  assert.deepEqual(loadWorkspaceLayers(root, { clientVersion: "10.0.0" }).warnings, []);
+  assert.deepEqual(loadWorkspaceLayers(root).warnings, [], "an unknown client version cannot judge");
+});
+
+test("checkMinClientVersion compares numerically, not as text", () => {
+  const cases = [
+    ["0.10.0", "0.9.0", true],
+    ["0.9.0", "0.10.0", false],
+    ["1.0", "1.0.0", true],
+    ["2.0.0-beta.1", "2.0.0", true],
+  ];
+  for (const [current, required, expected] of cases) {
+    assert.equal(
+      checkMinClientVersion(required, current),
+      expected,
+      `${current} vs ${required}`,
+    );
+  }
 });

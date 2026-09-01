@@ -319,8 +319,10 @@ pub fn read_git_remote_url(common_dir: &Path, remote: &str) -> String {
             .filter(|header| !header.is_empty())
         {
             let header = header.trim();
-            in_section = header
-                .strip_prefix("remote")
+            // git folds section and key names to lower case but keeps a quoted
+            // subsection exact, so `[Remote "origin"]` is the same section and
+            // `[remote "Origin"]` is not.
+            in_section = strip_prefix_ignore_ascii_case(header, "remote")
                 .filter(|rest| rest.starts_with(char::is_whitespace))
                 .map(str::trim)
                 .and_then(|rest| rest.strip_prefix('"'))
@@ -331,8 +333,7 @@ pub fn read_git_remote_url(common_dir: &Path, remote: &str) -> String {
         if !in_section {
             continue;
         }
-        if let Some(rest) = trimmed
-            .strip_prefix("url")
+        if let Some(rest) = strip_prefix_ignore_ascii_case(trimmed, "url")
             .map(|rest| rest.trim_start())
             .and_then(|rest| rest.strip_prefix('='))
         {
@@ -345,6 +346,14 @@ pub fn read_git_remote_url(common_dir: &Path, remote: &str) -> String {
         }
     }
     String::new()
+}
+
+/// `str::strip_prefix` folding ASCII case, the way a regex with `/i` does.
+fn strip_prefix_ignore_ascii_case<'a>(value: &'a str, prefix: &str) -> Option<&'a str> {
+    value
+        .get(..prefix.len())
+        .filter(|head| head.eq_ignore_ascii_case(prefix))
+        .map(|head| &value[head.len()..])
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -461,9 +470,13 @@ pub struct WorkspaceIdentity {
     pub vars: BTreeMap<String, String>,
 }
 
-/// Walk up from `cwd` to the nearest directory holding a `.git`.
+/// Walk up from `cwd` to the nearest directory holding a `.git`, falling back to
+/// the working directory itself.
 ///
-/// `$HOME` and the filesystem root are never workspace roots.
+/// `$HOME` and the filesystem root are never workspace roots, judged on the
+/// starting directory rather than on where the walk stops: a walk that reaches
+/// `/` without finding a repository has still started somewhere legitimate, and
+/// a `.openviking/config.json` there has to apply.
 pub fn find_workspace_root(cwd: &str, env: &WorkspaceEnv) -> (Option<PathBuf>, Option<GitInfo>) {
     let start = cwd.trim();
     if start.is_empty() {
@@ -479,6 +492,10 @@ pub fn find_workspace_root(cwd: &str, env: &WorkspaceEnv) -> (Option<PathBuf>, O
         _ => (absolute, env.home.clone()),
     };
     let filesystem_root = current.ancestors().last().map(Path::to_path_buf);
+    if current == stop_at || Some(&current) == filesystem_root.as_ref() {
+        return (None, None);
+    }
+    let working_directory = current.clone();
 
     while !current.as_os_str().is_empty()
         && Some(&current) != filesystem_root.as_ref()
@@ -492,7 +509,7 @@ pub fn find_workspace_root(cwd: &str, env: &WorkspaceEnv) -> (Option<PathBuf>, O
             _ => break,
         }
     }
-    (None, None)
+    (Some(working_directory), None)
 }
 
 /// Everything the peer templates can substitute, for one cwd.
@@ -514,12 +531,15 @@ pub fn resolve_workspace_identity(cwd: &str, env: &WorkspaceEnv) -> WorkspaceIde
 
     let mut vars = BTreeMap::new();
     vars.insert("git_remote".to_string(), sanitize_peer_id(&remote));
+    // Empty outside a repository even though `root` is set there, so the `git`
+    // preset still falls through to `{cwd}` rather than stopping at a repository
+    // root that does not exist.
     vars.insert(
         "git_root".to_string(),
-        if root_display.is_empty() {
-            String::new()
-        } else {
+        if git.is_some() {
             legacy_sanitize(&root_display)
+        } else {
+            String::new()
         },
     );
     vars.insert("cwd".to_string(), legacy_sanitize(cwd));
@@ -830,6 +850,65 @@ pub fn is_valid_profile_name(value: &str) -> bool {
         && chars.all(|ch| {
             ch.is_ascii_lowercase() || ch.is_ascii_digit() || matches!(ch, '.' | '_' | '-')
         })
+}
+
+/// The version a workspace file's `min_client_version` is measured against.
+const CLIENT_VERSION: &str = env!("OPENVIKING_CLI_VERSION");
+
+/// `Number.parseInt(part, 10) || 0`: leading digits win and anything else is 0,
+/// so a `1.2.3-rc1` tail compares as `3`.
+fn js_parse_int(part: &str) -> i64 {
+    let text = part.trim_start();
+    let (negative, digits) = match text.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, text.strip_prefix('+').unwrap_or(text)),
+    };
+    let head: String = digits.chars().take_while(char::is_ascii_digit).collect();
+    if head.is_empty() {
+        return 0;
+    }
+    let value = head.parse::<i64>().unwrap_or(i64::MAX);
+    if negative { -value } else { value }
+}
+
+fn compare_versions(left: &str, right: &str) -> std::cmp::Ordering {
+    let left: Vec<i64> = left.split('.').map(js_parse_int).collect();
+    let right: Vec<i64> = right.split('.').map(js_parse_int).collect();
+    for index in 0..left.len().max(right.len()) {
+        let ordering = left
+            .get(index)
+            .copied()
+            .unwrap_or(0)
+            .cmp(&right.get(index).copied().unwrap_or(0));
+        if ordering != std::cmp::Ordering::Equal {
+            return ordering;
+        }
+    }
+    std::cmp::Ordering::Equal
+}
+
+/// `min_client_version` warns and never blocks. A committed file that could stop
+/// an older client from running would be a denial of service anyone with commit
+/// access could mount, so it says "this was written for a newer client" and the
+/// settings still apply.
+pub fn check_min_client_version(
+    declared: &str,
+    client_version: &str,
+    warnings: &mut Vec<String>,
+) -> bool {
+    let required = declared.trim();
+    let current = client_version.trim();
+    if required.is_empty()
+        || current.is_empty()
+        || compare_versions(current, required) != std::cmp::Ordering::Less
+    {
+        return true;
+    }
+    warnings.push(format!(
+        "this workspace asks for OpenViking plugin {required} and this one is {current}; \
+         settings it introduced will be ignored rather than blocking the session"
+    ));
+    false
 }
 
 #[derive(Debug, Clone)]
@@ -1411,14 +1490,25 @@ pub fn workspace_config_paths(root: &Path) -> Vec<(String, PathBuf)> {
 
 pub const REGISTRY_VERSION: u64 = 1;
 
-/// A readable slot name plus a hash of the full path, so two `~/src/api` clones
-/// on one machine never share an entry and the filename still says which is
-/// which at a glance.
-pub fn slot_name(root: &str) -> String {
-    let base = Path::new(root)
-        .file_name()
-        .map(|name| name.to_string_lossy().to_string())
-        .unwrap_or_default();
+/// A readable name plus a hash, keyed on the workspace's identity rather than
+/// its path wherever git supplies one.
+///
+/// Two linked worktrees of one repository are one workspace — the same peer, so
+/// the same settings and the same `ov peer link` — and keying on the checkout
+/// path would silently split them in two. Outside a repository there is no
+/// identity but the path, so two `~/src/api` clones still get separate entries.
+pub fn slot_name(root: &str, identity: Option<&WorkspaceIdentity>) -> String {
+    let key = identity
+        .map(identity_key)
+        .unwrap_or_else(|| "path".to_string());
+    let source = if key == "path" { root } else { key.as_str() };
+    let base = match key.starts_with("remote:") {
+        true => key.rsplit('/').next().unwrap_or_default().to_string(),
+        false => Path::new(root)
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_default(),
+    };
     let mut readable = String::with_capacity(base.len());
     let mut in_run = false;
     for ch in base.chars() {
@@ -1435,7 +1525,7 @@ pub fn slot_name(root: &str) -> String {
         .chars()
         .take(40)
         .collect::<String>();
-    let digest = short_hash(root);
+    let digest = short_hash(source);
     if readable.is_empty() {
         format!("{digest}.json")
     } else {
@@ -1443,8 +1533,8 @@ pub fn slot_name(root: &str) -> String {
     }
 }
 
-pub fn entry_path(root: &str, env: &WorkspaceEnv) -> PathBuf {
-    env.registry_dir().join(slot_name(root))
+pub fn entry_path(root: &str, identity: Option<&WorkspaceIdentity>, env: &WorkspaceEnv) -> PathBuf {
+    env.registry_dir().join(slot_name(root, identity))
 }
 
 /// The identity a stored entry is checked against. Path alone is not enough: a
@@ -1481,7 +1571,7 @@ pub fn read_entry(
     identity: Option<&WorkspaceIdentity>,
     env: &WorkspaceEnv,
 ) -> RegistryEntry {
-    let path = entry_path(root, env);
+    let path = entry_path(root, identity, env);
     let file = read_workspace_file(&path, None, true);
     let Some(mut entry) = file.data else {
         return RegistryEntry {
@@ -1548,7 +1638,7 @@ pub fn write_entry(
     env: &WorkspaceEnv,
     now: i64,
 ) -> Result<(PathBuf, Value)> {
-    let path = entry_path(root, env);
+    let path = entry_path(root, identity, env);
     // Several copies of this reader ship independently, so a newer client's
     // entry can be sitting here. Refuse rather than flatten it.
     if let Some(on_disk) = read_raw_entry(&path)
@@ -1727,8 +1817,8 @@ impl ResolvedWorkspace {
             Error::Client(
                 copy(
                     language,
-                    "No workspace root here: this directory is not inside a git repository. Run the command from a repository, or `git init` first.",
-                    "此处没有工作区根目录：当前目录不在 git 仓库内。请在仓库中运行该命令，或先执行 git init。",
+                    "No workspace root here: the home directory and the filesystem root are never workspaces. Run the command from a project directory.",
+                    "此处没有工作区根目录：主目录与文件系统根目录不能作为工作区。请在项目目录中运行该命令。",
                 )
                 .to_string(),
             )
@@ -1807,7 +1897,15 @@ pub fn resolve_workspace(
                 exists: file.exists,
                 applied: file.data.is_some(),
             });
-            if let Some(data) = file.data {
+            if let Some(mut data) = file.data {
+                // Metadata, not a setting: it is lifted out before the layer is
+                // merged, and it only ever warns.
+                let declared = data
+                    .as_object_mut()
+                    .and_then(|object| object.shift_remove("min_client_version"));
+                if let Some(declared) = declared.as_ref().and_then(Value::as_str) {
+                    check_min_client_version(declared, CLIENT_VERSION, &mut warnings);
+                }
                 layers.push(ConfigLayer { layer, data });
             }
         }
@@ -2059,14 +2157,22 @@ fn render_show(resolved: &ResolvedWorkspace, language: Language) -> String {
             "  {}\n",
             theme::muted(copy(
                 language,
-                "no workspace root (not inside a git repository)",
-                "没有工作区根目录（不在 git 仓库内）",
+                "no workspace root (the home directory and the filesystem root are never workspaces)",
+                "没有工作区根目录（主目录与文件系统根目录不作为工作区）",
             ))
         ));
     } else {
         out.push_str(&field(
             copy(language, "root", "根目录"),
-            &format!("{} ({})", identity.root, identity.git_kind),
+            &format!(
+                "{} ({})",
+                identity.root,
+                if identity.git_kind.is_empty() {
+                    copy(language, "no repository", "非仓库")
+                } else {
+                    &identity.git_kind
+                }
+            ),
         ));
         if !identity.git_common_dir.is_empty() {
             out.push_str(&field(
@@ -2705,9 +2811,72 @@ mod tests {
         fs::create_dir_all(&inside).expect("notes dir");
         let env = test_env(&home);
 
-        assert_eq!(find_workspace_root(&inside.to_string_lossy(), &env).0, None);
         assert_eq!(find_workspace_root(&home.to_string_lossy(), &env).0, None);
+        assert_eq!(find_workspace_root("/", &env).0, None);
+        // A stray repository at `$HOME` must not claim the directories beneath
+        // it: `notes` is its own workspace with no git identity.
+        let (root, git) = find_workspace_root(&inside.to_string_lossy(), &env);
+        assert_eq!(root.as_deref(), Some(inside.as_path()));
+        assert!(git.is_none(), "it must not inherit the repository at $HOME");
         fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn a_directory_outside_any_repository_is_still_its_own_workspace() {
+        let plain = unique_dir("plain-workspace");
+        let env = test_env(Path::new("/nonexistent-home"));
+
+        let (root, git) = find_workspace_root(&plain.to_string_lossy(), &env);
+        assert_eq!(
+            root.as_deref(),
+            Some(plain.as_path()),
+            "a config file here has to be readable"
+        );
+        assert!(git.is_none());
+
+        // …and the config file there really does apply.
+        let config_dir = plain.join(CONFIG_DIR_NAME);
+        fs::create_dir_all(&config_dir).expect("config dir");
+        fs::write(
+            config_dir.join(TEAM_FILE),
+            serde_json::json!({ "version": 1, "recall": { "max_items": 9 } }).to_string(),
+        )
+        .expect("team file");
+        let resolved = resolve_workspace(&plain.to_string_lossy(), None, &env);
+        assert_eq!(
+            config_get(&resolved.merged.value, "recall.max_items"),
+            Some(&Value::from(9))
+        );
+        assert_eq!(resolved.identity.vars["git_root"], "");
+        fs::remove_dir_all(&plain).ok();
+    }
+
+    #[test]
+    fn git_folds_section_and_key_case_but_not_a_quoted_subsection() {
+        let dir = unique_dir("case");
+        let git_dir = dir.join(".git");
+        fs::create_dir_all(&git_dir).expect("git dir");
+        fs::write(
+            git_dir.join("config"),
+            "[Remote \"origin\"]\n\tURL = git@github.com:Org/Repo.git\n",
+        )
+        .expect("config");
+
+        assert_eq!(
+            read_git_remote_url(&git_dir, "origin"),
+            "git@github.com:Org/Repo.git",
+            "`git config` reads this file fine"
+        );
+        assert_eq!(
+            normalize_git_remote(&read_git_remote_url(&git_dir, "origin")),
+            "github.com/org/repo"
+        );
+        assert_eq!(
+            read_git_remote_url(&git_dir, "Origin"),
+            "",
+            "a quoted subsection stays case-sensitive"
+        );
+        fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
@@ -2737,8 +2906,12 @@ mod tests {
         let plain = unique_dir("plain");
         let outside = resolve_workspace_identity(&plain.to_string_lossy(), &env);
         assert!(!outside.is_git);
+        assert_eq!(outside.root, plain.to_string_lossy());
         assert_eq!(outside.vars["git_remote"], "");
-        assert_eq!(outside.vars["git_root"], "");
+        assert_eq!(
+            outside.vars["git_root"], "",
+            "no repository means no repository root"
+        );
         assert_eq!(
             outside.vars["cwd"],
             legacy_sanitize(&plain.to_string_lossy())
@@ -3380,14 +3553,102 @@ mod tests {
     }
 
     #[test]
+    fn min_client_version_warns_and_still_applies_the_settings() {
+        let mut warnings = Vec::new();
+        assert!(!check_min_client_version("9.9.0", "0.8.1", &mut warnings));
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("9.9.0") && warnings[0].contains("0.8.1"));
+
+        warnings.clear();
+        assert!(check_min_client_version("9.9.0", "9.9.0", &mut warnings));
+        assert!(check_min_client_version("9.9.0", "10.0.0", &mut warnings));
+        // Compared numerically, not as text, and a non-numeric tail is ignored.
+        assert!(check_min_client_version("0.9", "0.10.0", &mut warnings));
+        assert!(check_min_client_version(
+            "1.2.3",
+            "1.2.3-rc1",
+            &mut warnings
+        ));
+        // Neither side can judge without a version.
+        assert!(check_min_client_version("", "0.8.1", &mut warnings));
+        assert!(check_min_client_version("9.9.0", "", &mut warnings));
+        assert!(warnings.is_empty(), "{warnings:?}");
+
+        // A version note must never disable a workspace, and it is metadata
+        // rather than a setting, so it never reaches the merged config.
+        let root = unique_dir("min-client-version");
+        let config_dir = root.join(CONFIG_DIR_NAME);
+        fs::create_dir_all(&config_dir).expect("config dir");
+        fs::write(
+            config_dir.join(TEAM_FILE),
+            serde_json::json!({
+                "version": 1,
+                "min_client_version": "9999.0.0",
+                "recall": { "max_items": 7 },
+            })
+            .to_string(),
+        )
+        .expect("team file");
+        let env = test_env(Path::new("/nonexistent-home"));
+        let resolved = resolve_workspace(&root.to_string_lossy(), None, &env);
+        assert_eq!(
+            config_get(&resolved.merged.value, "recall.max_items"),
+            Some(&Value::from(7))
+        );
+        assert!(resolved.merged.get("min_client_version").is_none());
+        assert!(
+            resolved
+                .warnings
+                .iter()
+                .any(|w| w.contains("9999.0.0") && w.contains(CLIENT_VERSION)),
+            "{:?}",
+            resolved.warnings
+        );
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
     fn a_slot_is_readable_and_still_unique_per_absolute_path() {
-        let a = slot_name("/Users/x/src/api");
-        let b = slot_name("/Users/x/work/api");
+        let a = slot_name("/Users/x/src/api", None);
+        let b = slot_name("/Users/x/work/api", None);
         assert!(a.starts_with("api-") && a.ends_with(".json"), "{a}");
         assert_eq!(a.len(), "api-".len() + 12 + ".json".len());
         assert_ne!(a, b, "same basename, different path, different slot");
-        assert_eq!(a, slot_name("/Users/x/src/api"), "slots are stable");
-        assert_eq!(slot_name("/").len(), 12 + ".json".len());
+        assert_eq!(a, slot_name("/Users/x/src/api", None), "slots are stable");
+        assert_eq!(slot_name("/", None).len(), 12 + ".json".len());
+    }
+
+    #[test]
+    fn two_worktrees_of_one_repository_share_a_slot_and_two_clones_do_not() {
+        let repo = repo_identity("github.com/volcengine/openviking");
+        let other = repo_identity("github.com/someone/else");
+
+        // A linked worktree is a second checkout of the same repository — same
+        // peer, so the same settings and the same `ov peer link`.
+        let main = slot_name("/Users/x/src/api", Some(&repo));
+        let worktree = slot_name("/Users/x/wt/api-feature", Some(&repo));
+        assert_eq!(
+            worktree, main,
+            "the checkout path must not split one workspace in two"
+        );
+        assert!(main.starts_with("openviking-"), "{main}");
+        assert_eq!(main.len(), "openviking-".len() + 12 + ".json".len());
+        assert_ne!(
+            slot_name("/Users/x/src/api", Some(&other)),
+            main,
+            "a different repository is a different slot"
+        );
+
+        // Without a repository there is no identity but the path.
+        let plain = WorkspaceIdentity::default();
+        assert_ne!(
+            slot_name("/Users/x/src/notes", Some(&plain)),
+            slot_name("/Users/x/work/notes", Some(&plain))
+        );
+        assert_eq!(
+            slot_name("/Users/x/src/notes", Some(&plain)),
+            slot_name("/Users/x/src/notes", None)
+        );
     }
 
     #[test]
@@ -3488,13 +3749,13 @@ mod tests {
         );
         write_entry(root, patch, Some(&repo), &env, 1).expect("write");
 
+        // Keying the slot on identity makes the crossing physically impossible:
+        // the new repository looks in a different file and finds nothing.
         let miss = read_entry(root, Some(&other), &env);
         assert!(miss.entry.is_none(), "a conflicting identity is a miss");
-        assert!(miss.conflict);
-        assert!(
-            miss.warnings
-                .iter()
-                .any(|w| w.contains("different repository"))
+        assert_ne!(
+            entry_path(root, Some(&other), &env),
+            entry_path(root, Some(&repo), &env)
         );
 
         let hit = read_entry(root, Some(&repo), &env);
@@ -3516,6 +3777,38 @@ mod tests {
         fs::remove_dir_all(&home).ok();
     }
 
+    // Slot isolation is the first defence; the recorded identity is the second,
+    // for a file that was hand-edited or moved into the slot.
+    #[test]
+    fn an_entry_whose_recorded_identity_contradicts_the_caller_is_still_refused() {
+        let home = unique_dir("registry-hand-edited");
+        let env = test_env(&home);
+        let repo = repo_identity("github.com/volcengine/openviking");
+        let other = repo_identity("github.com/someone/else");
+        let root = "/Users/x/src/api";
+        fs::create_dir_all(env.registry_dir()).expect("registry dir");
+        fs::write(
+            entry_path(root, Some(&repo), &env),
+            serde_json::json!({
+                "version": 1,
+                "identity": identity_key(&other),
+                "peer": { "id": "someone-elses" },
+            })
+            .to_string(),
+        )
+        .expect("seed");
+
+        let miss = read_entry(root, Some(&repo), &env);
+        assert!(miss.entry.is_none());
+        assert!(miss.conflict);
+        assert!(
+            miss.warnings
+                .iter()
+                .any(|w| w.contains("different repository"))
+        );
+        fs::remove_dir_all(&home).ok();
+    }
+
     #[test]
     fn an_entry_from_a_newer_client_is_refused_not_flattened() {
         let home = unique_dir("registry-newer");
@@ -3524,12 +3817,12 @@ mod tests {
         let root = "/Users/x/src/api";
         fs::create_dir_all(env.registry_dir()).expect("registry dir");
         let future = serde_json::json!({ "version": 2, "peer": { "id": "pinned" } });
-        fs::write(entry_path(root, &env), future.to_string()).expect("seed");
+        fs::write(entry_path(root, Some(&repo), &env), future.to_string()).expect("seed");
 
         let error = write_entry(root, Map::new(), Some(&repo), &env, 1).unwrap_err();
         assert!(error.to_string().contains("newer client"), "{error}");
         assert_eq!(
-            read_raw_entry(&entry_path(root, &env)).expect("still there"),
+            read_raw_entry(&entry_path(root, Some(&repo), &env)).expect("still there"),
             future
         );
         fs::remove_dir_all(&home).ok();
@@ -3775,7 +4068,7 @@ mod tests {
         write_entry(root, patch, Some(&repo), &env, 2000).expect("second write");
         remember_previous_peer(root, "-Users-x-old", Some(&repo), &env, 3000).expect("remember");
 
-        let entry = read_raw_entry(&entry_path(root, &env)).expect("entry");
+        let entry = read_raw_entry(&entry_path(root, Some(&repo), &env)).expect("entry");
         assert_eq!(
             entry
                 .as_object()

@@ -27,7 +27,7 @@ if (!isPluginEnabled()) {
   process.exit(0);
 }
 
-const cfg = loadConfig();
+let cfg = loadConfig();
 const { log, logError } = createLogger("auto-recall");
 const fetchJSON = makeFetchJSON(cfg);
 
@@ -336,13 +336,6 @@ async function main() {
     ...extra,
   });
 
-  if (!cfg.autoRecall) {
-    log("skip", { reason: "autoRecall disabled" });
-    writeRecallState({ count: 0, reason: "disabled" });
-    approve();
-    return;
-  }
-
   let input;
   try {
     const chunks = [];
@@ -358,6 +351,18 @@ async function main() {
   const userPrompt = (input.prompt || "").trim();
   const sessionId = input.session_id;
   const cwd = input.cwd;
+  // The workspace layer belongs to the session's directory, which only the
+  // payload knows; see loadConfig for why re-resolving this late is safe.
+  // Everything gated below — recall.enabled included — reads the reload.
+  cfg = loadConfig(cwd);
+
+  if (!cfg.autoRecall) {
+    log("skip", { reason: "autoRecall disabled" });
+    writeRecallState({ count: 0, reason: "disabled" });
+    approve();
+    return;
+  }
+
   const effectivePeer = getEffectivePeerId(cfg, { sessionId, cwd });
   log("start", {
     query: userPrompt.slice(0, 200),
