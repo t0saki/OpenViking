@@ -131,6 +131,107 @@ Command-line options such as `--profile`, `--progress`, `--no-progress`, and `--
 
 Local directory uploads also honor `.gitignore`. Command-line `--include` and `--exclude` rules are merged with the configuration.
 
+## Workspace Configuration
+
+A repository can carry its own plugin settings, so the memory behavior of a project travels with the checkout instead of living in each contributor's home directory. Two files sit under the workspace root, and a third layer is kept per machine:
+
+```text
+<repo-root>/.openviking/config.json         # committed, shared by the team
+<repo-root>/.openviking/config.local.json   # private, not committed
+~/.openviking/workspaces/<slot>.json        # per-machine registry, one file per workspace
+```
+
+The workspace root is the nearest ancestor directory holding a `.git`; `$HOME` and the filesystem root are never workspace roots. The registry slot name combines the root's directory name with a hash of its full path, so two clones of one repository on one machine never share an entry. These layers are read by the Claude Code and Codex plugins, not by `ov` commands.
+
+### Precedence
+
+Highest first:
+
+| Layer | Scope |
+|---|---|
+| `OPENVIKING_*` environment variables | Current process |
+| `~/.openviking/workspaces/<slot>.json` | This machine, this workspace |
+| `<repo-root>/.openviking/config.local.json` | This checkout, private |
+| `<repo-root>/.openviking/config.json` | This repository, committed |
+| `ovcli.conf` `plugin.<harness>` | This machine, one harness |
+| `ovcli.conf` `plugin` | This machine, every harness |
+| `ov.conf` harness section | Compatibility layer for older deployments |
+| Built-in defaults | |
+
+A scalar from a higher layer replaces the lower one. Lists are unioned across layers; a leading `"!reset"` element drops everything the lower layers contributed, so `["!reset", "*/scratch/*"]` is the whole list.
+
+### Schema
+
+`version: 1` is required. A file declaring another version is skipped with a warning rather than guessed at.
+
+```json
+{
+  "version": 1,
+  "peer": { "source": "git" },
+  "recall": { "peer_scope": "actor", "max_items": 20 },
+  "capture": { "commit_token_threshold": 20000 },
+  "labels": { "team": "search" }
+}
+```
+
+| Key | Type / Values | Purpose |
+|---|---|---|
+| `peer.source` | `"git"` / `"cwd"` / `"none"` / template / list of templates | How the workspace peer is derived |
+| `peer.id` | string | Pin the peer explicitly; takes precedence over `peer.source` |
+| `recall.enabled` | boolean | Whether the plugin recalls at all |
+| `recall.peer_scope` | `"all"` / `"actor"` | Search every peer under this user, or only this workspace's peer |
+| `recall.dedup_turns` | integer, `0`–`20` | Recent turns a recalled item is deduplicated against |
+| `recall.max_items` | integer, `1`–`100` | Maximum recalled items |
+| `recall.score_threshold` | number, `0`–`1` | Minimum score for a recalled item |
+| `capture.enabled` | boolean | Whether the session is captured |
+| `capture.commit_token_threshold` | integer, `1000`–`1000000` | Tokens accumulated before a capture commits |
+| `bypass.session_patterns` | list of globs | A session whose id or working directory matches skips recall and capture |
+| `labels` | object | Free-form metadata for humans; not read by the plugins |
+
+An out-of-range number is clamped to the nearest bound and reported; an unrecognized enum value is ignored. Keys outside this list are kept in the file and ignored.
+
+### Workspace Peer
+
+`peer.source` decides which peer a workspace writes its memories under. The same setting is spelled `OPENVIKING_PEER_SOURCE` in the environment and `plugin.peerSource` or `plugin.<harness>.peerSource` in `ovcli.conf`.
+
+| Value | Meaning |
+|---|---|
+| `"git"` | Default. The normalized `origin` URL, else the repository root path, else the working directory — equivalent to `["{git_remote}", "{git_root}", "{cwd}"]`. No prefix is added. |
+| `"cwd"` | The working directory with every non-alphanumeric character replaced by `-`, byte for byte what earlier releases sent |
+| `"none"` | Send no peer at all; `OPENVIKING_WORKSPACE_PEER=0` means the same |
+| template / list of templates | For example `"git-{git_remote}"` or `["{git_remote}", "team-{dir}"]`; templates are tried in order, and one whose variables are empty falls through to the next |
+
+| Variable | Value |
+|---|---|
+| `{git_remote}` | Normalized `origin`, as `github.com-org-repo`; empty outside a git repository or without an `origin` |
+| `{git_root}` | Repository root path, with every non-alphanumeric character replaced by `-` |
+| `{cwd}` | Working directory, with every non-alphanumeric character replaced by `-` |
+| `{dir}` | The repository root's directory name |
+
+In `/Users/x/Dev/OpenViking/examples/codex-memory-plugin` with `origin` `git@github.com:volcengine/OpenViking.git`, the peer is `github.com-volcengine-openviking` — the same value from any subdirectory, worktree, machine, or clone. Every clone of one repository therefore shares one peer, while a fork has a different `origin` and stays separate. The derivation reads the repository's files directly instead of running `git`, so it also works where `git` is missing from `PATH`, and the URL is normalized so that the ssh and https spellings of one repository agree and a token embedded in the URL never reaches the peer id.
+
+Switching to the `git` default needs no migration: the pre-`git` peer id is recomputed locally, so recall still reaches memories written under it. With the default `recall.peer_scope: "all"` the server's sweep across the user's peers already covers it; under `"actor"` the plugin asks the old peer separately.
+
+### What a Workspace File May Not Set
+
+A hook runs without a prompt, so these files are trusted; what is refused is structural instead:
+
+- Connection and credential keys — `url`, `api_key`, `root_api_key`, `account`, `user`, `extra_headers`, and the rest — are stripped with a warning wherever they appear. Which server the data goes to stays answerable from `ovcli.conf` and the environment alone.
+- `${VAR}` is never expanded in these files.
+- `cli_config_profile`, which names an `ovcli.conf` profile, is accepted only in the registry.
+
+What a committed file switches off is announced rather than blocked: the plugin's `ov-memory-doctor` reports every workspace-scoped value, the layer it came from, and what it shadowed.
+
+`.gitignore` must not ignore all of `.openviking/`, or `config.json` can never be committed. Narrow the rule to the parser's scratch directories and the private file:
+
+```text
+.openviking/media/
+.openviking/downloads/
+.openviking/config.local.json
+```
+
+`ov-memory-doctor` warns when a blanket rule is in effect.
+
 ## Related Environment Variables
 
 The `ov` CLI directly uses only a small set of environment variables:

@@ -9,21 +9,35 @@ Claude Code, Codex, OpenCode, and pi memory plugins by `sync.mjs`.
 
 ## Workspace Peers
 
-`lib/workspace-peer.mjs` derives the default actor peer from the current
-workspace path. The rule matches Claude's project-directory naming: every
-character outside `A-Z`, `a-z`, and `0-9` becomes `-`; paths are not normalized,
-folded, or trimmed. For example, `/Users/x/Dev/OpenViking` becomes
-`-Users-x-Dev-OpenViking`.
+`lib/workspace-peer.mjs` decides which peer a workspace writes its memories under; `lib/workspace-identity.mjs` derives the values it substitutes.
+
+The peer used to be the working directory with every non-alphanumeric character replaced by `-`, so `/Users/x/Dev/OpenViking` became `-Users-x-Dev-OpenViking`. That made the identity an accident of where the repository sat: a clone on another machine, a rename, a git worktree, or simply working from a subdirectory each minted a separate, empty namespace. The default is now git's own identity, so one project keeps one memory wherever it is checked out.
+
+`peer.source` picks the rule. It is read from `OPENVIKING_PEER_SOURCE`, from `plugin.peerSource` / `plugin.<harness>.peerSource` in `ovcli.conf`, or from `peer.source` in a [workspace config file](#workspace-configuration):
+
+- `git` — the default. Equivalent to the template list `["{git_remote}", "{git_root}", "{cwd}"]`: the normalized `origin` URL, else the repository root path, else the working directory. No prefix is added.
+- `cwd` — the previous behaviour, byte for byte.
+- `none` — send no peer at all. `OPENVIKING_WORKSPACE_PEER=0` still means this.
+- A template such as `"git-{git_remote}"` or `"team-{dir}"`, or a list of templates tried in order. A template whose variables are empty falls through to the next one, so a half-substituted id is never sent.
+
+The variables a template may use:
+
+- `{git_remote}` — the normalized `origin` URL as `github.com-org-repo`; empty outside a git repository, or when there is no `origin`.
+- `{git_root}` — the repository root path, legacy sanitation.
+- `{cwd}` — the working directory, legacy sanitation.
+- `{dir}` — the repository root's directory name.
+
+So in `/Users/x/Dev/OpenViking/examples/codex-memory-plugin` with origin `git@github.com:volcengine/OpenViking.git`, the peer is `github.com-volcengine-openviking` — the same from any subdirectory, any worktree, any machine, any clone.
+
+Every clone of one repository therefore shares one peer: project memory follows the project. A fork has a different origin, so it stays separate by default; reviewing an external PR through `gh pr checkout` leaves `origin` alone and does not move the identity. Worktrees converge through `commondir`, a submodule keeps its own identity, and `$HOME` and `/` are never workspace roots. The URL is normalized so ssh and https spellings of one repo agree, and an embedded token can never reach the peer id. The whole derivation is pure filesystem work — no `git` subprocess — so it also holds where `git` is absent from `PATH` or would refuse the repository over dubious ownership.
 
 Resolution order is:
 
-1. Explicit peer: `OPENVIKING_PEER_ID`, `actor_peer_id` / `peer_id` in
-   `ovcli.conf`, or the harness-specific legacy peer config.
-2. Workspace-derived peer when `workspacePeer` is not `false`.
+1. Explicit peer: `OPENVIKING_PEER_ID`, `peer.id` in a workspace layer, `actor_peer_id` / `peer_id` in `ovcli.conf`, or the harness-specific legacy peer config.
+2. The peer derived by `peer.source`, when `workspacePeer` is not `false`.
 3. No peer.
 
-Set `OPENVIKING_WORKSPACE_PEER=0` or the harness config `workspacePeer=false`
-to disable workspace-derived peers.
+Migrating from the path-derived peer needs no action. The old id can always be recomputed locally, so recall still reaches memories written under it: with the default `peer_scope: "all"` the server's existing cross-peer sweep already covers them at zero cost, and with `peer_scope: "actor"` the plugin asks that peer separately. There is no deadline on this, and `peer.source: "cwd"` restores the old id outright.
 
 ## Recall Peer Scope
 
@@ -40,3 +54,22 @@ removes `peer_scope` and retries once.
 For deployments where one bot serves multiple real people, such as zouk,
 vikingbot, or AstrBot, configure an explicit actor peer and use the isolation
 mode so one person's memories are not recalled into another person's session.
+
+## Workspace Configuration
+
+`lib/workspace-config.mjs` and `lib/workspace-registry.mjs` give a repository three configuration layers of its own: `<repo-root>/.openviking/config.json`, which the team commits, `<repo-root>/.openviking/config.local.json`, which stays private and gitignored, and a per-machine entry at `~/.openviking/workspaces/<slot>.json`. Precedence, highest first:
+
+1. `OPENVIKING_*` environment variables
+2. the machine registry, `~/.openviking/workspaces/<slot>.json`
+3. `.openviking/config.local.json`
+4. `.openviking/config.json`
+5. `ovcli.conf` `plugin.<harness>`
+6. `ovcli.conf` `plugin`
+7. the harness block in `ov.conf` (legacy)
+8. built-in defaults
+
+Every file declares `version: 1`; one declaring another version is skipped with a warning. Schema v1 is `peer.source`, `peer.id`, `recall.enabled`, `recall.peer_scope`, `recall.dedup_turns`, `recall.max_items`, `recall.score_threshold`, `capture.enabled`, `capture.commit_token_threshold`, `bypass.session_patterns`, and `labels`. Lists union across layers, and a leading `"!reset"` clears what was inherited. Unknown keys are kept and ignored.
+
+Workspace files are trusted without a prompt: a hook is non-interactive, and an approval gate would degrade into one command per workspace. What is refused instead is structural — connection and credential keys (`url`, `api_key`, `account`, `user`, `extra_headers`, …) are stripped with a warning, `${VAR}` is never expanded in these files, and `cli_config_profile` is registry-only. What a committed file switches off is announced in `ov-memory-doctor` rather than blocked.
+
+`.gitignore` must not ignore all of `.openviking/`, or `config.json` can never be committed. Narrow the rule to `.openviking/media/` and `.openviking/downloads/`; doctor warns while it is still blanket.
