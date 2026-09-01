@@ -31,6 +31,16 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve as resolvePath } from "node:path";
 
+import {
+  announcedOverrides,
+  loadWorkspaceLayers,
+  mergeConfigLayers,
+  normalizeWorkspaceConfig,
+  projectWorkspaceSettings,
+} from "./workspace-config.mjs";
+import { findWorkspaceRoot, resolveWorkspaceIdentity } from "./workspace-identity.mjs";
+import { readEntry } from "./workspace-registry.mjs";
+
 const DEFAULT_OVCLI_CONF_PATH = join(homedir(), ".openviking", "ovcli.conf");
 
 export const HARNESS_KEYS = {
@@ -51,7 +61,7 @@ function tryLoadJson(path) {
  * Returns a flat settings object; unknown keys pass through untouched so a
  * harness can add its own knobs without touching this module.
  */
-export function loadPluginSettings(harness, env = process.env) {
+export function loadPluginSettings(harness, env = process.env, options = {}) {
   const path = resolvePath(
     (env.OPENVIKING_CLI_CONFIG_FILE || DEFAULT_OVCLI_CONF_PATH).replace(/^~/, homedir()),
   );
@@ -67,7 +77,50 @@ export function loadPluginSettings(harness, env = process.env) {
     ? plugin[harness]
     : {};
 
-  return { ...shared, ...scoped };
+  const settings = { ...shared, ...scoped };
+  const cwd = String(options.cwd || "").trim();
+  if (!cwd) return settings;
+  return { ...settings, ...resolveWorkspaceSettings(cwd, env).settings };
+}
+
+/**
+ * The workspace layers for one cwd, flattened into harness knobs.
+ *
+ * Separate from `loadPluginSettings` because the hooks call `loadConfig()` at
+ * module top level, before the payload on stdin has told them which directory
+ * the session is actually in. They resolve this later, with the real cwd, and
+ * merge it over what ovcli.conf gave them.
+ */
+export function resolveWorkspaceSettings(cwd, env = process.env) {
+  const empty = { settings: {}, root: "", provenance: {}, warnings: [], announced: [] };
+  try {
+    const { root } = findWorkspaceRoot(cwd, env);
+    if (!root) return empty;
+
+    const { layers, warnings } = loadWorkspaceLayers(root);
+    // The identity is what makes the registry's negative evidence work: without
+    // it a directory reused by a different repository inherits the old peer.
+    const identity = resolveWorkspaceIdentity({ cwd, env });
+    const registry = readEntry(root, { identity, env });
+    warnings.push(...registry.warnings);
+    if (registry.entry?.settings) layers.push({ layer: "registry", data: registry.entry.settings });
+    if (registry.entry?.peer) layers.push({ layer: "registry", data: { peer: registry.entry.peer } });
+    if (!layers.length) return { ...empty, root, warnings };
+
+    const { value, provenance } = mergeConfigLayers(layers, warnings);
+    normalizeWorkspaceConfig(value, warnings);
+    return {
+      settings: projectWorkspaceSettings(value),
+      root,
+      provenance,
+      warnings,
+      announced: announcedOverrides(provenance),
+      value,
+    };
+  } catch {
+    // A hook must never die over a config file. An unreadable layer is no layer.
+    return empty;
+  }
 }
 
 const REWRITE_MODES = new Set(["off", "client", "server", "auto"]);

@@ -147,7 +147,7 @@ export function loadConfig() {
   const server = ovFile.server || {};
   // ovcli.conf plugin.<harness> overrides plugin.* which overrides ov.conf's
   // claude_code section, so client-side tuning no longer needs a server config.
-  const pluginSettings = loadPluginSettings(HARNESS_KEYS.claudeCode);
+  const pluginSettings = loadPluginSettings(HARNESS_KEYS.claudeCode, process.env, { cwd: process.cwd() });
   const cc = { ...(ovFile.claude_code || {}), ...pluginSettings };
 
   // baseUrl: env → ovcli.url → ov.server.url → http://{host}:{port}

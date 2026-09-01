@@ -17,7 +17,11 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+import { resolveWorkspaceSettings } from "./plugin-config.mjs";
 import { peerScopeMemoPath } from "./recall-core.mjs";
+import { CONFIG_DIR_NAME, LOCAL_FILE, TEAM_FILE, workspaceConfigPaths } from "./workspace-config.mjs";
+import { findWorkspaceRoot } from "./workspace-identity.mjs";
+import { entryPath } from "./workspace-registry.mjs";
 
 // ---------------------------------------------------------------------------
 // Formatting helpers
@@ -668,6 +672,94 @@ export function lintPeerScopeDowngrade(path = peerScopeMemoPath(), now = Date.no
     detail: "recall runs against every peer under this user, not just this workspace's",
     fix: 'upgrade the OpenViking server, or set recallPeerScope to "all" so the wider search is deliberate',
   }];
+}
+
+/**
+ * `.openviking/` is also the parser's scratch directory, and the reflex is to
+ * ignore the whole thing — which silently stops a team's `config.json` from
+ * ever being committed. Catch the bare rule; narrower ones are fine.
+ */
+export function gitignoreHidesWorkspaceConfig(root) {
+  for (const name of [".gitignore", join(".git", "info", "exclude")]) {
+    let text;
+    try {
+      text = readFileSync(join(root, name), "utf-8");
+    } catch {
+      continue;
+    }
+    for (const line of text.split("\n")) {
+      const rule = line.trim().replace(/\/$/, "");
+      if (rule === CONFIG_DIR_NAME || rule === `/${CONFIG_DIR_NAME}` || rule === `**/${CONFIG_DIR_NAME}`) {
+        return name;
+      }
+    }
+  }
+  return "";
+}
+
+/**
+ * Where every workspace-scoped setting came from, and what it covered up.
+ *
+ * Three languages read this configuration and each could drift; per-key
+ * provenance is how a user finds out which layer actually won, the way
+ * `git config --show-origin --show-scope` does.
+ */
+export function checkWorkspace(report, { cwd = process.cwd(), env = process.env } = {}) {
+  report.section("Workspace");
+
+  const { root, git } = findWorkspaceRoot(cwd, env);
+  const summary = { root, kind: git?.kind || "", files: [], settings: {}, provenance: {} };
+  if (!root) {
+    report.info(`no workspace root above ${homeShort(cwd)} — no git repository below $HOME`);
+    report.info("workspace config and the git-derived peer need a repository; ovcli.conf and env still apply");
+    return summary;
+  }
+  report.ok(`workspace  ${homeShort(root)}  ← ${git.kind}`);
+
+  const resolved = resolveWorkspaceSettings(cwd, env);
+  summary.settings = resolved.settings;
+  summary.provenance = resolved.provenance;
+
+  for (const { layer, path } of [
+    ...workspaceConfigPaths(root),
+    { layer: "registry", path: entryPath(root, env) },
+  ]) {
+    const info = fileInfo(path);
+    summary.files.push({ layer, path, exists: info.exists });
+    report.info(`${layer.padEnd(26)} ${homeShort(path)}${info.exists ? "" : "  (absent)"}`);
+  }
+
+  const keys = Object.keys(resolved.provenance || {}).sort();
+  if (!keys.length) {
+    report.info("no workspace layer sets anything — every value comes from ovcli.conf, ov.conf or the environment");
+  }
+  for (const key of keys) {
+    const entry = resolved.provenance[key];
+    const shadowed = entry.shadowed.map((s) => `${JSON.stringify(s.value)} from ${s.source}`).join(", ");
+    report.info(
+      `${key} = ${JSON.stringify(entry.value)}  ← ${entry.source}`,
+      shadowed ? `shadows ${shadowed}` : "",
+    );
+  }
+
+  for (const warning of resolved.warnings || []) report.warn(warning);
+  for (const { key, value, source } of resolved.announced || []) {
+    report.warn(
+      `${source} sets ${key} = ${JSON.stringify(value)}`,
+      "a committed workspace file is trusted without a prompt, so what it changes is announced",
+      `override it in ${LOCAL_FILE} or in ${homeShort(entryPath(root, env))}`,
+    );
+  }
+
+  const ignoredBy = gitignoreHidesWorkspaceConfig(root);
+  if (ignoredBy) {
+    report.warn(
+      `${ignoredBy} ignores all of ${CONFIG_DIR_NAME}/`,
+      `${TEAM_FILE} is meant to be committed; the blanket rule stops it from ever being added`,
+      `narrow the rule to ${CONFIG_DIR_NAME}/media/ and ${CONFIG_DIR_NAME}/downloads/, and ignore ${CONFIG_DIR_NAME}/${LOCAL_FILE}`,
+    );
+  }
+  return summary;
 }
 
 export function countDirEntries(dir, filter = () => true) {

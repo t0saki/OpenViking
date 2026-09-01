@@ -18,6 +18,9 @@ const HARNESS_SHARED_FILES = [
   "recall-core.mjs",
   "retryable.mjs",
   "workspace-peer.mjs",
+  "workspace-identity.mjs",
+  "workspace-config.mjs",
+  "workspace-registry.mjs",
   "profile-inject.mjs",
   "uri-guard.mjs",
 ];
@@ -31,6 +34,9 @@ const AGENT_PLUGINS_SHARED_FILES = [
   "mcp-proxy-core.mjs",
   "mcp-proxy-config.mjs",
   "workspace-peer.mjs",
+  "workspace-identity.mjs",
+  "workspace-config.mjs",
+  "workspace-registry.mjs",
 ];
 const OPENCLAW_SHARED_FILES = [
   "recall-compress-core.mjs",

@@ -101,7 +101,10 @@ export function loadConfig() {
 
   // ovcli.conf plugin.<harness> overrides plugin.* which overrides ov.conf's
   // codex section, so client-side tuning no longer needs a server config.
-  const cx = { ...(ovFile.codex || {}), ...loadPluginSettings(HARNESS_KEYS.codex) };
+  const cx = {
+    ...(ovFile.codex || {}),
+    ...loadPluginSettings(HARNESS_KEYS.codex, process.env, { cwd: process.cwd() }),
+  };
   const server = ovFile.server || {};
   const explicitAuthMode = normalizeAuthMode(process.env.OPENVIKING_AUTH_MODE)
     || normalizeAuthMode(cx.authMode)

@@ -70,6 +70,9 @@ jobs:
             examples/memory-plugin-shared/recall-core.test.mjs \
             examples/memory-plugin-shared/recall-session-wiring.test.mjs \
             examples/memory-plugin-shared/workspace-peer.test.mjs \
+            examples/memory-plugin-shared/workspace-identity.test.mjs \
+            examples/memory-plugin-shared/workspace-config.test.mjs \
+            examples/memory-plugin-shared/workspace-registry.test.mjs \
             examples/memory-plugin-shared/uri-guard.test.mjs \
             examples/dsh-memory-plugin/*.test.mjs \
             examples/opencode-plugin/tests/*.test.mjs \

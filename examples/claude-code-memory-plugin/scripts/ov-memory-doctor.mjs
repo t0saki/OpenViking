@@ -47,6 +47,7 @@ import {
   scanRcFiles,
   unknownOvcliKeys,
   whichCommand,
+  checkWorkspace,
   lintPeerScopeDowngrade,
 } from "./shared/doctor-core.mjs";
 import { isBypassed } from "./shared/session-model.mjs";
@@ -482,6 +483,7 @@ async function main() {
   checkInstall(report, envInfo);
   const cfg = loadConfig();
   const configInfo = checkConfig(report, cfg);
+  const workspace = checkWorkspace(report);
   const connection = await checkConnection(report, cfg, configInfo, opts);
   const serverHealth = await checkServerHealth(report, { baseUrl: cfg.baseUrl, ovConf: configInfo.ovConf, health: connection?.probes?.health, offline: opts.offline, timeoutMs: opts.timeoutMs });
   checkActivity(report, cfg, connection);
@@ -499,6 +501,7 @@ async function main() {
         user: cfg.userId,
         peerId: configInfo.peer.peerId,
       },
+      workspace,
       server: connection?.summary || null,
       serverHealth,
       ...report.toJSON(),
