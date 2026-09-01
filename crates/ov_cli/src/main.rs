@@ -1183,6 +1183,16 @@ enum Commands {
         #[command(subcommand)]
         action: Option<ConfigCommands>,
     },
+    /// [Status] Inspect the workspace root, its config layers, and per-key provenance
+    Workspace {
+        #[command(subcommand)]
+        action: WorkspaceCommands,
+    },
+    /// [Status] Manage the peer this workspace writes memories under
+    Peer {
+        #[command(subcommand)]
+        action: PeerCommands,
+    },
     /// [Status] Choose CLI display language
     #[command(alias = "lang")]
     Language {
@@ -2079,13 +2089,61 @@ impl Commands {
                     ),
             } | Commands::Skills {
                 action: SkillCommands::Validate { .. },
-            } | Commands::Version
+                // `workspace show` and all of `peer` but `migrate` read and write
+                // local files only; requiring ovcli.conf would make them useless
+                // in exactly the state a user runs them to diagnose.
+            } | Commands::Workspace { .. }
+                | Commands::Peer {
+                    action: PeerCommands::Link { .. } | PeerCommands::ForgetPrevious,
+                }
+                | Commands::Version
         )
     }
 
     fn allows_invalid_runtime_config(&self) -> bool {
         matches!(self, Commands::Config { .. })
     }
+}
+
+#[derive(Subcommand)]
+enum WorkspaceCommands {
+    /// Show the workspace root, every config layer, and where each key came from
+    Show {
+        /// Also apply the ovcli.conf plugin.<name> layer, e.g. claude_code or codex
+        #[arg(long, value_name = "name", help_heading = "Common options")]
+        harness: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum PeerCommands {
+    /// Pin an explicit peer id for this workspace
+    Link {
+        /// Peer id to pin
+        #[arg(value_name = "peer-id")]
+        peer_id: String,
+    },
+    /// Move memories and resources from one peer to another
+    Migrate {
+        /// Peer to move from (default: the recorded previous peer)
+        #[arg(long, value_name = "peer-id", help_heading = "Common options")]
+        from: Option<String>,
+        /// Peer to move to (default: the effective peer)
+        #[arg(long, value_name = "peer-id", help_heading = "Common options")]
+        to: Option<String>,
+        /// Perform the move. Without it the command only reports what it would do
+        #[arg(long, help_heading = "Common options")]
+        apply: bool,
+        /// Report the plan without moving anything (the default)
+        #[arg(
+            long = "dry-run",
+            conflicts_with = "apply",
+            help_heading = "Common options"
+        )]
+        dry_run: bool,
+    },
+    /// Clear the recorded previous peer ids for this workspace
+    ForgetPrevious,
 }
 
 #[derive(Subcommand)]
@@ -2461,7 +2519,8 @@ fn pre_parse_requires_cli_config_file(args: &[OsString]) -> bool {
 
     match command {
         "config" => config_command_requires_cli_config_file(&tokens),
-        "language" | "version" => false,
+        "language" | "version" | "workspace" => false,
+        "peer" => tokens.get(1).map(String::as_str) == Some("migrate"),
         "task" => known_task_command_requires_config(&tokens),
         "admin" => tokens
             .get(1)
@@ -3614,6 +3673,8 @@ async fn main() {
             .await
         }
         Commands::Config { action } => handlers::handle_config(action, ctx).await,
+        Commands::Workspace { action } => handlers::handle_workspace(action, ctx),
+        Commands::Peer { action } => handlers::handle_peer(action, ctx).await,
         Commands::Language { .. } => unreachable!("language command is handled before config load"),
         Commands::Version => {
             println!(
@@ -4446,6 +4507,35 @@ mod tests {
             assert!(
                 !pre_parse_requires_cli_config_file(&os_args(args)),
                 "{args:?} should not be gated before Clap parsing"
+            );
+        }
+    }
+
+    // The pre-parse string gate and the typed gate decide the same thing at two
+    // different moments; a command they disagree about either demands a config
+    // it does not need or reaches its handler without one it does.
+    #[test]
+    fn workspace_and_peer_gates_agree_across_both_config_checks() {
+        let cases: &[(&[&str], bool)] = &[
+            (&["ov", "workspace", "show"], false),
+            (&["ov", "workspace", "show", "--harness", "codex"], false),
+            (&["ov", "peer", "link", "team-api"], false),
+            (&["ov", "peer", "forget-previous"], false),
+            (&["ov", "peer", "migrate"], true),
+            (&["ov", "peer", "migrate", "--apply"], true),
+        ];
+
+        for (args, expected) in cases {
+            assert_eq!(
+                pre_parse_requires_cli_config_file(&os_args(args)),
+                *expected,
+                "{args:?} pre-parse gate"
+            );
+            let cli = Cli::try_parse_from(*args).expect("command should parse");
+            assert_eq!(
+                cli.command.requires_cli_config_file(),
+                *expected,
+                "{args:?} typed gate"
             );
         }
     }
