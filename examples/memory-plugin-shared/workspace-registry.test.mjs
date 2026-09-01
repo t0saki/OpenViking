@@ -179,3 +179,23 @@ test("a free-form section in the registry survives a round trip", async () => {
   assert.deepEqual(entry.settings.labels, { user: "alice", team: "core" });
   assert.deepEqual(warnings, []);
 });
+
+test("two writers to one workspace: the later write wins, and says so", async () => {
+  const env = await home();
+  const root = "/Users/x/src/api";
+  writeEntry(root, { settings: { recall: { max_items: 3 } } }, { identity: repo, env });
+
+  // A per-workspace file removes contention between workspaces, not between the
+  // hooks of one session. Both readers see the same state, then both write.
+  const a = readEntry(root, { identity: repo, env });
+  const b = readEntry(root, { identity: repo, env });
+  assert.deepEqual(a.entry.settings, b.entry.settings);
+
+  writeEntry(root, { peer: { id: "from-a" } }, { identity: repo, env });
+  writeEntry(root, { previous_peer_ids: ["from-b"] }, { identity: repo, env });
+
+  const final = readEntry(root, { identity: repo, env }).entry;
+  assert.equal(final.peer.id, "from-a", "a sequential write still merges");
+  assert.deepEqual(final.previous_peer_ids, ["from-b"]);
+  assert.deepEqual(final.settings, { recall: { max_items: 3 } }, "neither write erased the settings");
+});

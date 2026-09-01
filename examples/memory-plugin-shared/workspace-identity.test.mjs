@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, rename, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { realpathSync } from "node:fs";
@@ -293,4 +293,36 @@ test("findWorkspaceRoot returns nothing rather than throwing on a dead cwd", () 
   const gone = join(cwd, "definitely-not-here", "nested");
   assert.deepEqual(findWorkspaceRoot("", { HOME: "/nonexistent-home" }), { root: "", git: null });
   assert.equal(typeof findWorkspaceRoot(gone, { HOME: "/nonexistent-home" }).root, "string");
+});
+
+test("moving or renaming the repository no longer changes its identity", async () => {
+  const parent = await tempRoot("moved-parent");
+  const before = join(parent, "api");
+  await mkdir(before, { recursive: true });
+  await makeRepo(before, { remote: "git@github.com:o/api.git" });
+  const env = { HOME: "/nonexistent-home", OPENVIKING_STATE_DIR: join(parent, ".state") };
+
+  const first = resolveWorkspaceIdentity({ cwd: before, env, cache: false });
+  const after = join(parent, "api-renamed");
+  await rename(before, after);
+  const second = resolveWorkspaceIdentity({ cwd: after, env, cache: false });
+
+  assert.equal(second.vars.git_remote, first.vars.git_remote, "this is the whole point of the change");
+  assert.notEqual(second.vars.cwd, first.vars.cwd, "the legacy id does move, which is why it needed replacing");
+});
+
+test("a shallow clone derives the same identity as a full one", async () => {
+  // The identity reads only the remote, so a missing history is irrelevant —
+  // unlike the root-commit scheme, which a shallow clone has no answer for.
+  const full = await tempRoot("full");
+  await makeRepo(full, { remote: "git@github.com:o/r.git" });
+  const shallow = await tempRoot("shallow");
+  const gitDir = await makeRepo(shallow, { remote: "git@github.com:o/r.git" });
+  await writeFile(join(gitDir, "shallow"), "0000000000000000000000000000000000000000\n");
+
+  const env = { HOME: "/nonexistent-home", OPENVIKING_STATE_DIR: join(full, ".state") };
+  assert.equal(
+    resolveWorkspaceIdentity({ cwd: shallow, env, cache: false }).vars.git_remote,
+    resolveWorkspaceIdentity({ cwd: full, env, cache: false }).vars.git_remote,
+  );
 });
