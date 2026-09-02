@@ -99,6 +99,8 @@ Behavior knobs live in the profile's Cordis patch entry:
             commitTokenThreshold: 20000
 ```
 
+`syncTurns: false`, in that same block, makes the integration read-only: it still injects your profile and recalls memories, but sends nothing back — no captured turns, no commits, and no replay of writes an earlier session queued, which stay on the queue until a session that still writes drains them.
+
 Credentials given in the patch win over the environment; behavior toggles read the environment first. The full list is documented in the [bundle README](https://github.com/volcengine/OpenViking/tree/main/examples/dsh-memory-plugin).
 
 </details>
