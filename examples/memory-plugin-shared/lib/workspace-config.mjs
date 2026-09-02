@@ -15,7 +15,6 @@
  *   - `${VAR}` is never expanded here. Variable expansion is a property of the
  *     layer, not of the parser: a committed file that could expand `${HOME}`
  *     could exfiltrate the environment.
- *   - `cli_config_profile` picks a credential file, so it is registry-only.
  *
  * Everything else a workspace file sets takes effect. What it turns off is
  * announced rather than blocked.
@@ -23,6 +22,8 @@
 
 import { readFileSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, join, relative } from "node:path";
+
+import { CONFIG_DIR_NAME, LOCAL_FILE, TEAM_FILE } from "./workspace-identity.mjs";
 
 /**
  * `JSON.parse` keeps `__proto__` as an own property, and assigning it walks
@@ -37,9 +38,7 @@ const UNSAFE_KEYS = ["__proto__", "constructor", "prototype"];
 // inside the 64 KiB cap, and an overflow here would take out sibling layers.
 const MAX_DEPTH = 32;
 
-export const CONFIG_DIR_NAME = ".openviking";
-export const TEAM_FILE = "config.json";
-export const LOCAL_FILE = "config.local.json";
+export { CONFIG_DIR_NAME, TEAM_FILE, LOCAL_FILE };
 export const CONFIG_VERSION = 1;
 export const MAX_CONFIG_BYTES = 64 * 1024;
 
@@ -88,20 +87,12 @@ export const FORBIDDEN_KEYS = [
 ];
 
 /**
- * Registry-only. Naming an ovcli.conf profile decides which credentials reach
- * which server, so a repository setting it would be `url` tampering by proxy.
- */
-export const REGISTRY_ONLY_KEYS = ["cli_config_profile"];
-
-/**
  * Sections whose keys are the user's own vocabulary, not ours. The ban below is
  * recursive so no section can smuggle a credential to a consumer that spreads
  * it into a request — but a free-form map's `user` key is a label, and
  * mangling it would be a bug, not a defence.
  */
 export const FREE_FORM_SECTIONS = ["labels"];
-
-const PROFILE_NAME_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 
 const ENUMS = {
   "recall.peer_scope": ["all", "actor"],
@@ -136,10 +127,6 @@ const KNOB_MAP = {
 };
 
 export const WORKSPACE_SCHEMA_KEYS = Object.keys(KNOB_MAP);
-
-export function isValidProfileName(value) {
-  return PROFILE_NAME_RE.test(String(value || ""));
-}
 
 /** -1, 0 or 1 over dotted numeric versions; a non-numeric tail is ignored. */
 function compareVersions(left, right) {
@@ -217,7 +204,7 @@ function stripUnsafeOnly(value, warnings, path, depth) {
  * Read one layer file. Every failure is a warning and an empty layer — a hook
  * must not die because a config file is odd.
  */
-export function readWorkspaceFile(path, { root = "", layer = "", registry = false } = {}) {
+export function readWorkspaceFile(path, { root = "", layer = "" } = {}) {
   const warnings = [];
   const empty = { path, layer, exists: false, data: null, warnings };
 
@@ -268,11 +255,10 @@ export function readWorkspaceFile(path, { root = "", layer = "", registry = fals
     return empty;
   }
 
-  const banned = registry ? FORBIDDEN_KEYS : [...FORBIDDEN_KEYS, ...REGISTRY_ONLY_KEYS];
   const { version, $schema, min_client_version: minClientVersion, ...rest } = parsed;
   let data;
   try {
-    data = stripForbidden(rest, banned, warnings);
+    data = stripForbidden(rest, FORBIDDEN_KEYS, warnings);
   } catch (err) {
     warnings.push(`${path} is nested too deeply (${err?.message || err})`);
     return empty;

@@ -53,15 +53,6 @@ test("a committed file cannot say where the data goes", async () => {
   assert.ok(warnings.some((w) => w.includes("recall.url")), "the warning names the full path");
 });
 
-test("a workspace file may not choose the credential profile", async () => {
-  const root = await workspace({
-    [TEAM_FILE]: { version: 1, cli_config_profile: "attacker" },
-    [LOCAL_FILE]: { version: 1, cli_config_profile: "mine" },
-  });
-  const { layers } = loadWorkspaceLayers(root);
-  for (const layer of layers) assert.equal(layer.data.cli_config_profile, undefined);
-});
-
 test("${VAR} stays a literal — a workspace file never expands the environment", async () => {
   const root = await workspace({
     [TEAM_FILE]: {

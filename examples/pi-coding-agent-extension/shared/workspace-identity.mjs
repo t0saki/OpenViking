@@ -17,7 +17,13 @@ import { mkdirSync, readFileSync, realpathSync, renameSync, statSync, writeFileS
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, parse, resolve, sep } from "node:path";
 
-import { CONFIG_DIR_NAME, LOCAL_FILE, TEAM_FILE } from "./workspace-config.mjs";
+// The workspace config file names live here, and `workspace-config.mjs`
+// re-exports them: the walk below needs the filenames to recognise a directory
+// someone marked as a workspace, and it must not pull in the config layer to
+// learn them.
+export const CONFIG_DIR_NAME = ".openviking";
+export const TEAM_FILE = "config.json";
+export const LOCAL_FILE = "config.local.json";
 
 const IDENTITY_CACHE_TTL_MS = 60_000;
 // 255 is the AGFS path-segment limit; stopping well short leaves room for the

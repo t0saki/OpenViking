@@ -27,7 +27,7 @@
  * silently does nothing.
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve as resolvePath } from "node:path";
 
@@ -81,60 +81,6 @@ export function loadPluginSettings(harness, env = process.env, options = {}) {
   const cwd = String(options.cwd || "").trim();
   if (!cwd) return settings;
   return { ...settings, ...resolveWorkspaceSettings(cwd, env, options).settings };
-}
-
-/**
- * The ovcli.conf this workspace should authenticate with, or "".
- *
- * Only the registry may name one — a repository choosing which credentials go
- * to which server would be `url` tampering by proxy — and only by name, which
- * selects `~/.openviking/ovcli.conf.<name>` from the profile layout the Rust
- * CLI already writes. A named profile that is missing is a hard error rather
- * than a silent fall back to the default: quietly authenticating somewhere the
- * user did not choose is the failure this key exists to prevent.
- *
- * Call this before resolving credentials; it is what makes the key more than a
- * note in a file.
- */
-export function resolveCliConfigProfile(cwd, env = process.env) {
-  try {
-    const { root } = findWorkspaceRoot(cwd, env);
-    if (!root) return "";
-    const identity = resolveWorkspaceIdentity({ cwd, env });
-    const { entry } = readEntry(root, { identity, env });
-    const name = String(entry?.cli_config_profile || "").trim();
-    if (!name) return "";
-
-    const home = String(env.OPENVIKING_HOME || "").trim();
-    const base = home ? home.replace(/^~(?=$|\/)/, homedir()) : join(homedir(), ".openviking");
-    const path = join(base, `ovcli.conf.${name}`);
-    if (!existsSync(path)) {
-      throw new Error(
-        `this workspace is registered to the OpenViking profile '${name}', but ${path} does not exist`,
-      );
-    }
-    return path;
-  } catch (err) {
-    // A missing profile is the caller's problem to report; anything else here
-    // is this module failing, and a hook must not die for it.
-    if (err instanceof Error && err.message.includes("does not exist")) throw err;
-    return "";
-  }
-}
-
-/**
- * Apply a registry-selected profile by pointing the credential chain at it.
- *
- * Returns the env the caller should resolve credentials with — the same object
- * when no profile is registered, so the common path costs one registry read.
- */
-export function applyCliConfigProfile(cwd, env = process.env) {
-  // An explicit override outranks the registry: someone who set the variable is
-  // steering this one run on purpose.
-  if (String(env.OPENVIKING_CLI_CONFIG_FILE || "").trim()) return env;
-  const path = resolveCliConfigProfile(cwd, env);
-  if (!path) return env;
-  return { ...env, OPENVIKING_CLI_CONFIG_FILE: path };
 }
 
 /**

@@ -265,7 +265,6 @@ A hook runs without a prompt, so these files are trusted; what is refused is str
 
 - Connection and credential keys — `url`, `api_key`, `root_api_key`, `account`, `user`, `extra_headers`, and the rest — are stripped with a warning wherever they appear. Which server the data goes to stays answerable from `ovcli.conf` and the environment alone.
 - `${VAR}` is never expanded in these files.
-- `cli_config_profile`, which names an `ovcli.conf` profile, is accepted only in the registry.
 
 What a committed file switches off is announced rather than blocked: the plugin's `ov-memory-doctor` reports every workspace-scoped value, the layer it came from, and what it shadowed.
 
