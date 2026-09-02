@@ -965,59 +965,6 @@ pub async fn handle_config(cmd: Option<ConfigCommands>, ctx: CliContext) -> Resu
     }
 }
 
-/// The directory a workspace command resolves from. Failing here means the
-/// process has no cwd at all, which every workspace rule treats as "no root".
-fn current_dir() -> String {
-    std::env::current_dir()
-        .map(|path| path.to_string_lossy().to_string())
-        .unwrap_or_default()
-}
-
-pub fn handle_workspace(cmd: crate::WorkspaceCommands, ctx: CliContext) -> Result<()> {
-    match cmd {
-        crate::WorkspaceCommands::Show { harness } => {
-            commands::workspace::show(
-                &current_dir(),
-                harness.as_deref(),
-                ctx.output_format,
-                ctx.compact,
-            );
-            Ok(())
-        }
-    }
-}
-
-pub async fn handle_peer(cmd: crate::PeerCommands, ctx: CliContext) -> Result<()> {
-    let cwd = current_dir();
-    match cmd {
-        crate::PeerCommands::Link { peer_id } => {
-            commands::peer::link(&cwd, &peer_id, ctx.output_format, ctx.compact)
-        }
-        crate::PeerCommands::ForgetPrevious => {
-            commands::peer::forget_previous(&cwd, ctx.output_format, ctx.compact)
-        }
-        crate::PeerCommands::Migrate {
-            from,
-            to,
-            apply,
-            dry_run: _,
-        } => {
-            let client = ctx.get_client_without_actor_peer();
-            commands::peer::migrate(
-                &client,
-                &cwd,
-                ctx.config.user.as_deref(),
-                from,
-                to,
-                apply,
-                ctx.output_format,
-                ctx.compact,
-            )
-            .await
-        }
-    }
-}
-
 fn handle_config_agent_result(
     result: std::result::Result<config_agent::AgentOutput, config_agent::AgentError>,
     ctx: &CliContext,

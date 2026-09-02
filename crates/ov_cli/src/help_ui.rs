@@ -80,16 +80,7 @@ const SEARCH_CONTEXT: &[HelpCommand] = help_commands![
 ];
 
 const CONFIG_STATUS: &[HelpCommand] = help_commands![
-    "config",
-    "workspace",
-    "peer",
-    "language",
-    "health",
-    "status",
-    "observer",
-    "wait",
-    "task",
-    "version",
+    "config", "language", "health", "status", "observer", "wait", "task", "version",
 ];
 
 const IMPORT_EXPORT_SESSIONS: &[HelpCommand] = help_commands![
@@ -1264,134 +1255,6 @@ const COMMAND_HELP_SPECS: &[CommandHelpSpec] = &[
         ],
     },
     CommandHelpSpec {
-        path: &["workspace"],
-        purpose: "Inspect the workspace this directory belongs to: its root, its git identity, every config layer, and where each effective key came from.",
-        examples: &[
-            HelpItem {
-                label: "ov workspace show",
-                description: "Show the root, the derived peer, and per-key provenance.",
-            },
-            HelpItem {
-                label: "ov workspace show --harness claude_code",
-                description: "Include the ovcli.conf plugin.claude_code layer a harness would see.",
-            },
-            HelpItem {
-                label: "ov workspace show -o json",
-                description: "Return the whole resolution as JSON for automation.",
-            },
-        ],
-        next_steps: &[
-            HelpItem {
-                label: "ov peer link <id>",
-                description: "Pin an explicit peer for this workspace.",
-            },
-            HelpItem {
-                label: "ov peer migrate",
-                description: "Move memories written under an older peer.",
-            },
-        ],
-    },
-    CommandHelpSpec {
-        path: &["workspace", "show"],
-        purpose: "Print the workspace root, every config layer with whether it exists, and each key's effective value, source, and shadowed values.",
-        examples: &[
-            HelpItem {
-                label: "ov workspace show",
-                description: "Read the layered workspace configuration.",
-            },
-            HelpItem {
-                label: "ov workspace show --harness codex",
-                description: "Apply the ovcli.conf plugin.codex override on top of the shared keys.",
-            },
-        ],
-        next_steps: &[
-            HelpItem {
-                label: "ov peer link <id>",
-                description: "Override the derived peer.",
-            },
-            HelpItem {
-                label: "ov config show",
-                description: "Inspect the connection settings the layers may not touch.",
-            },
-        ],
-    },
-    CommandHelpSpec {
-        path: &["peer"],
-        purpose: "Manage the peer this workspace writes memories under: pin it, move an older peer's data onto it, or drop the recorded history.",
-        examples: &[
-            HelpItem {
-                label: "ov peer link team-api",
-                description: "Pin an explicit peer id for this workspace.",
-            },
-            HelpItem {
-                label: "ov peer migrate",
-                description: "Preview moving the previous peer's memories onto the current one.",
-            },
-            HelpItem {
-                label: "ov peer forget-previous",
-                description: "Clear the recorded previous peer ids.",
-            },
-        ],
-        next_steps: &[HelpItem {
-            label: "ov workspace show",
-            description: "Confirm which peer is now in force and why.",
-        }],
-    },
-    CommandHelpSpec {
-        path: &["peer", "link"],
-        purpose: "Record an explicit peer id for this workspace, overriding whatever peer.source would derive.",
-        examples: &[HelpItem {
-            label: "ov peer link team-api",
-            description: "Pin the peer and print the old and new value.",
-        }],
-        next_steps: &[
-            HelpItem {
-                label: "ov workspace show",
-                description: "Check the pinned peer and the layer it came from.",
-            },
-            HelpItem {
-                label: "ov peer migrate",
-                description: "Move data written under the peer it replaced.",
-            },
-        ],
-    },
-    CommandHelpSpec {
-        path: &["peer", "migrate"],
-        purpose: "Move a peer's memories and resources onto another peer. Reports the plan by default; --apply performs it, and any collision is refused rather than overwritten.",
-        examples: &[
-            HelpItem {
-                label: "ov peer migrate",
-                description: "Preview moving the recorded previous peer onto the effective one.",
-            },
-            HelpItem {
-                label: "ov peer migrate --from -Users-x-Dev-api --to github.com-o-api --apply",
-                description: "Perform an explicit migration between two peers.",
-            },
-        ],
-        next_steps: &[
-            HelpItem {
-                label: "ov workspace show",
-                description: "Confirm the effective peer after the move.",
-            },
-            HelpItem {
-                label: "ov peer forget-previous",
-                description: "Drop the migration bookkeeping once it is done.",
-            },
-        ],
-    },
-    CommandHelpSpec {
-        path: &["peer", "forget-previous"],
-        purpose: "Clear the previous peer ids recorded for this workspace and report how many were dropped.",
-        examples: &[HelpItem {
-            label: "ov peer forget-previous",
-            description: "Drop the recorded history after a completed migration.",
-        }],
-        next_steps: &[HelpItem {
-            label: "ov workspace show",
-            description: "Confirm nothing previous is reported any more.",
-        }],
-    },
-    CommandHelpSpec {
         path: &["language"],
         purpose: "Choose the OpenViking CLI display language.",
         examples: &[
@@ -2515,12 +2378,6 @@ fn localized_command_description<'a>(
         "config add" => "非交互式添加配置",
         "config list" => "列出已保存配置",
         "config delete" => "删除已保存配置",
-        "workspace" => "查看工作区根目录、配置层与每个键的来源",
-        "workspace show" => "查看工作区配置层与键的来源",
-        "peer" => "管理本工作区写入记忆所用的 peer",
-        "peer link" => "为本工作区固定 peer id",
-        "peer migrate" => "在两个 peer 之间迁移记忆与资源",
-        "peer forget-previous" => "清除记录的历史 peer id",
         "health" => "快速检查服务器连接",
         "status" => "查看系统状态",
         "wait" => "等待异步任务完成",
@@ -2757,8 +2614,6 @@ fn is_bare_group_help_command(command: &str) -> bool {
             | "admin"
             | "system"
             | "observer"
-            | "workspace"
-            | "peer"
     )
 }
 
@@ -3352,14 +3207,6 @@ mod tests {
                 "Run server utility, health, consistency, backend sync, and crypto commands.",
             ),
             ("observer", "Inspect specific OpenViking server subsystems."),
-            (
-                "workspace",
-                "Inspect the workspace this directory belongs to",
-            ),
-            (
-                "peer",
-                "Manage the peer this workspace writes memories under",
-            ),
         ] {
             let rendered = strip_ansi(
                 &render_command_help_request(&os_args(&["ov", command]))

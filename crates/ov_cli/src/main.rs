@@ -92,19 +92,6 @@ impl CliContext {
         self.get_client_with_timeout(None)
     }
 
-    /// A client that speaks for the account rather than for one peer.
-    ///
-    /// The server hides another peer's paths from any request carrying
-    /// `X-OpenViking-Actor-Peer` (`is_hidden_by_actor_peer_view`), so a command
-    /// whose whole job is to read across peers has to drop the header — with it
-    /// set, every read of the peer being migrated away from is a 403.
-    pub fn get_client_without_actor_peer(&self) -> client::HttpClient {
-        let mut ctx = self.clone();
-        ctx.config.actor_peer_id = None;
-        ctx.config.agent_id = None;
-        ctx.get_client()
-    }
-
     pub fn get_client_with_timeout(&self, timeout_secs: Option<f64>) -> client::HttpClient {
         let auth = self.config.effective_auth(self.sudo);
         let mut client = client::HttpClient::new(
@@ -1196,16 +1183,6 @@ enum Commands {
         #[command(subcommand)]
         action: Option<ConfigCommands>,
     },
-    /// [Status] Inspect the workspace root, its config layers, and per-key provenance
-    Workspace {
-        #[command(subcommand)]
-        action: WorkspaceCommands,
-    },
-    /// [Status] Manage the peer this workspace writes memories under
-    Peer {
-        #[command(subcommand)]
-        action: PeerCommands,
-    },
     /// [Status] Choose CLI display language
     #[command(alias = "lang")]
     Language {
@@ -2102,61 +2079,13 @@ impl Commands {
                     ),
             } | Commands::Skills {
                 action: SkillCommands::Validate { .. },
-                // `workspace show` and all of `peer` but `migrate` read and write
-                // local files only; requiring ovcli.conf would make them useless
-                // in exactly the state a user runs them to diagnose.
-            } | Commands::Workspace { .. }
-                | Commands::Peer {
-                    action: PeerCommands::Link { .. } | PeerCommands::ForgetPrevious,
-                }
-                | Commands::Version
+            } | Commands::Version
         )
     }
 
     fn allows_invalid_runtime_config(&self) -> bool {
         matches!(self, Commands::Config { .. })
     }
-}
-
-#[derive(Subcommand)]
-enum WorkspaceCommands {
-    /// Show the workspace root, every config layer, and where each key came from
-    Show {
-        /// Also apply the ovcli.conf plugin.<name> layer, e.g. claude_code or codex
-        #[arg(long, value_name = "name", help_heading = "Common options")]
-        harness: Option<String>,
-    },
-}
-
-#[derive(Subcommand)]
-enum PeerCommands {
-    /// Pin an explicit peer id for this workspace
-    Link {
-        /// Peer id to pin
-        #[arg(value_name = "peer-id")]
-        peer_id: String,
-    },
-    /// Move memories and resources from one peer to another
-    Migrate {
-        /// Peer to move from (default: the recorded previous peer)
-        #[arg(long, value_name = "peer-id", help_heading = "Common options")]
-        from: Option<String>,
-        /// Peer to move to (default: the effective peer)
-        #[arg(long, value_name = "peer-id", help_heading = "Common options")]
-        to: Option<String>,
-        /// Perform the move. Without it the command only reports what it would do
-        #[arg(long, help_heading = "Common options")]
-        apply: bool,
-        /// Report the plan without moving anything (the default)
-        #[arg(
-            long = "dry-run",
-            conflicts_with = "apply",
-            help_heading = "Common options"
-        )]
-        dry_run: bool,
-    },
-    /// Clear the recorded previous peer ids for this workspace
-    ForgetPrevious,
 }
 
 #[derive(Subcommand)]
@@ -2532,8 +2461,7 @@ fn pre_parse_requires_cli_config_file(args: &[OsString]) -> bool {
 
     match command {
         "config" => config_command_requires_cli_config_file(&tokens),
-        "language" | "version" | "workspace" => false,
-        "peer" => tokens.get(1).map(String::as_str) == Some("migrate"),
+        "language" | "version" => false,
         "task" => known_task_command_requires_config(&tokens),
         "admin" => tokens
             .get(1)
@@ -2921,7 +2849,6 @@ fn language_gate_action(
     if has_saved_language
         || is_language_command_request(args)
         || is_config_agent_command_request(args)
-        || is_workspace_show_command_request(args)
     {
         LanguageGateAction::Continue
     } else if is_interactive {
@@ -2954,15 +2881,6 @@ fn is_language_command_request(args: &[OsString]) -> bool {
         first_command_token(args).as_deref(),
         Some("language" | "lang")
     )
-}
-
-/// `ov workspace show` is a diagnostic, like a doctor command: it has to answer
-/// on a machine where nobody has chosen a language — CI, a fresh container. The
-/// `peer` subcommands mutate state, so they can reasonably ask first.
-fn is_workspace_show_command_request(args: &[OsString]) -> bool {
-    let tokens = command_tokens_for_config_gate(args);
-    tokens.first().map(String::as_str) == Some("workspace")
-        && tokens.get(1).map(String::as_str) == Some("show")
 }
 
 fn first_command_token(args: &[OsString]) -> Option<String> {
@@ -3696,8 +3614,6 @@ async fn main() {
             .await
         }
         Commands::Config { action } => handlers::handle_config(action, ctx).await,
-        Commands::Workspace { action } => handlers::handle_workspace(action, ctx),
-        Commands::Peer { action } => handlers::handle_peer(action, ctx).await,
         Commands::Language { .. } => unreachable!("language command is handled before config load"),
         Commands::Version => {
             println!(
@@ -4534,35 +4450,6 @@ mod tests {
         }
     }
 
-    // The pre-parse string gate and the typed gate decide the same thing at two
-    // different moments; a command they disagree about either demands a config
-    // it does not need or reaches its handler without one it does.
-    #[test]
-    fn workspace_and_peer_gates_agree_across_both_config_checks() {
-        let cases: &[(&[&str], bool)] = &[
-            (&["ov", "workspace", "show"], false),
-            (&["ov", "workspace", "show", "--harness", "codex"], false),
-            (&["ov", "peer", "link", "team-api"], false),
-            (&["ov", "peer", "forget-previous"], false),
-            (&["ov", "peer", "migrate"], true),
-            (&["ov", "peer", "migrate", "--apply"], true),
-        ];
-
-        for (args, expected) in cases {
-            assert_eq!(
-                pre_parse_requires_cli_config_file(&os_args(args)),
-                *expected,
-                "{args:?} pre-parse gate"
-            );
-            let cli = Cli::try_parse_from(*args).expect("command should parse");
-            assert_eq!(
-                cli.command.requires_cli_config_file(),
-                *expected,
-                "{args:?} typed gate"
-            );
-        }
-    }
-
     #[test]
     fn cli_tree_help_hides_upload_and_admin_only_flags() {
         let err = Cli::command()
@@ -5239,34 +5126,6 @@ mod tests {
             language_gate_action(&os_args(&["ov", "config"]), false, false),
             LanguageGateAction::ExitNonInteractive
         );
-    }
-
-    #[test]
-    fn language_gate_lets_workspace_show_diagnose_but_not_the_peer_mutations() {
-        for args in [
-            &["ov", "workspace", "show"][..],
-            &["ov", "workspace", "show", "--harness", "codex"],
-            &["ov", "--output", "json", "workspace", "show"],
-        ] {
-            assert_eq!(
-                language_gate_action(&os_args(args), false, false),
-                LanguageGateAction::Continue,
-                "{args:?} should bypass first-run language selection"
-            );
-        }
-
-        for args in [
-            &["ov", "peer", "link", "team-api"][..],
-            &["ov", "peer", "migrate", "--apply"],
-            &["ov", "peer", "forget-previous"],
-            &["ov", "workspace"],
-        ] {
-            assert_eq!(
-                language_gate_action(&os_args(args), false, false),
-                LanguageGateAction::ExitNonInteractive,
-                "{args:?} may ask for a language first"
-            );
-        }
     }
 
     #[test]
