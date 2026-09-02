@@ -18,6 +18,7 @@ const DEFAULT_CONFIG = Object.freeze({
   peerId: "",
   userAgent: "",
   workspacePeer: true,
+  peerSource: "",
   recallPeerScope: "all",
   recallQueryExpansion: "auto",
   recallQueryExpansionConfigured: false,
