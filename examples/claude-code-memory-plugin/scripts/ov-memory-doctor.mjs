@@ -50,6 +50,7 @@ import {
   whichCommand,
   checkWorkspace,
   lintPeerScopeDowngrade,
+  WORKSPACE_PEER_HINT,
 } from "./shared/doctor-core.mjs";
 import { isBypassed } from "./shared/session-model.mjs";
 import { resolveEffectivePeerId } from "./shared/workspace-peer.mjs";
@@ -377,7 +378,12 @@ function checkConfig(report, cfg) {
   }
   const peer = resolveEffectivePeerId({ cfg, cwd: process.cwd() });
   report.info(`peer     ${peer.peerId || "(none)"}  ← ${peer.source} (${peer.origin})`);
-  if (peer.source === "none") {
+  if (peer.origin === "unresolved") {
+    report.info(
+      "no peer is sent: this directory is in no git repository, so its memories go to your user-level space",
+      `to give it a memory of its own, create .openviking/config.json here with ${WORKSPACE_PEER_HINT}`,
+    );
+  } else if (peer.source === "none") {
     report.warn(
       "no peer is sent, so recall defaults to every memory under this user",
       "sending a peer narrows the search to this workspace",

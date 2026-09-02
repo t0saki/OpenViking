@@ -14,7 +14,7 @@ import {
 } from "./lib/workspace-peer.mjs";
 import { resolveWorkspaceIdentity } from "./lib/workspace-identity.mjs";
 
-async function repo({ remote = "git@github.com:volcengine/OpenViking.git", git = true } = {}) {
+async function repo({ remote = "git@github.com:volcengine/OpenViking.git", git = true, marked = false } = {}) {
   const root = realpathSync(await mkdtemp(join(tmpdir(), "ov-peer-")));
   if (git) {
     await mkdir(join(root, ".git"), { recursive: true });
@@ -22,6 +22,10 @@ async function repo({ remote = "git@github.com:volcengine/OpenViking.git", git =
       join(root, ".git", "config"),
       remote ? `[remote "origin"]\n\turl = ${remote}\n` : "[core]\n\trepositoryformatversion = 0\n",
     );
+  }
+  if (marked) {
+    await mkdir(join(root, ".openviking"), { recursive: true });
+    await writeFile(join(root, ".openviking", "config.json"), '{"version":1}\n');
   }
   const env = { HOME: "/nonexistent-home", OPENVIKING_STATE_DIR: join(root, ".state") };
   return { root, env };
@@ -63,17 +67,43 @@ test("the default is the repository, from any subdirectory or clone", async () =
   assert.equal(nested.legacyPeerId, deriveWorkspacePeerId(deep), "the pre-git id stays reachable");
 });
 
-test("the git preset falls back through the root to the working directory", async () => {
+test("the git preset falls back to the repository root, and stops there", async () => {
   const noRemote = await repo({ remote: "" });
   const rootDerived = resolve(noRemote.root, noRemote.env);
   assert.equal(rootDerived.peerId, deriveWorkspacePeerId(noRemote.root));
   assert.equal(rootDerived.origin, "{git_root}");
+  assert.equal(rootDerived.legacyPeerId, "", "nothing to fall back to when it already is the legacy id");
 
+  // A directory that is no workspace gets no peer — an app that creates a
+  // fresh directory per task must not mint a fresh peer per task. The id the
+  // old rule would have used is still reported, so recall under `actor`
+  // scope keeps reaching what earlier sessions wrote there.
   const plain = await repo({ git: false });
-  const cwdDerived = resolve(plain.root, plain.env);
-  assert.equal(cwdDerived.peerId, deriveWorkspacePeerId(plain.root));
-  assert.equal(cwdDerived.origin, "{cwd}");
-  assert.equal(cwdDerived.legacyPeerId, "", "nothing to fall back to when it already is the legacy id");
+  const deep = join(plain.root, "outputs");
+  await mkdir(deep, { recursive: true });
+  const notAWorkspace = resolve(deep, plain.env);
+  assert.deepEqual(notAWorkspace, {
+    peerId: "",
+    source: "none",
+    origin: "unresolved",
+    legacyPeerId: deriveWorkspacePeerId(deep),
+  });
+});
+
+test("marking a plain directory makes it a workspace, but naming its peer is a separate step", async () => {
+  const marked = await repo({ git: false, marked: true });
+  const deep = join(marked.root, "src");
+  await mkdir(deep, { recursive: true });
+
+  // The marker is what makes `.openviking/config.json` apply from any depth;
+  // it does not by itself derive a peer, because the default chain is git-only.
+  assert.equal(resolve(deep, marked.env).origin, "unresolved");
+  // What the file in it says does: an explicit id, or a template over the
+  // workspace root's name.
+  assert.equal(resolve(deep, marked.env, { peerId: "my-project" }).peerId, "my-project");
+  const named = resolve(deep, marked.env, { peerSource: "{dir}" });
+  assert.equal(named.peerId, marked.root.split("/").pop(), "{dir} is the marked root, not the subdirectory");
+  assert.equal(resolve(marked.root, marked.env, { peerSource: "{dir}" }).peerId, named.peerId);
 });
 
 test("the cwd preset reproduces the old identity exactly", async () => {
@@ -110,7 +140,16 @@ test("a template can shape the id, and a list is tried in order", async () => {
 test("a template naming only empty variables resolves to no peer at all", async () => {
   const plain = await repo({ git: false });
   const unresolved = resolve(plain.root, plain.env, { peerSource: ["{git_remote}"] });
-  assert.deepEqual(unresolved, { peerId: "", source: "none", origin: "unresolved", legacyPeerId: "" });
+  assert.deepEqual(unresolved, {
+    peerId: "", source: "none", origin: "unresolved", legacyPeerId: deriveWorkspacePeerId(plain.root),
+  });
+});
+
+test("the cwd preset still gives a plain directory a peer, on request", async () => {
+  const plain = await repo({ git: false });
+  const optedIn = resolve(plain.root, plain.env, { peerSource: "cwd" });
+  assert.equal(optedIn.peerId, deriveWorkspacePeerId(plain.root));
+  assert.equal(optedIn.origin, "{cwd}");
 });
 
 test("renderPeerTemplate is all-or-nothing so no half-formed id escapes", () => {
@@ -124,6 +163,7 @@ test("renderPeerTemplate is all-or-nothing so no half-formed id escapes", () => 
 });
 
 test("peerSourceTemplates resolves presets and passes templates through", () => {
+  assert.deepEqual(PEER_SOURCE_PRESETS.git, ["{git_remote}", "{git_root}"], "no bare path in the default chain");
   assert.deepEqual(peerSourceTemplates(undefined), PEER_SOURCE_PRESETS.git);
   assert.deepEqual(peerSourceTemplates(""), PEER_SOURCE_PRESETS.git);
   assert.deepEqual(peerSourceTemplates("cwd"), ["{cwd}"]);

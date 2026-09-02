@@ -16,6 +16,8 @@ import { mkdirSync, readFileSync, realpathSync, renameSync, statSync, writeFileS
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, parse, resolve, sep } from "node:path";
 
+import { CONFIG_DIR_NAME, LOCAL_FILE, TEAM_FILE } from "./workspace-config.mjs";
+
 const IDENTITY_CACHE_TTL_MS = 60_000;
 // 255 is the AGFS path-segment limit; stopping well short leaves room for the
 // hash suffix and for anything that later prefixes a peer id.
@@ -184,15 +186,34 @@ function resolveGitDir(root) {
   return { gitDir, commonDir, kind };
 }
 
+/** A directory the user made a workspace on purpose, by giving it a config file. */
+function hasWorkspaceMarker(dir) {
+  for (const name of [TEAM_FILE, LOCAL_FILE]) {
+    try {
+      if (statSync(join(dir, CONFIG_DIR_NAME, name)).isFile()) return true;
+    } catch { /* not marked here */ }
+  }
+  return false;
+}
+
+const NO_ROOT = Object.freeze({ root: "", rootKind: "", git: null, gitRoot: "" });
+
 /**
- * Walk up from `cwd` to the nearest directory holding a `.git`.
+ * Walk up from `cwd` to the nearest workspace root.
+ *
+ * A workspace is a git repository, or a directory someone marked as one by
+ * creating `.openviking/config.json` (or `config.local.json`) in it. Nearest
+ * wins. Above a marked directory the walk continues to the enclosing
+ * repository, if any, so the git-shaped variables still resolve there.
+ * Anything else — a scratch folder, a download, an app's per-task directory —
+ * is not a workspace and gets no peer of its own.
  *
  * `$HOME` and the filesystem root are never workspace roots: a stray `.git`
  * in either would silently make every unrelated directory one workspace.
  */
 export function findWorkspaceRoot(cwd, env = process.env) {
   const start = String(cwd || "").trim();
-  if (!start) return { root: "", git: null };
+  if (!start) return NO_ROOT;
 
   let absolute;
   try {
@@ -200,7 +221,7 @@ export function findWorkspaceRoot(cwd, env = process.env) {
     // the directory is gone — the very case the catch below is meant to cover.
     absolute = resolve(start);
   } catch {
-    return { root: "", git: null };
+    return NO_ROOT;
   }
 
   // `current` and `stopAt` are compared as strings, so they must be
@@ -217,24 +238,22 @@ export function findWorkspaceRoot(cwd, env = process.env) {
     stopAt = home;
   }
   const filesystemRoot = parse(current).root;
-  // Judged on the directory itself, not on where the walk happens to stop: a
-  // walk that reaches `/` without finding a repository has still started
-  // somewhere legitimate.
-  if (current === stopAt || current === filesystemRoot) return { root: "", git: null };
-  const workingDirectory = current;
+  if (current === stopAt || current === filesystemRoot) return NO_ROOT;
 
+  let root = "";
+  let rootKind = "";
   while (current && current !== filesystemRoot && current !== stopAt) {
     const git = resolveGitDir(current);
-    if (git) return { root: current, git };
+    if (git) return { root: root || current, rootKind: rootKind || "git", git, gitRoot: current };
+    if (!root && hasWorkspaceMarker(current)) {
+      root = current;
+      rootKind = "config";
+    }
     const parent = dirname(current);
     if (parent === current) break;
     current = parent;
   }
-
-  // Outside a repository the working directory is the workspace, so a
-  // `.openviking/config.json` there still applies — only the git-shaped
-  // template variables go empty.
-  return { root: workingDirectory, git: null };
+  return root ? { root, rootKind, git: null, gitRoot: "" } : NO_ROOT;
 }
 
 function cachePath(cwd, env) {
@@ -267,7 +286,7 @@ function writeCache(path, identity, now) {
 /**
  * Everything the peer templates can substitute, for one cwd.
  *
- * `gitRemote` and `dir` are already sanitized; `gitRoot` and `cwd` carry the
+ * `git_remote` and `dir` are already sanitized; `git_root` and `cwd` carry the
  * legacy byte-for-byte rule, because they are the two that must reproduce a
  * peer minted before any of this existed.
  */
@@ -279,7 +298,7 @@ export function resolveWorkspaceIdentity({ cwd = "", env = process.env, cache = 
     if (hit) return hit;
   }
 
-  const { root, git } = findWorkspaceRoot(key, env);
+  const { root, rootKind, git, gitRoot } = findWorkspaceRoot(key, env);
   // Only the normalized form is kept. The raw URL may carry a token, and this
   // file outlives the process — writing it here would undo the care
   // `normalizeGitRemote` takes to drop userinfo.
@@ -287,16 +306,18 @@ export function resolveWorkspaceIdentity({ cwd = "", env = process.env, cache = 
   const identity = {
     cwd: key,
     root,
+    rootKind,
     isGit: Boolean(git),
     gitKind: git?.kind || "",
     gitCommonDir: git?.commonDir || "",
+    gitRoot,
     remote,
     vars: {
       git_remote: sanitizePeerId(remote),
-      // Empty outside a repository even though `root` is now set there, so the
-      // `git` preset still falls through to `{cwd}` rather than stopping at a
-      // repository root that does not exist.
-      git_root: git ? legacySanitize(root) : "",
+      // The enclosing repository's root, which is not the workspace root when a
+      // marker file below it won. Empty outside a repository, so the `git`
+      // preset resolves to nothing there rather than to a bare path.
+      git_root: git ? legacySanitize(gitRoot) : "",
       cwd: legacySanitize(key),
       dir: root ? sanitizePeerId(root.split(/[/\\]/).filter(Boolean).pop() || "") : "",
     },

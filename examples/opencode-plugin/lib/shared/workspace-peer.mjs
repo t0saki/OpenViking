@@ -17,17 +17,21 @@
 import { legacySanitize, resolveWorkspaceIdentity } from "./workspace-identity.mjs";
 
 /**
- * `git` is the default. It prefers the remote, because that is the one name
- * every clone agrees on; falls back to the repository root, which at least
- * stops a subdirectory from forking the identity; and finally to the working
- * directory, which is what a non-repository had all along.
+ * `git` is the default, and it resolves only inside a repository: the remote
+ * first, because that is the one name every clone agrees on, then the
+ * repository root for a repo that has none. Anywhere else it resolves to
+ * nothing and no peer is sent — a scratch folder or an app's per-task
+ * directory would otherwise mint a fresh, empty namespace each time, so those
+ * memories go to the user-level space instead. Naming such a directory is what
+ * `peer.id` is for, and deriving one from a bare path is what `cwd` is for;
+ * both are opt-in.
  *
  * No preset adds a prefix. A path-derived id starts with `-` on POSIX, so it
  * cannot collide with a remote-derived one; anyone who wants a prefix writes
  * their own template.
  */
 export const PEER_SOURCE_PRESETS = {
-  git: ["{git_remote}", "{git_root}", "{cwd}"],
+  git: ["{git_remote}", "{git_root}"],
   cwd: ["{cwd}"],
   none: [],
 };
@@ -103,5 +107,7 @@ export function resolveEffectivePeerId({ cfg = {}, cwd = "", identity = null, en
       legacyPeerId: peerId === legacyPeerId ? "" : legacyPeerId,
     };
   }
-  return { peerId: "", source: "none", origin: "unresolved", legacyPeerId: "" };
+  // No peer, but the pre-git id is still what earlier sessions in this
+  // directory wrote under, so recall keeps reaching it.
+  return { peerId: "", source: "none", origin: "unresolved", legacyPeerId };
 }

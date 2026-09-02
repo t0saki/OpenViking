@@ -32,8 +32,8 @@ test("a slot is readable and still unique per absolute path", () => {
 });
 
 test("two worktrees of one repository share a slot; two clones do not", () => {
-  // A linked worktree is a second checkout of the same repository — same peer,
-  // so the same settings and the same `ov peer link`.
+  // A linked worktree is a second checkout of the same repository — the same
+  // peer, so the same settings.
   const main = slotName("/Users/x/src/api", repo);
   const worktree = slotName("/Users/x/wt/api-feature", repo);
   assert.equal(worktree, main, "the checkout path must not split one workspace in two");

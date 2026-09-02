@@ -132,27 +132,77 @@ test("$HOME and the filesystem root are never workspace roots", async () => {
   await mkdir(inside, { recursive: true });
 
   // $HOME itself is not a workspace, and a stray repository there must not
-  // claim the directories beneath it — `notes` is its own workspace with no
-  // git identity, not a checkout of the dotfiles repo.
+  // claim the directories beneath it — `notes` is not a checkout of the
+  // dotfiles repo, and with nothing of its own it is no workspace at all.
   assert.equal(findWorkspaceRoot(home, { HOME: home }).root, "");
   const below = findWorkspaceRoot(inside, { HOME: home });
-  assert.equal(below.root, inside);
+  assert.equal(below.root, "");
   assert.equal(below.git, null, "it must not inherit the repository at $HOME");
   assert.equal(findWorkspaceRoot("/", { HOME: home }).root, "");
 });
 
-test("a directory outside any repository is still its own workspace", async () => {
+test("a directory outside any repository is not a workspace until it is marked", async () => {
   const plain = await tempRoot("plain-workspace");
   const env = { HOME: "/nonexistent-home", OPENVIKING_STATE_DIR: join(plain, ".state") };
+  const deep = join(plain, "src", "lib");
+  await mkdir(deep, { recursive: true });
 
-  const found = findWorkspaceRoot(plain, env);
-  assert.equal(found.root, plain, "a config file here has to be readable");
-  assert.equal(found.git, null);
+  // Unmarked: a scratch folder, or an app's per-task directory. No root, so no
+  // config layer and — with every git-shaped variable empty — no peer of its own.
+  assert.deepEqual(findWorkspaceRoot(plain, env), { root: "", rootKind: "", git: null, gitRoot: "" });
+  const none = resolveWorkspaceIdentity({ cwd: deep, env, cache: false });
+  assert.equal(none.root, "");
+  assert.equal(none.vars.git_root, "");
+  assert.equal(none.vars.dir, "");
+  assert.equal(none.vars.cwd, legacySanitize(deep), "the legacy id is still computable");
 
-  const identity = resolveWorkspaceIdentity({ cwd: plain, env, cache: false });
+  // Marked: the user said this directory is a project, and that holds from
+  // any depth below it, the way a repository does.
+  await mkdir(join(plain, ".openviking"), { recursive: true });
+  await writeFile(join(plain, ".openviking", "config.json"), '{"version":1}\n');
+  for (const cwd of [plain, deep]) {
+    const found = findWorkspaceRoot(cwd, env);
+    assert.equal(found.root, plain, `wrong root from ${cwd}`);
+    assert.equal(found.rootKind, "config");
+    assert.equal(found.git, null);
+  }
+  const identity = resolveWorkspaceIdentity({ cwd: deep, env, cache: false });
   assert.equal(identity.isGit, false);
+  assert.equal(identity.rootKind, "config");
   assert.equal(identity.vars.git_root, "", "no repository means no repository root");
-  assert.equal(identity.vars.cwd, legacySanitize(plain));
+  assert.equal(identity.root, plain, "the marked directory is where the config layer is read");
+  assert.equal(identity.vars.dir, sanitizePeerId(plain.split("/").pop()));
+});
+
+test("config.local.json marks a workspace too, and a marked subdirectory of a repo keeps the repo's git identity", async () => {
+  const personal = await tempRoot("personal");
+  await mkdir(join(personal, ".openviking"), { recursive: true });
+  await writeFile(join(personal, ".openviking", "config.local.json"), "{}");
+  assert.equal(findWorkspaceRoot(personal, { HOME: "/nonexistent-home" }).rootKind, "config");
+
+  const repo = await tempRoot("mono");
+  await makeRepo(repo, { remote: "git@github.com:volcengine/OpenViking.git" });
+  const sub = join(repo, "packages", "api");
+  await mkdir(join(sub, ".openviking"), { recursive: true });
+  await writeFile(join(sub, ".openviking", "config.json"), '{"version":1}');
+  const env = { HOME: "/nonexistent-home", OPENVIKING_STATE_DIR: join(repo, ".state") };
+
+  const found = findWorkspaceRoot(join(sub, "src"), env);
+  assert.equal(found.root, sub, "the nearest marker is the workspace");
+  assert.equal(found.rootKind, "config");
+  assert.equal(found.git.kind, "repo", "the enclosing repository is still found");
+  assert.equal(found.gitRoot, repo);
+
+  const identity = resolveWorkspaceIdentity({ cwd: join(sub, "src"), env, cache: false });
+  assert.equal(identity.vars.git_remote, "github.com-volcengine-openviking");
+  assert.equal(identity.vars.git_root, legacySanitize(repo), "git_root is the repository, not the marker");
+  assert.equal(identity.root, sub, "the config layer is read at the marker");
+  assert.equal(identity.vars.dir, "api");
+
+  // The repository root itself is found by `.git` first, even with a marker beside it.
+  await mkdir(join(repo, ".openviking"), { recursive: true });
+  await writeFile(join(repo, ".openviking", "config.json"), '{"version":1}');
+  assert.equal(findWorkspaceRoot(repo, env).rootKind, "git");
 });
 
 test("readGitRemoteUrl reads only origin, and does not follow includes", async () => {
@@ -187,6 +237,8 @@ test("identity exposes every template variable, git and non-git alike", async ()
   const env = { HOME: "/nonexistent-home", OPENVIKING_STATE_DIR: join(root, ".state") };
 
   const identity = resolveWorkspaceIdentity({ cwd: deep, env, cache: false });
+  assert.equal(identity.rootKind, "git");
+  assert.equal(identity.gitRoot, root);
   assert.equal(identity.vars.git_remote, "github.com-volcengine-openviking");
   assert.equal(identity.vars.git_root, legacySanitize(root));
   assert.equal(identity.vars.cwd, legacySanitize(deep));
@@ -197,6 +249,7 @@ test("identity exposes every template variable, git and non-git alike", async ()
   assert.equal(outside.isGit, false);
   assert.equal(outside.vars.git_remote, "");
   assert.equal(outside.vars.git_root, "");
+  assert.equal(outside.vars.dir, "", "a directory that is no workspace names nothing");
   assert.equal(outside.vars.cwd, legacySanitize(plain));
 });
 
@@ -311,7 +364,7 @@ test("a cache holding the wrong shape is re-derived instead of returned", async 
 test("findWorkspaceRoot returns nothing rather than throwing on a dead cwd", () => {
   const cwd = process.cwd();
   const gone = join(cwd, "definitely-not-here", "nested");
-  assert.deepEqual(findWorkspaceRoot("", { HOME: "/nonexistent-home" }), { root: "", git: null });
+  assert.deepEqual(findWorkspaceRoot("", { HOME: "/nonexistent-home" }), { root: "", rootKind: "", git: null, gitRoot: "" });
   assert.equal(typeof findWorkspaceRoot(gone, { HOME: "/nonexistent-home" }).root, "string");
 });
 

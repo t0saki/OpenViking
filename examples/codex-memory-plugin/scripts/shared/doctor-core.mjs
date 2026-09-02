@@ -24,6 +24,13 @@ import { CONFIG_DIR_NAME, LOCAL_FILE, TEAM_FILE, workspaceConfigPaths } from "./
 import { findWorkspaceRoot, resolveWorkspaceIdentity } from "./workspace-identity.mjs";
 import { entryPath } from "./workspace-registry.mjs";
 
+/**
+ * The snippet every surface quotes verbatim — this report, the docs and the
+ * skills an agent reads — so whoever follows any of them writes the same file.
+ * One line so it fits a table cell and a report line unchanged.
+ */
+export const WORKSPACE_PEER_HINT = '{"version": 1, "peer": {"id": "my-project"}}';
+
 // ---------------------------------------------------------------------------
 // Formatting helpers
 // ---------------------------------------------------------------------------
@@ -775,14 +782,16 @@ export function gitignoreHidesWorkspaceConfig(root) {
 export function checkWorkspace(report, { cwd = process.cwd(), env = process.env } = {}) {
   report.section("Workspace");
 
-  const { root, git } = findWorkspaceRoot(cwd, env);
-  const summary = { root, kind: git?.kind || "", files: [], settings: {}, provenance: {} };
+  const { root, rootKind, git } = findWorkspaceRoot(cwd, env);
+  const summary = { root, rootKind, kind: git?.kind || "", files: [], settings: {}, provenance: {} };
   if (!root) {
-    report.info(`no workspace root above ${homeShort(cwd)} — no git repository below $HOME`);
-    report.info("workspace config and the git-derived peer need a repository; ovcli.conf and env still apply");
+    report.info(`not a workspace: ${homeShort(cwd)} is in no git repository and has no ${CONFIG_DIR_NAME}/${TEAM_FILE} above it`);
+    report.info("memories here carry no workspace peer and go to your user-level space; ovcli.conf and env still apply");
+    report.info(`to give this directory its own memory, create ${CONFIG_DIR_NAME}/${TEAM_FILE} here with ${WORKSPACE_PEER_HINT}`);
     return summary;
   }
-  report.ok(`workspace  ${homeShort(root)}  ← ${git.kind}`);
+  const foundBy = rootKind === "git" ? git.kind : `${TEAM_FILE}${git ? ` inside ${git.kind}` : ""}`;
+  report.ok(`workspace  ${homeShort(root)}  ← ${foundBy}`);
 
   const resolved = resolveWorkspaceSettings(cwd, env);
   summary.settings = resolved.settings;

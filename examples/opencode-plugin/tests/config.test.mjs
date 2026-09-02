@@ -134,13 +134,22 @@ test("loadConfig derives workspace peer by default", async () => {
       process.env.OPENVIKING_CREDENTIAL_SOURCE = "env"
       process.env.OPENVIKING_URL = "https://env.example.com"
       const project = join(dir, "Project A")
+      await mkdir(join(project, ".git"), { recursive: true })
+      await writeFile(join(project, ".git", "config"), '[remote "origin"]\n\turl = git@github.com:acme/project-a.git\n')
 
       const cfg = loadConfig(dir, project)
-      // A temp directory is not a repository, so the git preset falls all the
-      // way through to the working directory — the pre-existing identity.
-      assert.equal(cfg.effectivePeer.peerId, project.replace(/[^A-Za-z0-9]/g, "-"))
+      assert.equal(cfg.effectivePeer.peerId, "github.com-acme-project-a")
       assert.equal(cfg.effectivePeer.source, "workspace")
-      assert.equal(cfg.effectivePeer.origin, "{cwd}")
+      assert.equal(cfg.effectivePeer.origin, "{git_remote}")
+
+      // Outside a repository the default derives nothing, so a scratch
+      // directory writes to the user-level space instead of a peer of its own.
+      const scratch = join(dir, "Scratch B")
+      await mkdir(scratch, { recursive: true })
+      const plain = loadConfig(dir, scratch)
+      assert.equal(plain.effectivePeer.peerId, "")
+      assert.equal(plain.effectivePeer.origin, "unresolved")
+      assert.equal(plain.effectivePeer.legacyPeerId, scratch.replace(/[^A-Za-z0-9]/g, "-"))
     } finally {
       restoreOpenVikingEnv(snapshot)
     }

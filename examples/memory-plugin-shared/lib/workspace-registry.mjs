@@ -33,9 +33,9 @@ export function registryDir(env = process.env) {
  * A readable name plus a hash, keyed on the workspace's identity rather than
  * its path wherever git supplies one.
  *
- * Two linked worktrees of one repository are one workspace — the same peer, so
- * the same settings and the same `ov peer link` — and keying on the checkout
- * path would silently split them in two. Outside a repository there is no
+ * Two linked worktrees of one repository are one workspace — the same peer and
+ * the same settings — and keying on the checkout path would silently split
+ * them in two. Outside a repository there is no
  * identity but the path, so two `~/src/api` clones still get separate entries.
  */
 export function slotName(root, identity = null) {
@@ -108,8 +108,8 @@ export function readEntry(root, { identity = null, env = process.env } = {}) {
 
 /**
  * Write this workspace's entry. Read-modify-write on this one small file only:
- * anything the caller does not mention is preserved, so `ov peer link` does not
- * erase settings and vice versa.
+ * anything the caller does not mention is preserved, so writing a peer here
+ * does not erase settings and vice versa.
  */
 export function writeEntry(root, patch, { identity = null, env = process.env, now = Date.now() } = {}) {
   const path = entryPath(root, env, identity);
@@ -152,8 +152,8 @@ export function writeEntry(root, patch, { identity = null, env = process.env, no
 }
 
 /**
- * Record a peer this workspace used to write under, so a later `ov peer` run
- * and doctor can point at memories the current peer no longer reaches.
+ * Record a peer this workspace used to write under, so doctor can point at
+ * memories the current peer no longer reaches.
  */
 export function rememberPreviousPeer(root, peerId, options = {}) {
   const id = String(peerId || "").trim();
