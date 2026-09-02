@@ -43,13 +43,28 @@ export function deriveWorkspacePeerId(cwd) {
   return legacySanitize(cwd);
 }
 
-/** Normalize `peer.source` — a preset name, a template, or a list — to templates. */
-export function peerSourceTemplates(source) {
+/**
+ * Normalize `peer.source` — a preset name, a template, or a list — to templates.
+ *
+ * A bare string with no `{` is a misspelled preset, not a template: `Git` or
+ * `gti` would otherwise become a peer literally named `Git`, quietly stranding
+ * the workspace's memories in a namespace nobody meant to create. Such a value
+ * warns and falls back to the default chain. An array is left alone — writing a
+ * list is explicit enough to mean the constant it contains.
+ */
+export function peerSourceTemplates(source, onWarn = null) {
   if (Array.isArray(source)) return source.map(String).filter(Boolean);
   const raw = String(source ?? "").trim();
   if (!raw) return PEER_SOURCE_PRESETS[DEFAULT_PEER_SOURCE];
   if (Object.hasOwn(PEER_SOURCE_PRESETS, raw)) return PEER_SOURCE_PRESETS[raw];
-  return [raw];
+  if (raw.includes("{")) return [raw];
+
+  const message = `OpenViking: ignored peer.source ${JSON.stringify(raw)}: it is neither a preset `
+    + `(${Object.keys(PEER_SOURCE_PRESETS).join(", ")}) nor a template such as "team-{dir}". `
+    + `Falling back to ${DEFAULT_PEER_SOURCE}.`;
+  if (typeof onWarn === "function") onWarn(message);
+  else process.stderr.write(`${message}\n`);
+  return PEER_SOURCE_PRESETS[DEFAULT_PEER_SOURCE];
 }
 
 /**
@@ -84,14 +99,14 @@ export function renderPeerTemplate(template, vars) {
  * the pre-git id whenever it differs, so recall can still reach memories
  * written under it.
  */
-export function resolveEffectivePeerId({ cfg = {}, cwd = "", identity = null, env = process.env } = {}) {
+export function resolveEffectivePeerId({ cfg = {}, cwd = "", identity = null, env = process.env, onWarn = null } = {}) {
   const explicit = String(cfg.peerId || "").trim();
   if (explicit) return { peerId: explicit, source: "explicit", origin: "explicit", legacyPeerId: "" };
 
   // `OPENVIKING_WORKSPACE_PEER=0` predates `peer.source` and still means "none".
   if (cfg.workspacePeer === false) return { peerId: "", source: "none", origin: "disabled", legacyPeerId: "" };
 
-  const templates = peerSourceTemplates(cfg.peerSource);
+  const templates = peerSourceTemplates(cfg.peerSource, onWarn);
   if (!templates.length) return { peerId: "", source: "none", origin: "none", legacyPeerId: "" };
 
   const vars = (identity || resolveWorkspaceIdentity({ cwd, env })).vars || {};

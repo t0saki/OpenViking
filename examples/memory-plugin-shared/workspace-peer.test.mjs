@@ -172,6 +172,21 @@ test("peerSourceTemplates resolves presets and passes templates through", () => 
   assert.deepEqual(peerSourceTemplates(["{git_remote}", "{cwd}"]), ["{git_remote}", "{cwd}"]);
 });
 
+test("a misspelled preset warns and falls back instead of becoming the peer", () => {
+  for (const typo of ["Git", "gti"]) {
+    const warnings = [];
+    assert.deepEqual(peerSourceTemplates(typo, (message) => warnings.push(message)), PEER_SOURCE_PRESETS.git);
+    assert.equal(warnings.length, 1, `${typo} must be reported, not silently adopted`);
+    assert.match(warnings[0], new RegExp(typo));
+  }
+
+  const quiet = [];
+  const push = (message) => quiet.push(message);
+  assert.deepEqual(peerSourceTemplates("team-{dir}", push), ["team-{dir}"], "a real template still passes through");
+  assert.deepEqual(peerSourceTemplates(["release", "{cwd}"], push), ["release", "{cwd}"], "a list is explicit");
+  assert.deepEqual(quiet, []);
+});
+
 test("a fork keeps its own peer, and every clone of one repo shares one", async () => {
   const upstream = await repo({ remote: "git@github.com:volcengine/OpenViking.git" });
   const fork = await repo({ remote: "git@github.com:t0saki/OpenViking.git" });
