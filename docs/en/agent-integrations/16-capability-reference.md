@@ -533,7 +533,7 @@ Each card serves as a quick-reference entry point. It records only the facts and
 ## zcode
 
 - **Integration docs**: [Community Integrations → ZCode](./08-community-plugins.md)
-- **Form**: Config-driven (merged into `~/.zcode/cli/config.json`, forcing `hooks.enabled=true`) utilizing an MCP proxy. It features 4 hooks: SessionStart(30s) / UserPromptSubmit(20s) / PreToolUse:Read\|Glob\|Grep(5s) / Stop(30s). It vendors 18 shared modules, and is the only harness that vendors the `agent-hook-runtime` pair instead of importing it by relative path. Version 0.1.1.
+- **Form**: Config-driven (merged into `~/.zcode/cli/config.json`, forcing `hooks.enabled=true`) utilizing an MCP proxy. It features 4 hooks: SessionStart(30s) / UserPromptSubmit(20s) / PreToolUse:Read\|Glob\|Grep(5s) / Stop(30s). It vendors 18 shared modules, and is the only harness that vendors the `agent-hook-runtime` pair instead of importing it by relative path. Version 0.1.2.
 - **Capability highlights**: The rollout file `~/.zcode/cli/rollout/model-io-<sid>.jsonl` serves as the source of truth for increments (a `lastTurnId` diff backfills any missed Stop events). Stop detaches by default, meaning Ctrl+C does not result in lost writes.
 - **Behavior notes**: Commits on every Stop (keep 0). The capture path only strips the three types of injection blocks without performing any further text cleanup ([§3.2.6](#_3-2-6-injection-backflow-protection)). The initial capture reads the entire rollout at once, meaning that installing it into a long-running session will produce a single large push.
 - **Configuration**: Environment variables only; `OPENVIKING_WRITE_PATH_ASYNC` takes effect for zcode.

@@ -515,7 +515,7 @@ MCP `write` / REST `content/write` 的三道 guard（`content_write.py`）：可
 ## zcode
 
 - **集成文档**：[社区插件 → ZCode](./08-community-plugins.md)
-- **形态**：配置驱动（合并进 `~/.zcode/cli/config.json`，强制 `hooks.enabled=true`）+ MCP 代理。4 hook：SessionStart(30s) / UserPromptSubmit(20s) / PreToolUse:Read\|Glob\|Grep(5s) / Stop(30s)。共 vendoring 18 个共享模块，也是唯一 vendoring `agent-hook-runtime` 那一对、而不是相对 import 的 harness。版本 0.1.1。
+- **形态**：配置驱动（合并进 `~/.zcode/cli/config.json`，强制 `hooks.enabled=true`）+ MCP 代理。4 hook：SessionStart(30s) / UserPromptSubmit(20s) / PreToolUse:Read\|Glob\|Grep(5s) / Stop(30s)。共 vendoring 18 个共享模块，也是唯一 vendoring `agent-hook-runtime` 那一对、而不是相对 import 的 harness。版本 0.1.2。
 - **能力亮点**：以 rollout 文件 `~/.zcode/cli/rollout/model-io-<sid>.jsonl` 为增量真相源（`lastTurnId` 差集补齐漏掉的 Stop）；Stop 默认 detach（Ctrl+C 不丢写入）。
 - **行为要点**：每 Stop commit（keep 0）；捕获路径仅剥离三类注入块（不做额外文本清洗，[§3.2.6](#_3-2-6-注入回流防护)）；首次捕获会一次性读取整个 rollout（长会话首装时单次推送量大）。
 - **配置**：仅 env；`OPENVIKING_WRITE_PATH_ASYNC` 对 zcode 生效。
