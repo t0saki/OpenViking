@@ -208,11 +208,11 @@ per-harness 章节（档案卡）只写差异；所有共享事实均在本章�
 5. mcpUrl：`OPENVIKING_MCP_URL`（非 cli 模式）→ `${baseUrl}/mcp`。
 6. 统一请求头：`Authorization: Bearer` + `X-OpenViking-Account/User/Actor-Peer` + `User-Agent: openviking-memory-<harness>/<version>`。
 
-**workspace peer**（家族 A 全体 + agent-plugins）：无显式 peerId 且 `OPENVIKING_WORKSPACE_PEER≠0` 时由 workspace 派生，随 `X-OpenViking-Actor-Peer` 发送（服务端会对该头校验，含 `/` 或 `\` 返回 400）。派生规则由 `peer.source` 决定，**默认 `git`**：先取归一化后的 `origin` URL，取不到回落到仓库根路径，再回落到当前工作目录。例如在 `/Users/x/Dev/OpenViking/examples/codex-memory-plugin` 下、origin 为 `git@github.com:volcengine/OpenViking.git` 时，peer 是 `github.com-volcengine-openviking`——任意子目录、任意 worktree、任意机器、任意 clone 都是同一个值。`peer.source` 的读取层为 env `OPENVIKING_PEER_SOURCE`、ovcli.conf `plugin.peerSource` / `plugin.<harness>.peerSource`、workspace 文件的 `peer.source`；只有 claude-code 和 codex 读这几层，其余家族 A harness 一律走默认值。
+**workspace peer**（家族 A 全体 + agent-plugins）：无显式 peerId 且 `OPENVIKING_WORKSPACE_PEER≠0` 时由 workspace 派生，随 `X-OpenViking-Actor-Peer` 发送（服务端会对该头校验，含 `/` 或 `\` 返回 400）。派生规则由 `peer.source` 决定，**默认 `git`**：先取归一化后的 `origin` URL，取不到回落到仓库根路径；不在仓库中则什么都不发送，在那里记下的内容进入用户级空间 `viking://user/<you>/memories`。例如在 `/Users/x/Dev/OpenViking/examples/codex-memory-plugin` 下、origin 为 `git@github.com:volcengine/OpenViking.git` 时，peer 是 `github.com-volcengine-openviking`——任意子目录、任意 worktree、任意机器、任意 clone 都是同一个值。`peer.source` 的读取层为 env `OPENVIKING_PEER_SOURCE`、ovcli.conf `plugin.peerSource` / `plugin.<harness>.peerSource`、workspace 文件的 `peer.source`；只有 claude-code 和 codex 读这几层，其余家族 A harness 一律走默认值。
 
 | `peer.source` | 展开为 | 得到的 peer |
 |---|---|---|
-| `git`（默认） | `["{git_remote}", "{git_root}", "{cwd}"]` | 归一化 origin → 仓库根路径 → cwd；预设一律不加前缀 |
+| `git`（默认） | `["{git_remote}", "{git_root}"]` | 归一化 origin → 仓库根路径；不在仓库中则什么都不发送，预设一律不加前缀 |
 | `cwd` | `["{cwd}"]` | 旧行为，逐字节等价：路径中所有非字母数字字符替换成 `-`（`/Users/x/Dev/OpenViking` → `-Users-x-Dev-OpenViking`） |
 | `none` | `[]` | 完全不发 peer；`OPENVIKING_WORKSPACE_PEER=0` 仍是同一含义 |
 | 模板串（如 `"git-{git_remote}"`、`"team-{dir}"`） | 自身 | 自由形式；也可给一组模板（如 `["team-{dir}", "{cwd}"]`）按顺序尝试，变量为空的模板跳过、落到下一个 |
@@ -220,9 +220,11 @@ per-harness 章节（档案卡）只写差异；所有共享事实均在本章�
 | 变量 | 取值 | 何时为空 |
 |---|---|---|
 | `{git_remote}` | 归一化后的 `origin`，形如 `github.com-org-repo`；host 与 path 转小写，`.git` 后缀与 userinfo 一并丢弃，因此同一仓库的 ssh / https 两种写法结果一致，且 URL 里内嵌的 token 不可能进入 peer id | 非 git 仓库，或未配 `origin` |
-| `{git_root}` | 仓库根路径，按上述旧 sanitation 处理 | 非 git 仓库 |
-| `{cwd}` | 当前工作目录，按上述旧 sanitation 处理 | 从不为空 |
-| `{dir}` | 仓库根目录的目录名 | 非 git 仓库 |
+| `{git_root}` | 仓库根路径，按上述旧 sanitation 处理 | 不在 git 仓库中。仓库内某个子目录放了标记文件时，它仍然是仓库自己的根，因此标记子目录不会拆散默认 peer |
+| `{cwd}` | 当前工作目录，按上述旧 sanitation 处理 | 从不为空——它也不在任何默认链里，裸路径只有在你明确要求时才会成为 peer |
+| `{dir}` | 工作区根目录的目录名：仓库根，或放着 `.openviking/config.json` 的那个目录 | 该目录不是工作区 |
+
+要让一个不是仓库的目录拥有独立 peer，在该目录下创建 `.openviking/config.json`，写上 `{"version": 1, "peer": {"id": "my-project"}}`。
 
 **身份语义**：同一仓库的所有 clone 共用一个 peer，项目记忆跟着项目走而非跟着 checkout 走。fork 的 `origin` 不同，因此默认就是另一个 peer；用 `gh pr checkout` 评审外部 PR 不改 `origin`，身份也就不受影响。派生是纯文件系统操作（`workspace-identity.mjs`），不起 `git` 子进程，因此能塞进最紧的 hook 预算，也能在 `git` 不在 `PATH` 上、或因 dubious ownership 拒绝该仓库时照常工作。worktree 经 `commondir` 收敛回主仓库，submodule 保留自己的身份，`$HOME` 与 `/` 永远不会被当作 workspace 根。
 

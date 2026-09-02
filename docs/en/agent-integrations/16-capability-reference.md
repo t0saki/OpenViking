@@ -206,11 +206,11 @@ Family A resolves credentials in the following order (refer to individual profil
 5. **mcpUrl**: Resolves via `OPENVIKING_MCP_URL` (when outside CLI mode) → `${baseUrl}/mcp`.
 6. **Common request headers**: `Authorization: Bearer` + `X-OpenViking-Account/User/Actor-Peer` + `User-Agent: openviking-memory-<harness>/<version>`.
 
-**Workspace peer** (applies to all of Family A + agent-plugins): If no explicit `peerId` is provided and `OPENVIKING_WORKSPACE_PEER≠0`, the peer is derived from the workspace and sent as the `X-OpenViking-Actor-Peer` (the server validates this header and returns a `400` error if it contains `/` or `\`). The derivation rule is `peer.source`, which **defaults to `git`**: the normalized `origin` URL first, falling back to the repository root, and finally to the working directory. In `/Users/x/Dev/OpenViking/examples/codex-memory-plugin` with an origin of `git@github.com:volcengine/OpenViking.git`, the peer is `github.com-volcengine-openviking` — the same value from any subdirectory, any worktree, any machine, and any clone. `peer.source` is read from the env var `OPENVIKING_PEER_SOURCE`, the ovcli.conf `plugin.peerSource` / `plugin.<harness>.peerSource` keys, and the workspace file's `peer.source`; only claude-code and codex read those layers, so every other Family A harness always runs on the default.
+**Workspace peer** (applies to all of Family A + agent-plugins): If no explicit `peerId` is provided and `OPENVIKING_WORKSPACE_PEER≠0`, the peer is derived from the workspace and sent as the `X-OpenViking-Actor-Peer` (the server validates this header and returns a `400` error if it contains `/` or `\`). The derivation rule is `peer.source`, which **defaults to `git`**: the normalized `origin` URL first, falling back to the repository root. Outside a repository nothing is sent, and what is remembered there goes to the user-level space `viking://user/<you>/memories` instead. In `/Users/x/Dev/OpenViking/examples/codex-memory-plugin` with an origin of `git@github.com:volcengine/OpenViking.git`, the peer is `github.com-volcengine-openviking` — the same value from any subdirectory, any worktree, any machine, and any clone. `peer.source` is read from the env var `OPENVIKING_PEER_SOURCE`, the ovcli.conf `plugin.peerSource` / `plugin.<harness>.peerSource` keys, and the workspace file's `peer.source`; only claude-code and codex read those layers, so every other Family A harness always runs on the default.
 
 | `peer.source` | Expands to | Resulting peer |
 |---|---|---|
-| `git` (the default) | `["{git_remote}", "{git_root}", "{cwd}"]` | The normalized origin, else the repository root, else the cwd. No preset adds a prefix. |
+| `git` (the default) | `["{git_remote}", "{git_root}"]` | The normalized origin, else the repository root. Outside a repository nothing is sent. No preset adds a prefix. |
 | `cwd` | `["{cwd}"]` | The previous behavior, byte for byte: every non-alphanumeric character in the path becomes a hyphen (`/Users/x/Dev/OpenViking` → `-Users-x-Dev-OpenViking`). |
 | `none` | `[]` | No peer is sent at all. `OPENVIKING_WORKSPACE_PEER=0` still means the same thing. |
 | A template (e.g. `"git-{git_remote}"`, `"team-{dir}"`) | Itself | Free-form. A list of templates (e.g. `["team-{dir}", "{cwd}"]`) is tried in order, and a template whose variables are empty falls through to the next one. |
@@ -218,9 +218,11 @@ Family A resolves credentials in the following order (refer to individual profil
 | Variable | Value | Empty when |
 |---|---|---|
 | `{git_remote}` | The normalized `origin` URL as `github.com-org-repo`. Host and path are lowercased and `.git` plus any userinfo is dropped, so the ssh and https spellings of one repo agree and an embedded token can never reach the peer id. | Not a git repository, or `origin` is unset |
-| `{git_root}` | The repository root path, under the legacy sanitation above | Not a git repository |
-| `{cwd}` | The working directory, under the legacy sanitation above | Never |
-| `{dir}` | The repository root's directory name | Not a git repository |
+| `{git_root}` | The repository root path, under the legacy sanitation above | Outside a git repository. A marker file inside a repository still leaves this the repository's own root, so marking a subdirectory does not split the default peer |
+| `{cwd}` | The working directory, under the legacy sanitation above | Never — and it is in no default chain, so a bare path becomes a peer only when you ask for one |
+| `{dir}` | The workspace root's directory name: the repository root, or the directory holding `.openviking/config.json` | The directory is not a workspace |
+
+To give a directory that is not a repository its own peer, create `.openviking/config.json` there holding `{"version": 1, "peer": {"id": "my-project"}}`.
 
 **Identity semantics**: Every clone of one repository shares one peer, so project memory follows the project rather than the checkout. A fork carries a different `origin` and is therefore a separate peer by default; reviewing an external PR via `gh pr checkout` does not change `origin`, so it does not change identity either. Derivation is pure filesystem work (`workspace-identity.mjs`) with no `git` subprocess, which keeps it inside the tightest hook budget and keeps it working where `git` is absent from `PATH` or would refuse the repo over dubious ownership. Worktrees converge onto the main repository via `commondir`, a submodule keeps its own identity, and `$HOME` and `/` are never treated as workspace roots.
 

@@ -12,7 +12,7 @@ OpenViking 客户端目前仅依赖一份全局配置（`~/.openviking/ovcli.con
 
 - **引入三层配置架构**：包括提交到仓库的 `<root>/.openviking/config.json`（团队共享）、不提交到仓库的 `<root>/.openviking/config.local.json`（个人覆盖），以及用户级注册表 `~/.openviking/workspaces/`（机器本地，按 Workspace 分布为单文件）。这三层配置采用统一的 Schema 和合并引擎。
 - **将 Peer 来源重构为可配置规则**：引入 `peer.source` 键，内置 `git`、`cwd`、`none` 预设，支持变量模板与按序回退。该规则可在任意配置层进行设置，也支持完全禁用 Peer。
-- **默认策略切换为基于 Git**：以归一化的 origin remote URL 作为项目身份，确保跨机器、跨克隆、跨子目录、跨 worktree 的稳定性。旧有基于 cwd 推导的记忆，将由默认的 broad recall 扫描与 dual-read 机制兜底（具体覆盖范围与边界详见「迁移与数据连续性」）。
+- **默认策略切换为基于 Git，且只基于 Git**：以归一化的 origin remote URL 作为项目身份，确保跨机器、跨克隆、跨子目录、跨 worktree 的稳定性。不在 Git 仓库里的目录默认**不再派生 peer**，其记忆进入用户级空间——这正是 peer 功能出现之前的基线；按目录路径派生 peer 改为显式 opt-in。旧有基于 cwd 推导的记忆，将由默认的 broad recall 扫描与 dual-read 机制兜底（具体覆盖范围与边界详见「迁移与数据连续性」）。
 - **对仓库提交的配置采取“直接信任”策略**：不设复杂的授权门槛，仅保留零摩擦的结构性安全底线（如结构性禁止凭证类键、不做变量展开）。相关风险评估与未来可选的授权机制详见「风险与信任取舍」一节。
 
 ## 背景与现状
@@ -54,14 +54,14 @@ OpenViking 客户端目前仅依赖一份全局配置（`~/.openviking/ovcli.con
 | --- | --- | --- | --- |
 | `config.json` | `<workspace-root>/.openviking/` | 是 | 团队共享的项目级设置 |
 | `config.local.json` | `<workspace-root>/.openviking/` | 否(gitignore) | 个人对当前项目的覆盖配置 |
-| `<slot>.json` | `~/.openviking/workspaces/` | 机器本地 | 用户级的 per-workspace 注册表 |
+| `<slot>.json` | `~/.openviking/workspaces/` | 机器本地 | 用户级的 per-workspace 注册表；本次没有 CLI 写入器，按插件 doctor 打印的路径手工创建 |
 | `ovcli.conf` | `~/.openviking/` | 机器本地 | 连接与凭证（维持不变）；新键存入 `plugin` 字典 |
 
-Workspace 根目录的确定规则：从生效的 cwd 向上查找最近的 `.git`（文件或目录），该目录即视为根目录，找到即停止查找；对于 linked worktree，通过 `commondir` 收敛**身份**（因此两个 worktree 共用同一个 peer 与同一条注册表记录），但各自的 `.openviking/config.json` 仍跟随所在 checkout——那是分支上的文件；Submodule 被视为独立仓库，不并入父仓库；非 Git 目录以 cwd 为根目录（此时仅 `{cwd}` 语义可用）；`$HOME` 与 `/` 不能作为 Workspace 根目录。
+Workspace 根目录的确定规则：从生效的 cwd 向上查找，最近的一个持有 `.git`（文件或目录）**或** `.openviking/config.json` / `config.local.json` 的目录即为根目录。`.git` 与标记文件同在一个目录时按 Git 处理；标记文件在仓库内部的子目录先被命中时，该子目录是配置层的根，但 Git 身份仍继续向上取自外层仓库（`{git_remote}` / `{git_root}` 不变，因此默认 peer 不会因为子目录多了一份配置文件而分裂）。对于 linked worktree，通过 `commondir` 收敛**身份**（因此两个 worktree 共用同一个 peer 与同一条注册表记录），但各自的 `.openviking/config.json` 仍跟随所在 checkout——那是分支上的文件；Submodule 被视为独立仓库，不并入父仓库。既无 `.git` 也无标记文件的目录**不是 Workspace**：没有根目录、没有配置层、没有注册表条目，默认也不派生 peer。`$HOME` 与 `/` 不能作为 Workspace 根目录。
 
 用户级注册表设计采用**目录制**而非单一 JSON 文件：每个 Workspace 对应一个权限为 0600、支持原子写入的小文件，以避免多个短生命周期的 Hook 进程对同一文件执行 read-modify-write 时造成更新丢失。定位条目时以 Workspace 根目录路径为依据，条目内部记录 Git 身份键作为**负证据（Negative Evidence）**——当路径命中但记录的 Git 身份与当前仓库冲突时，视为未命中，系统将开启新的条目，绝不继承旧条目的 Peer 绑定与设置。这能有效防止“同一路径先后放置了两个不同仓库”时发生身份串台。
 
-注册表条目内容包括：per-workspace settings（与 Workspace 文件共用 Schema）、`peer` 显式绑定（由 `ov peer link` 写入）、`previous_peer_ids`、`cli_config_profile`（详见安全底线），以及首次/最近可见时间。
+注册表条目内容包括：per-workspace settings（与 Workspace 文件共用 Schema）、`peer` 显式绑定（手工写入，CLI 写入器为后续）、`previous_peer_ids`、`cli_config_profile`（详见安全底线），以及首次/最近可见时间。
 
 同时需一并处理已知的命名冲突问题：`.openviking` 目前也是解析器的机器本地临时目录（`StoragePath.BASE_DIR`，`openviking_cli/utils/storage.py:37`），并且本仓库的 `.gitignore` 也忽略了整个 `.openviking` 目录。解决方案：将仓库自身与文档示例的 `.gitignore` 规则缩小为具体的临时子路径（如 `.openviking/media/`、`.openviking/downloads/` 等）而非整个目录；doctor 增加“存在 `config.json` 但被 Git 忽略”的检查项。
 
@@ -89,8 +89,8 @@ Workspace 根目录的确定规则：从生效的 cwd 向上查找最近的 `.gi
 | 层级 | JS Hooks | MCP Proxy | Rust CLI | Python SDK |
 | --- | --- | --- | --- | --- |
 | 环境变量 | 已有 | 已有 | 部分（无 `OPENVIKING_PEER_ID`） | 已有 |
-| 注册表 | 新增 | 经父进程注入 | 新增（`ov workspace` / `ov peer`） | 不适配 |
-| Workspace 文件 | 新增 | 不直读（见 Proxy 章节） | 新增（读） | 不适配 |
+| 注册表 | 新增 | 经父进程注入 | 后续（本次不含 Rust CLI） | 不适配 |
+| Workspace 文件 | 新增 | 不直读（见 Proxy 章节） | 后续 | 不适配 |
 | `ovcli.conf` | 已有 | 已有 | 已有 | 已有 |
 
 ### 合并语义
@@ -151,7 +151,7 @@ Workspace 根目录的确定规则：从生效的 cwd 向上查找最近的 `.gi
 
 ### Provenance 与诊断
 
-新命令 `ov workspace show` 与两个插件的 doctor 输出将展示 per-key 的完整解析链路：包括生效值、来源文件、被更高层遮蔽的值，以及因安全底线被剔除的键——功能对标 `git config --show-origin --show-scope`。（注：现有的 `ov doctor` 实际上是 Python 侧面向服务端环境的诊断工具，不承载此项输出功能。）在当前三语言技术栈、多 Reader 并存的现状下，这一诊断输出与配置体系本身同等重要，并将其作为各 Reader 行为一致性的日常验收手段。
+两个插件的 doctor 输出将展示 per-key 的完整解析链路：包括生效值、来源文件、被更高层遮蔽的值，以及因安全底线被剔除的键——功能对标 `git config --show-origin --show-scope`。（注：现有的 `ov doctor` 实际上是 Python 侧面向服务端环境的诊断工具，不承载此项输出功能。）在当前三语言技术栈、多 Reader 并存的现状下，这一诊断输出与配置体系本身同等重要，并将其作为各 Reader 行为一致性的日常验收手段。
 
 ## 设计：Peer 来源规则
 
@@ -159,8 +159,8 @@ Workspace 根目录的确定规则：从生效的 cwd 向上查找最近的 `.gi
 
 这是新增的配置键，可出现在任意配置层级中（环境变量形式为 `OPENVIKING_PEER_SOURCE`；`ovcli.conf` 侧为 `plugin.peerSource` / `plugin.<harness>.peerSource`）：
 
-- 内置预设 `"git"`：启用 Git 身份推导（这是新的默认行为），推导链路见下文。
-- 内置预设 `"cwd"`：保持当前行为，做到字节级一致。
+- 内置预设 `"git"`：启用 Git 身份推导（这是新的默认行为），推导链路见下文；不在 Git 仓库里则不派生。
+- 内置预设 `"cwd"`：保持旧行为，做到字节级一致；这是按目录路径派生 peer 的唯一预设，需显式选择。
 - 内置预设 `"none"`：完全不发送 Peer 头，也不写入 `peer_id`。
 - 支持模板字符串：例如 `"git-{git_remote}"`、`"{git_root}"`、`"team-{dir}"`。
 - 支持模板数组：按序尝试，如果某条模板中的变量解析为空，则整条直接落空并尝试下一条；全部落空则等价于 `"none"`。
@@ -170,13 +170,50 @@ v1 支持的变量集：
 | 变量 | 含义 | 空值条件 |
 | --- | --- | --- |
 | `{git_remote}` | 归一化后的 origin URL（`github.com/org/repo` 形式，已清理特殊字符） | 非 Git 仓库或不存在 origin remote |
-| `{git_root}` | 仓库根路径（按照 legacy 规则进行字符清理） | 非 Git 仓库 |
-| `{cwd}` | 生效的 cwd（按照 legacy 规则进行字符清理） | 无 |
-| `{dir}` | Workspace 根目录的目录名（已清理特殊字符） | 无 |
+| `{git_root}` | 仓库根路径（按照 legacy 规则进行字符清理）；标记文件在仓库内部命中时仍是仓库根 | 非 Git 仓库 |
+| `{cwd}` | 生效的 cwd（按照 legacy 规则进行字符清理）；默认链路不再使用，仅供 `cwd` 预设与自定义模板 | 无 |
+| `{dir}` | Workspace 根目录的目录名（已清理特殊字符） | 不是 Workspace |
 
-预设 `"git"` 实际上等价于模板数组 `["{git_remote}", "{git_root}", "{cwd}"]`：优先使用 remote，若无 remote 则退回到仓库根路径（至少修复了子目录分裂的问题），若不是 Git 仓库则最终退回到现行的 cwd 规则。默认情况下不添加任何前缀——因为路径类 ID（`{git_root}` / `{cwd}`）在 POSIX 系统下必然以 `-` 开头，与 remote 的表现形态天然不冲突；如果用户需要前缀，可以自定义模板（如 `"git-{git_remote}"`）。
+预设 `"git"` 实际上等价于模板数组 `["{git_remote}", "{git_root}"]`：优先使用 remote，若无 remote 则退回到仓库根路径（至少修复了子目录分裂的问题），若不是 Git 仓库则**落空**——不发送 peer 头，也不写入 `peer_id`，记忆进入用户级空间 `viking://user/<u>/memories`。默认情况下不添加任何前缀——因为路径类 ID（`{git_root}` / `{cwd}`）在 POSIX 系统下必然以 `-` 开头，与 remote 的表现形态天然不冲突；如果用户需要前缀，可以自定义模板（如 `"git-{git_remote}"`）。
 
-显式指定的 `peer.id` 优先级始终高于 `source` 推导，其跨层优先级继续沿用现有的 explicit 语义：`OPENVIKING_PEER_ID` 环境变量 → CLI 标志参数（`ov --actor-peer-id`）→ 注册表绑定（`ov peer link` 写入）→ `config.local.json` → `config.json` → `ovcli.conf` 中的 `actor_peer_id` / `peer_id` → 遗留的 `ov.conf` 块。出于向后兼容的考虑：`OPENVIKING_WORKSPACE_PEER=0` 将继续等价于 `peer.source: "none"`。
+### 非 Git 目录：默认不派生，按路径派生需 opt-in
+
+初稿的 `"git"` 预设末尾还挂着 `{cwd}` 回退，实测证明这一档必须去掉。Codex desktop 为每个不属于任何项目的对话（其状态文件里称为 projectless thread）新建一个 `~/Documents/Codex/<日期>/<slug>/` 目录作为 cwd，这些目录没有一个是 Git 仓库；按 cwd 回退，每个一次性任务都会铸造一个全新的空 peer，既召回不到上一次的东西，又在服务端留下一堆只有几条记忆的命名空间。这不是 Codex 独有的形态——下载解包出来的目录、临时目录、其他 agent 应用生成的任务目录都一样。通用的信号只有一个：它不是 Git 仓库，也没有任何东西声明它是一个项目。
+
+因此规则是：**默认只有 Git 仓库有 peer**。既不是仓库、也没有标记文件的目录，走 peer 功能出现之前的基线——不带 `X-OpenViking-Actor-Peer`，记忆写进用户级空间。想让一个非 Git 目录拥有自己的记忆，需要用户主动开启，三种方式按推荐顺序：
+
+1. 在该目录放 `.openviking/config.json`，写 `{"version": 1, "peer": {"id": "<名字>"}}`。显式名字不含路径，换机器、改目录名都不变；标记文件让任意子目录向上都能找到这个根。
+2. 同一文件里改写 `peer.source`（如 `"cwd"` 或 `"team-{dir}"`），适合想按路径或目录名派生的场景；注意 `"cwd"` 在子目录里会得到不同的 id，这是它的旧语义。
+3. 全局 `plugin.peerSource: "cwd"`（或 `OPENVIKING_PEER_SOURCE=cwd`）恢复旧行为，适合明知自己的项目多数不是 Git 仓库、且总是从项目根启动的用户。
+
+"这里不是 Workspace"的说明只出现在 doctor，不进入注入模型的上下文——否则 Codex 每个新任务都会吃一行噪音。
+
+已评估并放弃的其他做法见「备选方案」；简言之，读 Codex 的私有状态文件、按 app 路径设黑名单、为一次性目录发固定的 `scratch` peer，都或者不通用，或者只是把问题换了个地方。
+
+### 按场景标注 peer
+
+| 场景 | 建议 |
+| --- | --- |
+| 有 origin 的仓库 | 默认即可：所有 clone、worktree、子目录共用一个 peer |
+| Fork | 默认按 origin 与上游分开；要合并记忆，在两边的 `config.json` 里写同一个 `peer.id` |
+| 无 remote 的本地仓库 | 默认按仓库根路径；换机器会变，长期项目建议在 `config.json` 里写 `peer.id` |
+| 非 Git 的长期项目目录 | 放 `.openviking/config.json` 写 `peer.id` |
+| Monorepo 里某个子项目要单独记忆 | 子目录放 `config.json`，`peer.source: "{git_remote}-{dir}"`；不写则沿用仓库 peer |
+| 一次性任务目录（Codex desktop 的日期目录、临时解包目录） | 什么都不做，记忆进用户级空间 |
+| 几个目录共享一份记忆 | 各处 `peer.id` 写同一个值 |
+| 不想按项目分 | `peer.source: "none"`（等价 `OPENVIKING_WORKSPACE_PEER=0`） |
+
+### 召回隔离
+
+peer 是路径前缀，不是租户边界；隔离程度由召回参数 `peer_scope` 决定，客户端键为 workspace 文件的 `recall.peer_scope`、`ovcli.conf` 的 `plugin.recallPeerScope` 或环境变量 `OPENVIKING_RECALL_PEER_SCOPE`：
+
+- `"all"`（默认）：召回目标是用户级记忆 + 当前 peer 的记忆，再对 `viking://user/<u>/peers` 做一次广度扫描，其他 peer 命中的结果按类别降分（服务端 `other_peer_penalty` 默认 events / entities 0.1，preferences / experiences 0.02），只能垫底、不会抢占。旧 peer 下的记忆靠这一步自然回流。
+- `"actor"`：不扫描其他 peer，只看用户级记忆与当前 peer。客户端在这一档下会对 Legacy ID 额外发一次查询（见「迁移与数据连续性」）。
+- 用户级记忆在两档下都是全权重目标，这也是"非 Git 目录进用户级空间"的代价：一次性任务里提炼出的内容会在所有项目里参与召回。需要更强隔离的用户可以给一次性目录也放标记文件，或全局切到 `"actor"`。
+
+`peer_scope` 是逐请求参数，旧版服务端不认识时客户端会记录一次降级并告警，不会静默变成 `"all"`。
+
+显式指定的 `peer.id` 优先级始终高于 `source` 推导，其跨层优先级继续沿用现有的 explicit 语义：`OPENVIKING_PEER_ID` 环境变量 → CLI 标志参数（`ov --actor-peer-id`）→ 注册表条目（手工创建）→ `config.local.json` → `config.json` → `ovcli.conf` 中的 `actor_peer_id` / `peer_id` → 遗留的 `ov.conf` 块。出于向后兼容的考虑：`OPENVIKING_WORKSPACE_PEER=0` 将继续等价于 `peer.source: "none"`。
 
 ### Git 身份推导（零子进程）
 
@@ -202,11 +239,11 @@ URL 形式    https://user:token@github.com:8443/volcengine/OpenViking.git/
 
 示例：在 `/Users/x/Dev/OpenViking/examples/codex-memory-plugin` 目录下，且 origin 为 `git@github.com:volcengine/OpenViking.git` 时，推导出的 Peer 为 `github.com-volcengine-openviking`——无论是在任何子目录、任何 worktree、任何机器，还是任何一份克隆，身份都保持绝对一致。
 
-由此确立的身份语义：同一仓库的多个本地克隆**共享**同一个 Peer（项目记忆跟着项目走）；Fork 仓库与上游仓库的 origin 不同，因此**默认分开**（通过 `gh pr checkout` 审查外部 PR 时，origin 依然是自己的仓库，身份不受影响；若需合并 Fork 与上游的记忆，请使用 `ov peer link` 显式绑定）。
+由此确立的身份语义：同一仓库的多个本地克隆**共享**同一个 Peer（项目记忆跟着项目走）；Fork 仓库与上游仓库的 origin 不同，因此**默认分开**（通过 `gh pr checkout` 审查外部 PR 时，origin 依然是自己的仓库，身份不受影响；若需合并 Fork 与上游的记忆，在两边写同一个 `peer.id`）。
 
 ### 实现落点
 
-- **推导与归一化**：新增共享模块 `workspace-identity.mjs`；`resolveEffectivePeerId` 函数保持 `source ∈ {explicit, workspace, none}` 三值枚举不变，但新增姊妹字段 `origin`（取值如 `git-remote` / `git-path` / `cwd` / `explicit`）。因为现有代码中有 5 处针对 `source === "workspace"` 的字面量硬编码比较（Claude Code 的 session pin 两处、Codex 的 session-start 一处，以及两个 doctor），新增枚举会静默破坏 session pinning 逻辑。
+- **推导与归一化**：新增共享模块 `workspace-identity.mjs`；`resolveEffectivePeerId` 函数保持 `source ∈ {explicit, workspace, none}` 三值枚举不变，但新增姊妹字段 `origin`（取值为实际产生该 id 的模板字符串，如 `{git_remote}` / `{git_root}` / `{cwd}`，或 `explicit` / `disabled` / `none` / `unresolved`）。因为现有代码中有 5 处针对 `source === "workspace"` 的字面量硬编码比较（Claude Code 的 session pin 两处、Codex 的 session-start 一处，以及两个 doctor），新增枚举会静默破坏 session pinning 逻辑。
 - **Session Pin**：Claude Code 的 `ws-peer-<sessionId>.json` 与 Codex 的 `state.workspacePeerId` 继续在 SessionStart 阶段冻结整个会话的 Peer；Pin 文件新增版本字段，读取时忽略旧版本条目（目前的现状是 pin 永不过期，读取时没有 `maxAgeMs` 限制）。
 - **身份解析一次、向下传递**：每个提示词级别的 Hook 优先读取 pin 文件，避免重复推导。
 
@@ -214,10 +251,8 @@ URL 形式    https://user:token@github.com:8443/volcengine/OpenViking.git/
 
 默认策略切换为 Git 后，已有用户积累的旧记忆仍然存放在由 cwd 推导的旧 Peer 之下。本方案不依赖用户执行任何一次性迁移动作：
 
-1. **永久的双向读取（Dual-read）兜底**。当前 cwd 对应的 Legacy ID 永远可以在本地重新计算得出（无需专门登记）：当当前生效的 Peer 与 Legacy ID 不一致时，recall 操作会自动兼顾旧 Peer。在默认的 `peer_scope: "all"` 模式下，现有的 peers 目录扫描逻辑已自然覆盖旧 Peer 的 memory 数据，实现零额外成本；而在 `peer_scope: "actor"` 模式下，recall 会额外发起一次针对 `viking://user/<u>/peers/<legacy>/memories` 的 search 请求，但该请求必须**不带** `X-OpenViking-Actor-Peer` 头（带此请求头去读取他人的 Peer 路径会触发 403 硬错误，参考 `retrieval_targets.py:176`）。Dual-read 机制不设截止期限。需注意其覆盖范围：能在本地重算的仅限**当前路径**的 Legacy ID；若仓库已移动/改名，或历史上曾在多个子目录各自铸造过 Peer，旧 ID 将无法重算，此类情况由 broad 扫描机制与第 4 条的 doctor 枚举进行兜底。
-2. **`ov peer migrate`（可选的数据迁移）**。基于用户级的 `POST /api/v1/fs/mv` 接口，实现 `memories` 与 `resources` 目录树的整树移动，默认开启 `--dry-run`；若目标位置已存在同名子树，则逐层下降比对，遇到任何将引发覆盖的冲突一律拒绝并给出解释（服务端不提供 Merge 语义，客户端也不伪装支持）；命令内部会自行放大超时时间，并在重试前重新执行 `ls` 确认两侧状态；`user_id` 通过 `/api/v1/system/status` 获取（在 trusted 部署环境下，客户端配置中可能不包含该 ID）。
-3. **`ov peer link <id>`（手动身份绑定）**。向注册表写入显式绑定记录，作为合并 Fork 与上游、永久钉住 Legacy ID、强行拆分多份克隆等场景的统一操作出口。
-4. **Doctor 智能诊断**。通过不带 actor-peer 头的 `ov ls viking://user/<u>/peers` 命令枚举既有的 peers（服务端目前已支持，无需新增 API）。当生效 Peer 的记忆树为空，却存在疑似旧 Peer（符合 Legacy 路径形态的 ID）时，系统会报告“有 N 条记忆位于旧 Peer 下”，并提供精确的 `ov peer link` 或 `ov peer migrate` 命令建议。“仓库移动后 recall 内容为空”的旧 ID 虽然无法在本地重算，正是依靠这条枚举路径实现了排障覆盖。
+1. **永久的双向读取（Dual-read）兜底**。当前 cwd 对应的 Legacy ID 永远可以在本地重新计算得出（无需专门登记）：当当前生效的 Peer 与 Legacy ID 不一致时——包括非 Git 目录如今根本没有 Peer 的情况——recall 操作会自动兼顾旧 Peer。在默认的 `peer_scope: "all"` 模式下，现有的 peers 目录扫描逻辑已自然覆盖旧 Peer 的 memory 数据，实现零额外成本；而在 `peer_scope: "actor"` 模式下，recall 会额外发起一次针对 `viking://user/<u>/peers/<legacy>/memories` 的 search 请求，但该请求必须**不带** `X-OpenViking-Actor-Peer` 头（带此请求头去读取他人的 Peer 路径会触发 403 硬错误，参考 `retrieval_targets.py:176`）。Dual-read 机制不设截止期限。需注意其覆盖范围：能在本地重算的仅限**当前路径**的 Legacy ID；若仓库已移动/改名，或历史上曾在多个子目录各自铸造过 Peer，旧 ID 将无法重算，此类情况由 broad 扫描机制兜底（doctor 枚举旧 Peer 列为后续，见第 2 条）。
+2. **后续（本次 PR 不含）**。本次交付的保证只有第 1 条：旧 Peer 下的记忆不搬家，靠 `all` scope 扫描与 `actor` scope 双读回流；显式绑定与 `cli_config_profile` 通过手工创建的注册表条目完成。以下三项曾在分支上实现并撤回（命令面过大，先以纯插件改动合入），设计要点留档：`ov peer migrate`——基于用户级 `POST /api/v1/fs/mv` 整树移动 `memories` 与 `resources`，默认 `--dry-run`，目标已有同名子树时逐层比对、任何覆盖一律拒绝（服务端无 Merge 语义），读源 Peer 时不能带 actor-peer 头（403），`user_id` 经 `/api/v1/system/status` 获取；`ov peer link <id>`——向注册表写显式绑定，作为合并 Fork 与上游、钉住 Legacy ID、拆分克隆的统一出口；doctor 枚举旧 Peer——不带 actor-peer 头 `ls viking://user/<u>/peers`（服务端已支持），生效 Peer 记忆树为空而存在 Legacy 形态的旧 Peer 时报告“有 N 条记忆位于旧 Peer 下”并给出精确命令，这是“仓库移动后 recall 为空”这类无法本地重算的旧 ID 的唯一排障路径。
 
 已知边界（需如实写入文档）：broad 扫描的配额路径仅覆盖 `/memories/<bucket>/` 这样的分类桶（而无配额的扁平路径可能会带回 `profile.md` 等非分类文件），此外，旧 Peer 下的 **resources 文件在两条路径下都不会被自动扫回**——Dual-read 的 actor 分支与手动 migrate 才是彻底的解决方案。服务端的 Alias 映射表（在 `normalize_actor_peer_header` 处做旧→新映射）作为远期的备选方案，不纳入本 RFC 实施范围；需注意，该函数目前仅覆盖了读路径的 Header，写路径中的消息体 `peer_id` 还需另行处理；并且，项目 Changelog 曾明确决定不对 Legacy 有损 Peer 目录进行自动回读（因为多个身份可能发生碰撞，归属权应当交由操作者人工裁决），任何自动 Alias 机制都必须在此先例基础上进行独立论证。
 
@@ -240,8 +275,8 @@ URL 形式    https://user:token@github.com:8443/volcengine/OpenViking.git/
 
 - **P0：基础卫生修复（可独立发版）**：`sync.mjs` 改为仅导出各目标清单，并将 `main()` 逻辑挡在入口判断之后（当前机制只要 import 就会触发全量同步）；`sync.test.mjs` 改为导入这些清单（现有测试清单已过期，副本漂移可能会被 CI 静默放过）；修复 Rust 配置写路径中丢弃 `plugin` 段的数据丢失 Bug（`ov config add|edit` 与交互向导改用 `serde_json::Value` 级别的合并机制，确保未知键在往返序列化时得以保留）；为 Session pin 机制增加版本字段；当 `peer_scope: "actor"` 被旧版服务端响应 400/422 降级时，将静默失败改为抛出警告；将新编写的测试文件注册进 `.github/workflows/pr.yml`。
 - **P1：搭建配置引擎**：新增共享模块 `workspace-config.mjs`（负责发现、纯粹的 parse、安全底线过滤、合并以及 Provenance 溯源）、`workspace-registry.mjs`（负责目录制注册表读写、负证据查找机制）、`workspace-identity.mjs`（负责 Git 身份推导、归一化、Sanitize 字符清理及缓存）；将上述模块加入 `HARNESS_SHARED_FILES` 以同步至 7 个目标端，同时手工同步 `agent-plugins/servers/` 下的副本；接入 `loadPluginSettings`（函数签名增加 cwd 参数；由于 Hook 顶层调用的 `loadConfig()` 早于 stdin 的解析，Workspace 层的配置必须延迟懒加载），并串联各 Harness 的 cfg 组装点；实现插件 doctor 的 Provenance 诊断输出。此阶段系统行为保持不变（因为新层级默认均为空）。
-- **P2：Peer 来源规则与默认策略切换**：确保 `peer.source` 在全链路生效（环境变量 / ovcli 的 `plugin` 字典 / Workspace 文件；为 doctor 增加对 `plugin.*` 内部已知键的拼写检查支持——现有的 `KNOWN_OVCLI_KEYS` 仅校验顶层键，而 `plugin` 自身已经在白名单内）；将默认策略正式切换为 `git` 推导；上线 Dual-read 兜底机制；在 doctor 中增加对旧 Peer 的检测逻辑；同步更新引用了旧推导规则的 5 处 README 文件、`docs/en/agent-integrations/16-capability-reference.md`、`docs/en/configuration/02-client.md` 以及全部的中文镜像文档，并在 Changelog 中详细说明默认行为的变化与兜底恢复机制。
-- **P3：CLI 命令开发**：在 Rust 端实现 `ov workspace show` 和 `ov peer link|migrate|forget-previous` 命令；由于 `Config::from_file` 在反序列化整个结构体时会将部分缺失的键重置为默认值，注册表 Reader 必须独立实现以避开此坑；将新增的子命令补进 `requires_cli_config_file` 的两份门控（Gating）配置，并绕过语言检查。
+- **P2：Peer 来源规则与默认策略切换**：确保 `peer.source` 在全链路生效（环境变量 / ovcli 的 `plugin` 字典 / Workspace 文件；为 doctor 增加对 `plugin.*` 内部已知键的拼写检查支持——现有的 `KNOWN_OVCLI_KEYS` 仅校验顶层键，而 `plugin` 自身已经在白名单内）；将默认策略正式切换为 `git` 推导，非 Git 目录默认不派生（根目录查找同时识别 `.openviking/config.json` 标记文件）；上线 Dual-read 兜底机制；在 doctor 中增加对旧 Peer 的检测逻辑；同步更新引用了旧推导规则的 5 处 README 文件、`docs/en/agent-integrations/16-capability-reference.md`、`docs/en/configuration/02-client.md` 以及全部的中文镜像文档，并在 Changelog 中详细说明默认行为的变化与兜底恢复机制。
+- **P3：CLI 命令（后续，本次 PR 不含）**：`ov workspace show` 与 `ov peer link|migrate|forget-previous` 曾在分支上实现并撤回，先以纯插件改动合入。实现要点留档：注册表 Reader 必须独立于 `Config::from_file`（整个结构体反序列化会把缺失的键重置为默认值）；新子命令要补进 `requires_cli_config_file` 的两份门控并绕过语言检查；本次保留的只有 `ov config add|edit` 丢 `plugin` 段的修复（`serde_json::Value` 级合并）。
 - **独立 PR（涉及行为变更，需附带 Release Note）**：Claude Code、OpenCode 及 agent-plugins 这三个 MCP Proxy 停止使用 `process.cwd()` 推导 Peer（此举违反了其共享模块自身的约定，Codex 侧已有测试禁止此行为），改为由父进程在启动时（Launch-time）注入 `OPENVIKING_PEER_ID` 环境变量（仓库内部已有先例：dsh 父进程就是如此注入的，见 `examples/dsh-memory-plugin/mcp.mjs:27`；若父进程未注入，其 Proxy 仍会回退到 `process.cwd()`，本次将一并修正）；当 Actor 作用域下缺乏显式 Peer 时，触发警告并降级处理，而不是在启动时直接抛出异常。
 
 ## 备选方案（已否决）
@@ -250,11 +285,12 @@ URL 形式    https://user:token@github.com:8443/volcengine/OpenViking.git/
 - **在提交的文件中随机生成并记录 Workspace ID 作为唯一身份**：稳定性极佳，但严重依赖于该提交文件必须存在（如果仓库未采纳或未提交该文件则彻底无效），并且将该文件作为“权威”来源时，等于暴露了投毒攻击面；其“作为键”的设计思想已部分被未来的“Key, not authority”可选方向收录。
 - **设立授权门槛（Direnv 式的 Trust Gate 或 Key-not-authority）**：基于产品决策否决——在完全非交互的 Hook 场景下，任何授权机制都必然退化为要求用户对每个 Workspace 单独执行一条前置审批命令，带来的日常操作摩擦是不可接受的；其设计要点已归档在「风险与信任取舍」中备用。
 - **扩展 `ovcli.conf` 的顶层 Schema**：由于存在三个不同机制的 Schema 守门人（Pydantic 设置的 `extra:"forbid"`、SDK 的硬编码白名单、Rust 重写文件时的静默丢键行为），引入任何顶层新键对于旧版客户端都是致命的硬错误；而 `plugin` 字典是目前唯一可行的零变更安全通道。
-- **Remote 查找时支持从 origin 回退到 upstream**：由于执行 `git remote add upstream` 的瞬间会导致身份发生突变，这种不确定性不可接受；因此固定仅使用 origin，如需合并命名空间，统一走显式的 `ov peer link` 绑定流程。
+- **非 Git 目录继续按 cwd 派生（初稿的 `{cwd}` 回退档）**：被 Codex desktop 的 projectless 目录证伪——每个一次性任务铸造一个 peer。为此评估过的补救都没有采纳：读 `~/.codex/.codex-global-state.json` 里的 `projectless-thread-ids`（Electron 私有格式、1.25 MB、仅桌面版存在，SessionEnd 只有 3 秒预算）；按 app 路径设黑名单或在 codex 插件内置 `~/Documents/Codex`（依赖具体应用与操作系统的目录布局，`~/Documents/trae_projects` 之类的目录立刻又要补一条）；用户级"容器根"规则如 `~/Dev/*`（要求每个用户描述自己机器的目录布局，不是通用产品该有的默认值）；为非 Workspace 目录统一发固定的 `scratch` peer（在项目里降分、在 `actor` 下不可见的行为其实更好，但引入一个约定保留 id，且松散目录里学到的偏好也被降分；P2 若需要可在现有规则上加一条）。最终选择最朴素的一条：不是仓库就没有项目记忆，回到 peer 出现前的基线。
+- **Remote 查找时支持从 origin 回退到 upstream**：由于执行 `git remote add upstream` 的瞬间会导致身份发生突变，这种不确定性不可接受；因此固定仅使用 origin，如需合并命名空间，统一走显式的 `peer.id`。
 
 ## 开放问题
 
 1. Rust `ov` CLI 发起的数据面请求是否也应该按照 Workspace 来推导 Peer（目前它仅响应显式的 `actor_peer_id` 或 flag 参数）？若决定采纳，则需要实现 `serde_json::Value` 级别的 Overlay 覆盖合并，建议在 P3 阶段完成后再行单独评估。
 2. 模板变量集是否需要在 v1 阶段就引入诸如 `{branch}` 这类在会话生命周期内可能会发生改变的变量？目前倾向于不包含（在会话中途切换分支会导致记忆树割裂，这与 Session pin 的初衷严重冲突）。
-3. 针对 Monorepo 环境的子目录级别 Peer 划分（例如在根级别文件中维护子路径映射表，或采用“就近文件优先”的发现策略），留待 v2 版本再议；当前阶段坚定维持“一个仓库对应一个 Peer”的原则。
+3. Monorepo 的子目录级别 Peer 划分：根目录查找已经采用"就近文件优先"，子目录里的 `.openviking/config.json` 会成为该子树的配置层根，但 Git 身份仍取自外层仓库，因此默认依旧是"一个仓库对应一个 Peer"；想拆分的子项目自己在文件里改 `peer.source`（见「按场景标注 peer」）。根级别的子路径映射表不做。
 4. 目前已经可以通过不带 actor-peer 头的 `ov ls viking://user/<u>/peers` 来枚举既有 Peers 目录；对于 doctor 而言，是否值得专门开发一个带有额外元信息（如内部条目数量、最近写入时间戳）的专属清单 API？此问题留待实际实现期再做评估。

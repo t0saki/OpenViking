@@ -28,7 +28,7 @@
       "additionalProperties": true,
       "properties": {
         "source": {
-          "description": "How to derive the peer id. A preset, a template, or a list of templates tried in order — a template naming an empty variable falls through to the next. Variables: {git_remote} (normalized origin, e.g. github.com-org-repo), {git_root} and {cwd} (paths, legacy sanitation), {dir} (the workspace root's directory name).",
+          "description": "How to derive the peer id. A preset, a template, or a list of templates tried in order — a template naming an empty variable falls through to the next. The `git` default resolves only inside a repository; anywhere else it resolves to nothing and no peer is sent, so name such a directory with `id` or derive one with `cwd`. Variables: {git_remote} (normalized origin, e.g. github.com-org-repo), {git_root} (the enclosing repository root, empty outside one) and {cwd} (paths, legacy sanitation), {dir} (the workspace root's directory name, empty when the directory is not a workspace).",
           "default": "git",
           "oneOf": [
             {
@@ -39,14 +39,14 @@
               "type": "array",
               "items": { "type": "string" },
               "minItems": 1,
-              "examples": [["{git_remote}", "{git_root}", "{cwd}"]]
+              "examples": [["{git_remote}", "{git_root}"]]
             }
           ]
         },
         "id": {
           "type": "string",
           "pattern": "^[a-zA-Z0-9_.@-]+$",
-          "description": "An explicit peer id, which wins over `source`. Must match the server's identifier rule."
+          "description": "An explicit peer id, which wins over `source`. Two directories carrying the same id share one memory, which makes this the way to name a directory that is not a git repository. Must match the server's identifier rule."
         }
       }
     },
@@ -86,7 +86,7 @@
     },
     "labels": {
       "type": "object",
-      "description": "Free-form metadata for humans and for `ov workspace show`. Its keys are the user's own vocabulary and are never interpreted as settings.",
+      "description": "Free-form metadata for humans and for the plugins' doctor output. Its keys are the user's own vocabulary and are never interpreted as settings.",
       "additionalProperties": { "type": "string" }
     }
   }

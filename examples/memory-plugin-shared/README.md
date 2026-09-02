@@ -11,11 +11,11 @@ Claude Code, Codex, OpenCode, and pi memory plugins by `sync.mjs`.
 
 `lib/workspace-peer.mjs` decides which peer a workspace writes its memories under; `lib/workspace-identity.mjs` derives the values it substitutes.
 
-The peer used to be the working directory with every non-alphanumeric character replaced by `-`, so `/Users/x/Dev/OpenViking` became `-Users-x-Dev-OpenViking`. That made the identity an accident of where the repository sat: a clone on another machine, a rename, a git worktree, or simply working from a subdirectory each minted a separate, empty namespace. The default is now git's own identity, so one project keeps one memory wherever it is checked out.
+The peer used to be the working directory with every non-alphanumeric character replaced by `-`, so `/Users/x/Dev/OpenViking` became `-Users-x-Dev-OpenViking`. That made the identity an accident of where the repository sat: a clone on another machine, a rename, a git worktree, or simply working from a subdirectory each minted a separate, empty namespace. The default is now git's own identity, so one project keeps one memory wherever it is checked out. A directory that is not a repository sends no peer at all, and what is remembered there goes to your user-level space at `viking://user/<you>/memories` — an application that opens a fresh directory for every task would otherwise mint a fresh, empty peer for every task.
 
 `peer.source` picks the rule. It is read from `OPENVIKING_PEER_SOURCE`, from `plugin.peerSource` / `plugin.<harness>.peerSource` in `ovcli.conf`, or from `peer.source` in a [workspace config file](#workspace-configuration):
 
-- `git` — the default. Equivalent to the template list `["{git_remote}", "{git_root}", "{cwd}"]`: the normalized `origin` URL, else the repository root path, else the working directory. No prefix is added.
+- `git` — the default. Equivalent to the template list `["{git_remote}", "{git_root}"]`: the normalized `origin` URL, else the repository root path. Outside a repository nothing is sent. No prefix is added.
 - `cwd` — the previous behaviour, byte for byte.
 - `none` — send no peer at all. `OPENVIKING_WORKSPACE_PEER=0` still means this.
 - A template such as `"git-{git_remote}"` or `"team-{dir}"`, or a list of templates tried in order. A template whose variables are empty falls through to the next one, so a half-substituted id is never sent.
@@ -23,9 +23,11 @@ The peer used to be the working directory with every non-alphanumeric character 
 The variables a template may use:
 
 - `{git_remote}` — the normalized `origin` URL as `github.com-org-repo`; empty outside a git repository, or when there is no `origin`.
-- `{git_root}` — the repository root path, legacy sanitation.
-- `{cwd}` — the working directory, legacy sanitation.
-- `{dir}` — the repository root's directory name.
+- `{git_root}` — the repository root path, legacy sanitation; empty outside a git repository. A marker file inside a repository still leaves this the repository's own root, so marking a subdirectory does not split the default peer.
+- `{cwd}` — the working directory, legacy sanitation; never empty, and in no default chain, so a bare path becomes a peer only when you ask for one.
+- `{dir}` — the workspace root's directory name: the repository root, or the directory holding `.openviking/config.json`; empty when the directory is not a workspace.
+
+To give a directory that is not a repository its own peer, create `.openviking/config.json` there holding `{"version": 1, "peer": {"id": "my-project"}}`.
 
 So in `/Users/x/Dev/OpenViking/examples/codex-memory-plugin` with origin `git@github.com:volcengine/OpenViking.git`, the peer is `github.com-volcengine-openviking` — the same from any subdirectory, any worktree, any machine, any clone.
 
