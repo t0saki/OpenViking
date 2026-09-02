@@ -126,7 +126,7 @@ Core modules at a glance (detailed further in the per-dimension sections):
 | `batch-send.mjs` | Executes writes in batches of 100, handles per-message degradation on 404/405 errors, and queues the leading contiguous prefix | cc / codex / opencode + the agent-hook family |
 | `profile-inject.mjs` | Injects the profile and available-memory index at session start | 9 harnesses (all but openclaw / hermes) |
 | `recall-compress-core.mjs` | Manages the recall compression prompt, URI edit-distance repair, and caching | claude-code |
-| `capture-utils.mjs` | Handles message normalization, injection back-flow guarding, and capture filtering | codex / opencode / dsh / pi |
+| `capture-utils.mjs` | Handles message normalization, injection back-flow guarding, and capture filtering | codex / opencode / dsh / pi / zcode |
 | `credentials.mjs` | Credential resolution chain (see [§3.1.3](#_3-1-3-credential-systems)) | All JS-based |
 | `session-model.mjs` | Session ID prefix derivation and bypass globbing | All JS-based |
 | `async-writer.mjs` | Detaches the write path (drains stdin → spawn → approve → write → unref). Falls back to synchronous writing if spawn fails | cc / codex / zcode |
