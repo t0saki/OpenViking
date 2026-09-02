@@ -111,9 +111,9 @@ per-harness 章节（档案卡）只写差异；所有共享事实均在本章�
 
 ## 2.2 memory-plugin-shared 共享层
 
-`examples/memory-plugin-shared/lib/` 下共 18 个 `.mjs` 模块，是 JS 系 harness 的唯一事实源。两种消费形态：
+`examples/memory-plugin-shared/lib/` 下共 20 个 `.mjs` 模块，是 JS 系 harness 的唯一事实源。两种消费形态：
 
-1. **Vendoring（复制）**：由 `sync.mjs` 分发到 7 个目标，每个文件首行加 `// GENERATED FROM ... DO NOT EDIT.`（因此 vendored 副本行号 = lib 源行号 + 1，交叉读行号引用时要换算）。分发清单：claude-code / codex / opencode 各 17 个（HARNESS 13 + mcp-proxy-core + mcp-proxy-config + async-writer + batch-send）；dsh 15 个（HARNESS 13 + stdio 代理需要的两个 mcp-proxy-* 模块）；pi 13 个；zcode 全量 19 个；agent-plugins 5 个。当前 HEAD 各目标与 lib 源零漂移。
+1. **Vendoring（复制）**：由 `sync.mjs` 分发到 7 个目标，每个文件首行加 `// GENERATED FROM ... DO NOT EDIT.`（因此 vendored 副本行号 = lib 源行号 + 1，交叉读行号引用时要换算）。每个目标只发它真正 import 的模块，因此分发清单跟的是 import 图而不是 harness。在每个 hook 型插件都会拿的 12 个 hook 模块（`sync.mjs` 里的 `HARNESS_SHARED_FILES`）之上：pi 加 setup-wizard（13 个）；dsh 加 stdio 代理需要的两个 mcp-proxy-*（14 个）；opencode 加 setup-wizard、两个 mcp-proxy-* 与 batch-send（16 个）；zcode 加两个 mcp-proxy-*、batch-send、async-writer、agent-hook-runtime 与 agent-uri-guard（18 个）；claude-code / codex 加 setup-wizard、两个 mcp-proxy-*、batch-send、async-writer 与 doctor-core（各 18 个）。agent-plugins 没有 hook，因此一个 hook 模块都不拿，只有 credentials、debug-log、两个 mcp-proxy-* 与 workspace-peer（5 个）。当前 HEAD 各目标与 lib 源零漂移。
 2. **相对路径直接 import（不复制）**：cursor / trae / trae-cn 直接 `import "../../memory-plugin-shared/lib/..."`；安装器把包与共享 lib 一起复制到 `~/.openviking/agent-integrations/{<client>,memory-plugin-shared}/`，使相对层级成立。运行期这个共享目录被这几个 harness 共用，任一重装都会整体覆盖。
 
 核心模块速览（细节在各维度章展开）：
@@ -515,7 +515,7 @@ MCP `write` / REST `content/write` 的三道 guard（`content_write.py`）：可
 ## zcode
 
 - **集成文档**：[社区插件 → ZCode](./08-community-plugins.md)
-- **形态**：配置驱动（合并进 `~/.zcode/cli/config.json`，强制 `hooks.enabled=true`）+ MCP 代理。4 hook：SessionStart(30s) / UserPromptSubmit(20s) / PreToolUse:Read\|Glob\|Grep(5s) / Stop(30s)。唯一全量 vendoring 18 个共享文件的 harness。版本 0.1.1。
+- **形态**：配置驱动（合并进 `~/.zcode/cli/config.json`，强制 `hooks.enabled=true`）+ MCP 代理。4 hook：SessionStart(30s) / UserPromptSubmit(20s) / PreToolUse:Read\|Glob\|Grep(5s) / Stop(30s)。共 vendoring 18 个共享模块，也是唯一 vendoring `agent-hook-runtime` 那一对、而不是相对 import 的 harness。版本 0.1.1。
 - **能力亮点**：以 rollout 文件 `~/.zcode/cli/rollout/model-io-<sid>.jsonl` 为增量真相源（`lastTurnId` 差集补齐漏掉的 Stop）；Stop 默认 detach（Ctrl+C 不丢写入）。
 - **行为要点**：每 Stop commit（keep 0）；捕获路径仅剥离三类注入块（不做额外文本清洗，[§3.2.6](#_3-2-6-注入回流防护)）；首次捕获会一次性读取整个 rollout（长会话首装时单次推送量大）。
 - **配置**：仅 env；`OPENVIKING_WRITE_PATH_ASYNC` 对 zcode 生效。
