@@ -222,7 +222,7 @@ Family A resolves credentials in the following order (refer to individual profil
 | `{cwd}` | The working directory, under the legacy sanitation above | Never — and it is in no default chain, so a bare path becomes a peer only when you ask for one |
 | `{dir}` | The workspace root's directory name: the repository root, or the directory holding `.openviking/config.json` | The directory is not a workspace |
 
-To give a directory that is not a repository its own peer, create `.openviking/config.json` there holding `{"version": 1, "peer": {"id": "my-project"}}`.
+To give a directory that is not a repository its own peer under claude-code or codex, create `.openviking/config.json` there holding `{"version": 1, "peer": {"id": "my-project"}}`; every other harness needs an explicit `OPENVIKING_PEER_ID` instead.
 
 **Identity semantics**: Every clone of one repository shares one peer, so project memory follows the project rather than the checkout. A fork carries a different `origin` and is therefore a separate peer by default; reviewing an external PR via `gh pr checkout` does not change `origin`, so it does not change identity either. Derivation is pure filesystem work (`workspace-identity.mjs`) with no `git` subprocess, which keeps it inside the tightest hook budget and keeps it working where `git` is absent from `PATH` or would refuse the repo over dubious ownership. Worktrees converge onto the main repository via `commondir`, a submodule keeps its own identity, and `$HOME` and `/` are never treated as workspace roots.
 

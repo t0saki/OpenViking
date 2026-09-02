@@ -70,13 +70,15 @@ A git repository derives its peer from its `origin`, so every clone, worktree an
 
 A directory that is neither a repository nor marked gets no peer at all, and what is remembered there goes to the user-level space — which is why a scratch directory sees no project memory of its own.
 
-To give a directory its own memory, create `.openviking/config.json` in it:
+To give a directory its own memory under Claude Code or Codex, create `.openviking/config.json` in it:
 
 ```json
 {"version": 1, "peer": {"id": "my-project"}}
 ```
 
 Two directories carrying the same `peer.id` share one memory. Adding `"recall": {"peer_scope": "actor"}` to the same file limits recall to this project.
+
+Other harnesses do not read that file: under them, pin a peer with the `OPENVIKING_PEER_ID` environment variable instead.
 
 Do not invent other keys or commands for this: that file is the whole interface, and no `ov` subcommand creates, renames or merges a peer.
 

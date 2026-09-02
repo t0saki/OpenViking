@@ -12,8 +12,8 @@ and `OPENVIKING_PENDING_DIR` relocate individual pieces.
 | `~/.openviking/ovcli.conf` | Client connection: `url`, `api_key`, `account`, `user`, optional `plugin.claude_code.*` tuning. Mode 0600. |
 | `~/.openviking/ov.conf` | Server config. The plugin reads only `server.url/host/port`, `server.root_api_key` (last-resort key) and the legacy `claude_code` block. |
 | `~/.openviking/ovcli.conf.<name>` | Saved CLI profiles (`ov config switch` copies one over `ovcli.conf`). `ovcli.conf.bak.<epoch>` are installer backups, not profiles. |
-| `<repo root>/.openviking/config.json` / `config.local.json` | Workspace config layers, `version: 1` required: `peer.source`, `peer.id`, `recall.*`, `capture.*`, `bypass.session_patterns`, `labels`. `config.json` is committed and shared; `config.local.json` is private and gitignored. Trusted without a prompt, but connection and credential keys (`url`, `api_key`, `account`, `user`, `extra_headers`, …) are stripped with a warning, `${VAR}` is never expanded, and `cli_config_profile` is refused. A blanket `.openviking/` rule in `.gitignore` stops `config.json` from ever being committed — narrow it to `.openviking/media/` and `.openviking/downloads/`. |
-| `~/.openviking/workspaces/<slot>.json` | Per-machine workspace registry, one file per workspace (`<dir name>-<hash>.json`, mode 0600). Outranks both workspace files and is the only layer that may set `cli_config_profile`. An entry recorded for a different repository is ignored, not inherited. |
+| `<repo root>/.openviking/config.json` / `config.local.json` | Workspace config layers, `version: 1` required: `peer.source`, `peer.id`, `recall.*`, `capture.*`, `bypass.session_patterns`, `labels`. `config.json` is committed and shared; `config.local.json` is private and gitignored. Trusted without a prompt, but connection and credential keys (`url`, `api_key`, `account`, `user`, `extra_headers`, …) are stripped with a warning and `${VAR}` is never expanded. A blanket `.openviking/` rule in `.gitignore` stops `config.json` from ever being committed — narrow it to `.openviking/media/` and `.openviking/downloads/`. |
+| `~/.openviking/workspaces/<slot>.json` | Per-machine workspace registry, one file per workspace (`<dir name>-<hash>.json`, mode 0600). Outranks both workspace files, and nothing writes it — a user creates the file by hand. An entry recorded for a different repository is ignored, not inherited. |
 | `~/.claude/plugins/installed_plugins.json` | Install registry: `plugins["openviking-memory@openviking"][0].installPath/version/lastUpdated`. |
 | `~/.claude/plugins/known_marketplaces.json` | Marketplace `openviking` → `source` (`directory` path or `github`), `installLocation`. |
 | `~/.claude/plugins/cache/openviking/openviking-memory/<version>/` | The copy Claude Code actually runs. Keyed by `plugin.json` version. |
@@ -64,7 +64,6 @@ Stored as `.openviking/config.json` in the directory to be named; that directory
 | "make this folder remember separately" | Write `peer.id` in `.openviking/config.json` in that folder |
 | "these two repos should share memory" | Write the same `peer.id` in `.openviking/config.json` in both |
 | "only recall this project's memories" | Set `recall.peer_scope` to `"actor"` in the same file |
-| "why is there no project memory here" | The directory is in no repository and has no `.openviking/config.json` above it, so no peer is sent and what was remembered went to the user-level space; a `peer.id` in that file changes it |
 | "go back to the old per-directory behaviour" | `peer.source: "cwd"` in the same file, or `OPENVIKING_PEER_SOURCE=cwd` for every directory on this machine |
 | "do not separate by project at all" | `peer.source: "none"` in the same file |
 

@@ -224,7 +224,7 @@ per-harness 章节（档案卡）只写差异；所有共享事实均在本章�
 | `{cwd}` | 当前工作目录，按上述旧 sanitation 处理 | 从不为空——它也不在任何默认链里，裸路径只有在你明确要求时才会成为 peer |
 | `{dir}` | 工作区根目录的目录名：仓库根，或放着 `.openviking/config.json` 的那个目录 | 该目录不是工作区 |
 
-要让一个不是仓库的目录拥有独立 peer，在该目录下创建 `.openviking/config.json`，写上 `{"version": 1, "peer": {"id": "my-project"}}`。
+在 claude-code 和 codex 下，要让一个不是仓库的目录拥有独立 peer，在该目录下创建 `.openviking/config.json`，写上 `{"version": 1, "peer": {"id": "my-project"}}`；其余 harness 只能改用显式的 `OPENVIKING_PEER_ID`。
 
 **身份语义**：同一仓库的所有 clone 共用一个 peer，项目记忆跟着项目走而非跟着 checkout 走。fork 的 `origin` 不同，因此默认就是另一个 peer；用 `gh pr checkout` 评审外部 PR 不改 `origin`，身份也就不受影响。派生是纯文件系统操作（`workspace-identity.mjs`），不起 `git` 子进程，因此能塞进最紧的 hook 预算，也能在 `git` 不在 `PATH` 上、或因 dubious ownership 拒绝该仓库时照常工作。worktree 经 `commondir` 收敛回主仓库，submodule 保留自己的身份，`$HOME` 与 `/` 永远不会被当作 workspace 根。
 

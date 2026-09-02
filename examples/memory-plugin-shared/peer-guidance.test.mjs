@@ -73,10 +73,14 @@ test("no document still promises the working directory, or a command that does n
 
   const retiredChain = /\{git_remote\}"?,\s*"?\{git_root\}"?,\s*"?\{cwd\}/;
   const withdrawnCommand = /\bov (workspace|peer)\b/;
+  // The changelogs are generated from GitHub Releases, so a release note that
+  // happens to name one of these commands is not something a human can edit here.
+  const generated = /docs\/(en|zh)\/about\/02-changelog\.md$/;
   for (const path of new Set(files)) {
     const rel = relative(ROOT, path);
     const text = readFileSync(path, "utf-8");
     assert.ok(!retiredChain.test(text), `${rel} still spells the default chain with {cwd} in it`);
+    if (generated.test(rel)) continue;
     assert.ok(!withdrawnCommand.test(text), `${rel} names an ov workspace / ov peer command, which does not exist`);
   }
 });
@@ -87,7 +91,11 @@ test("the canonical page agrees with the code it documents", () => {
   assert.ok(page.includes(rendered), `the page must spell the default chain as ${rendered}`);
 
   const known = new Set(Object.keys(resolveWorkspaceIdentity({ cwd: ROOT, cache: false }).vars));
-  const section = page.slice(page.indexOf("### Workspace Peer"), page.indexOf("### What a Workspace File May Not Set"));
+  const start = page.indexOf("### Workspace Peer");
+  const end = page.indexOf("### What a Workspace File May Not Set");
+  assert.ok(start >= 0, "the page no longer has a '### Workspace Peer' heading");
+  assert.ok(end >= 0, "the page no longer has a '### What a Workspace File May Not Set' heading");
+  const section = page.slice(start, end);
   const documented = new Set([...section.matchAll(/\{([a-z_]+)\}/g)].map((m) => m[1]));
   assert.ok(documented.size >= 4, "the variable table went missing");
   for (const name of documented) {
