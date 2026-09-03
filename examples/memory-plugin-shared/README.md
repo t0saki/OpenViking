@@ -26,6 +26,7 @@ The variables a template may use:
 - `{git_root}` — the repository root path, legacy sanitation; empty outside a git repository. A marker file inside a repository still leaves this the repository's own root, so marking a subdirectory does not split the default peer.
 - `{cwd}` — the working directory, legacy sanitation; never empty, and in no default chain, so a bare path becomes a peer only when you ask for one.
 - `{dir}` — the workspace root's directory name: the repository root, or the directory holding `.openviking/config.json`; empty when the directory is not a workspace.
+- `{harness}` — the name of the agent running, the same one the User-Agent carries; never empty. No preset uses it, so agents share one repository's memory unless a template such as `"{git_remote}-{harness}"` asks them not to. The MCP proxy takes no part in derivation, so a read path that goes only through it cannot resolve it.
 
 To give a directory that is not a repository its own peer, create `.openviking/config.json` there holding `{"version": 1, "peer": {"id": "my-project"}}`.
 

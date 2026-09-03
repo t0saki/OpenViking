@@ -230,6 +230,7 @@ peer 是用户空间下的一段路径前缀——`viking://user/<you>/peers/<pe
 | `{git_root}` | 仓库根路径，所有非字母数字字符替换成 `-` | 不在 git 仓库中。仓库内某个子目录放了 `.openviking/config.json` 时，它仍然是仓库自己的根，因此标记子目录不会拆散默认 peer |
 | `{cwd}` | 工作目录，所有非字母数字字符替换成 `-` | 从不为空——它也不在任何默认链里，裸路径只有在你明确要求时才会成为 peer |
 | `{dir}` | 工作区根目录的目录名：仓库根，或放着 `.openviking/config.json` 的那个目录 | 该目录不是工作区 |
+| `{harness}` | 当前 agent 的名字（`claude-code`、`codex`、`dsh`、`opencode`、`pi`、`cursor`、`trae`、`trae-cn`、`zcode`） | 从不为空——但 MCP proxy 不参与推导，所以只走 proxy 的读路径解析不出它 |
 
 在 `/Users/x/Dev/OpenViking/examples/codex-memory-plugin` 目录下、`origin` 为 `git@github.com:volcengine/OpenViking.git` 时，peer 是 `github.com-volcengine-openviking`——无论从哪个子目录、哪个 worktree、哪台机器、哪份 clone 得到的都是同一个值。因此同一仓库的所有 clone 共享一个 peer，而 fork 的 `origin` 不同，默认就是独立的 peer。推导过程直接读取仓库文件而不调用 `git`，因此 `PATH` 中没有 `git` 时同样可用；URL 会先归一化，使同一仓库的 ssh 与 https 写法收敛到同一个值，URL 中内嵌的 token 也不会进入 peer id。
 
@@ -243,6 +244,7 @@ peer 是用户空间下的一段路径前缀——`viking://user/<you>/peers/<pe
 | 长期使用但不是仓库的目录 | 创建 `.openviking/config.json`，写上 `peer.id` |
 | monorepo 里某个子项目要单独记忆 | 在子目录放 `config.json`，写 `peer.source: "{git_remote}-{dir}"`。只放标记文件仍会沿用仓库 peer，因为 `{git_remote}` 先解析成功 |
 | 一次性任务目录（应用按日期新建的目录、临时解包目录） | 什么都不用做，记忆进入用户级空间 |
+| 同一仓库下各个 agent 想各存各的 | `peer.source: "{git_remote}-{harness}"`。默认不这么分——跨 agent 共享一份项目记忆通常才是想要的，所以这一档得自己写 |
 | 几个目录共享一份记忆 | 各处写同一个 `peer.id` |
 | 不想按项目区分 | `peer.source: "none"`（等同于 `OPENVIKING_WORKSPACE_PEER=0`） |
 

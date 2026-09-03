@@ -137,6 +137,31 @@ test("a template can shape the id, and a list is tried in order", async () => {
   assert.equal(chain.origin, "team-{dir}");
 });
 
+test("{harness} splits one repository per agent, for whoever asks for it", async () => {
+  const { root, env } = await repo();
+  const template = "{git_remote}-{harness}";
+  assert.equal(
+    resolve(root, env, { peerSource: template, harness: "codex" }).peerId,
+    "github.com-volcengine-openviking-codex",
+  );
+  assert.equal(
+    resolve(root, env, { peerSource: template, clientId: "cursor" }).peerId,
+    "github.com-volcengine-openviking-cursor",
+    "the agent-hook harnesses carry the name as clientId",
+  );
+  assert.equal(
+    resolve(root, env, { peerSource: template, harness: "Trae CN/2" }).peerId,
+    "github.com-volcengine-openviking-Trae-CN-2",
+    "a harness name is sanitized like every other variable",
+  );
+
+  // Without a harness the template is one empty variable, so it falls through
+  // rather than handing back a peer with a dangling dash.
+  const chain = resolve(root, env, { peerSource: [template, "{git_remote}"] });
+  assert.equal(chain.peerId, "github.com-volcengine-openviking");
+  assert.equal(chain.origin, "{git_remote}");
+});
+
 test("a template naming only empty variables resolves to no peer at all", async () => {
   const plain = await repo({ git: false });
   const unresolved = resolve(plain.root, plain.env, { peerSource: ["{git_remote}"] });

@@ -56,6 +56,7 @@ export function resolveConfig(input = {}, env = process.env, cwd = process.cwd()
     peerId: explicitPeerId,
     explicitPeerId,
     userAgent: buildUserAgent("dsh", PLUGIN_VERSION),
+    harness: "dsh",
     recallLimitConfigured: Object.prototype.hasOwnProperty.call(input, "recallLimit"),
     recallQueryExpansionConfigured: Object.prototype.hasOwnProperty.call(input, "recallQueryExpansion"),
   };

@@ -243,6 +243,9 @@ test("identity exposes every template variable, git and non-git alike", async ()
   assert.equal(identity.vars.git_root, legacySanitize(root));
   assert.equal(identity.vars.cwd, legacySanitize(deep));
   assert.equal(identity.vars.dir, sanitizePeerId(root.split("/").pop()));
+  // `harness` belongs to the caller, not here: this result is cached on disk
+  // under a cwd-only key, which two harnesses in one directory would share.
+  assert.deepEqual(Object.keys(identity.vars).sort(), ["cwd", "dir", "git_remote", "git_root"]);
 
   const plain = await tempRoot("plain");
   const outside = resolveWorkspaceIdentity({ cwd: plain, env, cache: false });

@@ -33,6 +33,7 @@ export class OpenVikingRuntime {
         peerId: this.config.explicitPeerId,
         peerSource: this.config.peerSource,
         workspacePeer: this.config.workspacePeer,
+        harness: this.config.harness,
       },
       cwd,
     });

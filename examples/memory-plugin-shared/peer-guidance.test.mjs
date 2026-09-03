@@ -90,7 +90,9 @@ test("the canonical page agrees with the code it documents", () => {
   const rendered = `[${PEER_SOURCE_PRESETS.git.map((t) => `"${t}"`).join(", ")}]`;
   assert.ok(page.includes(rendered), `the page must spell the default chain as ${rendered}`);
 
-  const known = new Set(Object.keys(resolveWorkspaceIdentity({ cwd: ROOT, cache: false }).vars));
+  // `harness` is the one variable the caller supplies rather than the identity,
+  // which is cached under a cwd-only key and so cannot hold it.
+  const known = new Set([...Object.keys(resolveWorkspaceIdentity({ cwd: ROOT, cache: false }).vars), "harness"]);
   const start = page.indexOf("### Workspace Peer");
   const end = page.indexOf("### What a Workspace File May Not Set");
   assert.ok(start >= 0, "the page no longer has a '### Workspace Peer' heading");

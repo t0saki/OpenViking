@@ -8,7 +8,7 @@
 
 1. **项目身份改为基于 Git 推导**。使用归一化后的 origin remote（如 `github.com-volcengine-openviking`）作为 peer id。如此一来，同一个仓库无论在何台设备、哪个克隆副本、哪个子目录或哪个 worktree 下运行，其项目身份均保持一致。
 2. **非 Git 仓库目录默认不再分配 peer**，其记忆将写入用户级空间——恢复到 peer 功能引入前的默认行为。此举主要是为了应对 Codex desktop 等场景：该类工具会为每个临时任务新建一个日期目录，若按原有规则，每个一次性任务都会生成一个全新的空 peer，既无法检索历史记忆，又会在服务端堆积大量仅含零星记忆的命名空间。若需让某个非 Git 目录拥有独立记忆，只需在其中创建 `.openviking/config.json` 并指定 `peer.id` 即可。
-3. **peer 来源调整为可配置项** `peer.source`：内置 `git`（新默认值）、`cwd`（旧行为，保持逐字节兼容）、`none`（彻底禁用）三种模式，同时支持诸如 `"{git_remote}-{dir}"` 的自定义模板。
+3. **peer 来源调整为可配置项** `peer.source`：内置 `git`（新默认值）、`cwd`（旧行为，保持逐字节兼容）、`none`（彻底禁用）三种模式，同时支持诸如 `"{git_remote}-{harness}"` 的自定义模板。
 4. **引入三层配置架构**：包括 `<仓库根>/.openviking/config.json`（提交至 Git，供团队共享）、`config.local.json`（供个人覆盖，不提交）、以及 `~/.openviking/workspaces/`（本机私有，用户对任何仓库均有最终覆盖权）。这三层配置共用同一套 Schema 与合并规则，其优先级高于全局的 `ovcli.conf`，但始终低于环境变量。
 
 **旧记忆处理方案**：无需进行任何数据迁移。旧的 cwd 身份随时可在本地重新计算，recall 检索时会自动将其带入进行双向读取（dual-read），且不设截止期限。此外，默认的跨 peer 广度扫描同样会召回旧记忆，仅在结果排序时相对靠后。
@@ -180,6 +180,8 @@ Workspace 根目录的确定规则：从生效的 cwd 向上查找，最近的�
 - 支持模板字符串：例如 `"git-{git_remote}"`、`"{git_root}"`、`"team-{dir}"`。
 - 支持模板数组：按序尝试，如果某条模板中的变量解析为空，则整条直接落空并尝试下一条；全部落空则等价于 `"none"`。
 
+`{harness}` 让「同一仓库下不同 agent 各存各的记忆」成为可写得出来的配置，但**没有任何预设使用它**：跨 agent 共享一份项目记忆通常才是用户想要的那一侧，所以拆分是 opt-in。此外 MCP proxy 不参与 peer 推导（其 cwd 不是可靠身份，见「实现落点」），因此模板里用了 `{harness}` 时，只经由 proxy 的读路径解析不出该变量。
+
 v1 支持的变量集：
 
 | 变量 | 含义 | 空值条件 |
@@ -188,6 +190,7 @@ v1 支持的变量集：
 | `{git_root}` | 仓库根路径（按照 legacy 规则进行字符清理）；标记文件在仓库内部命中时仍是仓库根 | 非 Git 仓库 |
 | `{cwd}` | 生效的 cwd（按照 legacy 规则进行字符清理）；默认链路不再使用，仅供 `cwd` 预设与自定义模板 | 无 |
 | `{dir}` | Workspace 根目录的目录名（已清理特殊字符） | 不是 Workspace |
+| `{harness}` | 当前 agent 的名字，与 User-Agent 携带的一致（`claude-code`、`codex`、`dsh`、`opencode`、`pi`、`cursor`、`trae`、`trae-cn`、`zcode`） | 从不为空 |
 
 预设 `"git"` 实际上等价于模板数组 `["{git_remote}", "{git_root}"]`：优先使用 remote，若无 remote 则退回到仓库根路径（至少修复了子目录分裂的问题），若不是 Git 仓库则**落空**——不发送 peer 头，也不写入 `peer_id`，记忆进入用户级空间 `viking://user/<u>/memories`。默认情况下不添加任何前缀——因为路径类 ID（`{git_root}` / `{cwd}`）在 POSIX 系统下必然以 `-` 开头，与 remote 的表现形态天然不冲突；如果用户需要前缀，可以自定义模板（如 `"git-{git_remote}"`）。
 
@@ -216,6 +219,7 @@ v1 支持的变量集：
 | Monorepo 里某个子项目要单独记忆 | 子目录放 `config.json`，`peer.source: "{git_remote}-{dir}"`；不写则沿用仓库 peer |
 | 一次性任务目录（Codex desktop 的日期目录、临时解包目录） | 什么都不做，记忆进用户级空间 |
 | 几个目录共享一份记忆 | 各处 `peer.id` 写同一个值 |
+| 同一仓库下各个 agent 要各存各的 | `peer.source: "{git_remote}-{harness}"` |
 | 不想按项目分 | `peer.source: "none"`（等价 `OPENVIKING_WORKSPACE_PEER=0`） |
 
 ### 召回隔离
@@ -250,7 +254,7 @@ URL 形式    https://user:token@github.com:8443/volcengine/OpenViking.git/
 
 由于 userinfo 在归一化过程中被丢弃，因此 remote URL 中内嵌 token 的情况不会泄露到 Peer ID 中。大小写折叠使得同一仓库的不同拼写方式（如 SSH 与 HTTPS、大小写差异）都能收敛到同一个身份；其代价是，在极少数区分大小写的 Forge 平台上，仅大小写不同的两个仓库会合并到同一个命名空间（原始的拼写会保留在注册表的 `label` 中）。
 
-字符清理（Sanitize）存在两套规则，严禁混用：`{git_root}` 与 `{cwd}` 遵循 **Legacy 规则进行逐字节替换**（即 `[^A-Za-z0-9]` → `-`，不折叠连续字符、保留前导 `-`），确保与 `peer.source: "cwd"` 在 Legacy ID 重算时达到字节级完全一致；而 `{git_remote}` 与 `{dir}` 使用新规则（适配服务端字符集 `^[a-zA-Z0-9_.@-]+$`，详见 `openviking/core/identifiers.py:8`）：非法字符替换为 `-`，折叠连续的 `-`，去除首尾的 `-.`，保留 `.` 使得类似 `github.com` 的域名具备可读性；规避 `__self` 与 `ext-`（实现期核实：二者在服务端校验层并非保留字——`__self` 只是 `session/memory/memory_isolation_handler.py` 的内部哨兵，`ext-` 只是 `ingest/peer.py` 的客户端编码约定；仍然规避，以免与它们撞名）；超过 100 字符时进行截断，并在末尾追加原文哈希的前 12 位（远低于 AGFS 的 255 字节段上限）。
+字符清理（Sanitize）存在两套规则，严禁混用：`{git_root}` 与 `{cwd}` 遵循 **Legacy 规则进行逐字节替换**（即 `[^A-Za-z0-9]` → `-`，不折叠连续字符、保留前导 `-`），确保与 `peer.source: "cwd"` 在 Legacy ID 重算时达到字节级完全一致；而 `{git_remote}`、`{dir}` 与 `{harness}` 使用新规则（适配服务端字符集 `^[a-zA-Z0-9_.@-]+$`，详见 `openviking/core/identifiers.py:8`）：非法字符替换为 `-`，折叠连续的 `-`，去除首尾的 `-.`，保留 `.` 使得类似 `github.com` 的域名具备可读性；规避 `__self` 与 `ext-`（实现期核实：二者在服务端校验层并非保留字——`__self` 只是 `session/memory/memory_isolation_handler.py` 的内部哨兵，`ext-` 只是 `ingest/peer.py` 的客户端编码约定；仍然规避，以免与它们撞名）；超过 100 字符时进行截断，并在末尾追加原文哈希的前 12 位（远低于 AGFS 的 255 字节段上限）。
 
 示例：在 `/Users/x/Dev/OpenViking/examples/codex-memory-plugin` 目录下，且 origin 为 `git@github.com:volcengine/OpenViking.git` 时，推导出的 Peer 为 `github.com-volcengine-openviking`——无论是在任何子目录、任何 worktree、任何机器，还是任何一份克隆，身份都保持绝对一致。
 

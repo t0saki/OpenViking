@@ -223,6 +223,7 @@ per-harness 章节（档案卡）只写差异；所有共享事实均在本章�
 | `{git_root}` | 仓库根路径，按上述旧 sanitation 处理 | 不在 git 仓库中。仓库内某个子目录放了标记文件时，它仍然是仓库自己的根，因此标记子目录不会拆散默认 peer |
 | `{cwd}` | 当前工作目录，按上述旧 sanitation 处理 | 从不为空——它也不在任何默认链里，裸路径只有在你明确要求时才会成为 peer |
 | `{dir}` | 工作区根目录的目录名：仓库根，或放着 `.openviking/config.json` 的那个目录 | 该目录不是工作区 |
+| `{harness}` | 当前 agent 的名字，与 User-Agent 里那个一致 | 从不为空——但 MCP proxy 不参与推导（它的 cwd 不是可靠身份），只走 proxy 的读路径解析不出它 |
 
 在 claude-code 和 codex 下，要让一个不是仓库的目录拥有独立 peer，在该目录下创建 `.openviking/config.json`，写上 `{"version": 1, "peer": {"id": "my-project"}}`；其余 harness 只能改用显式的 `OPENVIKING_PEER_ID`。
 

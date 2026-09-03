@@ -193,6 +193,7 @@ export function loadConfig(cwd = process.cwd()) {
     peerId,
     workspacePeer,
     peerSource: str(process.env.OPENVIKING_PEER_SOURCE, null) ?? cx.peerSource,
+    harness: "codex",
     userAgent: USER_AGENT,
     timeoutMs,
     recallTimeoutMs,

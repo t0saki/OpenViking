@@ -28,12 +28,12 @@
       "additionalProperties": true,
       "properties": {
         "source": {
-          "description": "How to derive the peer id. A preset, a template, or a list of templates tried in order — a template naming an empty variable falls through to the next. The `git` default resolves only inside a repository; anywhere else it resolves to nothing and no peer is sent, so name such a directory with `id` or derive one with `cwd`. Variables: {git_remote} (normalized origin, e.g. github.com-org-repo), {git_root} (the enclosing repository root, empty outside one) and {cwd} (paths, legacy sanitation), {dir} (the workspace root's directory name, empty when the directory is not a workspace).",
+          "description": "How to derive the peer id. A preset, a template, or a list of templates tried in order — a template naming an empty variable falls through to the next. The `git` default resolves only inside a repository; anywhere else it resolves to nothing and no peer is sent, so name such a directory with `id` or derive one with `cwd`. Variables: {git_remote} (normalized origin, e.g. github.com-org-repo), {git_root} (the enclosing repository root, empty outside one) and {cwd} (paths, legacy sanitation), {dir} (the workspace root's directory name, empty when the directory is not a workspace) and {harness} (the name of the agent running, never empty; no preset uses it, so agents share one repository's memory unless a template asks otherwise).",
           "default": "git",
           "oneOf": [
             {
               "type": "string",
-              "examples": ["git", "cwd", "none", "{git_remote}", "team-{dir}"]
+              "examples": ["git", "cwd", "none", "{git_remote}", "team-{dir}", "{git_remote}-{harness}"]
             },
             {
               "type": "array",

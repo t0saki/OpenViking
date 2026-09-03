@@ -221,6 +221,7 @@ Family A resolves credentials in the following order (refer to individual profil
 | `{git_root}` | The repository root path, under the legacy sanitation above | Outside a git repository. A marker file inside a repository still leaves this the repository's own root, so marking a subdirectory does not split the default peer |
 | `{cwd}` | The working directory, under the legacy sanitation above | Never — and it is in no default chain, so a bare path becomes a peer only when you ask for one |
 | `{dir}` | The workspace root's directory name: the repository root, or the directory holding `.openviking/config.json` | The directory is not a workspace |
+| `{harness}` | The name of the agent running, the same one the User-Agent carries | Never — but the MCP proxy takes no part in derivation (its cwd is not a reliable identity), so a read path that goes only through it cannot resolve it |
 
 To give a directory that is not a repository its own peer under claude-code or codex, create `.openviking/config.json` there holding `{"version": 1, "peer": {"id": "my-project"}}`; every other harness needs an explicit `OPENVIKING_PEER_ID` instead.
 

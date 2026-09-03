@@ -13,7 +13,7 @@
  * The old behaviour is still one word away, byte for byte.
  */
 
-import { legacySanitize, resolveWorkspaceIdentity } from "./workspace-identity.mjs";
+import { legacySanitize, resolveWorkspaceIdentity, sanitizePeerId } from "./workspace-identity.mjs";
 
 /**
  * `git` is the default, and it resolves only inside a repository: the remote
@@ -109,7 +109,13 @@ export function resolveEffectivePeerId({ cfg = {}, cwd = "", identity = null, en
   const templates = peerSourceTemplates(cfg.peerSource, onWarn);
   if (!templates.length) return { peerId: "", source: "none", origin: "none", legacyPeerId: "" };
 
-  const vars = (identity || resolveWorkspaceIdentity({ cwd, env })).vars || {};
+  // `harness` is composed here rather than in the identity, whose result is
+  // cached on disk under a cwd-only key — two harnesses in one directory would
+  // otherwise read each other's peer back out of that cache.
+  const vars = {
+    ...((identity || resolveWorkspaceIdentity({ cwd, env })).vars || {}),
+    harness: sanitizePeerId(cfg.harness || cfg.clientId || ""),
+  };
   const legacyPeerId = deriveWorkspacePeerId(cwd);
   for (const template of templates) {
     const peerId = renderPeerTemplate(template, vars);
