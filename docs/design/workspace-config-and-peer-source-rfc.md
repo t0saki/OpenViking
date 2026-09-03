@@ -222,6 +222,18 @@ v1 支持的变量集：
 | 同一仓库下各个 agent 要各存各的 | `peer.source: "{git_remote}-{harness}"` |
 | 不想按项目分 | `peer.source: "none"`（等价 `OPENVIKING_WORKSPACE_PEER=0`） |
 
+### 更进一步的自定义（记录方向，不在本 RFC 范围）
+
+模板变量集与 `peer.source` 的候选链是可以继续加东西的，以下两条已经评估过可行性，但都不随本 RFC 交付：
+
+**更多现成变量。** `{git_branch}` 的读取成本很低：`resolveGitDir` 已经算出了 worktree 自己的 gitdir（linked worktree 的 `HEAD` 在自己的 gitdir 里而不是 commondir 里，因此必须用前者，否则读到的是主 worktree 的分支），只需多读一次 `HEAD` 并匹配 `ref: refs/heads/<name>`，detached HEAD 取不到名字就按既有的 all-or-nothing 规则整条落空。同理，`normalizeGitRemote` 产出的 `host/path` 再切一刀就能免费得到 `{git_host}` / `{git_owner}` / `{git_repo}`，让 `"{git_owner}-{git_repo}"` 这类更短的 id 写得出来。
+
+不做的理由不在实现，而在语义与缓存：分支是天天在换的，按分支拆 peer 意味着每开一个 feature 分支就进一个空的记忆命名空间、切回来才找得到，这与 Session pin「整个会话冻结同一个 peer」的初衷直接冲突；而 identity 结果有 60 秒磁盘缓存，`git checkout` 之后最多 60 秒内 peer 仍是旧分支的。若将来交付，应当与 `{harness}` 同级——提供变量，但不进任何预设，并在文档里写明这个代价。另需注意：旧客户端写下的缓存条目不含新键，升级后的 60 秒窗口内模板会静默判空并漂移到回退档，因此缓存读取需要在键集不匹配时视为未命中。
+
+**`peer.command`：由外部脚本决定 peer。** 做成又一个模板变量 `{command}` 而不是平行的解析路径，即可自动继承既有语义：能与别的变量拼接、能放进候选列表、脚本无输出就整条落空并试下一条。要点是懒执行（模板里没提到 `{command}` 就根本不启动进程）、定长 argv 不过 shell（沿用 `async-writer` / `doctor-core` / `host-compressor` 既有的执行姿势）、带超时且超时即落空、结果与 identity 同一套短 TTL 缓存以保证一个 turn 只付一次代价。
+
+它值不值得做，取决于 `peer.id`（显式命名）与用户级注册表（按 workspace 手工绑定）之外还剩多少诉求——脚本真正独有的场景是「对一批还没访问过的仓库自动套一条规则」。此外，该键不应从仓库提交的 `config.json` / `config.local.json` 读取，只认用户级来源，否则克隆一个仓库即等于执行任意代码，本 RFC「风险与信任取舍」中列出的三条结构性底线会被一次性拆掉。
+
 ### 召回隔离
 
 peer 是路径前缀，不是租户边界；隔离程度由召回参数 `peer_scope` 决定，客户端键为 workspace 文件的 `recall.peer_scope`、`ovcli.conf` 的 `plugin.recallPeerScope` 或环境变量 `OPENVIKING_RECALL_PEER_SCOPE`：
@@ -310,6 +322,6 @@ URL 形式    https://user:token@github.com:8443/volcengine/OpenViking.git/
 ## 开放问题
 
 1. Rust `ov` CLI 发起的数据面请求是否也应该按照 Workspace 来推导 Peer（目前它仅响应显式的 `actor_peer_id` 或 flag 参数）？若决定采纳，则需要实现 `serde_json::Value` 级别的 Overlay 覆盖合并，建议在 P3 阶段完成后再行单独评估。
-2. 模板变量集是否需要在 v1 阶段就引入诸如 `{branch}` 这类在会话生命周期内可能会发生改变的变量？目前倾向于不包含（在会话中途切换分支会导致记忆树割裂，这与 Session pin 的初衷严重冲突）。
+2. 模板变量集是否需要引入诸如 `{git_branch}` 这类在会话生命周期内可能发生改变的变量，以及是否开放 `peer.command` 这样的脚本扩展点？两者的可行性与代价见「更进一步的自定义」，本 RFC 均不交付。
 3. Monorepo 的子目录级别 Peer 划分：根目录查找已经采用"就近文件优先"，子目录里的 `.openviking/config.json` 会成为该子树的配置层根，但 Git 身份仍取自外层仓库，因此默认依旧是"一个仓库对应一个 Peer"；想拆分的子项目自己在文件里改 `peer.source`（见「按场景标注 peer」）。根级别的子路径映射表不做。
 4. 目前已经可以通过不带 actor-peer 头的 `ov ls viking://user/<u>/peers` 来枚举既有 Peers 目录；对于 doctor 而言，是否值得专门开发一个带有额外元信息（如内部条目数量、最近写入时间戳）的专属清单 API？此问题留待实际实现期再做评估。
