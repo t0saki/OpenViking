@@ -307,7 +307,7 @@ test("loadConfig falls back to config peerId when shared credentials define none
 
       const cfg = loadConfig(dir, project)
       assert.equal(cfg.peerId, "atomic-city")
-      assert.deepEqual(cfg.effectivePeer, { peerId: "atomic-city", source: "explicit" })
+      assert.deepEqual(cfg.effectivePeer, { peerId: "atomic-city", source: "explicit", origin: "explicit", legacyPeerId: "" })
       assert.equal(cfg.legacyCredentialsUsed, false)
     } finally {
       restoreOpenVikingEnv(snapshot)
@@ -337,7 +337,7 @@ test("loadConfig keeps ovcli actor_peer_id over config peerId", async () => {
 
       const cfg = loadConfig(dir, project)
       assert.equal(cfg.peerId, "cli-peer")
-      assert.deepEqual(cfg.effectivePeer, { peerId: "cli-peer", source: "explicit" })
+      assert.deepEqual(cfg.effectivePeer, { peerId: "cli-peer", source: "explicit", origin: "explicit", legacyPeerId: "" })
     } finally {
       restoreOpenVikingEnv(snapshot)
     }
@@ -366,7 +366,7 @@ test("loadConfig keeps env peer over config peerId when ovcli has none", async (
 
       const cfg = loadConfig(dir, project)
       assert.equal(cfg.peerId, "env-peer")
-      assert.deepEqual(cfg.effectivePeer, { peerId: "env-peer", source: "explicit" })
+      assert.deepEqual(cfg.effectivePeer, { peerId: "env-peer", source: "explicit", origin: "explicit", legacyPeerId: "" })
     } finally {
       restoreOpenVikingEnv(snapshot)
     }
