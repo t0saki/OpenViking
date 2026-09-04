@@ -128,7 +128,7 @@ report_unexpected_error() { # report_unexpected_error <status> <line> <command>
   if [ "${BASH_SUBSHELL:-0}" -gt 0 ]; then
     return "$status"
   fi
-  printf '\033[?25h' >/dev/tty 2>/dev/null || true
+  printf '\033[?25h' 2>/dev/null >/dev/tty || true
   printf '\n' >&2
   err "$(t 'OpenViking installer stopped unexpectedly.' 'OpenViking 安装程序意外退出。')"
   printf '    %s: %s\n' "$(t 'Exit status' '状态码')" "$status" >&2
@@ -319,14 +319,20 @@ select_language() {
 split_harnesses() {
   printf '%s\n' "$1" | tr ',' '\n' | while IFS= read -r h; do
     h=$(printf '%s' "$h" | tr '[:upper:]' '[:lower:]' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-    [ -n "$h" ] && printf '%s\n' "$h"
+    if [ -n "$h" ]; then
+      printf '%s\n' "$h"
+    fi
   done
 }
 
 split_csv_list() {
   printf '%s\n' "$1" | tr ',' '\n' | while IFS= read -r item; do
     item=$(printf '%s' "$item" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-    [ -n "$item" ] && printf '%s\n' "$item"
+    # An `&& ...` here would make an empty last element the loop's -- and so the
+    # function's -- exit status, which `set -e` turns into an abort at the call.
+    if [ -n "$item" ]; then
+      printf '%s\n' "$item"
+    fi
   done
 }
 
@@ -1278,8 +1284,11 @@ configure_ovcli() {
     cp "$OVCLI_CONF" "$OVCLI_CONF.bak.$(date +%s)"
   fi
   json_merge_ovcli "$OVCLI_CONF" "$url" "$key" "$account" "$user"
-  if [ "$url" != "$current_url" ] || { [ "$key" != "__OPENVIKING_KEEP__" ] && [ "$key" != "$current_key" ]; }; then
+  if [ "$url" != "$current_url" ]; then
     info "$(t 'Updated:' '已更新：') url: ${current_url:-—} -> $url"
+  fi
+  if [ "$key" != "__OPENVIKING_KEEP__" ] && [ "$key" != "$current_key" ]; then
+    info "$(t 'Updated:' '已更新：') api_key: $(mask_secret "$current_key") -> $(mask_secret "$key")"
   fi
   info "$(t 'Credentials ready:' '凭据已就绪：') $OVCLI_CONF"
   info "$(t 'Reconfigure later by re-running this installer.' '之后可重跑本安装脚本重新配置。')"
