@@ -152,3 +152,55 @@ printf '%s:%s:%s\\n' "$SELECTED_HARNESSES" "$(list_words "$CODEX_BINS")" "$(tui_
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stdout.trim(), "codex:trae-cli:TraeCode CLI 2.0");
 });
+
+test("keeping the stored API key leaves the wizard on its feet", () => {
+  const result = runInstallerPrelude(`
+tui_menu() { TUI_MENU_CHOICE=1; }
+INTERACTIVE=1
+exec 3< <(printf '\\n')
+prompt_connection "https://example.invalid/openviking" "stored-key"
+printf '%s|%s\\n' "$WIZ_URL" "$WIZ_KEY"
+`);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(
+    result.stdout.trim().split("\n").pop(),
+    "https://api.vikingdb.cn-beijing.volces.com/openviking|__OPENVIKING_KEEP__",
+  );
+});
+
+test("the credentials step writes ovcli.conf when the stored key is kept", (t) => {
+  const home = makeTempHome(t);
+  const conf = join(home, "ovcli.conf");
+  writeFileSync(conf, `${JSON.stringify({ url: "http://127.0.0.1:1933", api_key: "stored-key", output: "table" }, null, 2)}\n`);
+
+  const result = runInstallerPrelude(`
+tui_menu() { TUI_MENU_CHOICE=1; }
+INTERACTIVE=1
+OV_HOME=${JSON.stringify(home)}
+OVCLI_CONF=${JSON.stringify(conf)}
+exec 3< <(printf '\\n')
+configure_ovcli
+`);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(JSON.parse(readFileSync(conf, "utf8")), {
+    url: "https://api.vikingdb.cn-beijing.volces.com/openviking",
+    api_key: "stored-key",
+    output: "table",
+  });
+});
+
+test("menu digit shortcuts move the cursor instead of confirming", () => {
+  // Confirming on the digit itself leaves the Enter most users press right
+  // after it in the tty buffer, where the next prompt reads it as an empty
+  // answer. Driving the real menus needs a pty, so pin the key handlers.
+  const menuArm = /\[1-9\]\)([\s\S]*?);;/.exec(installerSource);
+  assert.ok(menuArm, "tui_menu no longer has a [1-9] case arm");
+  assert.doesNotMatch(menuArm[1], /\bbreak\b/);
+
+  const chooseFormat = /^tui_choose_cli_format\(\) \{$[\s\S]*?^\}$/m.exec(installerSource);
+  assert.ok(chooseFormat, "tui_choose_cli_format not found");
+  assert.match(chooseFormat[0], /^ +1\) cursor=0 ;;$/m);
+  assert.match(chooseFormat[0], /^ +2\) cursor=1 ;;$/m);
+});

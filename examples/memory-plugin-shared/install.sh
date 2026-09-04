@@ -255,7 +255,7 @@ tui_menu() { # tui_menu <title> <default-index> <option...>  -> TUI_MENU_CHOICE
       fi
       i=$((i + 1))
     done
-    printf '\r\033[K   %s%s%s\n' "$CYAN" "$(t '↑/↓ move · 1-9 jump · enter confirm' '↑/↓ 移动 · 数字直选 · 回车确认')" "$RESET" >/dev/tty
+    printf '\r\033[K   %s%s%s\n' "$CYAN" "$(t '↑/↓ move · 1-9 jump · enter confirm' '↑/↓ 移动 · 数字跳转 · 回车确认')" "$RESET" >/dev/tty
     lines=$((n + 1))
     IFS= read -rsn1 key <&3 || key=""
     case "$key" in
@@ -270,9 +270,11 @@ tui_menu() { # tui_menu <title> <default-index> <option...>  -> TUI_MENU_CHOICE
       k) cursor=$(( (cursor + n - 1) % n )) ;;
       j) cursor=$(( (cursor + 1) % n )) ;;
       [1-9])
+        # Jump only. Confirming on the digit leaves the Enter most users press
+        # right after it in the tty buffer, where the next prompt reads it as
+        # an empty answer.
         if [ "$key" -le "$n" ]; then
           cursor=$((key - 1))
-          break
         fi
         ;;
       ''|$'\n'|$'\r') break ;;
@@ -811,8 +813,8 @@ tui_choose_cli_format() {
         esac
         ;;
       k|j) cursor=$((1 - cursor)) ;;
-      1) TUI_FORMAT_CHOICE="claude"; break ;;
-      2) TUI_FORMAT_CHOICE="codex"; break ;;
+      1) cursor=0 ;;
+      2) cursor=1 ;;
       ''|$'\n'|$'\r')
         if [ "$cursor" -eq 0 ]; then TUI_FORMAT_CHOICE="claude"; else TUI_FORMAT_CHOICE="codex"; fi
         break
@@ -1215,8 +1217,12 @@ prompt_connection() { # sets WIZ_URL / WIZ_KEY (WIZ_KEY may stay __OPENVIKING_KE
   elif [ -n "$reply" ]; then
     WIZ_KEY="$reply"
   else
+    # Not `[ -z ... ] && ...`: as the function's last command a false test makes
+    # prompt_connection return 1, and `set -e` aborts the whole installer.
     WIZ_KEY="__OPENVIKING_KEEP__"
-    [ -z "$current_key" ] && WIZ_KEY=""
+    if [ -z "$current_key" ]; then
+      WIZ_KEY=""
+    fi
   fi
 }
 
