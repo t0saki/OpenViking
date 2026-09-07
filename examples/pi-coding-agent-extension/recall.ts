@@ -59,6 +59,9 @@ export class RecallManager {
       userQuery,
       {
         actorPeerId: this.config.peerId,
+        // Under `actor` scope the effective peer is the only one asked, so a
+        // workspace whose id changed would lose everything written before it.
+        legacyPeerId: this.config.legacyPeerId,
         // Passing the OV session id is what turns on server-side query
         // expansion and the cross-turn dedup ledger.
         sessionId: this.sessionId() ?? "",

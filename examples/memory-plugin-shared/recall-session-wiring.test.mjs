@@ -28,6 +28,13 @@ const CALL_SITES = [
     file: join(ROOT, "examples", "pi-coding-agent-extension", "recall.ts"),
     pattern: /sessionId:\s*this\.sessionId\(\)/,
   },
+  // Under `actor` scope the effective peer is the only one asked, so dropping
+  // the pre-git id here makes every memory written before it unreachable.
+  {
+    name: "pi recall forwards the pre-git peer for the actor-scope dual read",
+    file: join(ROOT, "examples", "pi-coding-agent-extension", "recall.ts"),
+    pattern: /legacyPeerId:\s*this\.config\.legacyPeerId/,
+  },
 ];
 
 for (const { name, file, pattern } of CALL_SITES) {

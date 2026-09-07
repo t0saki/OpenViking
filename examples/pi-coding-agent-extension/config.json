@@ -23,6 +23,6 @@
   "captureMaxLength": 24000,
   "captureToolMaxChars": 1000000,
   "captureAssistantTurns": true,
-  "bypassPatterns": [],
+  "bypassSessionPatterns": [],
   "logLevel": "error"
 }

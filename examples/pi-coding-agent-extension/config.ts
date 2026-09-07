@@ -14,6 +14,8 @@ export interface OVConfig {
   account: string;
   user: string;
   peerId: string;
+  /** The pre-git workspace id, when it differs — recall still reaches it. */
+  legacyPeerId: string;
   userAgent: string;
   harness: string;
   workspacePeer: boolean;
@@ -44,7 +46,10 @@ export interface OVConfig {
   captureMaxLength: number;
   captureToolMaxChars: number;
   captureAssistantTurns: boolean;
+  /** Kept as this extension's original spelling; projected into the shared one. */
   bypassPatterns: string[];
+  bypassSession: boolean;
+  bypassSessionPatterns: string[];
   logLevel: "silent" | "error" | "info";
   debugLogPath: string;
 }
@@ -56,6 +61,7 @@ const DEFAULT_CONFIG: OVConfig = {
   account: "",
   user: "",
   peerId: "",
+  legacyPeerId: "",
   userAgent: "",
   harness: "pi",
   workspacePeer: true,
@@ -91,6 +97,8 @@ const DEFAULT_CONFIG: OVConfig = {
   captureToolMaxChars: 1000000,
   captureAssistantTurns: true,
   bypassPatterns: [],
+  bypassSession: false,
+  bypassSessionPatterns: [],
   logLevel: "error",
   debugLogPath: "",
 };
@@ -182,9 +190,29 @@ export function loadConfig(extensionDir: string): OVConfig {
   config.recallPeerScope = config.recallPeerScope === "actor" ? "actor" : "all";
   config.recallQueryExpansion = config.recallQueryExpansion === "off" ? "off" : "auto";
   config.recallLedger = config.recallLedger !== false;
-  if (!Array.isArray(config.bypassPatterns)) config.bypassPatterns = [];
+  // `bypassSessionPatterns` is the name the shared matcher reads and every
+  // other harness spells; `bypassPatterns` was this extension's own and keeps
+  // working. Both end up holding the same list so either can be inspected.
+  const patternSource = Array.isArray(file.bypassSessionPatterns)
+    ? file.bypassSessionPatterns
+    : (Array.isArray(config.bypassPatterns) ? config.bypassPatterns : []);
+  const envPatterns = process.env.OPENVIKING_BYPASS_SESSION_PATTERNS;
+  config.bypassSessionPatterns = (envPatterns
+    ? envPatterns.split(",")
+    : patternSource.filter((p: unknown) => typeof p === "string"))
+    .map((p: string) => p.trim())
+    .filter(Boolean);
+  config.bypassPatterns = config.bypassSessionPatterns;
+  if (process.env.OPENVIKING_BYPASS_SESSION !== undefined) {
+    config.bypassSession = envBool(process.env.OPENVIKING_BYPASS_SESSION, config.bypassSession);
+  }
   config.debugLogPath = typeof config.debugLogPath === "string" ? config.debugLogPath.trim() : "";
-  config.peerId = resolveEffectivePeerId({ cfg: config as any, cwd: process.cwd() }).peerId;
+  // The whole resolution, not just the id: `legacyPeerId` is what lets recall
+  // under `actor` scope still reach memories written before the git-derived
+  // peer replaced the path-derived one.
+  const effectivePeer = resolveEffectivePeerId({ cfg: config as any, cwd: process.cwd() });
+  config.peerId = effectivePeer.peerId;
+  config.legacyPeerId = effectivePeer.legacyPeerId || "";
   return config;
 }
 

@@ -4,6 +4,7 @@ export function buildRecallBlock(
   query: string,
   options?: {
     actorPeerId?: string;
+    legacyPeerId?: string;
     sessionId?: string;
     log?: (stage: string, data?: any) => void;
   },

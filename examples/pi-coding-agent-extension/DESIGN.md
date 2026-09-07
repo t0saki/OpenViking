@@ -69,7 +69,8 @@ interface OVConfig {
   mirrorMemoryWrites: boolean;   // Mirror MEMORY.md to OV at commit time (default: true)
   writeQueueFlushInterval: number; // Write queue flush interval in ms (default: 5000)
   writeQueueFlushThreshold: number; // Write queue flush after N queued turns (default: 5)
-  bypassPatterns: string[];      // Glob patterns for cwd to skip (default: [])
+  bypassSessionPatterns: string[]; // Glob patterns for cwd to skip (default: [])
+  bypassSession: boolean;        // Skip everything regardless of cwd (default: false)
   logLevel: "silent" | "error" | "info";  // default: "error"
 }
 ```
@@ -642,7 +643,7 @@ Two-level guard:
 
 1. **Health check**: At `session_start`, ping OV health. If unreachable: set `connected = false`, log once, all subsequent operations become no-ops. No retrying, no spamming. Tools return "OpenViking server is not reachable."
 
-2. **Bypass check**: Before any OV operation, check `config.bypassPatterns` against `process.cwd()`. If the cwd matches any pattern (e.g., `/tmp/**`, `**/scratch/**`), skip all OV operations for this session. This prevents throwaway experiments from polluting long-term memory (from Claude Code plugin's `OPENVIKING_BYPASS_SESSION_PATTERNS`).
+2. **Bypass check**: Before any OV operation, the shared `isBypassed()` matches `config.bypassSessionPatterns` against `process.cwd()`. If the cwd matches any pattern (e.g., `/tmp/**`, `**/scratch/**`), skip all OV operations for this session. This prevents throwaway experiments from polluting long-term memory. Same matcher, same key and same `OPENVIKING_BYPASS_SESSION_PATTERNS` env var as every other harness; `bypassPatterns` is this extension's older name and still reads.
 
 #### Session resume rehydration
 
@@ -708,7 +709,7 @@ A `/viking commit` command (or a `viking_commit` tool) triggers a synchronous `c
 ```
 1. session_start fires
 2. Load config
-3. Check bypassPatterns against cwd
+3. Check bypassSessionPatterns against cwd
    └── MATCH → set bypassed = true, skip all OV ops, return
 4. client.health()
    ├── OK → connected = true, continue
@@ -905,7 +906,7 @@ Default: `~/.pi/agent/extensions/openviking/config.json`
   "mirrorMemoryWrites": true,
   "writeQueueFlushInterval": 5000,
   "writeQueueFlushThreshold": 5,
-  "bypassPatterns": [],
+  "bypassSessionPatterns": [],
   "logLevel": "error"
 }
 ```

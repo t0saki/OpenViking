@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 import { loadConfig, loadConfigFromModuleUrl } from "../config.ts";
+import { isBypassed } from "../shared/session-model.mjs";
+import { deriveWorkspacePeerId } from "../shared/workspace-peer.mjs";
 
 async function withConfigFile(body, fn, env = {}, cliConfig = null) {
   const dir = await mkdtemp(join(tmpdir(), "ov-pi-config-用户-"));
@@ -21,6 +23,8 @@ async function withConfigFile(body, fn, env = {}, cliConfig = null) {
     OPENVIKING_CONFIG_FILE: process.env.OPENVIKING_CONFIG_FILE,
     OPENVIKING_DEBUG_LOG: process.env.OPENVIKING_DEBUG_LOG,
     OV_DEBUG_LOG: process.env.OV_DEBUG_LOG,
+    OPENVIKING_BYPASS_SESSION: process.env.OPENVIKING_BYPASS_SESSION,
+    OPENVIKING_BYPASS_SESSION_PATTERNS: process.env.OPENVIKING_BYPASS_SESSION_PATTERNS,
   };
   process.env.OPENVIKING_CREDENTIAL_SOURCE = "env";
   process.env.OPENVIKING_URL = "http://127.0.0.1:1933";
@@ -34,6 +38,8 @@ async function withConfigFile(body, fn, env = {}, cliConfig = null) {
   delete process.env.OPENVIKING_RECALL_PEER_SCOPE;
   delete process.env.OPENVIKING_DEBUG_LOG;
   delete process.env.OV_DEBUG_LOG;
+  delete process.env.OPENVIKING_BYPASS_SESSION;
+  delete process.env.OPENVIKING_BYPASS_SESSION_PATTERNS;
   for (const [key, value] of Object.entries(env)) {
     if (value === undefined) delete process.env[key];
     else process.env[key] = value;
@@ -215,5 +221,40 @@ test("loadConfig gives ovcli peer precedence over config peer", async () => {
   }, {
     url: "http://127.0.0.1:1933",
     actor_peer_id: "ovcli-peer",
+  });
+});
+
+test("loadConfig keeps the pre-git peer so recall can still reach it", async () => {
+  await withConfigFile({}, (cfg) => {
+    const legacy = deriveWorkspacePeerId(process.cwd());
+    if (cfg.peerId === legacy) {
+      assert.equal(cfg.legacyPeerId, "", "nothing to fall back to when the ids already match");
+    } else {
+      assert.equal(cfg.legacyPeerId, legacy, "memories written before the git peer must stay reachable");
+    }
+  });
+});
+
+test("loadConfig projects bypassPatterns onto the name the shared matcher reads", async () => {
+  await withConfigFile({ bypassPatterns: ["/tmp/scratch*", " "] }, (cfg) => {
+    assert.deepEqual(cfg.bypassSessionPatterns, ["/tmp/scratch*"]);
+    assert.deepEqual(cfg.bypassPatterns, ["/tmp/scratch*"]);
+    assert.equal(isBypassed(cfg, { cwd: "/tmp/scratch-1" }), true);
+    assert.equal(isBypassed(cfg, { cwd: "/tmp/keep" }), false);
+  });
+});
+
+test("loadConfig reads bypassSessionPatterns directly and lets the env override it", async () => {
+  await withConfigFile({ bypassSessionPatterns: ["/from/file"] }, (cfg) => {
+    assert.deepEqual(cfg.bypassSessionPatterns, ["/from/file"]);
+  });
+
+  await withConfigFile({ bypassSessionPatterns: ["/from/file"] }, (cfg) => {
+    assert.deepEqual(cfg.bypassSessionPatterns, ["/from/env", "/also/env"]);
+    assert.equal(cfg.bypassSession, true);
+    assert.equal(isBypassed(cfg, { cwd: "/anywhere" }), true, "the switch wins regardless of cwd");
+  }, {
+    OPENVIKING_BYPASS_SESSION_PATTERNS: "/from/env, /also/env ,",
+    OPENVIKING_BYPASS_SESSION: "1",
   });
 });

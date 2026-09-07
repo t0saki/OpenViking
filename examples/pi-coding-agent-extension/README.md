@@ -192,9 +192,11 @@ recent live tail.
 
 | Field                    | Default    | Description                                                              |
 |--------------------------|------------|--------------------------------------------------------------------------|
-| `bypassPatterns`         | `[]`       | Glob patterns to skip extension processing                               |
+| `bypassSessionPatterns`  | `[]`       | Glob patterns matched against the cwd; a hit skips all OpenViking work for the session. `bypassPatterns` is the older name and still works. Env: `OPENVIKING_BYPASS_SESSION_PATTERNS` (CSV), `OPENVIKING_BYPASS_SESSION=1` |
 | `logLevel`               | `"error"`  | `"silent"`, `"error"`, or `"info"`                                      |
 | `debugLogPath`           | `""`       | Write JSON Lines debug records to this path; empty disables the log      |
+
+Bypass now runs through the same matcher every other OpenViking harness uses, so the patterns are real globs: `*` stops at a path separator and `**` crosses them. A bare path used to match its subdirectories as a prefix, and no longer does — write `"/tmp/scratch**"` where `"/tmp/scratch"` used to be enough.
 
 ## Architecture
 

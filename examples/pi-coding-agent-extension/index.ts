@@ -17,6 +17,7 @@ import { RecallManager } from "./recall.js";
 import { RecallLedger } from "./shared/recall-ledger.mjs";
 import { SyncManager } from "./sync.js";
 import { buildProfileBlock } from "./shared/profile-inject.mjs";
+import { isBypassed } from "./shared/session-model.mjs";
 import { guardVikingUriToolCall } from "./lib/uri-guard-adapter.mjs";
 import { registerTools } from "./tools.js";
 import { createTakeoverManager } from "./takeover.js";
@@ -68,13 +69,10 @@ export default async function (pi: ExtensionAPI) {
 
     startPromise = (async () => {
       // Bypass check
-      const cwd = process.cwd();
-      for (const pattern of config.bypassPatterns) {
-        if (matchBypass(cwd, pattern)) {
-          bypassed = true;
-          started = true;
-          return;
-        }
+      if (isBypassed(config, { cwd: process.cwd() })) {
+        bypassed = true;
+        started = true;
+        return;
       }
 
       // Health check
@@ -325,17 +323,6 @@ export default async function (pi: ExtensionAPI) {
 // ================================================================
 // Helper Functions
 // ================================================================
-
-/** Simple bypass pattern matching (prefix and glob). */
-function matchBypass(cwd: string, pattern: string): boolean {
-  if (pattern.startsWith("*")) {
-    return cwd.endsWith(pattern.slice(1));
-  }
-  if (pattern.endsWith("*")) {
-    return cwd.startsWith(pattern.slice(0, -1));
-  }
-  return cwd === pattern || cwd.startsWith(pattern + "/");
-}
 
 /** Build the <openviking-context> profile block. */
 async function buildSessionProfileBlock(
