@@ -42,7 +42,7 @@
 ¹ MCP `write` can target `viking://resources`, `viking://user`, or `viking://agent`. Adding skills via MCP is not yet supported; use the openclaw `add_skill` tool, `ov add-skill` CLI, or the REST API instead.
 ² MCP `forget` does not differentiate between memory, resource, and skill types. However, the storage layer protects namespace roots: deletion requests for bare `viking://`, `viking://user`, and `viking://agent` are rejected. See [§3.5](#_3-5-type-boundaries-for-writes-and-deletes).
 ³ For `viking_forget` on pi: the `recursive` flag is strictly set to false (directories are never deleted), and deleting by query requires a match score > 0.8.
-⁴ The `pi` harness registers its tools only if the session bypasses `bypassPatterns`, `client.health()` passes, and `ensureSession` succeeds (`index.ts:66-113`). If the health check fails, no tools are registered for that session.
+⁴ The `pi` harness registers its tools only if the session misses `bypassSessionPatterns`, `client.health()` passes, and `ensureSession` succeeds (`index.ts:66-108`). If the health check fails, no tools are registered for that session.
 ⁵ The `add_resource` tool in openclaw requires a double opt-in before activation.
 
 **Skill addition/deletion boundaries**: Skills can be added via the openclaw `add_skill` tool (enabled by default), the `ov add-skill` CLI command, or the REST API. Deletion operates across four tiers, detailed in [§3.5](#_3-5-type-boundaries-for-writes-and-deletes).
@@ -52,7 +52,7 @@
 | harness | how it plugs in | auto-recall | recall carries session_id | digest (client)* | profile injection | takes over host compaction | offline compensation (pending queue) | statusline |
 |---|---|---|---|---|---|---|---|---|
 | claude-code | 9 hooks + MCP proxy + slash + statusline + skill | ✅ | ✅ | ✅ local `claude -p` / server-side rewrite (auto by default) | ✅ (10000) | ❌ (PreCompact only commits) | ✅ | ✅ |
-| codex / trae-cli | 4 hooks + MCP proxy + skill | ✅ | ✅ | ✅ local `codex exec` (on by default) | ✅ (10000) | ❌ | ❌ no on-disk queue (the cursor stays put and the next turn resends) | ❌ |
+| codex / trae-cli | 5 hooks + MCP proxy + skill | ✅ | ✅ | ✅ local `codex exec` (on by default) | ✅ (10000) | ❌ | ✅ | ❌ |
 | cursor | 7 hooks + MCP proxy + rule + skill | ✅ | ✅ | ❌ | ✅ (6000) | ❌ | ✅ | ❌ |
 | trae / trae-cn | 4 hooks + MCP proxy | ✅ | ✅ | ❌ | ✅ (6000) | ❌ | ✅ | ❌ |
 | zcode | 4 hooks + MCP proxy | ✅ | ✅ | ❌ | ✅ (6000) | ❌ | ✅ | ❌ |
@@ -122,7 +122,7 @@ Core modules at a glance (detailed further in the per-dimension sections):
 | `recall-core.mjs` | Handles recall request construction, three-tier degradation, and local fallback ranking/injection | All JS-based harnesses |
 | `agent-hook-runtime.mjs` | All-in-one "thin hook" runtime handling 19 configuration environment variables, session ID derivation, cross-process locking, fetching, and commits | cursor / trae / trae-cn / zcode |
 | `mcp-proxy-core.mjs` | stdio ↔ streamable-HTTP MCP proxy core | All MCP-based integrations + agent-plugins |
-| `pending-queue.mjs` | On-disk offline queueing and replay at session start | cc / cursor / trae×2 / zcode / opencode / dsh / pi |
+| `pending-queue.mjs` | On-disk offline queueing and replay at session start | cc / codex / cursor / trae×2 / zcode / opencode / dsh / pi |
 | `batch-send.mjs` | Executes writes in batches of 100, handles per-message degradation on 404/405 errors, and queues the leading contiguous prefix | cc / codex / opencode + the agent-hook family |
 | `profile-inject.mjs` | Injects the profile and available-memory index at session start | 9 harnesses (all but openclaw / hermes) |
 | `recall-compress-core.mjs` | Manages the recall compression prompt, URI edit-distance repair, and caching | claude-code |
@@ -394,8 +394,7 @@ Legend: **C** = commits; **C\*** = commits, with a precondition (see notes); **�
 
 | harness | mechanism | notes |
 |---|---|---|
-| cc / cursor / trae×2 / zcode / opencode / dsh / pi | On-disk queue `~/.openviking/pending` (0700/0600) | Only retryable failures are queued (4xx errors, including 401/403, are considered non-retryable and are not queued, though they appear in debug logs); replay runs at session start: ≤50 entries per run, ≤3 attempts per entry, TTL 7 days; `.processing` claims entries atomically, with a 10min stale reclaim; an addMessage failure breaks execution immediately to preserve order |
-| codex / trae-cli | No on-disk queue | When the server is unreachable, compensation occurs because the `capturedTurnCount` cursor does not advance, prompting the next Stop to resend the same batch. This works provided the process survives and a subsequent turn occurs |
+| cc / codex / cursor / trae×2 / zcode / opencode / dsh / pi | On-disk queue `~/.openviking/pending` (0700/0600) | Only retryable failures are queued (4xx errors, including 401/403, are considered non-retryable and are not queued, though they appear in debug logs); replay runs at session start: ≤50 entries per run, ≤3 attempts per entry, TTL 7 days; `.processing` claims entries atomically, with a 10min stale reclaim; an addMessage failure breaks execution immediately to preserve order |
 | openclaw | No local queue | An addSessionMessage failure is caught, and that turn's messages are not replayed |
 | hermes | In-process daemon-thread queue | The drain operates on a strict budget (10s/65s); nothing is written to disk |
 | LangChain | In-process `_pending_commit_sessions` set | A failed commit is retried automatically during the next record; nothing is written to disk. On partial success, it raises an `OpenVikingPartialWriteError` (carrying `messages_written`, `input_messages_consumed`, and `context_attached`, allowing the caller to slice by position and retry the suffix) — making this the only protocol across all integrations that reports partial success |
@@ -480,7 +479,7 @@ There are three primary guards on MCP `write` and REST `content/write` (`content
 | harness | When the server is unreachable | Negative cache | HTTP retry | Failure blocks the host |
 |---|---|---|---|---|
 | claude-code | All hooks catch exceptions → approve (never blocks); at session-start, even pending replays are skipped | context-face 6h + host-cli probe 7d + health 5s | None (relies on pending replay); `peer_scope` degrades once; batch falls back to sequential | No (`uri-guard` deny is by design) |
-| codex / trae-cli | All hooks catch exceptions → noop | context-face 6h + compressor runtime_failed (until the next startup) | Same as above (no on-disk pending; resends from the cursor) | No |
+| codex / trae-cli | All hooks catch exceptions → noop | context-face 6h + compressor runtime_failed (until the next startup) | Same as above (pending replay, triggered at SessionStart) | No |
 | cursor/trae×2/zcode | Fetch errors are swallowed as `status:0`, and catch returns an empty injection; silently skips if the lock isn't acquired within 5s | context-face 6h (no negative cache for unreachable servers; every turn waits the full 15s) | None | No |
 | opencode | All paths catch exceptions → WARN; the `event`/`dispose` hooks lack try/catch blocks (non-retryable commit failures bubble up to the host) | context-face 6h only; `/health` is uncached (one round trip per turn) | No synchronous retry; the MCP proxy retries once each for 401/403 and 400/404 | Mostly no (except `event`/`dispose`) |
 | dsh | The client swallows all exceptions; `ensureState` failures are not cached (when the server is unreachable, each pre-step makes two 5s health calls) | context-face 6h + an in-process user-space cache that never expires | None; pending queue replays 3 times across processes | Yes (pre-step runs profile+recall serially; session/flush blocks) |
@@ -538,7 +537,7 @@ Each card serves as a quick-reference entry point. It records only the facts and
 - **Integration docs**: [TRAE Memory Integration](./13-trae.md)
 - **Form**: TraeCode CLI 2.0 is a Codex-family CLI (binary `traecli`, user config `~/.trae/traecli.toml`, TUI support for `/plugins`, `/skills`, and `/mcp`). OpenViking integrates via a **codex plugin alias install**: using `--harness trae-cli` reuses the Codex installation flow, redirecting only the install parameters (binary, home, and config paths) to TraeCode CLI.
 - **Capability surface**: Same plugin as Codex: 5 registered hooks, an MCP proxy, an experience skill, local recall compression, idle-TTL commit reclamation, and resume-archive injection. Refer to the Codex profile card. If the TraeCode CLI build lacks `SessionEnd`, the registration is ignored and every commit at shutdown goes through the idle-TTL sweep.
-- **Version support**: TraeCode CLI 2.0 only. 1.0 and 2.0 are not the same CLI — only 2.0 is Codex-family, and only 2.0 can use the codex plugin alias install. The earlier standalone plugin for 1.0, `examples/trae-cli-memory-hooks` (the `~/.trae/cli/hooks.json` + `[mcp_servers."openviking-memory"]` approach), is deprecated.
+- **Version support**: TraeCode CLI 2.0 only. 1.0 and 2.0 are not the same CLI — only 2.0 is Codex-family, and only 2.0 can use the codex plugin alias install. The earlier standalone plugin for 1.0 (the `~/.trae/cli/hooks.json` + `[mcp_servers."openviking-memory"]` approach) has been removed from the repository. The installer still accepts `--harness trae-cli --uninstall` to clean up a copy an old install left on disk.
 - **Dimension index**: Same as the Codex card.
 
 ## cursor
@@ -590,7 +589,7 @@ Each card serves as a quick-reference entry point. It records only the facts and
 - **Form**: Operates as a native pi extension (loaded from a directory and dynamically transpiled from TS by jiti). It registers 7 native `viking_*` tools and uses direct REST communication (since pi lacks MCP support). It features 8 events + a `/viking` command. Version 0.1.0.
 - **Highlights**: Features takeover compaction (enabled by default, [§3.4.2](#_3-4-2-pi-takeover)). Employs a two-stage recall system: it queues at `before_agent_start` and performs synchronous retrieval during the context event, ensuring the current turn's prompt receives its corresponding memories. It also includes a status line. The `session_shutdown` event triggers across all shutdown paths and is properly awaited.
 - **Behavior**: When takeover is enabled, exiting does not trigger a commit. Instead, the handler persists local state, and archiving waits either for the next resumed run to hit the threshold or for a manual `/viking commit` command ([§3.3.3](#_3-3-3-shutdown-method-×-harness-outcome-matrix)). The takeover threshold is set to 30000 tokens while keeping the last 3 turns (keep 3, which the server interprets as a message count). When takeover is disabled, the threshold is 20000 tokens (keep 10), and exiting triggers an unconditional commit. Tool registration requires `health` and `ensureSession` to be established first ([§1.1](#_1-1-active-tool-surface-agentic-calls)). The `viking_add_resource` tool exclusively accepts HTTP URLs (the guard resides on the server). If takeover is off, resuming via `pi -c` will re-report the entire branch.
-- **Config**: Behavior toggles are managed in `config.json` + environment variables (credentials always pass through the credential chain, [§3.1.3](#_3-1-3-credential-systems)). Note that `bypassPatterns` uses prefix matching rather than globs.
+- **Config**: Behavior toggles are managed in `config.json` + environment variables (credentials always pass through the credential chain, [§3.1.3](#_3-1-3-credential-systems)). Bypass goes through the shared `isBypassed` glob matcher under the key `bypassSessionPatterns`; the older `bypassPatterns` still reads.
 - **Dimension index**: tool surface [§1.1](#_1-1-active-tool-surface-agentic-calls) | recall [§3.2](#_3-2-automatic-recall-and-injection) | takeover [§3.4.2](#_3-4-2-pi-takeover) | commit [§3.3.2](#_3-3-2-regular-commit-triggers)/[§3.3.3](#_3-3-3-shutdown-method-×-harness-outcome-matrix).
 
 ## openclaw

@@ -42,7 +42,7 @@
 ¹ MCP `write` 的可写域是 `viking://resources|user|agent`，暂不支持 MCP 新增 skill；新增 skill 的入口是 openclaw `add_skill`、`ov add-skill` 与 REST。
 ² MCP `forget` 不区分 memory/resource/skill 类型；存储层保留了命名空间根保护机制（裸 `viking://`、`viking://user`、`viking://agent` 根拒删），详见 [§3.5](#_3-5-写入与删除的类型边界)。
 ³ pi 的 `viking_forget`：其 `recursive` 参数固定为 false（不删除目录），按 query 删除要求匹配分 >0.8。
-⁴ pi 工具注册前置：需未命中 bypassPatterns、`client.health()` 通过、`ensureSession` 成功（`index.ts:66-113`）；health 未通过时本轮不注册工具面。
+⁴ pi 工具注册前置：需未命中 `bypassSessionPatterns`、`client.health()` 通过、`ensureSession` 成功（`index.ts:66-108`）；health 未通过时本轮不注册工具面。
 ⁵ openclaw 的 `add_resource` 需经过双重 opt-in 后方可开启。
 
 **skill 的增删边界**：新增入口包含 openclaw `add_skill`（默认开）、`ov add-skill` 与 REST；删除边界分四档，详见 [§3.5](#_3-5-写入与删除的类型边界)。
@@ -52,7 +52,7 @@
 | harness | 接入方式 | 自动召回 | 召回带 session_id | 再摘要（客户端）* | profile 注入 | 接管宿主压缩 | 离线补偿（pending queue） | statusline |
 |---|---|---|---|---|---|---|---|---|
 | claude-code | 9 hook + MCP 代理 + slash + statusline + skill | ✅ | ✅ | ✅ 本地 `claude -p` / 服务端 rewrite（默认 auto） | ✅（10000） | ❌（PreCompact 只 commit） | ✅ | ✅ |
-| codex / trae-cli | 4 hook + MCP 代理 + skill | ✅ | ✅ | ✅ 本地 `codex exec`（默认开） | ✅（10000） | ❌ | ❌ 无磁盘队列（靠游标不推进、下一轮重发补偿） | ❌ |
+| codex / trae-cli | 5 hook + MCP 代理 + skill | ✅ | ✅ | ✅ 本地 `codex exec`（默认开） | ✅（10000） | ❌ | ✅ | ❌ |
 | cursor | 7 hook + MCP 代理 + rule + skill | ✅ | ✅ | ❌ | ✅（6000） | ❌ | ✅ | ❌ |
 | trae / trae-cn | 4 hook + MCP 代理 | ✅ | ✅ | ❌ | ✅（6000） | ❌ | ✅ | ❌ |
 | zcode | 4 hook + MCP 代理 | ✅ | ✅ | ❌ | ✅（6000） | ❌ | ✅ | ❌ |
@@ -123,7 +123,7 @@ per-harness 章节（档案卡）只写差异；所有共享事实均在本章�
 | `recall-core.mjs` | 召回请求构造 + 三级降级 + 本地兜底排序注入 | 全部 JS 系 harness |
 | `agent-hook-runtime.mjs` | "瘦 hook"一体化运行时（配置面 19 个 env、session id 派生、跨进程锁、fetch、commit） | cursor / trae / trae-cn / zcode |
 | `mcp-proxy-core.mjs` | stdio↔streamable-HTTP MCP 代理内核 | 全部 MCP 型 + agent-plugins |
-| `pending-queue.mjs` | 磁盘离线队列 + 会话启动重放 | cc / cursor / trae×2 / zcode / opencode / dsh / pi |
+| `pending-queue.mjs` | 磁盘离线队列 + 会话启动重放 | cc / codex / cursor / trae×2 / zcode / opencode / dsh / pi |
 | `batch-send.mjs` | 100 条/批写入 + 404/405 逐条降级 + 连续前缀入队 | cc / codex / opencode + agent-hook 系 |
 | `profile-inject.mjs` | session-start 的 profile + 可用记忆清单注入 | 9 个 harness（openclaw / hermes 除外） |
 | `recall-compress-core.mjs` | 召回压缩 prompt + URI 编辑距离修复 + 缓存 | claude-code |
@@ -373,8 +373,7 @@ JS 系 harness 的召回逻辑均由 `recall-core.mjs` 中的三级降级链处�
 
 | harness | 机制 | 要点 |
 |---|---|---|
-| cc / cursor / trae×2 / zcode / opencode / dsh / pi | 磁盘队列 `~/.openviking/pending`（0700/0600） | 仅可重试的失败入队（4xx 含 401/403 判为不可重试，不入队，debug 日志可见）；重放在会话启动时执行：≤50 条/次、≤3 次/条、TTL 7 天；`.processing` 原子认领，10min 陈旧回收；addMessage 失败即 break 保序 |
-| codex / trae-cli | 无磁盘队列 | 服务端不可达时，靠 `capturedTurnCount` 游标不推进、下一轮 Stop 重发同批实现补偿（进程存活且有下一轮时生效） |
+| cc / codex / cursor / trae×2 / zcode / opencode / dsh / pi | 磁盘队列 `~/.openviking/pending`（0700/0600） | 仅可重试的失败入队（4xx 含 401/403 判为不可重试，不入队，debug 日志可见）；重放在会话启动时执行：≤50 条/次、≤3 次/条、TTL 7 天；`.processing` 原子认领，10min 陈旧回收；addMessage 失败即 break 保序 |
 | openclaw | 无本地队列 | addSessionMessage 失败被 catch，该轮消息不重放 |
 | hermes | 进程内 daemon 线程队列 | drain 有预算（10s/65s）；不落盘 |
 | LangChain | 进程内 `_pending_commit_sessions` 集合 | commit 失败下次 record 自动重试；不落盘。部分成功时抛 `OpenVikingPartialWriteError`（携带 `messages_written`、`input_messages_consumed`、`context_attached`，调用方可按位置切片重试后缀）——全部集成里唯一的部分成功上报协议 |
@@ -461,7 +460,7 @@ MCP `write` / REST `content/write` 的三道 guard（`content_write.py`）：可
 | harness | 服务端不可达时 | 负缓存 | HTTP 重试 | 失败阻塞宿主 |
 |---|---|---|---|---|
 | claude-code | 各 hook catch→approve，不阻塞；session-start 时连 pending 重放都跳过 | context-face 6h + host-cli 探测 7d + health 5s | 无（靠 pending 重放）；peer_scope 降级 1 次；batch→逐条 | 否（uri-guard deny 是设计意图） |
-| codex / trae-cli | 各 hook catch→noop | context-face 6h + 压缩器 runtime_failed（至下次启动） | 同上（无磁盘 pending，靠游标重发） | 否 |
+| codex / trae-cli | 各 hook catch→noop | context-face 6h + 压缩器 runtime_failed（至下次启动） | 同上（靠 pending 重放，SessionStart 触发） | 否 |
 | cursor/trae×2/zcode | fetch 吞成 status:0，catch 返回空注入；锁 5s 拿不到则静默跳过 | context-face 6h（服务端整体不可达时无负缓存，每轮等满 15s） | 无 | 否 |
 | opencode | 各路径 catch→WARN；`event`/`dispose` hook 无 try/catch（不可重试的 commit 失败会冒泡宿主） | 仅 context-face 6h；`/health` 无缓存（每轮一次往返） | 无同步重试；MCP 代理 401/403、400/404 各一次 | 基本否（event/dispose 例外） |
 | dsh | client 全吞异常；`ensureState` 失败不缓存（服务端不可达时每 pre-step 两次 health 各 5s） | context-face 6h + user-space 缓存进程内不过期 | 无；pending 跨进程重放 3 次 | 是（pre-step 串行 profile+recall；session/flush 阻塞） |
@@ -519,7 +518,7 @@ MCP `write` / REST `content/write` 的三道 guard（`content_write.py`）：可
 - **集成文档**：[TRAE 记忆集成](./13-trae.md)
 - **形态**：TraeCode CLI 2.0 是 Codex 系 CLI（binary `traecli`，用户配置 `~/.trae/traecli.toml`，TUI 支持 `/plugins` `/skills` `/mcp`）。OpenViking 经 **codex 插件别名安装**接入：`--harness trae-cli` 复用 codex 安装流程，仅安装参数（binary / home / 配置路径）指向 TraeCode CLI。
 - **能力面**：与 codex 同一套插件——5 个已注册 hook + MCP 代理 + experience skill、本地召回压缩、idle-TTL commit 回收、resume archive 注入等，详见 codex 档案卡。若 TraeCode CLI 所基于的 Codex 版本没有 `SessionEnd`，该 hook 会被忽略，关闭时的 commit 全部依赖 idle-TTL 扫描。
-- **版本支持**：仅支持 TraeCode CLI 2.0。1.0 与 2.0 不是同一套 CLI，2.0 才是 Codex 系、才能走 codex 插件别名安装；早期面向 1.0 的独立插件 `examples/trae-cli-memory-hooks`（`~/.trae/cli/hooks.json` + `[mcp_servers."openviking-memory"]` 方案）已废弃。
+- **版本支持**：仅支持 TraeCode CLI 2.0。1.0 与 2.0 不是同一套 CLI，2.0 才是 Codex 系、才能走 codex 插件别名安装；早期面向 1.0 的独立插件（`~/.trae/cli/hooks.json` + `[mcp_servers."openviking-memory"]` 方案）已随仓库移除；安装器仍保留 `--harness trae-cli --uninstall`，用于清掉旧安装留在磁盘上的那份。
 - **维度索引**：同 codex 卡。
 
 ## cursor
@@ -572,7 +571,7 @@ MCP `write` / REST `content/write` 的三道 guard（`content_write.py`）：可
 - **形态**：pi 原生扩展（目录装载，jiti 直译 TS），原生注册 7 个 `viking_*` 工具，REST 直连（pi 无 MCP 支持）。8 事件 + `/viking` 命令。版本 0.1.0。
 - **能力亮点**：takeover 压缩接管（默认开，[§3.4.2](#_3-4-2-pi-takeover)）；两段式召回（before_agent_start 排队 + context 事件同步检索，当前轮 prompt 拿当前轮记忆）；statusline；`session_shutdown` 在所有关闭方式下都触发且被 await。
 - **行为要点**：默认 takeover 下退出不 commit（handler 持久化本地状态，归档靠下次续跑攒满阈值或 `/viking commit`，[§3.3.3](#_3-3-3-关闭方式-×-harness-终局矩阵)）；takeover 阈值 30000 token + 保留 3 轮（keep 3，服务端按消息条数解释）；非 takeover 阈值 20000/keep 10、退出无条件 commit；工具注册需 health+ensureSession 前置（[§1.1](#_1-1-主动工具面-agentic-调用能力)）；`viking_add_resource` 仅 HTTP URL（guard 在服务端）；非 takeover 模式下 `pi -c` 续跑会重新上报整条 branch。
-- **配置**：`config.json` 行为旋钮 + env（凭据统一走凭据链，[§3.1.3](#_3-1-3-凭据体系)）；`bypassPatterns` 为前缀匹配（非 glob）。
+- **配置**：`config.json` 行为旋钮 + env（凭据统一走凭据链，[§3.1.3](#_3-1-3-凭据体系)）；bypass 走共享 `isBypassed` 的 glob 匹配，键名 `bypassSessionPatterns`（旧名 `bypassPatterns` 仍可读）。
 - **维度索引**：工具面 [§1.1](#_1-1-主动工具面-agentic-调用能力) ｜召回 [§3.2](#_3-2-自动召回与注入) ｜takeover [§3.4.2](#_3-4-2-pi-takeover) ｜commit [§3.3.2](#_3-3-2-常规-commit-触发条件)/[§3.3.3](#_3-3-3-关闭方式-×-harness-终局矩阵)。
 
 ## openclaw
