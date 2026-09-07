@@ -1,71 +1,57 @@
 #!/usr/bin/env node
 
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
-import { dirname, join, relative, resolve as resolvePath } from "node:path";
+import { access, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { dirname, join, relative, resolve as resolvePath, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 export const SHARED_DIR = join(ROOT, "examples", "memory-plugin-shared", "lib");
-// What a plugin ships must equal what it imports. The groups below are
-// capabilities, and every target composes the ones it actually uses — no list
-// is named after a harness and then spread into another, because that is how a
-// module nobody imports ends up vendored into four directories.
 
-/** The files every hook-driven harness plugin imports. */
-const HOOK_SHARED_FILES = [
-  "credentials.mjs",
-  "capture-utils.mjs",
-  "session-model.mjs",
-  "pending-queue.mjs",
-  "debug-log.mjs",
-  "recall-compress-core.mjs",
-  "recall-core.mjs",
-  "retryable.mjs",
-  "workspace-peer.mjs",
-  "workspace-identity.mjs",
-  "profile-inject.mjs",
-  "uri-guard.mjs",
-];
-/** The interactive installer, for the plugins that ship a `scripts/setup.mjs`. */
-const SETUP_WIZARD_SHARED_FILES = ["setup-wizard.mjs"];
-/** The stdio MCP proxy, for the plugins that bundle one. */
-const MCP_PROXY_SHARED_FILES = ["mcp-proxy-core.mjs", "mcp-proxy-config.mjs"];
-/** Batched session sends, for the plugins that flush off the hook's hot path. */
-const BATCH_SHARED_FILES = ["batch-send.mjs"];
-/** The detached write path, for the plugins whose hooks are short-lived subprocesses. */
-const ASYNC_WRITE_SHARED_FILES = ["async-writer.mjs"];
-/** The layered workspace config, its per-machine registry, and the loader over both. */
-const WORKSPACE_CONFIG_SHARED_FILES = ["plugin-config.mjs", "workspace-config.mjs", "workspace-registry.mjs"];
-
-const DOCTOR_SHARED_FILES = [
-  ...HOOK_SHARED_FILES,
-  ...SETUP_WIZARD_SHARED_FILES,
-  ...MCP_PROXY_SHARED_FILES,
-  ...BATCH_SHARED_FILES,
-  ...ASYNC_WRITE_SHARED_FILES,
-  ...WORKSPACE_CONFIG_SHARED_FILES,
-  "doctor-core.mjs",
-];
-// opencode is imported in-process by its host, so it has no hook subprocess to
-// detach from: it takes the batch sender without the async write path.
-const OPENCODE_SHARED_FILES = [...HOOK_SHARED_FILES, ...SETUP_WIZARD_SHARED_FILES, ...MCP_PROXY_SHARED_FILES, ...BATCH_SHARED_FILES];
-// dsh and zcode ship no setup entry point, so nothing there calls the wizard.
-const ZCODE_SHARED_FILES = [...HOOK_SHARED_FILES, ...MCP_PROXY_SHARED_FILES, ...BATCH_SHARED_FILES, ...ASYNC_WRITE_SHARED_FILES, "agent-hook-runtime.mjs", "agent-uri-guard.mjs"];
-const DSH_SHARED_FILES = [...HOOK_SHARED_FILES, ...MCP_PROXY_SHARED_FILES];
-const PI_SHARED_FILES = [...HOOK_SHARED_FILES, ...SETUP_WIZARD_SHARED_FILES, ...BATCH_SHARED_FILES];
-// Agent Plugins 1.0 has no hooks: it is the proxy and nothing else.
-const AGENT_PLUGINS_SHARED_FILES = ["credentials.mjs", "debug-log.mjs", ...MCP_PROXY_SHARED_FILES];
-// openclaw assembles recall server-side, so it takes the recall pair alone.
-const OPENCLAW_SHARED_FILES = ["recall-compress-core.mjs", "recall-core.mjs"];
+// What a plugin ships equals what it imports, and neither side is written down.
+// Hand-kept lists were the drift: a group named after one harness got spread
+// into another's, and modules nobody imported ended up vendored into four
+// directories while a module somebody did import went missing and became an
+// ERR_MODULE_NOT_FOUND on the first hook of a fresh install. Each target below
+// only says where its code lives and where its copies go; the file set is the
+// transitive closure of what that code actually imports.
 export const TARGETS = [
-  { dir: join(ROOT, "examples", "claude-code-memory-plugin", "scripts", "shared"), files: DOCTOR_SHARED_FILES },
-  { dir: join(ROOT, "examples", "codex-memory-plugin", "scripts", "shared"), files: DOCTOR_SHARED_FILES },
-  { dir: join(ROOT, "examples", "opencode-plugin", "lib", "shared"), files: OPENCODE_SHARED_FILES },
-  { dir: join(ROOT, "examples", "dsh-memory-plugin", "shared"), files: DSH_SHARED_FILES },
-  { dir: join(ROOT, "examples", "pi-coding-agent-extension", "shared"), files: PI_SHARED_FILES },
-  { dir: join(ROOT, "examples", "zcode-memory-plugin", "scripts", "shared") , files: ZCODE_SHARED_FILES },
-  { dir: join(ROOT, "agent-plugins", "servers", "shared"), files: AGENT_PLUGINS_SHARED_FILES },
-  { dir: join(ROOT, "examples", "openclaw-plugin", "shared"), files: OPENCLAW_SHARED_FILES },
+  {
+    root: join(ROOT, "examples", "claude-code-memory-plugin"),
+    dir: join(ROOT, "examples", "claude-code-memory-plugin", "scripts", "shared"),
+  },
+  {
+    root: join(ROOT, "examples", "codex-memory-plugin"),
+    dir: join(ROOT, "examples", "codex-memory-plugin", "scripts", "shared"),
+  },
+  {
+    root: join(ROOT, "examples", "opencode-plugin"),
+    dir: join(ROOT, "examples", "opencode-plugin", "lib", "shared"),
+  },
+  {
+    root: join(ROOT, "examples", "dsh-memory-plugin"),
+    dir: join(ROOT, "examples", "dsh-memory-plugin", "shared"),
+  },
+  {
+    root: join(ROOT, "examples", "pi-coding-agent-extension"),
+    dir: join(ROOT, "examples", "pi-coding-agent-extension", "shared"),
+  },
+  {
+    root: join(ROOT, "agent-plugins"),
+    dir: join(ROOT, "agent-plugins", "servers", "shared"),
+  },
+  {
+    root: join(ROOT, "examples", "openclaw-plugin"),
+    dir: join(ROOT, "examples", "openclaw-plugin", "shared"),
+  },
+];
+
+// cursor, trae, trae-cn and zcode vendor nothing: the installer copies the
+// canonical runtime to `$OV_HOME/agent-integrations/memory-plugin-shared/lib`
+// and they import it by the relative path that resolves both there and here.
+export const ASSEMBLED_ROOTS = [
+  join(ROOT, "examples", "cursor-memory-plugin"),
+  join(ROOT, "examples", "trae-memory-hooks"),
+  join(ROOT, "examples", "zcode-memory-plugin"),
 ];
 
 export const GENERATED_HEADER = "// GENERATED FROM examples/memory-plugin-shared/lib. DO NOT EDIT.\n";
@@ -95,17 +81,129 @@ export const SKILL_TARGETS = [
   },
 ];
 
-async function listSharedFiles() {
-  const files = await readdir(SHARED_DIR);
-  return files.filter((file) => file.endsWith(".mjs")).sort();
+const SOURCE_EXTENSIONS = new Set([".mjs", ".js", ".cjs", ".ts", ".mts"]);
+const SKIPPED_DIRS = new Set(["node_modules", ".git", "dist", "coverage"]);
+
+const STATIC_IMPORT_RE = /(?:^|[\s;(=])(?:import|export)\b[^;'"]*?from\s*["']([^"']+)["']/g;
+const DYNAMIC_IMPORT_RE = /\bimport\s*\(\s*["']([^"']+)["']\s*\)/g;
+const SIDE_EFFECT_IMPORT_RE = /(?:^|[\s;])import\s*["']([^"']+)["']/g;
+
+/** Every module specifier a source file names, in any of the three forms. */
+export function importSpecifiers(source) {
+  const found = [];
+  for (const re of [STATIC_IMPORT_RE, DYNAMIC_IMPORT_RE, SIDE_EFFECT_IMPORT_RE]) {
+    for (const match of source.matchAll(re)) found.push(match[1]);
+  }
+  return found;
+}
+
+async function sourceFilesUnder(dir, skip, out = []) {
+  let entries;
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch {
+    return out;
+  }
+  for (const entry of entries) {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (SKIPPED_DIRS.has(entry.name) || path === skip) continue;
+      await sourceFilesUnder(path, skip, out);
+      continue;
+    }
+    const dot = entry.name.lastIndexOf(".");
+    if (dot > 0 && SOURCE_EXTENSIONS.has(entry.name.slice(dot))) out.push(path);
+  }
+  return out;
+}
+
+async function exists(path) {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The shared modules a target's own code imports directly.
+ *
+ * Everything under `root` except the vendored directory itself is the target's
+ * own code — including re-export shims like claude-code's `scripts/lib/`, which
+ * are the only importer of several modules.
+ */
+export async function directSharedImports({ root, dir }) {
+  const seeds = new Set();
+  const missing = [];
+  for (const file of await sourceFilesUnder(root, dir)) {
+    const source = await readFile(file, "utf-8");
+    for (const spec of importSpecifiers(source)) {
+      if (!spec.startsWith(".")) continue;
+      const resolved = resolvePath(dirname(file), spec);
+      if (!resolved.startsWith(dir + sep)) continue;
+      const name = resolved.slice(dir.length + 1);
+      seeds.add(name);
+      if (!(await exists(resolved))) missing.push({ name, importer: relative(ROOT, file) });
+    }
+  }
+  return { seeds: [...seeds].sort(), missing };
+}
+
+/**
+ * The transitive closure of `seeds` inside lib/.
+ *
+ * A seed that lib/ does not have is a plugin-local module living in the same
+ * directory (pi's recall-ledger), not an error: it is simply not generated.
+ */
+export async function sharedClosure(seeds) {
+  const generated = new Set();
+  const pending = [...seeds];
+  while (pending.length) {
+    const name = pending.pop();
+    if (generated.has(name)) continue;
+    const source = await readFile(join(SHARED_DIR, name), "utf-8").catch(() => null);
+    if (source === null) continue;
+    generated.add(name);
+    for (const spec of importSpecifiers(source)) {
+      if (spec.startsWith("./")) pending.push(spec.slice(2));
+    }
+  }
+  return [...generated].sort();
+}
+
+/** The closure the installer has to assemble for the harnesses that vendor nothing. */
+export async function assembledClosure() {
+  const seeds = new Set();
+  for (const root of ASSEMBLED_ROOTS) {
+    const { seeds: found, missing } = await directSharedImports({ root, dir: SHARED_DIR });
+    if (missing.length) {
+      const detail = missing.map((m) => `${m.name} (imported by ${m.importer})`).join(", ");
+      throw new Error(`the assembled runtime is missing: ${detail}`);
+    }
+    for (const seed of found) seeds.add(seed);
+  }
+  return sharedClosure([...seeds]);
+}
+
+/** Every target with the file set its own imports resolve to. */
+export async function resolveTargets() {
+  const resolved = [];
+  for (const target of TARGETS) {
+    const { seeds, missing } = await directSharedImports(target);
+    if (missing.length) {
+      const detail = missing.map((m) => `${m.name} (imported by ${m.importer})`).join(", ");
+      throw new Error(`${relative(ROOT, target.dir)}: imports a module that exists nowhere: ${detail}`);
+    }
+    resolved.push({ ...target, files: await sharedClosure(seeds) });
+  }
+  return resolved;
 }
 
 async function copySharedFile(file, targetDir) {
   await mkdir(targetDir, { recursive: true });
-  const source = join(SHARED_DIR, file);
-  const target = join(targetDir, file);
-  const body = await readFile(source, "utf-8");
-  await writeFile(target, `${GENERATED_HEADER}${body}`, "utf-8");
+  const body = await readFile(join(SHARED_DIR, file), "utf-8");
+  await writeFile(join(targetDir, file), `${GENERATED_HEADER}${body}`, "utf-8");
 }
 
 async function copySkill(skill, targetDir) {
@@ -117,18 +215,38 @@ async function copySkill(skill, targetDir) {
   }
 }
 
+/** Vendored copies the target no longer imports; the sync would never touch them again. */
+async function staleCopies(target, keep) {
+  const stale = [];
+  for (const name of (await readdir(target.dir).catch(() => [])).sort()) {
+    if (!name.endsWith(".mjs") || keep.includes(name)) continue;
+    const body = await readFile(join(target.dir, name), "utf-8");
+    if (body.startsWith(GENERATED_HEADER)) stale.push(name);
+  }
+  return stale;
+}
+
 async function main() {
-  const allFiles = await listSharedFiles();
-  for (const target of TARGETS) {
-    const files = target.files ?? allFiles;
-    for (const file of files) {
-      if (!allFiles.includes(file)) {
-        throw new Error(`shared file not found: ${file}`);
-      }
+  const claimed = new Set();
+  for (const target of await resolveTargets()) {
+    for (const file of target.files) {
       await copySharedFile(file, target.dir);
+      claimed.add(file);
       process.stdout.write(`synced ${file} -> ${relative(ROOT, target.dir)}\n`);
     }
+    for (const file of await staleCopies(target, target.files)) {
+      process.stdout.write(`stale  ${file} in ${relative(ROOT, target.dir)} — nothing imports it; delete it\n`);
+    }
   }
+
+  for (const file of await assembledClosure()) claimed.add(file);
+  const unclaimed = (await readdir(SHARED_DIR))
+    .filter((file) => file.endsWith(".mjs") && !claimed.has(file))
+    .sort();
+  for (const file of unclaimed) {
+    process.stdout.write(`unused lib/${file} — no target imports it\n`);
+  }
+
   for (const { skill, dirs } of SKILL_TARGETS) {
     for (const dir of dirs) {
       await copySkill(skill, dir);

@@ -1999,7 +1999,7 @@ copy_agent_integration() { # copy_agent_integration <source-subdir> <dest-name>
   printf '%s' "$dest"
 }
 
-# Cursor and TRAE keep only their client-specific adapters in the repository.
+# Cursor, TRAE and ZCode keep only their client-specific adapters in the repository.
 # Assemble a self-contained installation by adding the canonical shared runtime
 # at install time instead of committing generated copies for every client.
 assemble_agent_integration() { # assemble_agent_integration <source-subdir> <dest-name>
@@ -2014,7 +2014,8 @@ assemble_agent_integration() { # assemble_agent_integration <source-subdir> <des
   mkdir -p "$shared_dest.tmp"
   for file in \
     agent-hook-runtime.mjs agent-uri-guard.mjs credentials.mjs debug-log.mjs \
-    batch-send.mjs mcp-proxy-core.mjs pending-queue.mjs profile-inject.mjs \
+    async-writer.mjs batch-send.mjs capture-utils.mjs \
+    mcp-proxy-config.mjs mcp-proxy-core.mjs pending-queue.mjs profile-inject.mjs \
     retryable.mjs \
     recall-compress-core.mjs recall-core.mjs \
     session-model.mjs uri-guard.mjs workspace-identity.mjs workspace-peer.mjs; do

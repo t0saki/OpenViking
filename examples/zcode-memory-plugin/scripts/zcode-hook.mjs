@@ -34,8 +34,8 @@ import {
   stableHash,
   withAgentHookLock,
   writeHookState,
-} from "./shared/agent-hook-runtime.mjs";
-import { maybeDetach, readHookStdin } from "./shared/async-writer.mjs";
+} from "../../memory-plugin-shared/lib/agent-hook-runtime.mjs";
+import { maybeDetach, readHookStdin } from "../../memory-plugin-shared/lib/async-writer.mjs";
 import { applyZcodeCaptureResult, buildZcodeCapturePlan } from "./zcode-capture.mjs";
 import { buildZcodeTurns, cleanZcodeText } from "./zcode-turns.mjs";
 

@@ -14,7 +14,7 @@
 
 import { readFileSync, realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { evaluateAgentUriGuard } from "./shared/agent-uri-guard.mjs";
+import { evaluateAgentUriGuard } from "../../memory-plugin-shared/lib/agent-uri-guard.mjs";
 
 function readInput() {
   try {

@@ -61,17 +61,16 @@ for required in \
   zcode-memory-plugin/scripts/zcode-hook.mjs \
   zcode-memory-plugin/scripts/zcode-capture.mjs \
   zcode-memory-plugin/scripts/zcode-turns.mjs \
-  zcode-memory-plugin/scripts/shared/async-writer.mjs \
-  zcode-memory-plugin/scripts/shared/agent-hook-runtime.mjs \
-  zcode-memory-plugin/scripts/shared/batch-send.mjs \
-  zcode-memory-plugin/scripts/shared/retryable.mjs \
   zcode-memory-plugin/servers/mcp-proxy.mjs \
   memory-plugin-shared/lib/agent-hook-runtime.mjs \
   memory-plugin-shared/lib/agent-uri-guard.mjs \
   memory-plugin-shared/lib/async-writer.mjs \
+  memory-plugin-shared/lib/batch-send.mjs \
+  memory-plugin-shared/lib/capture-utils.mjs \
+  memory-plugin-shared/lib/mcp-proxy-config.mjs \
+  memory-plugin-shared/lib/mcp-proxy-core.mjs \
   memory-plugin-shared/lib/retryable.mjs \
-  memory-plugin-shared/lib/uri-guard.mjs \
-  memory-plugin-shared/lib/mcp-proxy-core.mjs; do
+  memory-plugin-shared/lib/uri-guard.mjs; do
   test -f "${STAGE}/${required}" || {
     echo "Marketplace archive is missing ${required}" >&2
     exit 1

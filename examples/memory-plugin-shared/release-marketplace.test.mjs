@@ -54,7 +54,13 @@ test("release marketplace archive supports a ZCode TOS install", () => {
     const integrationRoot = join(home, ".openviking", "agent-integrations", "zcode");
     assert.ok(existsSync(join(integrationRoot, "scripts", "zcode-hook.mjs")));
     assert.ok(existsSync(join(integrationRoot, "scripts", "zcode-capture.mjs")));
-    assert.ok(existsSync(join(integrationRoot, "scripts", "shared", "async-writer.mjs")));
+    // ZCode imports the runtime the installer assembles beside it, the way
+    // cursor and trae do, rather than a copy committed into its own tree.
+    const sharedRoot = join(home, ".openviking", "agent-integrations", "memory-plugin-shared", "lib");
+    assert.ok(existsSync(join(sharedRoot, "async-writer.mjs")));
+    assert.ok(existsSync(join(sharedRoot, "capture-utils.mjs")));
+    assert.ok(existsSync(join(sharedRoot, "mcp-proxy-config.mjs")));
+    assert.equal(existsSync(join(integrationRoot, "scripts", "shared")), false);
 
     const config = JSON.parse(readFileSync(join(home, ".zcode", "cli", "config.json"), "utf8"));
     assert.equal(config.hooks.enabled, true);
