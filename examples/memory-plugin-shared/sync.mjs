@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { access, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve as resolvePath, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -247,7 +247,13 @@ async function copySharedFile(file, targetDir, typed) {
   for (const name of names) {
     const body = await readFile(join(SHARED_DIR, name), "utf-8").catch(() => null);
     if (body === null) continue;
-    await writeFile(join(targetDir, name), `${GENERATED_HEADER}${body}`, "utf-8");
+    // Written through a rename so a reader never sees half a module: the
+    // marketplace staging script runs this generator, and it can run while a
+    // test is byte-comparing the copies.
+    const target = join(targetDir, name);
+    const staging = `${target}.${process.pid}.tmp`;
+    await writeFile(staging, `${GENERATED_HEADER}${body}`, "utf-8");
+    await rename(staging, target);
   }
 }
 
