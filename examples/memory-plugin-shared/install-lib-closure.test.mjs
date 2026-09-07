@@ -1,7 +1,7 @@
 /**
  * What the installer ships must equal what the shipped code imports.
  *
- * cursor, trae and trae-cli have no vendored copy of the shared runtime: the
+ * cursor and trae have no vendored copy of the shared runtime: the
  * installer assembles one by copying a hand-written list into
  * `$OV_HOME/agent-integrations/memory-plugin-shared/lib`. A module that list
  * forgets is an ERR_MODULE_NOT_FOUND on the first hook of a fresh install, and
@@ -18,7 +18,7 @@ import { fileURLToPath } from "node:url";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const LIB = join(HERE, "lib");
 
-/** The entrypoints cursor, trae and trae-cli import from the assembled lib. */
+/** The entrypoints cursor and trae import from the assembled lib. */
 const ENTRYPOINTS = ["agent-hook-runtime.mjs", "agent-uri-guard.mjs", "mcp-proxy-core.mjs"];
 
 const RELATIVE_IMPORT_RE = /(?:^|[\s;(])(?:import|export)\s[^;]*?from\s*["'](\.\/[^"']+)["']/g;
