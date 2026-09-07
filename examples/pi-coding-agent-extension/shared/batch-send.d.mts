@@ -1,3 +1,4 @@
+// GENERATED FROM examples/memory-plugin-shared/lib. DO NOT EDIT.
 export const BATCH_LIMIT: number;
 export function sendSessionMessages(
   fetchJSON: (path: string, init?: any) => Promise<{ ok: boolean; status?: number; result?: any; error?: any }>,

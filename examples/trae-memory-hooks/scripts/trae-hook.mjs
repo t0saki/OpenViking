@@ -19,14 +19,14 @@ import {
   withAgentHookLock,
   writeHookState,
 } from "../../memory-plugin-shared/lib/agent-hook-runtime.mjs";
-import { filterCaptureTurns } from "../../memory-plugin-shared/lib/capture-utils.mjs";
+import { filterCaptureTurns, isCaptureEnabled } from "../../memory-plugin-shared/lib/capture-utils.mjs";
 import { buildTraeTurns, cleanTraeText } from "./trae-turns.mjs";
 
 const eventName = process.env.OPENVIKING_HOOK_EVENT || process.argv[2] || "";
 const requestedSource = process.env.OPENVIKING_HOOK_SOURCE || process.argv[3];
 const requestedClient = requestedSource === "trae-cn" ? "trae-cn" : "trae";
 const prefix = requestedClient === "trae-cn" ? "trcn-" : "tr-";
-const cfg = loadAgentHookConfig(requestedClient);
+let cfg = loadAgentHookConfig(requestedClient);
 const { log, logError } = createAgentLogger(requestedClient, eventName, cfg);
 
 function output(value = {}) {
@@ -48,6 +48,9 @@ const input = await readHookInput();
 const nativeSessionId = resolveNativeSessionId(input);
 const sessionId = deriveAgentSessionId(prefix, input);
 const cwd = resolveAgentCwd(input);
+// The payload names the session's directory, which the module-level load could
+// not know; a workspace file there outranks ovcli.conf.
+cfg = loadAgentHookConfig(requestedClient, cwd);
 const { fetchJSON } = makeAgentFetchJSON(cfg, cwd);
 
 async function main() {
@@ -104,7 +107,7 @@ async function main() {
   }
 
   if (eventName === "stop") {
-    if (!cfg.autoCapture) { approve(); return; }
+    if (!isCaptureEnabled(cfg)) { approve(); return; }
     await withAgentHookLock(requestedClient, nativeSessionId, async () => {
       state = await readHookState(requestedClient, nativeSessionId);
       const hashes = new Set(Array.isArray(state.capturedHashes) ? state.capturedHashes : []);

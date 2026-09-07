@@ -18,18 +18,17 @@
  * Resolution stays env → ovcli.conf plugin.<harness> → ovcli.conf plugin →
  * ov.conf harness section (legacy) → defaults.
  *
- * Consumers: Claude Code and Codex only. The other harnesses ship this module
- * through `sync.mjs` but still read their knobs from the environment, so a
- * `plugin` entry named after them is inert. `HARNESS_KEYS` lists what a harness
- * loader actually consumes today — add a key here as its loader starts calling
- * `loadPluginSettings`, not before, so the section never promises a knob that
- * silently does nothing.
+ * Every harness resolves through `resolveSettings()` below, so one `plugin`
+ * section configures all of them and `ov config switch` moves behaviour along
+ * with credentials. The knobs themselves are declared once in
+ * `config-schema.mjs`; this module only decides which files supply them.
  */
 
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve as resolvePath } from "node:path";
 
+import { HARNESS_KEYS, harnessKey, resolveKnobs } from "./config-schema.mjs";
 import {
   announcedOverrides,
   loadWorkspaceLayers,
@@ -42,10 +41,7 @@ import { readEntry } from "./workspace-registry.mjs";
 
 const DEFAULT_OVCLI_CONF_PATH = join(homedir(), ".openviking", "ovcli.conf");
 
-export const HARNESS_KEYS = {
-  claudeCode: "claude_code",
-  codex: "codex",
-};
+export { HARNESS_KEYS, harnessKey };
 
 function tryLoadJson(path) {
   try {
@@ -72,14 +68,45 @@ export function loadPluginSettings(harness, env = process.env, options = {}) {
     if (value && typeof value === "object" && !Array.isArray(value)) continue;
     shared[key] = value;
   }
-  const scoped = harness && plugin[harness] && typeof plugin[harness] === "object"
-    ? plugin[harness]
-    : {};
+  // Both spellings of the harness name find the same override, so copying
+  // `claude-code` out of the installer is not a silent no-op.
+  const key = harnessKey(harness);
+  const scoped = {};
+  for (const candidate of [key, key.replace(/_/g, "-")]) {
+    const value = candidate && plugin[candidate];
+    if (value && typeof value === "object" && !Array.isArray(value)) Object.assign(scoped, value);
+  }
 
   const settings = { ...shared, ...scoped };
   const cwd = String(options.cwd || "").trim();
   if (!cwd) return settings;
   return { ...settings, ...resolveWorkspaceSettings(cwd, env, options).settings };
+}
+
+/**
+ * Every knob for one harness, resolved through the whole layer stack.
+ *
+ * `legacy` is that harness's section in ov.conf, which is where tuning used to
+ * live: it stays the lowest configured layer so an existing deployment keeps
+ * working, and everything above it comes from files a client may edit.
+ *
+ * Returns the settings, the names some layer actually supplied (what the
+ * `*Configured` flags report), and the raw ovcli.conf merge — a couple of
+ * callers still need to know a value came from ovcli.conf rather than ov.conf.
+ */
+export function resolveSettings(harness, options = {}) {
+  const { env = process.env, cwd = "", legacy = {}, clientVersion = "" } = options;
+  const key = harnessKey(harness);
+  const plugin = loadPluginSettings(key, env, { cwd, clientVersion });
+  const { settings, configured, sources } = resolveKnobs({
+    harness: key,
+    layers: [
+      { name: "ov.conf", data: legacy },
+      { name: "ovcli.conf", data: plugin },
+    ],
+    env,
+  });
+  return { settings, configured, sources, plugin };
 }
 
 /**

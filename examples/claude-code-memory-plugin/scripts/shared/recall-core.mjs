@@ -31,6 +31,28 @@ const CODING_QUOTA_WEIGHTS = {
 
 let userSpaceCache = "";
 
+/**
+ * Is recall on for this config?
+ *
+ * The switch has four spellings in the wild: a boolean `autoRecall`, opencode's
+ * `{ enabled }` object, dsh and pi's `syncTurns`, and the global `enabled`
+ * that turns the whole plugin off. Reading it here rather than in each loader
+ * is what keeps it from drifting a fifth time — and any spelling that says off
+ * wins, so a config that disables recall under an older name still disables it.
+ */
+export function isRecallEnabled(cfg = {}) {
+  return isSwitchOn([cfg.enabled, cfg.autoRecall, cfg.recall, cfg.syncRecall]);
+}
+
+/** Any recognised spelling that says off wins; everything else means on. */
+function isSwitchOn(values) {
+  for (const value of values) {
+    if (value === false) return false;
+    if (value && typeof value === "object" && !Array.isArray(value) && value.enabled === false) return false;
+  }
+  return true;
+}
+
 export function estimateTokens(text) {
   return text ? Math.ceil(String(text).length / 4) : 0;
 }

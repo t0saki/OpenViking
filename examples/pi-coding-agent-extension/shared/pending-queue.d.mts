@@ -1,3 +1,4 @@
+// GENERATED FROM examples/memory-plugin-shared/lib. DO NOT EDIT.
 export function enqueue(type: string, sessionId: string, payload: Record<string, any>): Promise<{ ok: boolean; path?: string; error?: string }>;
 export function listPending(): Promise<Array<{ filename: string; entry: Record<string, any> }>>;
 export function replayPending(

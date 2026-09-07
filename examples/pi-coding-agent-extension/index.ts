@@ -10,8 +10,9 @@
  * (most mature, production-hardened), Hermes (anti-pattern: stale prefetch).
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { isCaptureEnabled } from "./shared/capture-utils.mjs";
 import { createLogger } from "./shared/debug-log.mjs";
-import { loadConfigFromModuleUrl, type OVConfig } from "./config.js";
+import { loadConfig, type OVConfig } from "./config.js";
 import { OVClient } from "./client.js";
 import { RecallManager } from "./recall.js";
 import { RecallLedger } from "./shared/recall-ledger.mjs";
@@ -24,7 +25,7 @@ import { createTakeoverManager } from "./takeover.js";
 
 export default async function (pi: ExtensionAPI) {
   // --- Load config ---
-  const config = loadConfigFromModuleUrl(import.meta.url);
+  const config = loadConfig();
   if (!config.enabled) return;
 
   // Env overrides
@@ -226,7 +227,7 @@ export default async function (pi: ExtensionAPI) {
 
   // --- turn_end ---
   pi.on("turn_end", async (event, ctx) => {
-    if (!connected || bypassed || !config.syncTurns) return;
+    if (!connected || bypassed || !isCaptureEnabled(config)) return;
 
     const branch = ctx.sessionManager.getBranch();
     const result = await sync.syncBranch(branch);

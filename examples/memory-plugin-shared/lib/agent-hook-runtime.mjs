@@ -8,7 +8,8 @@ import { createLogger } from "./debug-log.mjs";
 import { sendSessionMessages } from "./batch-send.mjs";
 import { enqueue, replayPending } from "./pending-queue.mjs";
 import { buildProfileBlock } from "./profile-inject.mjs";
-import { buildRecallBlock } from "./recall-core.mjs";
+import { buildRecallBlock, isRecallEnabled } from "./recall-core.mjs";
+import { resolveSettings } from "./plugin-config.mjs";
 import { isRetryableFailure } from "./retryable.mjs";
 import { deriveHarnessSessionId, isBypassed } from "./session-model.mjs";
 import { resolveEffectivePeerId } from "./workspace-peer.mjs";
@@ -16,17 +17,6 @@ import { resolveEffectivePeerId } from "./workspace-peer.mjs";
 const STATE_VERSION = 1;
 const STATE_DIR_MODE = 0o700;
 const STATE_FILE_MODE = 0o600;
-
-function envBool(name, fallback) {
-  const value = process.env[name];
-  if (value == null || value === "") return fallback;
-  return !["0", "false", "no", "off"].includes(value.trim().toLowerCase());
-}
-
-function envNumber(name, fallback, minimum = 0) {
-  const value = Number(process.env[name]);
-  return Number.isFinite(value) ? Math.max(minimum, value) : fallback;
-}
 
 function safePart(value) {
   return String(value || "unknown").replace(/[^A-Za-z0-9._-]/g, "-");
@@ -42,34 +32,36 @@ export function stableHash(...values) {
     .digest("hex");
 }
 
-export function loadAgentHookConfig(clientId) {
+/**
+ * The config for one of the thin hook harnesses.
+ *
+ * These four used to read the environment and nothing else, so `ov config
+ * switch` moved their credentials and left their behaviour behind, and an
+ * `ovcli.conf` `plugin` entry named after them was inert. They resolve through
+ * the same layers as every other harness now; only the log path, which is named
+ * after the client, stays local.
+ *
+ * `cwd` selects the workspace layer. It defaults to this process's directory,
+ * which is all a hook knows before the payload on stdin names the session's
+ * own — the caller re-resolves once it has it. That is safe because a workspace
+ * file may not carry connection or credential keys, so the base URL and API key
+ * cannot move under a logger or fetch helper already built from the first load.
+ */
+export function loadAgentHookConfig(clientId, cwd = process.cwd()) {
   const credentials = resolveOpenVikingCredentials();
-  const debugLogPath = process.env.OPENVIKING_DEBUG_LOG
-    || join(homedir(), ".openviking", "logs", `${clientId}-hooks.log`);
+  const { settings, configured } = resolveSettings(clientId, { env: process.env, cwd });
   return {
+    ...settings,
     ...credentials,
+    // The credential chain owns the peer unless a `plugin` entry or a workspace
+    // file names one, which is the more specific answer for this directory.
+    peerId: configured.has("peerId") ? settings.peerId : credentials.peerId,
     clientId,
     userAgent: buildUserAgent(clientId, process.env.OPENVIKING_INTEGRATION_VERSION),
-    enabled: envBool("OPENVIKING_MEMORY_ENABLED", true),
-    autoRecall: envBool("OPENVIKING_AUTO_RECALL", true),
-    autoCapture: envBool("OPENVIKING_AUTO_CAPTURE", true),
-    workspacePeer: envBool("OPENVIKING_WORKSPACE_PEER", true),
-    bypassSession: envBool("OPENVIKING_BYPASS_SESSION", false),
-    bypassSessionPatterns: String(process.env.OPENVIKING_BYPASS_SESSION_PATTERNS || "")
-      .split(",").map((item) => item.trim()).filter(Boolean),
-    recallLimit: envNumber("OPENVIKING_RECALL_LIMIT", 10, 1),
-    recallLimitConfigured: Boolean(process.env.OPENVIKING_RECALL_LIMIT),
-    recallTokenBudget: envNumber("OPENVIKING_RECALL_TOKEN_BUDGET", 2000, 200),
-    recallMaxContentChars: envNumber("OPENVIKING_RECALL_MAX_CONTENT_CHARS", 500, 50),
-    scoreThreshold: envNumber("OPENVIKING_SCORE_THRESHOLD", 0.35, 0),
-    recallPreferAbstract: envBool("OPENVIKING_RECALL_PREFER_ABSTRACT", true),
-    recallPeerScope: process.env.OPENVIKING_RECALL_PEER_SCOPE === "actor" ? "actor" : "all",
-    timeoutMs: envNumber("OPENVIKING_TIMEOUT_MS", 15000, 1000),
-    profileTokenBudget: envNumber("OPENVIKING_PROFILE_TOKEN_BUDGET", 6000, 500),
-    commitTurnThreshold: envNumber("OPENVIKING_COMMIT_TURN_THRESHOLD", 8, 1),
-    writePathAsync: envBool("OPENVIKING_WRITE_PATH_ASYNC", true),
-    debug: envBool("OPENVIKING_DEBUG", false),
-    debugLogPath,
+    recallLimitConfigured: configured.has("recallLimit"),
+    recallQueryExpansionConfigured: configured.has("recallQueryExpansion"),
+    debugLogPath: settings.debugLogPath
+      || join(homedir(), ".openviking", "logs", `${clientId}-hooks.log`),
   };
 }
 
@@ -240,7 +232,7 @@ export async function replayAgentPending(fetchJSON, log = () => {}) {
 }
 
 export async function recallForPrompt(fetchJSON, cfg, prompt, cwd, log = () => {}, options = {}) {
-  if (!cfg.autoRecall || !String(prompt || "").trim()) return null;
+  if (!isRecallEnabled(cfg) || !String(prompt || "").trim()) return null;
   const peer = resolveEffectivePeerId({ cfg, cwd });
   return buildRecallBlock(fetchJSON, cfg, prompt, {
     actorPeerId: peer.peerId,

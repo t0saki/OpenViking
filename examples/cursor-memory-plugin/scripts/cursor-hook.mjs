@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { readFile } from "node:fs/promises";
-import { filterCaptureTurns } from "../../memory-plugin-shared/lib/capture-utils.mjs";
+import { filterCaptureTurns, isCaptureEnabled } from "../../memory-plugin-shared/lib/capture-utils.mjs";
 import { parseCursorTranscript } from "./cursor-transcript.mjs";
 
 import {
@@ -27,7 +27,7 @@ import {
 const CLIENT_ID = "cursor";
 const PREFIX = "cu-";
 const eventName = process.env.OPENVIKING_HOOK_EVENT || process.argv[2] || "";
-const cfg = loadAgentHookConfig(CLIENT_ID);
+let cfg = loadAgentHookConfig(CLIENT_ID);
 const { log, logError } = createAgentLogger(CLIENT_ID, eventName, cfg);
 
 function output(value = {}) {
@@ -35,7 +35,7 @@ function output(value = {}) {
 }
 
 async function captureTranscript(input, state, sessionId) {
-  if (!cfg.autoCapture) return { state, captured: 0 };
+  if (!isCaptureEnabled(cfg)) return { state, captured: 0 };
   const transcriptPath = input.transcript_path || input.transcriptPath;
   if (!transcriptPath) return { state, captured: 0 };
   let turns = [];
@@ -75,6 +75,9 @@ const input = await readHookInput();
 const nativeSessionId = resolveNativeSessionId(input);
 const sessionId = deriveAgentSessionId(PREFIX, input);
 const cwd = resolveAgentCwd(input);
+// The payload names the session's directory, which the module-level load could
+// not know; a workspace file there outranks ovcli.conf.
+cfg = loadAgentHookConfig(CLIENT_ID, cwd);
 const { fetchJSON } = makeAgentFetchJSON(cfg, cwd);
 
 async function main() {

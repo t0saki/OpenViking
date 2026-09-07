@@ -144,7 +144,12 @@ export async function directSharedImports({ root, dir }) {
       if (!resolved.startsWith(dir + sep)) continue;
       const name = resolved.slice(dir.length + 1);
       seeds.add(name);
-      if (!(await exists(resolved))) missing.push({ name, importer: relative(ROOT, file) });
+      // A module this sync has not generated yet is not missing — it is the
+      // reason to run the sync. What is missing is a module that exists
+      // neither in lib/ nor beside the copies as a plugin-local file.
+      if (!(await exists(join(SHARED_DIR, name))) && !(await exists(resolved))) {
+        missing.push({ name, importer: relative(ROOT, file) });
+      }
     }
   }
   return { seeds: [...seeds].sort(), missing };
@@ -195,15 +200,34 @@ export async function resolveTargets() {
       const detail = missing.map((m) => `${m.name} (imported by ${m.importer})`).join(", ");
       throw new Error(`${relative(ROOT, target.dir)}: imports a module that exists nowhere: ${detail}`);
     }
-    resolved.push({ ...target, files: await sharedClosure(seeds) });
+    const own = await sourceFilesUnder(target.root, target.dir);
+    resolved.push({
+      ...target,
+      files: await sharedClosure(seeds),
+      typed: own.some((file) => file.endsWith(".ts") || file.endsWith(".mts")),
+    });
   }
   return resolved;
 }
 
-async function copySharedFile(file, targetDir) {
+/**
+ * Copy one module, plus its type declaration for a target written in
+ * TypeScript.
+ *
+ * The `.d.mts` files used to live in the vendored directories, hand-written and
+ * hand-kept in step with modules they sat beside — two harnesses had two
+ * different, both incomplete, declarations of the same module. They are part of
+ * the module now. A JavaScript target has no use for them, so `typed` says
+ * whether this one imports from TypeScript.
+ */
+async function copySharedFile(file, targetDir, typed) {
   await mkdir(targetDir, { recursive: true });
-  const body = await readFile(join(SHARED_DIR, file), "utf-8");
-  await writeFile(join(targetDir, file), `${GENERATED_HEADER}${body}`, "utf-8");
+  const names = typed ? [file, `${file.slice(0, -4)}.d.mts`] : [file];
+  for (const name of names) {
+    const body = await readFile(join(SHARED_DIR, name), "utf-8").catch(() => null);
+    if (body === null) continue;
+    await writeFile(join(targetDir, name), `${GENERATED_HEADER}${body}`, "utf-8");
+  }
 }
 
 async function copySkill(skill, targetDir) {
@@ -219,7 +243,8 @@ async function copySkill(skill, targetDir) {
 async function staleCopies(target, keep) {
   const stale = [];
   for (const name of (await readdir(target.dir).catch(() => [])).sort()) {
-    if (!name.endsWith(".mjs") || keep.includes(name)) continue;
+    const module = name.endsWith(".d.mts") ? `${name.slice(0, -6)}.mjs` : name;
+    if (!module.endsWith(".mjs") || keep.includes(module)) continue;
     const body = await readFile(join(target.dir, name), "utf-8");
     if (body.startsWith(GENERATED_HEADER)) stale.push(name);
   }
@@ -230,7 +255,7 @@ async function main() {
   const claimed = new Set();
   for (const target of await resolveTargets()) {
     for (const file of target.files) {
-      await copySharedFile(file, target.dir);
+      await copySharedFile(file, target.dir, target.typed);
       claimed.add(file);
       process.stdout.write(`synced ${file} -> ${relative(ROOT, target.dir)}\n`);
     }

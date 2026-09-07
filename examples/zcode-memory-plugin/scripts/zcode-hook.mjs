@@ -36,11 +36,12 @@ import {
   writeHookState,
 } from "../../memory-plugin-shared/lib/agent-hook-runtime.mjs";
 import { maybeDetach, readHookStdin } from "../../memory-plugin-shared/lib/async-writer.mjs";
+import { isCaptureEnabled } from "../../memory-plugin-shared/lib/capture-utils.mjs";
 import { applyZcodeCaptureResult, buildZcodeCapturePlan } from "./zcode-capture.mjs";
 import { buildZcodeTurns, cleanZcodeText } from "./zcode-turns.mjs";
 
 const eventName = process.env.OPENVIKING_HOOK_EVENT || process.argv[2] || "";
-const cfg = loadAgentHookConfig("zcode");
+let cfg = loadAgentHookConfig("zcode");
 const { log, logError } = createAgentLogger("zcode", eventName, cfg);
 
 /**
@@ -135,7 +136,7 @@ async function main() {
 
   // --- Stop: capture incremental turns + commit ---
   if (eventName === "stop") {
-    if (!cfg.autoCapture) return;
+    if (!isCaptureEnabled(cfg)) return;
     await withAgentHookLock("zcode", nativeSessionId, async () => {
       state = await readHookState("zcode", nativeSessionId);
       const plan = buildZcodeCapturePlan(buildZcodeTurns(input, state), state, cfg);
@@ -164,7 +165,7 @@ async function main() {
 }
 
 async function run() {
-  if (eventName === "stop" && cfg.enabled && cfg.autoCapture) {
+  if (eventName === "stop" && isCaptureEnabled(cfg)) {
     const detached = await maybeDetach(cfg, { approve: () => {} });
     if (detached) return;
   }
@@ -183,6 +184,9 @@ async function run() {
   nativeSessionId = resolveNativeSessionId(input);
   sessionId = deriveAgentSessionId("zc-", input);
   cwd = resolveAgentCwd(input);
+  // The payload names the session's directory, which the module-level load
+  // could not know; a workspace file there outranks ovcli.conf.
+  cfg = loadAgentHookConfig("zcode", cwd);
   ({ fetchJSON } = makeAgentFetchJSON(cfg, cwd));
   await main();
 }

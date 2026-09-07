@@ -4,6 +4,7 @@ import { resolveConfig } from "./config.mjs";
 
 test("behavior environment overrides are applied and normalized", () => {
   const config = resolveConfig({}, {
+    OPENVIKING_CLI_CONFIG_FILE: "/nonexistent/ovcli.conf",
     OPENVIKING_URL: "http://127.0.0.1:19464/",
     OPENVIKING_WORKSPACE_PEER: "0",
     OPENVIKING_RECALL_PEER_SCOPE: "actor",
@@ -29,6 +30,7 @@ test("explicit plugin config overrides credential files", () => {
     user: "plugin-user",
     peerId: "plugin-peer",
   }, {
+    OPENVIKING_CLI_CONFIG_FILE: "/nonexistent/ovcli.conf",
     OPENVIKING_URL: "http://env.local",
     OPENVIKING_API_KEY: "env-key",
     OPENVIKING_ACCOUNT: "env-account",
@@ -41,4 +43,25 @@ test("explicit plugin config overrides credential files", () => {
   assert.equal(config.account, "plugin-account");
   assert.equal(config.user, "plugin-user");
   assert.equal(config.peerId, "plugin-peer");
+});
+
+// A knob set once in ovcli.conf reaches this harness like any other, and the
+// host's own input is the lower layer.
+test("the ovcli.conf plugin section outranks the cordis input", async () => {
+  const { mkdtempSync, writeFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const dir = mkdtempSync(join(tmpdir(), "dsh-plugin-conf-"));
+  const cliPath = join(dir, "ovcli.conf");
+  writeFileSync(cliPath, JSON.stringify({
+    url: "http://127.0.0.1:1933",
+    plugin: { recallLimit: 5, dsh: { captureMode: "keyword" } },
+  }));
+
+  const config = resolveConfig({ recallLimit: 3, captureMode: "semantic" }, {
+    OPENVIKING_CLI_CONFIG_FILE: cliPath,
+  }, "/workspace/project");
+
+  assert.equal(config.recallLimit, 5);
+  assert.equal(config.captureMode, "keyword");
 });

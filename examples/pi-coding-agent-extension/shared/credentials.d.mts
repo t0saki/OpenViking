@@ -1,3 +1,4 @@
+// GENERATED FROM examples/memory-plugin-shared/lib. DO NOT EDIT.
 export function buildUserAgent(harness: string, version?: string): string;
 
 export function readManifestVersion(manifest: string | URL): string;

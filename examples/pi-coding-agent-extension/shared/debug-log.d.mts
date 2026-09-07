@@ -1,3 +1,4 @@
+// GENERATED FROM examples/memory-plugin-shared/lib. DO NOT EDIT.
 export declare function createLogger(
   hookName: string,
   overrideCfg?: { debug?: boolean; debugLogPath?: string },

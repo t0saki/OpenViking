@@ -85,23 +85,27 @@ for (const { name, file, pattern } of TIMEOUT_PASSTHROUGH) {
   });
 }
 
+// The env var alone is not enough: buildContextSearchBody only emits
+// `query_expansion` when the harness also marks it as configured. The variable
+// itself is declared once in the schema, so what each harness still owns is
+// reporting whether the user asked for the knob at all.
 const QUERY_EXPANSION_OPT_OUT = [
-  {
-    name: "OpenCode exposes the query-expansion opt-out",
-    file: join(ROOT, "examples", "opencode-plugin", "lib", "config.mjs"),
-  },
-  {
-    name: "pi exposes the query-expansion opt-out",
-    file: join(ROOT, "examples", "pi-coding-agent-extension", "config.ts"),
-  },
+  join(ROOT, "examples", "opencode-plugin", "lib", "config.mjs"),
+  join(ROOT, "examples", "pi-coding-agent-extension", "config.ts"),
+  join(ROOT, "examples", "claude-code-memory-plugin", "scripts", "config.mjs"),
+  join(ROOT, "examples", "codex-memory-plugin", "scripts", "config.mjs"),
+  join(ROOT, "examples", "dsh-memory-plugin", "config.mjs"),
+  join(ROOT, "examples", "memory-plugin-shared", "lib", "agent-hook-runtime.mjs"),
 ];
 
-for (const { name, file } of QUERY_EXPANSION_OPT_OUT) {
-  test(name, async () => {
+test("the query-expansion opt-out is declared once and reported by every loader", async () => {
+  const { KNOB_BY_NAME } = await import("./lib/config-schema.mjs");
+  const knob = KNOB_BY_NAME.get("recallQueryExpansion");
+  assert.equal(knob.env, "OPENVIKING_RECALL_QUERY_EXPANSION");
+  assert.deepEqual(knob.values, ["auto", "off"]);
+
+  for (const file of QUERY_EXPANSION_OPT_OUT) {
     const source = await readFile(file, "utf-8");
-    // The env var alone is not enough: buildContextSearchBody only emits
-    // `query_expansion` when the harness also marks it as configured.
-    assert.match(source, /OPENVIKING_RECALL_QUERY_EXPANSION/);
-    assert.match(source, /recallQueryExpansionConfigured/);
-  });
-}
+    assert.match(source, /recallQueryExpansionConfigured/, file);
+  }
+});

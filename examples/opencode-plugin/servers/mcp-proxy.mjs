@@ -8,8 +8,7 @@
  * requests to the server's /mcp endpoint, and keeps stdout protocol-clean.
  */
 
-import { homedir } from "node:os"
-import { join, resolve as resolvePath } from "node:path"
+import { resolve as resolvePath } from "node:path"
 import { fileURLToPath } from "node:url"
 import { loadConfig } from "../lib/config.mjs"
 import { createLogger } from "../lib/shared/debug-log.mjs"
@@ -33,11 +32,7 @@ function readProxyConfig() {
     debugLogPath: cfg.debugLogPath,
     credentialSource: cfg.credentialSource,
     credentialPath: cfg.credentialPath || cfg.configPath,
-    watchedPaths: [
-      cfg.credentialPath,
-      cfg.configPath,
-      join(homedir(), ".config", "opencode", "openviking-config.json"),
-    ],
+    watchedPaths: [cfg.credentialPath, cfg.configPath],
   })
 }
 

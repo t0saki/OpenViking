@@ -1,3 +1,4 @@
+// GENERATED FROM examples/memory-plugin-shared/lib. DO NOT EDIT.
 export function deriveWorkspacePeerId(cwd: unknown): string;
 export function resolveEffectivePeerId(input?: {
   cfg?: { peerId?: string; workspacePeer?: boolean; peerSource?: unknown };

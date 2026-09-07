@@ -2012,13 +2012,15 @@ assemble_agent_integration() { # assemble_agent_integration <source-subdir> <des
   shared_dest="$OV_HOME/agent-integrations/memory-plugin-shared/lib"
   rm -rf "$shared_dest.tmp"
   mkdir -p "$shared_dest.tmp"
+  # The closure of what cursor, trae and zcode import; install-lib-closure.test.mjs
+  # derives it from those imports and fails when this list drifts.
   for file in \
-    agent-hook-runtime.mjs agent-uri-guard.mjs credentials.mjs debug-log.mjs \
-    async-writer.mjs batch-send.mjs capture-utils.mjs \
-    mcp-proxy-config.mjs mcp-proxy-core.mjs pending-queue.mjs profile-inject.mjs \
-    retryable.mjs \
-    recall-compress-core.mjs recall-core.mjs \
-    session-model.mjs uri-guard.mjs workspace-identity.mjs workspace-peer.mjs; do
+    agent-hook-runtime.mjs agent-uri-guard.mjs async-writer.mjs batch-send.mjs \
+    capture-utils.mjs config-schema.mjs credentials.mjs debug-log.mjs \
+    mcp-proxy-config.mjs mcp-proxy-core.mjs pending-queue.mjs plugin-config.mjs \
+    profile-inject.mjs recall-compress-core.mjs recall-core.mjs retryable.mjs \
+    session-model.mjs uri-guard.mjs workspace-config.mjs workspace-identity.mjs \
+    workspace-peer.mjs workspace-registry.mjs; do
     cp "$shared/lib/$file" "$shared_dest.tmp/$file"
   done
   rm -rf "$shared_dest"
@@ -2981,21 +2983,16 @@ install_pi() {
     warn "$(t 'pi CLI not found; skipping pi extension install.' '未找到 pi 命令，跳过 pi 扩展安装。')"
     return 0
   fi
-  local plugin_dir dest tmp keep_config
+  local plugin_dir dest tmp
   plugin_dir="$(plugin_dir_on_disk pi-coding-agent-extension)" || {
     warn "$(t 'pi extension sources not found; skipping.' '未找到 pi 扩展源码，跳过。')"
     return 0
   }
   dest="$HOME/.pi/agent/extensions/openviking"
   tmp="$dest.tmp"
-  keep_config=""
-  [ -f "$dest/config.json" ] && keep_config="$dest/config.json"
   rm -rf "$tmp"
   mkdir -p "$tmp"
   (cd "$plugin_dir" && tar --exclude node_modules --exclude .git -cf - .) | (cd "$tmp" && tar -xf -)
-  if [ -n "$keep_config" ]; then
-    cp "$keep_config" "$tmp/config.json"
-  fi
   rm -rf "$dest"
   mkdir -p "$(dirname "$dest")"
   mv "$tmp" "$dest"

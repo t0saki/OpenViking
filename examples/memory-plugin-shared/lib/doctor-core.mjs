@@ -17,6 +17,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+import { HARNESS_CONFIG_KEYS, pluginConfigKeys } from "./config-schema.mjs";
 import { resolveWorkspaceSettings } from "./plugin-config.mjs";
 import { peerScopeMemoPath } from "./recall-core.mjs";
 import { CONFIG_DIR_NAME, LOCAL_FILE, TEAM_FILE, workspaceConfigPaths } from "./workspace-config.mjs";
@@ -310,31 +311,13 @@ export function unknownOvcliKeys(data) {
  *
  * `plugin` is on the allowlist above, which used to mean everything inside it
  * went unchecked — so `peerSorce` sat there doing nothing with no complaint.
- * `plugin-known-keys.test.mjs` derives this set from the two loaders and fails
- * when they diverge, so it cannot rot into a list that rejects a real knob.
+ * The set is the schema's own key list, aliases included, so it cannot rot into
+ * a list that rejects a real knob.
  */
-export const KNOWN_PLUGIN_KEYS = new Set([
-  "apiKey", "accountId", "userId", "auth_mode", "authMode", "enabled", "debug", "timeoutMs",
-  "peerId", "peer_id", "peerSource", "workspacePeer",
-  "autoRecall", "autoCapture", "noAutoInject", "writePathAsync", "minQueryLength",
-  "bypassSessionPatterns",
-  "recallLimit", "recallMaxTokens", "recallMaxContentChars", "recallTokenBudget",
-  "recallPeerScope", "recallDedupTurns", "recallQueryExpansion", "recallPreferAbstract",
-  "recallRewrite", "recallContextTimeoutMs", "recallTimeoutMs", "scoreThreshold",
-  "recallCompress", "recallCompressMaxBullets", "recallCompressMaxInputChars",
-  "recallCompressMinInputChars", "recallCompressBaseUrl", "recallCompressModel",
-  "recallCompressThinking", "recallCompressReasoningEffort", "recallCompressTimeoutMs",
-  "recallCompressDetectOnStartup", "recallCompressDetectTimeoutMs", "recallCompressDetectTtlMs",
-  "captureMode", "captureMaxLength", "captureTimeoutMs", "captureToolMaxChars",
-  "captureAssistantTurns", "captureLastAssistantOnStop", "logRankingDetails",
-  "commitTokenThreshold", "commitKeepRecentCount", "autoCommitOnCompact",
-  "profileTokenBudget", "resumeContextBudget", "resumeArchiveInject",
-  "resumeArchiveMaxChars", "resumeArchiveTokenBudget",
-  "skillExperience", "skillExperienceLimit",
-]);
+export const KNOWN_PLUGIN_KEYS = pluginConfigKeys();
 
 /** Nested objects in `plugin` are per-harness overrides, not knobs. */
-const PLUGIN_HARNESS_KEYS = new Set(["claude_code", "codex"]);
+const PLUGIN_HARNESS_KEYS = HARNESS_CONFIG_KEYS;
 
 function nearestKnownKey(key) {
   // Levenshtein would be overkill; a typo that matters is almost always one

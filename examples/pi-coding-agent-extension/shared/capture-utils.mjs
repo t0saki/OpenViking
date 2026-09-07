@@ -486,6 +486,23 @@ function isPunctuationOnly(text) {
   return !/[a-z0-9\u3400-\u9fff]/i.test(text);
 }
 
+/**
+ * Is capture on for this config?
+ *
+ * The switch has four spellings in the wild: a boolean `autoCapture`, opencode's
+ * `{ enabled }` object, dsh and pi's `syncTurns`, and the global `enabled`
+ * that turns the whole plugin off. Reading it here rather than in each loader
+ * is what keeps it from drifting a fifth time — and any spelling that says off
+ * wins, so a config that disables capture under an older name still disables it.
+ */
+export function isCaptureEnabled(cfg = {}) {
+  for (const value of [cfg.enabled, cfg.autoCapture, cfg.capture, cfg.syncTurns]) {
+    if (value === false) return false;
+    if (value && typeof value === "object" && !Array.isArray(value) && value.enabled === false) return false;
+  }
+  return true;
+}
+
 export function shouldCaptureText(text, role, cfg = {}) {
   const maxLength = cfg.captureMaxLength || 24000;
   const sanitized = sanitizeCapturedText(text);

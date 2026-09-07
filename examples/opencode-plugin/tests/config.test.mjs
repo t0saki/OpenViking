@@ -44,7 +44,7 @@ function restoreOpenVikingEnv(snapshot) {
   }
 }
 
-test("loadConfig prefers env credentials over ovcli and legacy config", async () => {
+test("loadConfig prefers env credentials over ovcli", async () => {
   const snapshot = { ...process.env }
   await withTempDir("ov-oc-config-", async (dir) => {
     try {
@@ -61,13 +61,6 @@ test("loadConfig prefers env credentials over ovcli and legacy config", async ()
         user: "cli-user",
         actor_peer_id: "cli-peer",
       }))
-      await writeFile(join(project, ".opencode", "openviking-config.json"), JSON.stringify({
-        endpoint: "https://legacy.example.com",
-        apiKey: "legacy-key",
-        account: "legacy-account",
-        user: "legacy-user",
-        peerId: "legacy-peer",
-      }))
       process.env.OPENVIKING_CLI_CONFIG_FILE = ovcli
       process.env.OPENVIKING_URL = "https://env.example.com"
       process.env.OPENVIKING_API_KEY = "env-key"
@@ -83,41 +76,41 @@ test("loadConfig prefers env credentials over ovcli and legacy config", async ()
       assert.equal(cfg.peerId, "env-peer")
       assert.equal(cfg.effectivePeer.peerId, "env-peer")
       assert.equal(cfg.effectivePeer.source, "explicit")
-      assert.equal(cfg.legacyCredentialsUsed, false)
     } finally {
       restoreOpenVikingEnv(snapshot)
     }
   })
 })
 
-test("loadConfig reads legacy credentials as fallback and marks deprecation", async () => {
+// The plugin used to keep its own `openviking-config.json`; a knob now travels
+// with the credentials, so switching profile switches behaviour too.
+test("loadConfig reads its knobs from the ovcli.conf plugin section", async () => {
   const snapshot = { ...process.env }
-  await withTempDir("ov-oc-legacy-", async (dir) => {
+  await withTempDir("ov-oc-plugin-section-", async (dir) => {
     try {
       for (const key of Object.keys(process.env)) {
         if (key.startsWith("OPENVIKING_")) delete process.env[key]
       }
-      const project = join(dir, "project")
-      process.env.OPENVIKING_CLI_CONFIG_FILE = join(dir, "missing-ovcli.conf")
-      process.env.OPENVIKING_CONFIG_FILE = join(dir, "missing-ov.conf")
-      await mkdir(join(project, ".opencode"), { recursive: true })
-      await writeFile(join(project, ".opencode", "openviking-config.json"), JSON.stringify({
-        endpoint: "https://legacy.example.com",
-        apiKey: "legacy-key",
-        account: "legacy-account",
-        user: "legacy-user",
-        peerId: "legacy-peer",
+      const ovcli = join(dir, "ovcli.conf")
+      await writeFile(ovcli, JSON.stringify({
+        url: "https://cli.example.com",
+        api_key: "cli-key",
+        plugin: {
+          recallLimit: 4,
+          opencode: { captureMode: "keyword", autoRecall: false },
+        },
       }))
+      process.env.OPENVIKING_CLI_CONFIG_FILE = ovcli
 
-      const cfg = loadConfig(dir, project)
-      assert.equal(cfg.endpoint, "https://legacy.example.com")
-      assert.equal(cfg.apiKey, "legacy-key")
-      assert.equal(cfg.account, "legacy-account")
-      assert.equal(cfg.user, "legacy-user")
-      assert.equal(cfg.peerId, "legacy-peer")
-      assert.equal(cfg.effectivePeer.peerId, "legacy-peer")
-      assert.equal(cfg.effectivePeer.source, "explicit")
-      assert.equal(cfg.legacyCredentialsUsed, true)
+      const cfg = loadConfig(dir, join(dir, "project"))
+      assert.equal(cfg.recallLimit, 4, "a shared knob applies")
+      assert.equal(cfg.recallLimitConfigured, true)
+      assert.equal(cfg.captureMode, "keyword", "the per-harness override applies")
+      assert.equal(cfg.autoRecall, false)
+
+      // And the environment still wins over both.
+      process.env.OPENVIKING_RECALL_LIMIT = "9"
+      assert.equal(loadConfig(dir, join(dir, "project")).recallLimit, 9)
     } finally {
       restoreOpenVikingEnv(snapshot)
     }
@@ -184,10 +177,12 @@ test("loadConfig supports hook-only mode without registering the bundled MCP ser
         if (key.startsWith("OPENVIKING_")) delete process.env[key]
       }
       const project = join(dir, "project")
-      await mkdir(join(project, ".opencode"), { recursive: true })
-      await writeFile(join(project, ".opencode", "openviking-config.json"), JSON.stringify({
-        mcp: { enabled: false },
+      const ovcli = join(dir, "ovcli.conf")
+      await writeFile(ovcli, JSON.stringify({
+        url: "https://cli.example.com",
+        plugin: { opencode: { mcpEnabled: false } },
       }))
+      process.env.OPENVIKING_CLI_CONFIG_FILE = ovcli
 
       const cfg = loadConfig(dir, project)
       assert.equal(cfg.enabled, true)
@@ -206,15 +201,20 @@ test("OpenVikingPlugin keeps lifecycle hooks without mutating MCP config in hook
         for (const key of Object.keys(process.env)) {
           if (key.startsWith("OPENVIKING_")) delete process.env[key]
         }
-        const configPath = join(dir, "openviking-config.json")
-        await writeFile(configPath, JSON.stringify({
-          mcp: { enabled: false },
-          runtime: { dataDir: join(dir, "runtime") },
-          repoContext: { enabled: false },
-          autoRecall: { enabled: false },
-          autoCapture: false,
+        const ovcli = join(dir, "ovcli.conf")
+        await writeFile(ovcli, JSON.stringify({
+          url: endpoint,
+          plugin: {
+            opencode: {
+              mcpEnabled: false,
+              dataDir: join(dir, "runtime"),
+              repoContext: false,
+              autoRecall: false,
+              autoCapture: false,
+            },
+          },
         }))
-        process.env.OPENVIKING_PLUGIN_CONFIG = configPath
+        process.env.OPENVIKING_CLI_CONFIG_FILE = ovcli
         process.env.OPENVIKING_URL = endpoint
 
         const plugin = await OpenVikingPlugin({ client: {}, directory: dir })
@@ -245,10 +245,12 @@ test("loadConfig preserves an explicit zero commit keep recent count", async () 
       const project = join(dir, "project")
       process.env.OPENVIKING_CREDENTIAL_SOURCE = "env"
       process.env.OPENVIKING_URL = "https://env.example.com"
-      await mkdir(join(project, ".opencode"), { recursive: true })
-      await writeFile(join(project, ".opencode", "openviking-config.json"), JSON.stringify({
-        commitKeepRecentCount: 0,
+      const ovcli = join(dir, "ovcli.conf")
+      await writeFile(ovcli, JSON.stringify({
+        url: "https://env.example.com",
+        plugin: { commitKeepRecentCount: 0 },
       }))
+      process.env.OPENVIKING_CLI_CONFIG_FILE = ovcli
 
       const cfg = loadConfig(dir, project)
       assert.equal(cfg.commitKeepRecentCount, 0)
@@ -268,10 +270,12 @@ test("loadConfig defaults an invalid commit keep recent count", async () => {
       const project = join(dir, "project")
       process.env.OPENVIKING_CREDENTIAL_SOURCE = "env"
       process.env.OPENVIKING_URL = "https://env.example.com"
-      await mkdir(join(project, ".opencode"), { recursive: true })
-      await writeFile(join(project, ".opencode", "openviking-config.json"), JSON.stringify({
-        commitKeepRecentCount: null,
+      const ovcli = join(dir, "ovcli.conf")
+      await writeFile(ovcli, JSON.stringify({
+        url: "https://env.example.com",
+        plugin: { commitKeepRecentCount: null },
       }))
+      process.env.OPENVIKING_CLI_CONFIG_FILE = ovcli
 
       const cfg = loadConfig(dir, project)
       assert.equal(cfg.commitKeepRecentCount, 10)
@@ -296,26 +300,27 @@ test("loadConfig falls back to config peerId when shared credentials define none
         api_key: "cli-key",
         account: "cli-account",
         user: "cli-user",
-      }))
-      await writeFile(join(project, ".opencode", "openviking-config.json"), JSON.stringify({
-        enabled: true,
-        peerId: "atomic-city",
-        workspacePeer: false,
-        recallPeerScope: "actor",
+        plugin: {
+          opencode: {
+            enabled: true,
+            peerId: "atomic-city",
+            workspacePeer: false,
+            recallPeerScope: "actor",
+          },
+        },
       }))
       process.env.OPENVIKING_CLI_CONFIG_FILE = ovcli
 
       const cfg = loadConfig(dir, project)
       assert.equal(cfg.peerId, "atomic-city")
       assert.deepEqual(cfg.effectivePeer, { peerId: "atomic-city", source: "explicit", origin: "explicit", legacyPeerId: "" })
-      assert.equal(cfg.legacyCredentialsUsed, false)
     } finally {
       restoreOpenVikingEnv(snapshot)
     }
   })
 })
 
-test("loadConfig keeps ovcli actor_peer_id over config peerId", async () => {
+test("loadConfig keeps ovcli actor_peer_id over the plugin section peerId", async () => {
   const snapshot = { ...process.env }
   await withTempDir("ov-oc-peer-cli-wins-", async (dir) => {
     try {
@@ -329,9 +334,7 @@ test("loadConfig keeps ovcli actor_peer_id over config peerId", async () => {
         url: "https://cli.example.com",
         api_key: "cli-key",
         actor_peer_id: "cli-peer",
-      }))
-      await writeFile(join(project, ".opencode", "openviking-config.json"), JSON.stringify({
-        peerId: "config-peer",
+        plugin: { opencode: { peerId: "config-peer" } },
       }))
       process.env.OPENVIKING_CLI_CONFIG_FILE = ovcli
 
@@ -344,7 +347,7 @@ test("loadConfig keeps ovcli actor_peer_id over config peerId", async () => {
   })
 })
 
-test("loadConfig keeps env peer over config peerId when ovcli has none", async () => {
+test("loadConfig keeps env peer over the plugin section peerId when ovcli has none", async () => {
   const snapshot = { ...process.env }
   await withTempDir("ov-oc-peer-env-wins-", async (dir) => {
     try {
@@ -357,9 +360,7 @@ test("loadConfig keeps env peer over config peerId when ovcli has none", async (
       await writeFile(ovcli, JSON.stringify({
         url: "https://cli.example.com",
         api_key: "cli-key",
-      }))
-      await writeFile(join(project, ".opencode", "openviking-config.json"), JSON.stringify({
-        peerId: "config-peer",
+        plugin: { opencode: { peerId: "config-peer" } },
       }))
       process.env.OPENVIKING_CLI_CONFIG_FILE = ovcli
       process.env.OPENVIKING_PEER_ID = "env-peer"
