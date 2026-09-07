@@ -14,6 +14,7 @@ const OVERRIDES = [
   "OPENVIKING_AUTO_CAPTURE",
   "OPENVIKING_API_KEY",
   "OPENVIKING_BEARER_TOKEN",
+  "OPENVIKING_RECALL_LIMIT",
 ];
 
 /**
@@ -161,5 +162,39 @@ test("no api_key anywhere reports no source", () => {
     assert.equal(cfg.apiKey, "");
     assert.equal(cfg.credentialSource, "none");
     assert.equal(cfg.credentialPath, null);
+  });
+});
+
+test("the layers a knob resolves through, lowest to highest", () => {
+  withConfigs({
+    ov: { claude_code: { recallLimit: 2 } },
+    cli: {
+      url: "http://127.0.0.1:1933",
+      api_key: "sk-cli",
+      plugin: { recallLimit: 5, claude_code: { recallLimit: 6 } },
+    },
+    workspace: { version: 1, recall: { max_items: 8 } },
+  }, ({ workspaceDir, otherDir }) => {
+    // ov.conf's section is the lowest configured layer, so the shared plugin
+    // block covers it and the per-harness block covers that.
+    assert.equal(loadConfig(otherDir).recallLimit, 6);
+    assert.equal(loadConfig(workspaceDir).recallLimit, 8, "the workspace file outranks ovcli.conf");
+
+    process.env.OPENVIKING_RECALL_LIMIT = "9";
+    assert.equal(loadConfig(workspaceDir).recallLimit, 9, "the environment outranks every file");
+  });
+});
+
+test("a default does not report as a choice the user made", () => {
+  withConfigs({
+    ov: { server: {} },
+    cli: { url: "http://127.0.0.1:1933", api_key: "sk-cli" },
+  }, ({ otherDir }) => {
+    // Several fields reach the server only when configured, so a default that
+    // reported as configured would send this plugin's opinion as the user's.
+    const cfg = loadConfig(otherDir);
+    assert.equal(cfg.recallLimit, 10);
+    assert.equal(cfg.recallLimitConfigured, false);
+    assert.equal(cfg.recallQueryExpansionConfigured, false);
   });
 });
