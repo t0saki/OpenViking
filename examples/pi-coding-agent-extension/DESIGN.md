@@ -40,7 +40,7 @@ Design comparison:
 
 ## Config
 
-Inline in `index.ts`. Loaded from `~/.pi/agent/extensions/openviking/config.json`.
+Declared in `shared/config-schema.mjs` and loaded by `config.ts` from `~/.openviking/ovcli.conf`.
 
 ```typescript
 interface OVConfig {
@@ -50,14 +50,14 @@ interface OVConfig {
   account: string;               // Multi-tenant account (default: "")
   user: string;                  // Multi-tenant user (default: "")
   peerId: string;                // Actor peer identity for X-OpenViking-Actor-Peer
-  syncTurns: boolean;            // Auto-sync conversation turns (default: true)
-  recallBudget: number;          // Max tokens for <relevant-memories> block (default: 2000)
+  autoCapture: boolean;          // Auto-sync conversation turns (default: true; `syncTurns` still accepted)
+  recallTokenBudget: number;     // Max tokens for <relevant-memories> block (default: 2000)
   recallMaxContentChars: number; // Max chars per recall result before truncation (default: 500)
   recallPreferAbstract: boolean; // Prefer abstract/overview over full content (default: true)
   recallLimit: number;          // Legacy input scaled into six coding quotas (default: 10)
-  recallScoreThreshold: number;  // Min relevance score for recall results (default: 0.35)
-  recallMinQueryLength: number;  // Skip recall for queries shorter than this (default: 3)
-  profileBudget: number;        // Max tokens for user profile injection at session start (default: 10000)
+  scoreThreshold: number;        // Min relevance score for recall results (default: 0.35)
+  minQueryLength: number;        // Skip recall for queries shorter than this (default: 3)
+  profileTokenBudget: number;   // Max tokens for user profile injection at session start (default: 10000)
   resumeContextBudget: number;   // Max tokens for archive overview on resume/compact (default: 2000)
   indexBudget: number;           // Max tokens for memory index in system prompt (default: 2000)
   captureToolResults: boolean;   // Include tool result output in capture (default: false — agent inputs kept, results dropped)
@@ -79,7 +79,7 @@ interface OVConfig {
 an effective total quota of 6 because every coding category keeps one slot.
 Callers that require exact category ceilings should use Context `quotas`.
 
-Config resolution: `config.json` → env vars (`OPENVIKING_URL`, `OPENVIKING_API_KEY`, `OPENVIKING_ACCOUNT`, `OPENVIKING_USER`, `OPENVIKING_AGENT_ID`, etc.) → defaults. Follows the Claude Code plugin's priority chain.
+Config resolution: env vars (`OPENVIKING_URL`, `OPENVIKING_API_KEY`, `OPENVIKING_ACCOUNT`, `OPENVIKING_USER`, etc.) → the workspace's `.openviking/config.json`, `.openviking/config.local.json` and machine registry entry → `ovcli.conf`'s `plugin.pi` → `ovcli.conf`'s `plugin` → defaults. The same chain every other OpenViking memory plugin resolves.
 
 ## File Details
 
@@ -266,7 +266,7 @@ Synchronous recall that runs on every user prompt, injecting relevant OV context
    - Content capped per-item to `recallMaxContentChars` (default 500 chars) — prevents a single verbose memory from consuming the entire budget
 9. **Token-budgeted formatting with graceful degradation** (from Claude Code plugin):
    - Process items in ranked order
-   - Items within the total `recallBudget` (default 2000 tokens) get full content lines
+   - Items within the total `recallTokenBudget` (default 2000 tokens) get full content lines
    - Items beyond the budget are **degraded to URI + score hints** rather than dropped — the model can call `viking_read` to expand them
    - The first item is always included even if it exceeds the remaining budget
 10. Format as `<relevant-memories>` block
@@ -434,7 +434,7 @@ function estimateTokens(text: string): number {
 
 Rule: codepoint >= 0x3000 (CJK / Hiragana / Katakana / Hangul / fullwidth) counts at 1.5 tokens/char. Everything else at chars/4. Errs on the side of overcounting CJK by ~10-20% — safe direction for budget enforcement.
 
-This affects: recall budget (`recallBudget`), profile budget (`profileBudget`), index budget (`indexBudget`), and per-item content cap (`recallMaxContentChars`). The per-item cap is in chars but should be validated against the CJK-aware estimator for content known to be CJK-heavy.
+This affects: recall budget (`recallTokenBudget`), profile budget (`profileTokenBudget`), and per-item content cap (`recallMaxContentChars`). The per-item cap is in chars but should be validated against the CJK-aware estimator for content known to be CJK-heavy.
 
 #### Commit management
 
@@ -629,7 +629,7 @@ Main entry point. Wires everything together.
 
 | Event | Handler | What it does |
 |-------|---------|-------------|
-| `session_start` | Init + Resume + Profile | Health check OV, check bypass, create/reuse session, **inject user profile** (profile.md + preferences/ + entities/ listing, capped at `profileBudget`), on resume: fetch archive overview, build memory index, register tools |
+| `session_start` | Init + Resume + Profile | Health check OV, check bypass, create/reuse session, **inject user profile** (profile.md + preferences/ + entities/ listing, capped at `profileTokenBudget`), on resume: fetch archive overview, build memory index, register tools |
 | `before_agent_start` | Recall queue + System prompt | Queue current prompt without I/O, inject memory index + tool ad into system prompt |
 | `context` | Recall search + injection | Search after user-message rendering, then prepend `<relevant-memories>` (reuse cached block on later LLM iterations) |
 | `turn_end` | Sync | Strip all injected blocks, **capture filter (shouldCapture)**, **preserve tool USE inputs + tool summary line**, drop tool RESULTS, **enqueue to write queue** (auto-flushes at threshold/interval), track pending tokens, check commit threshold |
@@ -653,7 +653,7 @@ When `session_start` fires with `reason: "resume"`, the session may have previou
 
 Via `before_agent_start`'s `systemPrompt` return field. Composes up to four things:
 
-1. **Profile block** (from session_start cache) — user identity + preferences + entities. Capped at `profileBudget`. Only present if OV has a user profile.
+1. **Profile block** (from session_start cache) — user identity + preferences + entities. Capped at `profileTokenBudget`. Only present if OV has a user profile.
 2. **Archive overview** (from session_start resume OR pre-compact rehydration) — "what happened in previous sessions" or "what happened before compaction". Capped at `resumeContextBudget` tokens.
 3. **Memory index** (from `index_builder.ts`) — a browsable table of contents showing what OV knows. Refreshed at session start and after commits.
 4. **Tool advertisement** — the standard tool usage instructions.
@@ -719,9 +719,9 @@ A `/viking commit` command (or a `viking_commit` tool) triggers a synchronous `c
    a. Resolve user space: `client.resolveScopeSpace("user")` → discover namespace via /api/v1/system/status + fs/ls
    b. Read profile.md from viking://user/<space>/memories/profile.md
    c. List preferences/ and entities/ directories with abstracts
-   d. **Profile elision** (from Claude Code plugin): if profile exceeds `profileBudget` tokens, keep head (identity block, first 8 lines) + tail (most-recent events, fits remaining budget), drop noisy middle. Preserves both stable identity facts (top of file) and recent activity (bottom of file) — only the noisy middle timeline is sacrificed. Falls back to head-only truncate when file is too short to elide.
+   d. **Profile elision** (from Claude Code plugin): if profile exceeds `profileTokenBudget` tokens, keep head (identity block, first 8 lines) + tail (most-recent events, fits remaining budget), drop noisy middle. Preserves both stable identity facts (top of file) and recent activity (bottom of file) — only the noisy middle timeline is sacrificed. Falls back to head-only truncate when file is too short to elide.
    e. Compose <openviking-context> block with user-profile + available-memories
-   f. Capped at profileBudget tokens (default 10000) using CJK-aware estimator
+   f. Capped at profileTokenBudget tokens (default 10000) using CJK-aware estimator
    g. Cached for system prompt injection in before_agent_start
 7. If event.reason == "resume":
    a. Fetch latest archive overview from OV (L1)
@@ -878,35 +878,32 @@ This mirrors OpenClaw's preflight `assemble()` which provides `latest_archive_ov
 
 ## Config File
 
-Default: `~/.pi/agent/extensions/openviking/config.json`
+`~/.openviking/ovcli.conf`, shared with every other OpenViking client. Keys in `plugin` apply to every harness; keys in `plugin.pi` apply to this extension and override them.
 
 ```json
 {
-  "enabled": true,
-  "endpoint": "http://127.0.0.1:1933",
-  "apiKey": "",
-  "account": "",
-  "user": "",
-  "peerId": "",
-  "syncTurns": true,
-  "recallBudget": 2000,
-  "recallMaxContentChars": 500,
-  "recallPreferAbstract": true,
-  "recallScoreThreshold": 0.35,
-  "recallMinQueryLength": 3,
-  "profileBudget": 10000,
-  "resumeContextBudget": 2000,
-  "indexBudget": 2000,
-  "commitTokenThreshold": 20000,
-  "commitOnShutdown": true,
-  "captureToolResults": false,
-  "captureMode": "semantic",
-  "captureMaxLength": 24000,
-  "captureAssistantTurns": true,
-  "mirrorMemoryWrites": true,
-  "writeQueueFlushInterval": 5000,
-  "writeQueueFlushThreshold": 5,
-  "bypassSessionPatterns": [],
-  "logLevel": "error"
+  "url": "http://127.0.0.1:1933",
+  "api_key": "",
+  "plugin": {
+    "pi": {
+      "enabled": true,
+      "peerId": "",
+      "autoCapture": true,
+      "recallTokenBudget": 2000,
+      "recallMaxContentChars": 500,
+      "recallPreferAbstract": true,
+      "scoreThreshold": 0.35,
+      "minQueryLength": 3,
+      "profileTokenBudget": 10000,
+      "resumeContextBudget": 32000,
+      "commitTokenThreshold": 20000,
+      "captureToolResults": false,
+      "captureMode": "semantic",
+      "captureMaxLength": 24000,
+      "captureAssistantTurns": true,
+      "bypassSessionPatterns": [],
+      "logLevel": "error"
+    }
+  }
 }
 ```

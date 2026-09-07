@@ -32,7 +32,7 @@ same branch entries to OpenViking.
 1. `turn_end` captures new branch entries into the OpenViking session.
 2. The capture path uses a disk pending queue when OpenViking is temporarily
    unreachable.
-3. When `pendingTokens >= takeover.tokenThreshold`, takeover tries to advance.
+3. When `pendingTokens >= takeoverTokenThreshold`, takeover tries to advance.
 4. Advance requires a successful flush barrier: all current-session
    `addMessage` queue entries must be delivered. Pending `commitSession`
    entries and entries for other sessions do not block the barrier.
@@ -76,27 +76,31 @@ slash commands, and OpenViking status messages remain filtered.
 
 ## Configuration
 
+In `~/.openviking/ovcli.conf`, under the shared `plugin` section or the `plugin.pi` override:
+
 ```json
 {
-  "takeover": {
-    "enabled": true,
-    "tokenThreshold": 30000,
-    "keepRecentTurns": 3,
-    "overviewBudget": 3000,
-    "overviewPollMs": 2000,
-    "overviewPollMax": 15
+  "plugin": {
+    "pi": {
+      "takeoverEnabled": true,
+      "takeoverTokenThreshold": 30000,
+      "takeoverKeepRecentTurns": 3,
+      "takeoverOverviewBudget": 3000,
+      "takeoverOverviewPollMs": 2000,
+      "takeoverOverviewPollMax": 15
+    }
   }
 }
 ```
 
 | Field | Default | Meaning |
 |-------|---------|---------|
-| `takeover.enabled` | `true` | Enable context takeover |
-| `takeover.tokenThreshold` | `30000` | Synced-token pressure required before commit and boundary advance |
-| `takeover.keepRecentTurns` | `3` | Recent user turns kept in full fidelity |
-| `takeover.overviewBudget` | `3000` | Token budget for the injected archive overview |
-| `takeover.overviewPollMs` | `2000` | Delay between overview polling attempts |
-| `takeover.overviewPollMax` | `15` | Max overview polling attempts after commit |
+| `takeoverEnabled` | `true` | Enable context takeover (`OPENVIKING_TAKEOVER`) |
+| `takeoverTokenThreshold` | `30000` | Synced-token pressure required before commit and boundary advance |
+| `takeoverKeepRecentTurns` | `3` | Recent user turns kept in full fidelity |
+| `takeoverOverviewBudget` | `3000` | Token budget for the injected archive overview |
+| `takeoverOverviewPollMs` | `2000` | Delay between overview polling attempts |
+| `takeoverOverviewPollMax` | `15` | Max overview polling attempts after commit |
 
 ## Failure Modes
 
