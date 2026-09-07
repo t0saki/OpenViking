@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { HARNESS_KEYS, KNOBS, KNOB_BY_KEY, WORKSPACE_KNOB_MAP } from "./lib/config-schema.mjs";
+import { HARNESS_KEYS, KNOBS, KNOB_BY_KEY, WORKSPACE_KNOB_MAP, resolveKnobs } from "./lib/config-schema.mjs";
 import { KNOWN_PLUGIN_KEYS, unknownPluginKeys } from "./lib/doctor-core.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -64,6 +64,28 @@ test("the schema is internally consistent", () => {
   for (const [path, name] of Object.entries(WORKSPACE_KNOB_MAP)) {
     assert.ok(names.has(name), `${path} maps to unknown knob ${name}`);
   }
+});
+
+// A file may carry both spellings — a plugin that renamed a knob leaves the old
+// one behind — and which one wins has to be the newer, not whichever the loop
+// happened to reach last.
+test("the canonical spelling wins over its own alias in the same layer", () => {
+  const { settings } = resolveKnobs({
+    layers: [{
+      name: "file",
+      data: {
+        autoCapture: true,
+        syncTurns: false,
+        recallCompressThinking: "high",
+        recallCompressReasoningEffort: "low",
+        bypassSessionPatterns: ["/keep"],
+        bypassPatterns: ["/stale"],
+      },
+    }],
+  });
+  assert.equal(settings.autoCapture, true);
+  assert.equal(settings.recallCompressThinking, "high");
+  assert.deepEqual(settings.bypassSessionPatterns, ["/keep"]);
 });
 
 test("a misspelled knob is caught, with the key it was probably meant to be", () => {

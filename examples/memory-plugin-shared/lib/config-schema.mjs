@@ -330,7 +330,10 @@ export function resolveKnobs({ harness = "", layers = [], env = {} } = {}) {
     for (const layer of layers) {
       const data = layer?.data;
       if (!data || typeof data !== "object") continue;
-      for (const key of [knob.name, ...(knob.aliases || [])]) {
+      // Aliases first so the canonical name wins when one layer carries both:
+      // a file with `recallCompressThinking` beside its older
+      // `recallCompressReasoningEffort` means the newer one.
+      for (const key of [...(knob.aliases || []), knob.name]) {
         if (!Object.prototype.hasOwnProperty.call(data, key)) continue;
         if (data[key] === undefined) continue;
         value = take(knob, data[key], layer.name || "file", value);
