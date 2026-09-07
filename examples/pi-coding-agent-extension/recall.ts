@@ -1,6 +1,6 @@
 import type { OVClient } from "./client.js";
 import type { OVConfig } from "./config.js";
-import { buildRecallBlock } from "./shared/recall-core.mjs";
+import { buildRecallBlock, isRecallEnabled } from "./shared/recall-core.mjs";
 import { RecallLedger, ledgerKey } from "./lib/recall-ledger.mjs";
 
 export interface RecallCache {
@@ -44,6 +44,10 @@ export class RecallManager {
 
     const userQuery = this.pendingPrompt;
     this.pendingPrompt = "";
+    if (!isRecallEnabled(this.config as any)) {
+      this.cache = { block: null, promptText: userQuery };
+      return null;
+    }
     if (userQuery.trim().length < this.config.minQueryLength) {
       this.cache = { block: null, promptText: userQuery };
       return null;

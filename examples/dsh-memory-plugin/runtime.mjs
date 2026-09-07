@@ -1,7 +1,7 @@
 import { createUserMessage } from "@deepseek-ai/dsh-llm";
 import { isCaptureEnabled } from "./shared/capture-utils.mjs";
 import { buildProfileBlock } from "./shared/profile-inject.mjs";
-import { buildRecallBlock } from "./shared/recall-core.mjs";
+import { buildRecallBlock, isRecallEnabled } from "./shared/recall-core.mjs";
 import { deriveHarnessSessionId } from "./shared/session-model.mjs";
 import {
   dequeue,
@@ -126,7 +126,7 @@ export class OpenVikingRuntime {
 
   async recallMessage(agent, messages) {
     const state = await this.initialize(agent);
-    if (!state.ready) return null;
+    if (!state.ready || !isRecallEnabled(state.config)) return null;
     const query = promptText(messages);
     if (query.length < state.config.minQueryLength) return null;
     const block = await buildRecallBlock(

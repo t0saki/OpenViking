@@ -287,6 +287,19 @@ test("disposeAll drains every live session", async () => {
   assert.equal(runtime.states.size, 0);
 });
 
+// dsh and pi had no recall switch at all: every other harness could turn recall
+// off and these two retrieved on every prompt regardless.
+test("autoRecall false stops the recall request", async () => {
+  const runtime = new OpenVikingRuntime({
+    async fetchJSON() {
+      throw new Error("recall must not reach the server when it is switched off");
+    },
+  }, { ...config(), autoRecall: false }, { debug() {} });
+  runtime.initialize = async () => ({ ready: true, config: { ...config(), autoRecall: false } });
+
+  assert.equal(await runtime.recallMessage({}, [{ role: "user", content: "what did we decide" }]), null);
+});
+
 test("syncTurns false sends nothing: no capture, no commit, no dispose flush, no replay", async () => {
   const pendingDir = await mkdtemp(join(tmpdir(), "dsh-memory-sync-off-"));
   tempDirs.push(pendingDir);
