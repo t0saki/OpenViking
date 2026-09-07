@@ -129,15 +129,15 @@ test("TRAE prompt hook injects recall and Stop captures dedicated event fields",
     ]);
     assert.equal(recalled.filter((item) => /trae memory/.test(item.hookSpecificOutput?.additionalContext || "")).length, 1);
     await Promise.all([
-      runHook("stop", "trae-cn", { ...base, last_assistant_message: "done" }, env),
-      runHook("stop", "trae-cn", { ...base, last_assistant_message: "done" }, env),
+      runHook("stop", "trae-cn", { ...base, last_assistant_message: "the retry budget is three attempts" }, env),
+      runHook("stop", "trae-cn", { ...base, last_assistant_message: "the retry budget is three attempts" }, env),
     ]);
     assert.equal(messages.length, 2);
     assert.equal(commits.length, 1, "the completed TRAE turn must be committed immediately");
     assert.ok(messages.every((item) => item.url.includes("trcn-same-session")));
 
     await runHook("user-prompt-submit", "trae-cn", { ...base, prompt: "remember this", generation_id: "prompt-2" }, env);
-    await runHook("stop", "trae-cn", { ...base, last_assistant_message: "done" }, env);
+    await runHook("stop", "trae-cn", { ...base, last_assistant_message: "the retry budget is three attempts" }, env);
     assert.equal(messages.length, 4, "a later identical turn must not be mistaken for a duplicate Hook run");
     assert.equal(commits.length, 2);
   } finally {

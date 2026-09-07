@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { readFile } from "node:fs/promises";
+import { filterCaptureTurns } from "../../memory-plugin-shared/lib/capture-utils.mjs";
 import { parseCursorTranscript } from "./cursor-transcript.mjs";
 
 import {
@@ -45,9 +46,17 @@ async function captureTranscript(input, state, sessionId) {
     // Cursor transcripts do not expose a stable message id. Include the
     // transcript position so two legitimate identical turns are retained,
     // while duplicate Hook executions over the same transcript still dedupe.
+    // Hash the raw turn, not the filtered text, so raising captureMaxLength
+    // never resends a turn the server already holds in truncated form.
     const hash = stableHash(index, turn.role, turn.content);
     if (capturedHashes.has(hash)) continue;
-    toSend.push({ hash, turn });
+    const { kept, dropped } = filterCaptureTurns([turn], cfg);
+    if (!kept.length) {
+      log("capture_skip", dropped[0]);
+      capturedHashes.add(hash);
+      continue;
+    }
+    toSend.push({ hash, turn: kept[0] });
   }
   const result = await addAgentMessages(fetchJSON, sessionId, toSend.map((item) => item.turn));
   const captured = result.sent + result.queued;

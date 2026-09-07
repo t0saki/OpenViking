@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { filterCaptureTurns } from "./lib/capture-utils.mjs";
+
 import {
   commitAgentSession,
   makeAgentFetchJSON,
@@ -77,4 +79,40 @@ test("agent fetch and commit logging preserve response trace_id", async (t) => {
       error: "commit failed",
     },
   });
+});
+
+// The thin harnesses composed on this runtime used to send whatever their
+// transcript parser produced. Every other harness runs the same filter, so it
+// belongs beside the runtime rather than reimplemented in each hook.
+test("the shared capture filter drops the turns no harness wants to remember", () => {
+  const { kept, dropped } = filterCaptureTurns([
+    { role: "user", content: "/compact" },
+    { role: "assistant", content: "ok" },
+    { role: "user", content: "..." },
+    { role: "assistant", content: "[openviking-memory] recalled 3 items" },
+    { role: "user", content: "the retry budget is three attempts" },
+  ], { captureMaxLength: 24000 });
+
+  assert.deepEqual(kept.map((turn) => turn.content), ["the retry budget is three attempts"]);
+  assert.deepEqual(dropped.map((turn) => turn.reason), [
+    "slash_command", "ack", "punctuation", "plugin_status",
+  ]);
+});
+
+test("a turn past captureMaxLength is capped rather than dropped", () => {
+  const long = "remember this detail. ".repeat(200);
+  const { kept, dropped } = filterCaptureTurns(
+    [{ role: "user", content: long }],
+    { captureMaxLength: 200 },
+  );
+
+  assert.equal(dropped.length, 0);
+  assert.ok(kept[0].content.length < long.length, "the turn must reach the extractor capped");
+  assert.ok(kept[0].content.startsWith("remember this detail."));
+});
+
+test("filterCaptureTurns tolerates a missing or malformed turn list", () => {
+  for (const input of [undefined, null, "text", 3, {}]) {
+    assert.deepEqual(filterCaptureTurns(input), { kept: [], dropped: [] });
+  }
 });

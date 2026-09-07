@@ -19,6 +19,7 @@ import {
   withAgentHookLock,
   writeHookState,
 } from "../../memory-plugin-shared/lib/agent-hook-runtime.mjs";
+import { filterCaptureTurns } from "../../memory-plugin-shared/lib/capture-utils.mjs";
 import { buildTraeTurns, cleanTraeText } from "./trae-turns.mjs";
 
 const eventName = process.env.OPENVIKING_HOOK_EVENT || process.argv[2] || "";
@@ -110,9 +111,18 @@ async function main() {
       const turnKey = state.pendingPrompt?.at || state.lastTurnKey || state.promptHash || "unknown-turn";
       const toSend = [];
       for (const turn of buildTraeTurns(input, state)) {
+        // Hash the raw turn, not the filtered text, so raising
+        // captureMaxLength never resends one the server already holds
+        // in truncated form.
         const hash = stableHash(turnKey, turn.role, turn.content);
         if (hashes.has(hash)) continue;
-        toSend.push({ hash, turn });
+        const { kept, dropped } = filterCaptureTurns([turn], cfg);
+        if (!kept.length) {
+          log("capture_skip", dropped[0]);
+          hashes.add(hash);
+          continue;
+        }
+        toSend.push({ hash, turn: kept[0] });
       }
       const result = await addAgentMessages(fetchJSON, sessionId, toSend.map((item) => item.turn));
       const captured = result.sent + result.queued;

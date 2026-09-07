@@ -512,3 +512,26 @@ export function shouldCaptureText(text, role, cfg = {}) {
 
   return { shouldCapture: true, reason: "ok", text: capped };
 }
+
+/**
+ * Apply the capture filter to a list of `{ role, content }` turns.
+ *
+ * The harnesses that compose `agent-hook-runtime` used to send whatever their
+ * transcript parser produced: an acknowledgement, a slash command, a stray
+ * `ok`, or a turn far past `captureMaxLength` all reached the extractor
+ * verbatim. This is the same decision every other harness makes, in one place,
+ * so a thin harness gets it by calling rather than by reimplementing it.
+ *
+ * Returns the surviving turns with `content` replaced by the sanitized and
+ * capped text, and the dropped ones with the reason, for the debug log.
+ */
+export function filterCaptureTurns(turns, cfg = {}) {
+  const kept = [];
+  const dropped = [];
+  for (const turn of Array.isArray(turns) ? turns : []) {
+    const decision = shouldCaptureText(turn?.content, turn?.role, cfg);
+    if (decision.shouldCapture) kept.push({ ...turn, content: decision.text });
+    else dropped.push({ role: turn?.role, reason: decision.reason });
+  }
+  return { kept, dropped };
+}
