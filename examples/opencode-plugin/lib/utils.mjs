@@ -139,7 +139,7 @@ export async function makeRequest(config, options) {
       const rawError = typeof payload === "object" ? payload.error ?? payload.message : payload
       const errorMessage = typeof rawError === "string" ? rawError : JSON.stringify(rawError)
       if (response.status === 401 || response.status === 403) {
-        throw new Error("Authentication failed. Please check apiKey/account/user in openviking-config.json or OPENVIKING_* environment variables.")
+        throw new Error("Authentication failed. Check api_key/account/user in ~/.openviking/ovcli.conf, or the OPENVIKING_* environment variables.")
       }
       throw new Error(`Request failed (${response.status}): ${errorMessage}`)
     }
@@ -190,7 +190,7 @@ export async function makeMultipartRequest(config, options) {
       const rawError = typeof payload === "object" ? payload.error ?? payload.message : payload
       const errorMessage = typeof rawError === "string" ? rawError : JSON.stringify(rawError)
       if (response.status === 401 || response.status === 403) {
-        throw new Error("Authentication failed. Please check apiKey/account/user in openviking-config.json or OPENVIKING_* environment variables.")
+        throw new Error("Authentication failed. Check api_key/account/user in ~/.openviking/ovcli.conf, or the OPENVIKING_* environment variables.")
       }
       throw new Error(`Request failed (${response.status}): ${errorMessage}`)
     }
