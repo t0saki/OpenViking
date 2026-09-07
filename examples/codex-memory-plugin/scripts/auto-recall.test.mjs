@@ -834,3 +834,82 @@ test("the actor peer comes from the workspace named by the payload's cwd", async
     await rm(stateDir, { recursive: true, force: true });
   }
 });
+
+test("a bypassed directory gets no injected memory and makes no request", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "ov-auto-recall-bypass-"));
+  const scratchDir = join(stateDir, "scratch");
+  const keepDir = join(stateDir, "keep");
+  const requests = [];
+
+  try {
+    await mkdir(scratchDir, { recursive: true });
+    await mkdir(keepDir, { recursive: true });
+
+    const env = (baseUrl) => ({
+      OPENVIKING_AUTO_RECALL: "1",
+      OPENVIKING_CODEX_STATE_DIR: stateDir,
+      OPENVIKING_STATE_DIR: stateDir,
+      OPENVIKING_HOME: join(stateDir, "home"),
+      OPENVIKING_CONFIG_FILE: join(stateDir, "missing-ov.conf"),
+      OPENVIKING_CLI_CONFIG_FILE: join(stateDir, "missing-ovcli.conf"),
+      OPENVIKING_CREDENTIAL_SOURCE: "env",
+      OPENVIKING_RECALL_COMPRESS: "0",
+      OPENVIKING_RECALL_LIMIT: "1",
+      OPENVIKING_RECALL_TIMEOUT_MS: "10000",
+      OPENVIKING_MIN_QUERY_LENGTH: "1",
+      OPENVIKING_SCORE_THRESHOLD: "0",
+      OPENVIKING_TIMEOUT_MS: "5000",
+      OPENVIKING_BYPASS_SESSION_PATTERNS: "**/scratch",
+      OPENVIKING_URL: baseUrl,
+    });
+
+    await withMockOpenViking(async (req, res) => {
+      const url = new URL(req.url, "http://127.0.0.1");
+      requests.push(url.pathname);
+      if (req.method === "GET" && url.pathname === "/health") {
+        writeJson(res, { status: "ok", result: { ok: true } });
+        return;
+      }
+      if (req.method === "POST" && url.pathname === "/api/v1/search/search") {
+        await readRequestBody(req);
+        writeJson(res, {
+          status: "ok",
+          result: {
+            entries: [{
+              uri: "viking://user/zeus/memories/events/leak.md",
+              category: "events",
+              detail: "full",
+              score: 0.9,
+              text: "memory that must not reach a bypassed session",
+            }],
+            rendered: "memory that must not reach a bypassed session",
+            digest: "",
+            stats: { returned: 1, used_tokens: 40 },
+          },
+        });
+        return;
+      }
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ status: "error", error: "not found" }));
+    }, async (baseUrl) => {
+      const off = await runAutoRecall(
+        { prompt: "please use prior context", session_id: "cx-bypassed", cwd: scratchDir },
+        env(baseUrl),
+      );
+      assert.deepEqual(JSON.parse(off.stdout.trim()), {});
+      assert.deepEqual(requests, [], "a bypassed directory must not reach the server at all");
+
+      const on = await runAutoRecall(
+        { prompt: "please use prior context", session_id: "cx-kept", cwd: keepDir },
+        env(baseUrl),
+      );
+      assert.match(
+        JSON.parse(on.stdout.trim()).hookSpecificOutput.additionalContext,
+        /must not reach a bypassed session/,
+        "the same env must still recall outside the pattern",
+      );
+    });
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});

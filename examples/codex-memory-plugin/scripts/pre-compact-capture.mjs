@@ -28,6 +28,7 @@ import { loadConfig } from "./config.mjs";
 import { createLogger } from "./debug-log.mjs";
 import { catchUpTurns, commitOvSession, hasCaptureKeyword, makeFetchJSON } from "./ov-session.mjs";
 import { clearEnded, loadState, saveState, withSessionLock } from "./session-state.mjs";
+import { isBypassed } from "./shared/session-model.mjs";
 import { resolveEffectivePeerId } from "./shared/workspace-peer.mjs";
 
 let cfg = loadConfig();
@@ -161,6 +162,12 @@ async function main() {
   // payload knows; see loadConfig for why re-resolving this late is safe.
   const cwd = typeof input.cwd === "string" && input.cwd.trim() ? input.cwd : process.cwd();
   cfg = loadConfig(cwd);
+
+  if (isBypassed(cfg, { sessionId, cwd })) {
+    log("skip", { stage: "init", reason: "bypass_session_pattern" });
+    noop();
+    return;
+  }
 
   // Compaction means the thread is running, so any earlier end marker is stale.
   await clearEnded(sessionId, { before: HOOK_STARTED_AT });

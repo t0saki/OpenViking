@@ -32,6 +32,7 @@ import {
   withSessionLock,
 } from "./session-state.mjs";
 import { maybeDetach, readHookStdin } from "./shared/async-writer.mjs";
+import { isBypassed } from "./shared/session-model.mjs";
 import { resolveEffectivePeerId } from "./shared/workspace-peer.mjs";
 
 let cfg = loadConfig();
@@ -175,6 +176,14 @@ async function main() {
 
   if (!sessionId) {
     log("skip", { stage: "init", reason: "no session_id" });
+    output({});
+    return;
+  }
+
+  // Before markEnded: a bypassed session was never captured, so leaving a
+  // marker behind would only make the next SessionStart sweep chase nothing.
+  if (isBypassed(cfg, { sessionId, cwd })) {
+    log("skip", { stage: "init", reason: "bypass_session_pattern" });
     output({});
     return;
   }

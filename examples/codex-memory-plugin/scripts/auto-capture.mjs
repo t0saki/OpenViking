@@ -27,6 +27,7 @@ import { createLogger } from "./debug-log.mjs";
 import { catchUpTurns, hasCaptureKeyword, makeFetchJSON } from "./ov-session.mjs";
 import { clearEnded, loadState, saveState, withSessionLock } from "./session-state.mjs";
 import { maybeDetach, readHookStdin } from "./shared/async-writer.mjs";
+import { isBypassed } from "./shared/session-model.mjs";
 import { resolveEffectivePeerId } from "./shared/workspace-peer.mjs";
 
 let cfg = loadConfig();
@@ -165,6 +166,12 @@ async function main() {
   if (!cfg.autoCapture) {
     // The gate above ran against this process's directory, not the session's.
     log("skip", { stage: "init", reason: "autoCapture disabled" });
+    noop();
+    return;
+  }
+
+  if (isBypassed(cfg, { sessionId, cwd })) {
+    log("skip", { stage: "init", reason: "bypass_session_pattern" });
     noop();
     return;
   }

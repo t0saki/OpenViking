@@ -696,3 +696,125 @@ test("the workspace that decides capture is the payload's, not the hook process'
     await rm(stateDir, { recursive: true, force: true });
   }
 });
+
+test("a retryable send failure queues the turns instead of dropping them", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "ov-auto-capture-pending-"));
+  const transcriptPath = join(stateDir, "transcript.jsonl");
+  const pendingDir = join(stateDir, "pending");
+
+  try {
+    await writeFile(transcriptPath, JSON.stringify({
+      payload: { message: { role: "user", content: "this turn must survive the outage" } },
+    }));
+
+    await withMockOpenViking(async (req, res) => {
+      const url = new URL(req.url, "http://127.0.0.1");
+      if (req.method === "GET" && url.pathname === "/health") {
+        writeJson(res, { status: "ok", result: { ok: true } });
+        return;
+      }
+      if (req.method === "POST" && url.pathname.endsWith("/messages/batch")) {
+        await readRequestBody(req);
+        res.writeHead(503, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ status: "error", error: { message: "server restarting" } }));
+        return;
+      }
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ status: "error", error: "not found" }));
+    }, async (baseUrl) => {
+      await runAutoCapture(
+        { session_id: "cx-outage", transcript_path: transcriptPath, cwd: stateDir },
+        {
+          OPENVIKING_CODEX_STATE_DIR: stateDir,
+          OPENVIKING_PENDING_DIR: pendingDir,
+          OPENVIKING_HOME: join(stateDir, "home"),
+          OPENVIKING_CONFIG_FILE: join(stateDir, "missing-ov.conf"),
+          OPENVIKING_CLI_CONFIG_FILE: join(stateDir, "missing-ovcli.conf"),
+          OPENVIKING_CREDENTIAL_SOURCE: "env",
+          OPENVIKING_WRITE_PATH_ASYNC: "0",
+          OPENVIKING_TIMEOUT_MS: "5000",
+          OPENVIKING_URL: baseUrl,
+        },
+      );
+    });
+
+    const queued = await readdir(pendingDir).catch(() => []);
+    assert.equal(queued.length, 1, `expected one queued entry, got ${JSON.stringify(queued)}`);
+    const entry = JSON.parse(await readFile(join(pendingDir, queued[0]), "utf-8"));
+    assert.equal(entry.type, "addMessage");
+    assert.match(JSON.stringify(entry.payload), /must survive the outage/);
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("a bypassed directory captures nothing and leaves no state behind", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "ov-auto-capture-bypass-"));
+  const transcriptPath = join(stateDir, "transcript.jsonl");
+  const scratchDir = join(stateDir, "scratch");
+  const keepDir = join(stateDir, "keep");
+  const calls = [];
+
+  try {
+    await mkdir(scratchDir, { recursive: true });
+    await mkdir(keepDir, { recursive: true });
+    await writeFile(transcriptPath, JSON.stringify({
+      payload: { message: { role: "user", content: "throwaway experiment" } },
+    }));
+
+    const env = (baseUrl) => ({
+      OPENVIKING_CODEX_STATE_DIR: stateDir,
+      OPENVIKING_HOME: join(stateDir, "home"),
+      OPENVIKING_CONFIG_FILE: join(stateDir, "missing-ov.conf"),
+      OPENVIKING_CLI_CONFIG_FILE: join(stateDir, "missing-ovcli.conf"),
+      OPENVIKING_CREDENTIAL_SOURCE: "env",
+      OPENVIKING_WRITE_PATH_ASYNC: "0",
+      OPENVIKING_TIMEOUT_MS: "5000",
+      OPENVIKING_BYPASS_SESSION_PATTERNS: "**/scratch",
+      OPENVIKING_URL: baseUrl,
+    });
+
+    await withMockOpenViking(async (req, res) => {
+      const url = new URL(req.url, "http://127.0.0.1");
+      calls.push(url.pathname);
+      if (req.method === "GET" && url.pathname === "/health") {
+        writeJson(res, { status: "ok", result: { ok: true } });
+        return;
+      }
+      if (req.method === "POST" && url.pathname.endsWith("/messages/batch")) {
+        await readRequestBody(req);
+        writeJson(res, { status: "ok", result: { ok: true } });
+        return;
+      }
+      if (req.method === "GET" && url.pathname.startsWith("/api/v1/sessions/")) {
+        writeJson(res, { status: "ok", result: { pending_tokens: 0 } });
+        return;
+      }
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ status: "error", error: "not found" }));
+    }, async (baseUrl) => {
+      const off = await runAutoCapture(
+        { session_id: "cx-bypassed", transcript_path: transcriptPath, cwd: scratchDir },
+        env(baseUrl),
+      );
+      assert.deepEqual(JSON.parse(off.stdout.trim()), {});
+      assert.deepEqual(calls, [], "a bypassed directory must not reach the server at all");
+      assert.equal(
+        (await readdir(stateDir)).includes("cx-bypassed.json"),
+        false,
+        "no session state should be written for a bypassed directory",
+      );
+
+      await runAutoCapture(
+        { session_id: "cx-kept", transcript_path: transcriptPath, cwd: keepDir },
+        env(baseUrl),
+      );
+      assert.ok(
+        calls.some((path) => path.endsWith("/messages/batch")),
+        `the same env must still capture outside the pattern; calls=${JSON.stringify(calls)}`,
+      );
+    });
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});

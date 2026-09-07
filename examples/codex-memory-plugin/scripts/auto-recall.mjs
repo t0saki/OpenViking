@@ -33,6 +33,7 @@ import {
   postRecall,
 } from "./shared/recall-core.mjs";
 import { compressRecallContext } from "./shared/recall-compress-core.mjs";
+import { isBypassed } from "./shared/session-model.mjs";
 import { resolveEffectivePeerId } from "./shared/workspace-peer.mjs";
 
 let cfg = loadConfig();
@@ -569,6 +570,12 @@ async function main() {
   const cwd = typeof input.cwd === "string" && input.cwd.trim() ? input.cwd : process.cwd();
   cfg = loadConfig(cwd);
   effectivePeer = resolveEffectivePeerId({ cfg, cwd });
+
+  if (isBypassed(cfg, { sessionId: input.session_id, cwd })) {
+    log("skip", { stage: "init", reason: "bypass_session_pattern" });
+    emit();
+    return;
+  }
 
   if (!cfg.autoRecall) {
     log("skip", { stage: "init", reason: "autoRecall disabled" });

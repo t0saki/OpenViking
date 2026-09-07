@@ -58,7 +58,9 @@ import {
   saveState,
   withSessionLock,
 } from "./session-state.mjs";
+import { replayPending } from "./shared/pending-queue.mjs";
 import { buildProfileBlock } from "./shared/profile-inject.mjs";
+import { isBypassed } from "./shared/session-model.mjs";
 import { resolveEffectivePeerId } from "./shared/workspace-peer.mjs";
 
 let cfg = loadConfig();
@@ -100,6 +102,23 @@ function emitSessionStartOutput({ contexts = [], systemMessage = "" } = {}) {
   }
   if (systemMessage) response.systemMessage = systemMessage;
   output(response);
+}
+
+/**
+ * Drain writes that an earlier hook queued while the server was unreachable.
+ * SessionStart is the only codex hook that runs after a known-healthy check,
+ * so it is where the queue gets its chance; a bypassed directory still replays,
+ * because the entries were recorded by sessions that were not bypassed.
+ */
+async function replayPendingWrites() {
+  try {
+    const result = await replayPending(fetchJSONRes, log);
+    if (result.replayed > 0 || result.failed > 0 || result.deferred > 0) {
+      log("pending-replay", result);
+    }
+  } catch (err) {
+    logError("pending-replay", err);
+  }
 }
 
 function responseTraceId(body) {
@@ -346,7 +365,13 @@ async function main() {
   cfg = loadConfig(cwd);
   const effectivePeer = resolveEffectivePeerId({ cfg, cwd });
   activePeerId = effectivePeer.peerId;
-  if (newSessionId !== "unknown") {
+  // A bypassed directory suppresses this session's own memory work — no peer
+  // registration, no injection. The sweep and the pending replay below still
+  // run: they finish sessions recorded elsewhere, and this hook is the only
+  // place codex runs either, so skipping them would strand that data for as
+  // long as the user keeps working in a bypassed repository.
+  const bypassed = isBypassed(cfg, { sessionId: newSessionId, cwd });
+  if (!bypassed && newSessionId !== "unknown") {
     const state = await loadState(newSessionId);
     await saveState({
       ...state,
@@ -358,6 +383,7 @@ async function main() {
     newSessionId,
     idleTtlMs: IDLE_TTL_MS,
     peerSource: effectivePeer.source,
+    bypassed,
   });
 
   try {
@@ -373,6 +399,12 @@ async function main() {
     const health = await fetchJSON("/health");
     if (!health) {
       logError("health_check", "server unreachable; skipping profile + archive injection");
+      noop();
+      return;
+    }
+    await replayPendingWrites();
+    if (bypassed) {
+      log("skip", { stage: "inject", reason: "bypass_session_pattern" });
       noop();
       return;
     }
@@ -400,7 +432,9 @@ async function main() {
     return;
   }
 
-  const profileContext = await buildSessionProfileContext();
+  await replayPendingWrites();
+
+  const profileContext = bypassed ? null : await buildSessionProfileContext();
   const now = Date.now();
   const commits = [];
   let retired = 0;

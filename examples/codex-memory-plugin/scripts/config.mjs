@@ -39,6 +39,7 @@
  *   OPENVIKING_RECALL_LIMIT, OPENVIKING_SCORE_THRESHOLD
  *   OPENVIKING_WORKSPACE_PEER, OPENVIKING_RECALL_PEER_SCOPE
  *   OPENVIKING_NO_AUTO_INJECT, OPENVIKING_PROFILE_TOKEN_BUDGET
+ *   OPENVIKING_BYPASS_SESSION, OPENVIKING_BYPASS_SESSION_PATTERNS (CSV)
  *   OPENVIKING_DEBUG=1, OPENVIKING_DEBUG_LOG
  */
 
@@ -180,6 +181,16 @@ export function loadConfig(cwd = process.cwd()) {
     ),
   );
 
+  // bypassSessionPatterns: env CSV overrides the config array entirely. The
+  // workspace layer projects `bypass.session_patterns` here too, so a
+  // repository can hold the exclusions its contributors share.
+  const envPatterns = str(process.env.OPENVIKING_BYPASS_SESSION_PATTERNS, null);
+  const bypassSessionPatterns = envPatterns
+    ? envPatterns.split(",").map((s) => s.trim()).filter(Boolean)
+    : (Array.isArray(cx.bypassSessionPatterns)
+        ? cx.bypassSessionPatterns.filter((p) => typeof p === "string" && p.trim())
+        : []);
+
   return {
     configPath,
     cliConfigPath: cliPath,
@@ -264,6 +275,9 @@ export function loadConfig(cwd = process.cwd()) {
     ) === "off" ? "off" : "auto",
     recallQueryExpansionConfigured: Boolean(process.env.OPENVIKING_RECALL_QUERY_EXPANSION) ||
       hasOwn(cx, "recallQueryExpansion"),
+
+    bypassSession: envBool("OPENVIKING_BYPASS_SESSION") ?? false,
+    bypassSessionPatterns,
 
     autoCapture: envBool("OPENVIKING_AUTO_CAPTURE") ?? (cx.autoCapture !== false),
     captureMode: (str(process.env.OPENVIKING_CAPTURE_MODE, str(cx.captureMode, "semantic")) === "keyword")

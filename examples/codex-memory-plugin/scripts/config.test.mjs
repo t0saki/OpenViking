@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { loadConfig } from "./config.mjs";
+import { isBypassed } from "./shared/session-model.mjs";
 
 const OVERRIDES = [
   "OPENVIKING_CONFIG_FILE",
@@ -15,6 +16,8 @@ const OVERRIDES = [
   "OPENVIKING_PEER_ID",
   "OPENVIKING_PEER_SOURCE",
   "OPENVIKING_AUTO_CAPTURE",
+  "OPENVIKING_BYPASS_SESSION",
+  "OPENVIKING_BYPASS_SESSION_PATTERNS",
   "OPENVIKING_URL",
   "OPENVIKING_BASE_URL",
   "OPENVIKING_API_KEY",
@@ -138,5 +141,47 @@ test("an omitted cwd falls back to this process's directory", () => {
     } finally {
       process.chdir(origin);
     }
+  });
+});
+
+test("a repository can carry the bypass patterns its contributors share", () => {
+  withConfigs({
+    cli: { url: "http://127.0.0.1:1933", api_key: "sk-cli" },
+    workspace: { version: 1, bypass: { session_patterns: ["**/workspace"] } },
+  }, ({ workspaceDir, otherDir }) => {
+    const inside = loadConfig(workspaceDir);
+    assert.deepEqual(inside.bypassSessionPatterns, ["**/workspace"]);
+    assert.equal(isBypassed(inside, { cwd: workspaceDir }), true);
+
+    const outside = loadConfig(otherDir);
+    assert.deepEqual(outside.bypassSessionPatterns, []);
+    assert.equal(isBypassed(outside, { cwd: otherDir }), false);
+  });
+});
+
+test("the bypass env vars override the file, matching every other harness", () => {
+  withConfigs({
+    ov: { codex: { bypassSessionPatterns: ["/from/ov-conf"] } },
+    cli: { url: "http://127.0.0.1:1933", api_key: "sk-cli" },
+    env: {
+      OPENVIKING_BYPASS_SESSION_PATTERNS: "/from/env, /also/env ,",
+      OPENVIKING_BYPASS_SESSION: "1",
+    },
+  }, ({ otherDir }) => {
+    const cfg = loadConfig(otherDir);
+    assert.deepEqual(cfg.bypassSessionPatterns, ["/from/env", "/also/env"]);
+    assert.equal(cfg.bypassSession, true);
+    assert.equal(isBypassed(cfg, { cwd: "/anywhere" }), true, "the switch wins regardless of cwd");
+  });
+});
+
+test("ov.conf's codex section still supplies the patterns when no env var does", () => {
+  withConfigs({
+    ov: { codex: { bypassSessionPatterns: ["/scratch/*", 7, "  "] } },
+    cli: { url: "http://127.0.0.1:1933", api_key: "sk-cli" },
+  }, ({ otherDir }) => {
+    const cfg = loadConfig(otherDir);
+    assert.deepEqual(cfg.bypassSessionPatterns, ["/scratch/*"]);
+    assert.equal(cfg.bypassSession, false);
   });
 });
