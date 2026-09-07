@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - "examples/dsh-memory-plugin/**"
+      - "examples/memory-plugin-shared/lib/**"
       - ".github/workflows/dsh-plugin-release.yml"
   workflow_dispatch:
 

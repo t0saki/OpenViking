@@ -1,7 +1,7 @@
 import type { OVClient } from "./client.js";
 import type { OVConfig } from "./config.js";
 import { buildRecallBlock } from "./shared/recall-core.mjs";
-import { RecallLedger, ledgerKey } from "./shared/recall-ledger.mjs";
+import { RecallLedger, ledgerKey } from "./lib/recall-ledger.mjs";
 
 export interface RecallCache {
   block: string | null;

@@ -5,6 +5,10 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 STAGE="${1:?usage: stage-memory-plugin-marketplace.sh <stage-dir>}"
 
+# The plugins published as packages build their shared copies at pack time and
+# keep none in git, so the archive is only complete once the generator has run.
+node "${ROOT}/examples/memory-plugin-shared/sync.mjs" >/dev/null
+
 rm -rf "${STAGE}"
 mkdir -p "${STAGE}"
 cp -R \
@@ -67,10 +71,16 @@ for required in \
   memory-plugin-shared/lib/async-writer.mjs \
   memory-plugin-shared/lib/batch-send.mjs \
   memory-plugin-shared/lib/capture-utils.mjs \
+  memory-plugin-shared/lib/config-schema.mjs \
+  memory-plugin-shared/lib/plugin-config.mjs \
   memory-plugin-shared/lib/mcp-proxy-config.mjs \
   memory-plugin-shared/lib/mcp-proxy-core.mjs \
   memory-plugin-shared/lib/retryable.mjs \
-  memory-plugin-shared/lib/uri-guard.mjs; do
+  memory-plugin-shared/lib/uri-guard.mjs \
+  pi-coding-agent-extension/shared/credentials.mjs \
+  pi-coding-agent-extension/shared/plugin-config.mjs \
+  opencode-plugin/lib/shared/credentials.mjs \
+  opencode-plugin/lib/shared/plugin-config.mjs; do
   test -f "${STAGE}/${required}" || {
     echo "Marketplace archive is missing ${required}" >&2
     exit 1

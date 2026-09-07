@@ -15,7 +15,7 @@ import { createLogger } from "./shared/debug-log.mjs";
 import { loadConfig, type OVConfig } from "./config.js";
 import { OVClient } from "./client.js";
 import { RecallManager } from "./recall.js";
-import { RecallLedger } from "./shared/recall-ledger.mjs";
+import { RecallLedger } from "./lib/recall-ledger.mjs";
 import { SyncManager } from "./sync.js";
 import { buildProfileBlock } from "./shared/profile-inject.mjs";
 import { isBypassed } from "./shared/session-model.mjs";

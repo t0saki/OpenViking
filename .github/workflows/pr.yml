@@ -30,6 +30,11 @@ jobs:
 
       - run: npm ci --prefix examples/dsh-memory-plugin
 
+      # The plugins published as packages keep no shared copies in git; they are
+      # built on the way out, and the tests import them like the package would.
+      - name: Generate the shared runtime copies
+        run: node examples/memory-plugin-shared/sync.mjs
+
       - name: Run memory plugin tests
         run: |
           node --test \

@@ -2977,6 +2977,18 @@ opencode_install_file_plugin() {
 # pi
 # ---------------------------------------------------------------------------
 
+# The pi extension is copied wholesale rather than assembled, so its shared
+# runtime has to be on disk before the copy. A marketplace archive was staged
+# with the generator already run; a source checkout has not been, so run it
+# there. Anywhere else this is a no-op and the check below reports the gap.
+sync_shared_runtime() {
+  local shared root
+  shared="$(plugin_dir_on_disk memory-plugin-shared)" || return 0
+  root="$(cd "$shared/../.." 2>/dev/null && pwd)" || return 0
+  [ -f "$shared/sync.mjs" ] && [ -d "$root/examples/memory-plugin-shared" ] || return 0
+  "$NODE_BIN" "$shared/sync.mjs" >/dev/null 2>&1 || true
+}
+
 install_pi() {
   heading "$(t '4. pi extension' '4. pi 扩展')"
   if ! command -v pi >/dev/null 2>&1; then
@@ -2988,6 +3000,11 @@ install_pi() {
     warn "$(t 'pi extension sources not found; skipping.' '未找到 pi 扩展源码，跳过。')"
     return 0
   }
+  sync_shared_runtime
+  if [ ! -f "$plugin_dir/shared/credentials.mjs" ]; then
+    warn "$(t 'pi extension shared runtime is missing; run node examples/memory-plugin-shared/sync.mjs and retry.' '未找到 pi 扩展的共享运行时；请先运行 node examples/memory-plugin-shared/sync.mjs 再重试。')"
+    return 0
+  fi
   dest="$HOME/.pi/agent/extensions/openviking"
   tmp="$dest.tmp"
   rm -rf "$tmp"

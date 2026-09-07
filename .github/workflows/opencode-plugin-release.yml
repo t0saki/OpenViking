@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - "examples/opencode-plugin/**"
+      - "examples/memory-plugin-shared/lib/**"
       - ".github/workflows/opencode-plugin-release.yml"
   workflow_dispatch:
 

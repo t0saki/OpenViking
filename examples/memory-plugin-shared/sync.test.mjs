@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { readFile, readdir } from "node:fs/promises";
 import { join, relative } from "node:path";
 import test from "node:test";
@@ -45,6 +46,24 @@ test("what each plugin ships equals the closure of what it imports", async () =>
       target.files,
       `${relative(ROOT, target.dir)} does not hold the closure of its imports; run node examples/memory-plugin-shared/sync.mjs`,
     );
+  }
+});
+
+// Which copies git holds is a delivery decision, and getting it backwards fails
+// in a way nobody sees until an install breaks: a committed plugin whose copies
+// were ignored ships nothing, and a packaged plugin whose copies were committed
+// taxes every review diff with 12,000 generated lines.
+test("git holds the copies the directory-installed plugins need, and no others", async () => {
+  for (const target of await resolveTargets()) {
+    const dir = relative(ROOT, target.dir);
+    const tracked = execFileSync("git", ["ls-files", "--", dir], { cwd: ROOT, encoding: "utf-8" })
+      .split("\n")
+      .filter(Boolean);
+    if (target.committed) {
+      assert.ok(tracked.length > 0, `${dir} is installed from this repository, so its copies must be committed`);
+    } else {
+      assert.deepEqual(tracked, [], `${dir} is generated at pack time; it must not be committed`);
+    }
   }
 });
 

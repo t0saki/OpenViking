@@ -14,34 +14,55 @@ export const SHARED_DIR = join(ROOT, "examples", "memory-plugin-shared", "lib");
 // ERR_MODULE_NOT_FOUND on the first hook of a fresh install. Each target below
 // only says where its code lives and where its copies go; the file set is the
 // transitive closure of what that code actually imports.
+// What a plugin ships equals what it imports, and neither side is written down.
+// Hand-kept lists were the drift: a group named after one harness got spread
+// into another's, and modules nobody imported ended up vendored into four
+// directories while a module somebody did import went missing and became an
+// ERR_MODULE_NOT_FOUND on the first hook of a fresh install. Each target below
+// only says where its code lives, where its copies go, and whether the copies
+// have to be committed; the file set is the transitive closure of what that
+// code actually imports.
+//
+// `committed` is about how the plugin is delivered, not about taste. A host
+// that installs by pointing at a directory in this repository can only see
+// files git has, so those copies are committed and a bot regenerates them on
+// main. A plugin published as an npm package or assembled into a tarball builds
+// its copies at pack time, so committing them would only tax every review diff.
 export const TARGETS = [
   {
     root: join(ROOT, "examples", "claude-code-memory-plugin"),
     dir: join(ROOT, "examples", "claude-code-memory-plugin", "scripts", "shared"),
+    committed: true,
   },
   {
     root: join(ROOT, "examples", "codex-memory-plugin"),
     dir: join(ROOT, "examples", "codex-memory-plugin", "scripts", "shared"),
-  },
-  {
-    root: join(ROOT, "examples", "opencode-plugin"),
-    dir: join(ROOT, "examples", "opencode-plugin", "lib", "shared"),
-  },
-  {
-    root: join(ROOT, "examples", "dsh-memory-plugin"),
-    dir: join(ROOT, "examples", "dsh-memory-plugin", "shared"),
-  },
-  {
-    root: join(ROOT, "examples", "pi-coding-agent-extension"),
-    dir: join(ROOT, "examples", "pi-coding-agent-extension", "shared"),
+    committed: true,
   },
   {
     root: join(ROOT, "agent-plugins"),
     dir: join(ROOT, "agent-plugins", "servers", "shared"),
+    committed: true,
+  },
+  {
+    root: join(ROOT, "examples", "opencode-plugin"),
+    dir: join(ROOT, "examples", "opencode-plugin", "lib", "shared"),
+    committed: false,
+  },
+  {
+    root: join(ROOT, "examples", "dsh-memory-plugin"),
+    dir: join(ROOT, "examples", "dsh-memory-plugin", "shared"),
+    committed: false,
+  },
+  {
+    root: join(ROOT, "examples", "pi-coding-agent-extension"),
+    dir: join(ROOT, "examples", "pi-coding-agent-extension", "shared"),
+    committed: false,
   },
   {
     root: join(ROOT, "examples", "openclaw-plugin"),
     dir: join(ROOT, "examples", "openclaw-plugin", "shared"),
+    committed: false,
   },
 ];
 
