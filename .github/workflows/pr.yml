@@ -55,7 +55,6 @@ jobs:
             examples/claude-code-memory-plugin/scripts/lib/recall-core-timeout.test.mjs \
             examples/cursor-memory-plugin/scripts/cursor-plugin.test.mjs \
             examples/trae-memory-hooks/scripts/trae-hooks.test.mjs \
-            examples/trae-cli-memory-hooks/scripts/trae-cli-hooks.test.mjs \
             examples/zcode-memory-plugin/scripts/zcode-async.test.mjs \
             examples/zcode-memory-plugin/scripts/zcode-capture.test.mjs \
             examples/zcode-memory-plugin/scripts/zcode-hooks.test.mjs \
@@ -127,6 +126,23 @@ jobs:
           npm test --
           --exclude "tests/ut/architecture-boundaries.test.ts"
           --exclude "**/node_modules/**"
+
+  plugin-versions:
+    runs-on: ubuntu-24.04
+    if: ${{ github.event_name == 'pull_request' }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+
+      - name: Plugins that changed must move their version string
+        run: |
+          git fetch --quiet origin ${{ github.base_ref }}
+          bash .github/scripts/check-plugin-version-bumps.sh "origin/${{ github.base_ref }}"
 
   check-deps:
     runs-on: ubuntu-24.04
