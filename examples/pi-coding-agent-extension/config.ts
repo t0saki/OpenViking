@@ -5,7 +5,7 @@ import { buildUserAgent, resolveOpenVikingCredentials } from "./shared/credentia
 import { resolveEffectivePeerId } from "./shared/workspace-peer.mjs";
 
 /** Hand-maintained: this extension ships no manifest to read a version from. */
-export const EXTENSION_VERSION = "0.1.0";
+export const EXTENSION_VERSION = "0.2.0";
 
 export interface OVConfig {
   enabled: boolean;

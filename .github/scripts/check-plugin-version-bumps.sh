@@ -46,7 +46,28 @@ process.stdin.on("end", () => {
 '
 }
 
+# A plugin that carries both a host manifest and an installer manifest has to
+# say the same version in both: the host installs by one and the installer
+# decides "nothing changed" by the other, so a mismatch means a plugin that
+# reports upgraded and behaves like it did not.
+PAIRED=(
+  "examples/cursor-memory-plugin/.cursor-plugin/plugin.json:examples/cursor-memory-plugin/openviking.integration.json"
+  "examples/zcode-memory-plugin/.zcode-plugin/plugin.json:examples/zcode-memory-plugin/openviking.integration.json"
+)
+
 failed=0
+for entry in "${PAIRED[@]}"; do
+  host="${entry%%:*}"
+  integration="${entry#*:}"
+  [ -f "$host" ] && [ -f "$integration" ] || continue
+  host_version="$(read_version "" "$host")"
+  integration_version="$(read_version "" "$integration")"
+  if [ "$host_version" != "$integration_version" ]; then
+    echo "::error file=$host::$host says $host_version and $integration says $integration_version."
+    failed=1
+  fi
+done
+
 for entry in "${PLUGINS[@]}"; do
   dir="${entry%%:*}"
   manifest="${entry#*:}"
