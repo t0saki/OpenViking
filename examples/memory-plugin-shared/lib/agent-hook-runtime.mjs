@@ -6,6 +6,7 @@ import { dirname, join } from "node:path";
 import { buildUserAgent, resolveAuthMode, resolveOpenVikingCredentials } from "./credentials.mjs";
 import { createLogger } from "./debug-log.mjs";
 import { sendSessionMessages } from "./batch-send.mjs";
+import { createOvHttp } from "./ov-http.mjs";
 import { enqueue, replayPending } from "./pending-queue.mjs";
 import { buildProfileBlock } from "./profile-inject.mjs";
 import { buildRecallBlock, isRecallEnabled } from "./recall-core.mjs";
@@ -20,10 +21,6 @@ const STATE_FILE_MODE = 0o600;
 
 function safePart(value) {
   return String(value || "unknown").replace(/[^A-Za-z0-9._-]/g, "-");
-}
-
-function responseTraceId(body) {
-  return body?.result?.trace_id || body?.error?.trace_id || body?.trace_id || undefined;
 }
 
 export function stableHash(...values) {
@@ -173,31 +170,10 @@ export async function writeHookState(clientId, nativeSessionId, value) {
 
 export function makeAgentFetchJSON(cfg, cwd = process.cwd()) {
   const effectivePeer = resolveEffectivePeerId({ cfg, cwd });
-  const fetchJSON = async (path, init = {}, options = {}) => {
-    const controller = new AbortController();
-    const timeoutMs = Math.max(1000, Number(options.timeoutMs) || cfg.timeoutMs);
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-      const headers = { "Content-Type": "application/json", ...(init.headers || {}) };
-      if (cfg.apiKey) headers.Authorization = `Bearer ${cfg.apiKey}`;
-      if (cfg.sendIdentityHeaders && cfg.account) headers["X-OpenViking-Account"] = cfg.account;
-      if (cfg.sendIdentityHeaders && cfg.user) headers["X-OpenViking-User"] = cfg.user;
-      const peerId = options.actorPeerId ?? effectivePeer.peerId;
-      if (peerId) headers["X-OpenViking-Actor-Peer"] = peerId;
-      if (cfg.userAgent) headers["User-Agent"] = cfg.userAgent;
-      const response = await fetch(`${cfg.baseUrl}${path}`, { ...init, headers, signal: controller.signal });
-      const body = await response.json().catch(() => ({}));
-      const traceId = responseTraceId(body);
-      if (!response.ok || body.status === "error") {
-        return { ok: false, status: response.status, error: body.error || body, traceId };
-      }
-      return { ok: true, result: body.result ?? body, traceId };
-    } catch (error) {
-      return { ok: false, status: 0, error: { message: error?.message || String(error) } };
-    } finally {
-      clearTimeout(timer);
-    }
-  };
+  const fetchJSON = createOvHttp(cfg, {
+    defaultTimeoutMs: cfg.timeoutMs,
+    resolveActorPeerId: () => effectivePeer.peerId,
+  });
   return { fetchJSON, effectivePeer };
 }
 

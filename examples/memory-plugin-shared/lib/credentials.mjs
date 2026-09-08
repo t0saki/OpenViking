@@ -274,7 +274,7 @@ function main() {
     process.stdout.write(resolveOpenVikingCredentials().peerId ? "1" : "0");
     return;
   }
-  process.stderr.write("usage: ov-credentials.mjs <mcp-url|has-api-key|has-peer-id>\n");
+  process.stderr.write("usage: credentials.mjs <mcp-url|has-api-key|has-peer-id>\n");
   process.exitCode = 2;
 }
 

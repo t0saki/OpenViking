@@ -8,6 +8,7 @@ credentials.mjs
 debug-log.mjs
 mcp-proxy-config.mjs
 mcp-proxy-core.mjs
+ov-http.mjs
 pending-queue.mjs
 plugin-config.mjs
 profile-inject.mjs
