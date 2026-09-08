@@ -144,12 +144,6 @@ const RELEVANT_MEMORIES_BLOCK_RE = /<relevant-memories>[\s\S]*?<\/relevant-memor
 const OPENVIKING_CTX_BLOCK_RE = /<openviking-context>[\s\S]*?<\/openviking-context>/gi;
 const SYSTEM_REMINDER_BLOCK_RE = /<system-reminder>[\s\S]*?<\/system-reminder>/gi;
 const SUBAGENT_CONTEXT_LINE_RE = /^\[Subagent Context\][^\n]*$/gmi;
-const COMMAND_TEXT_RE = /^\/[a-z0-9_-]{1,64}\b/i;
-const NON_CONTENT_TEXT_RE = /^[\p{P}\p{S}\s]+$/u;
-const CJK_CHAR_RE = /[぀-ヿ㐀-鿿豈-﫿가-힯]/;
-// Question-only heuristic (ported from openclaw-plugin/text-utils.ts
-// looksLikeQuestionOnlyText). Pure interrogatives rarely yield memories.
-const QUESTION_ONLY_RE = /^(who|what|when|where|why|how|is|are|does|did|can|could|would|should|may|might|will|谁|什么|何|哪|为什么|怎么|如何|是|会|能|能否)\b.{0,200}[?？]$/i;
 
 // Strip plugin-injected blocks (auto-recall context, system reminders,
 // subagent context, relevant-memories) without collapsing whitespace —
@@ -170,41 +164,6 @@ function sanitize(text) {
   return stripInjectedBlocks(text)
     .replace(/\s+/g, " ")
     .trim();
-}
-
-function shouldCapture(text) {
-  const normalized = sanitize(text);
-  if (!normalized) return { capture: false, reason: "empty", text: "" };
-
-  const compact = normalized.replace(/\s+/g, "");
-  const minLen = CJK_CHAR_RE.test(compact) ? 4 : 10;
-  if (compact.length < minLen || normalized.length > cfg.captureMaxLength) {
-    return { capture: false, reason: "length_out_of_range", text: normalized };
-  }
-
-  if (COMMAND_TEXT_RE.test(normalized)) {
-    return { capture: false, reason: "command", text: normalized };
-  }
-
-  if (NON_CONTENT_TEXT_RE.test(normalized)) {
-    return { capture: false, reason: "non_content", text: normalized };
-  }
-
-  if (QUESTION_ONLY_RE.test(normalized)) {
-    return { capture: false, reason: "question_only", text: normalized };
-  }
-
-  if (cfg.captureMode === "keyword") {
-    for (const trigger of MEMORY_TRIGGERS) {
-      if (trigger.test(normalized)) {
-        return { capture: true, reason: `trigger:${trigger}`, text: normalized };
-      }
-    }
-    return { capture: false, reason: "no_trigger", text: normalized };
-  }
-
-  // semantic mode — always capture
-  return { capture: true, reason: "semantic", text: normalized };
 }
 
 // ---------------------------------------------------------------------------
@@ -585,13 +544,12 @@ async function main() {
     return;
   }
 
-  // Batch-level capture decision. shouldCapture() is designed to evaluate a *single
-  // user message* (length bounds, command/punctuation/question-only filters, keyword
-  // trigger). Applied to a multi-turn batch concatenated by formatTurnsAsText(), it
-  // misfires:
+  // Batch-level capture decision. A per-message filter (length bounds,
+  // command/punctuation/question-only) misfires on a multi-turn batch
+  // concatenated by formatTurnsAsText():
   //   - tool I/O inlining easily pushes combined text over captureMaxLength → entire
   //     batch silently dropped + state advanced → permanent data loss
-  //   - JSON-shaped tool I/O can match the punctuation-only regex → non_content drop
+  //   - JSON-shaped tool I/O can match a punctuation-only rule → non_content drop
   //   - a leading `/cmd` user turn flips the whole batch to `command` → drop
   //   - a question-shaped user turn ("why?") tags the whole batch as question_only
   // For batches we only need: skip empty batches, and (keyword mode) require *some*
