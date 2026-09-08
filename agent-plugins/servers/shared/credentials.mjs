@@ -108,6 +108,20 @@ export function loadCredentialFiles(env = process.env) {
   };
 }
 
+/**
+ * The calling harness's own section of ov.conf.
+ *
+ * ov.conf spells its sections snake_case while a host may call itself
+ * `claude-code` or `trae-cn`, so both spellings land on the same block. The
+ * normalization stays inline rather than importing `config-schema.mjs`, which
+ * the portable agent-plugins bundle would then have to ship as well.
+ */
+function harnessSection(ovFile, harness) {
+  const key = String(harness || "").trim().toLowerCase().replace(/-/g, "_");
+  const section = key ? ovFile[key] : null;
+  return section && typeof section === "object" && !Array.isArray(section) ? section : {};
+}
+
 function sourceMode(env) {
   const raw = str(env.OPENVIKING_CREDENTIAL_SOURCE, str(env.OPENVIKING_CREDENTIALS_SOURCE, "auto"))
     .toLowerCase();
@@ -144,13 +158,19 @@ function deriveBaseUrl({ env, cliFile, ovFile, mode, useCli }) {
   return `http://${host}:${port}`;
 }
 
-export function resolveOpenVikingCredentials(env = process.env) {
+/**
+ * `harness` names whose ov.conf section supplies the legacy fallback. It sits
+ * where it always did — after ovcli.conf, before `server.root_api_key` — but a
+ * harness now reads its own section instead of every one of them reading
+ * codex's. The default keeps codex, the only caller that never passes one.
+ */
+export function resolveOpenVikingCredentials(env = process.env, harness = "codex") {
   const files = loadCredentialFiles(env);
   const mode = sourceMode(env);
   const envHasCredentials = hasEnvCredentialFields(env);
   const useCli = mode === "cli" ||
     (mode === "auto" && !envHasCredentials && files.cliPath && hasCredentialFields(files.cliFile));
-  const cx = files.ovFile.codex || {};
+  const cx = harnessSection(files.ovFile, harness);
   const server = files.ovFile.server || {};
 
   const baseUrl = deriveBaseUrl({ env, ...files, mode, useCli });

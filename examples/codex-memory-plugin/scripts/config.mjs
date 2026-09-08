@@ -124,7 +124,9 @@ export function loadConfig(cwd = process.cwd()) {
     baseUrl: creds.baseUrl,
     authMode,
     sendIdentityHeaders: authMode === "trusted",
-    apiKey: creds.apiKey,
+    // The credential chain has no view of ovcli.conf's `plugin` section, which
+    // is where a key set through `plugin.codex.apiKey` lives.
+    apiKey: creds.apiKey || settings.apiKey,
     account: creds.account,
     user: creds.user,
     peerId,

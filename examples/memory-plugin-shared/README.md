@@ -69,7 +69,7 @@ mode so one person's memories are not recalled into another person's session.
 4. `.openviking/config.json`
 5. `ovcli.conf` `plugin.<harness>`
 6. `ovcli.conf` `plugin`
-7. the harness block in `ov.conf` (claude-code and codex only, legacy), or the settings the cordis host hands the dsh plugin
+7. the block in `ov.conf` named after the harness (legacy). Its credential fields reach every harness; its tuning knobs reach claude-code, codex and dsh, and for dsh it sits under the settings the cordis host hands the plugin
 8. built-in defaults
 
 Every harness resolves every knob through that order: claude-code, codex, cursor, trae, trae-cn, zcode, opencode, dsh and pi. One `plugin` section therefore configures all of them, and `ov config switch` moves behaviour along with credentials. Inside `plugin`, a per-harness override is found under either spelling of the harness name, so `claude_code` and `claude-code`, `trae_cn` and `trae-cn` both reach the same object.

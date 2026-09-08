@@ -33,7 +33,7 @@ doctor prints the effective mode as `credential source`.
 | Field | Order (auto mode) |
 |---|---|
 | url | `OPENVIKING_URL` → `OPENVIKING_BASE_URL` → `ovcli.conf url` → `ov.conf server.url` → `http://{server.host\|127.0.0.1}:{server.port\|1933}` |
-| api_key | `OPENVIKING_BEARER_TOKEN` → `OPENVIKING_API_KEY` → `ovcli.conf api_key` → `ov.conf codex.apiKey` → `ov.conf server.root_api_key` |
+| api_key | `OPENVIKING_BEARER_TOKEN` → `OPENVIKING_API_KEY` → `ovcli.conf api_key` → `ov.conf codex.apiKey` → `ov.conf server.root_api_key` → `ovcli.conf plugin.codex.apiKey` |
 | account / user | `OPENVIKING_ACCOUNT` / `OPENVIKING_USER` → `ovcli.conf account/account_id`, `user/user_id` → `ov.conf codex.accountId/userId` |
 | peer | `OPENVIKING_PEER_ID` → registry → `config.local.json` → `config.json` (`peer.id`) → `ovcli.conf plugin.codex.peerId` → `ovcli.conf plugin.peerId` → `ovcli.conf actor_peer_id/peer_id` → `ov.conf codex.peerId` → derived per `peer.source` unless `OPENVIKING_WORKSPACE_PEER=0` |
 | peer.source | `OPENVIKING_PEER_SOURCE` → registry → `config.local.json` → `config.json` → `ovcli.conf plugin.codex.peerSource` → `ovcli.conf plugin.peerSource` → `ov.conf codex.peerSource` → `git` |
@@ -160,7 +160,7 @@ Startup failures (printed by the server; exit 1 unless noted):
 | Text | Cause |
 |---|---|
 | `OpenViking configuration file not found.` | No ov.conf at any resolved path |
-| `Unknown config field '…' in OpenVikingConfig` / `Extra inputs are not permitted` | Unknown key — including `claude_code`, `codex` and `server.url`, which only the plugins read |
+| `Unknown config field '…' in OpenVikingConfig` / `Extra inputs are not permitted` | Unknown key — including a top-level block named after any harness (`claude_code`, `codex`, `cursor`, `trae`, `trae_cn`, `zcode`, `opencode`, `dsh`, `pi`) and `server.url`, which only the plugins read |
 | `SECURITY: server.auth_mode='dev' requires server.host to be localhost` | Dev mode (no `auth_mode`, no `root_api_key`) on a non-loopback bind |
 | `Invalid server.root_api_key: empty string is not allowed` | `""` instead of `null` |
 | `Another OpenViking process (PID n) is already using the data directory` | Two servers on one workspace (exit 3, `Application startup failed. Exiting.`) |

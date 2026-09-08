@@ -30,7 +30,7 @@ function expandHome(value) {
 }
 
 export function loadConfig(pluginRoot, projectDirectory) {
-  const creds = resolveOpenVikingCredentials()
+  const creds = resolveOpenVikingCredentials(process.env, "opencode")
   const { settings, configured } = resolveSettings("opencode", {
     cwd: projectDirectory || process.cwd(),
   })

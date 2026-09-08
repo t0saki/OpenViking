@@ -17,7 +17,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import { HARNESS_CONFIG_KEYS, pluginConfigKeys } from "./config-schema.mjs";
+import { HARNESS_CONFIG_KEYS, HARNESS_KEYS, pluginConfigKeys } from "./config-schema.mjs";
 import { resolveWorkspaceSettings } from "./plugin-config.mjs";
 import { peerScopeMemoPath } from "./recall-core.mjs";
 import { CONFIG_DIR_NAME, LOCAL_FILE, TEAM_FILE, workspaceConfigPaths } from "./workspace-config.mjs";
@@ -896,7 +896,13 @@ export function existsPath(path) {
 // `openviking-server doctor`, which runs in the server's Python environment.
 // ---------------------------------------------------------------------------
 
-const PLUGIN_ONLY_OV_CONF_KEYS = { claude_code: "ovcli.conf plugin.claude_code", codex: "ovcli.conf plugin.codex" };
+// Every harness reads the ov.conf section named after it, so every one of
+// those names is a block a user may have written and the server refuses.
+const PLUGIN_ONLY_OV_CONF_KEYS = Object.fromEntries(
+  Object.values(HARNESS_KEYS)
+    .filter((key) => key !== "openclaw")
+    .map((key) => [key, `ovcli.conf plugin.${key}`]),
+);
 const READY_OK_VALUES = new Set(["ok", "not_configured", "not_supported"]);
 const READY_FIXES = {
   embedding: "the server cannot embed with the configured provider — check embedding.dense.{provider,model,api_key,api_base} in ov.conf; `openviking-server doctor` shows the provider's reply",

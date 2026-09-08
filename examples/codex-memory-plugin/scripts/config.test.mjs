@@ -185,3 +185,18 @@ test("ov.conf's codex section still supplies the patterns when no env var does",
     assert.equal(cfg.bypassSession, false);
   });
 });
+
+test("ovcli.conf plugin.codex.apiKey is the last-resort key, behind server.root_api_key", () => {
+  withConfigs({
+    cli: { plugin: { codex: { apiKey: "sk-plugin" } } },
+  }, ({ otherDir }) => {
+    assert.equal(loadConfig(otherDir).apiKey, "sk-plugin", "nothing else supplies a key");
+  });
+
+  withConfigs({
+    ov: { server: { root_api_key: "sk-root" } },
+    cli: { plugin: { codex: { apiKey: "sk-plugin" } } },
+  }, ({ otherDir }) => {
+    assert.equal(loadConfig(otherDir).apiKey, "sk-root", "the credential chain runs first");
+  });
+});

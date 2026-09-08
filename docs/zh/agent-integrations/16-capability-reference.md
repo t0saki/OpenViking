@@ -205,7 +205,7 @@ per-harness 章节（档案卡）只写差异；所有共享事实均在本章�
 1. 模式由 `OPENVIKING_CREDENTIAL_SOURCE`（别名 `_CREDENTIALS_SOURCE`）控制，取值 ∈ `env|cli|auto`（默认 auto）。
 2. **auto 语义是 env 优先**：只要任一 env 凭据字段存在，整体就走 env；只有 env 全空、且 ovcli.conf 存在并含凭据字段时，才整体切换到文件（此时 key/account/user/peer 全部只从文件取）。
 3. baseUrl：env → ovcli `url` → ov.conf `server.url` → `http://{server.host|127.0.0.1}:{server.port|1933}`（其中 `0.0.0.0` 归一为 `127.0.0.1`）；兜底 `http://127.0.0.1:1933`。
-4. apiKey：`BEARER_TOKEN` → `API_KEY` → ovcli `api_key` → ov.conf `codex.apiKey` → `server.root_api_key`。
+4. apiKey：`BEARER_TOKEN` → `API_KEY` → ovcli `api_key` → ov.conf `<harness>.apiKey` → `server.root_api_key`。`<harness>` 是调用方 harness 自己的那段（snake_case，如 `trae_cn`；`claude-code` 与 `claude_code` 指向同一段）；account / user / peerId 在各自链条的同一位置读同一段。
 5. mcpUrl：`OPENVIKING_MCP_URL`（非 cli 模式）→ `${baseUrl}/mcp`。
 6. 统一请求头：`Authorization: Bearer` + `X-OpenViking-Account/User/Actor-Peer` + `User-Agent: openviking-memory-<harness>/<version>`。
 
@@ -241,7 +241,7 @@ openclaw 的 peer 由 `peer_role`/`peer_prefix` 推导（`peer_role=sender` 时�
 | env `OPENVIKING_*` | 各家族见上；行为旋钮见各档案卡 | 唯一横跨所有 JS 系的层 |
 | workspace 层：每机注册表 `~/.openviking/workspaces/<slot>.json` > `<repo-root>/.openviking/config.local.json`（私有，gitignore）> `<repo-root>/.openviking/config.json`（提交进仓库、团队共享） | claude-code / codex / cursor / trae / trae-cn / zcode / opencode / dsh / pi | schema v1，必须写 `version: 1`，声明其他版本的文件会被跳过并告警。可用 key：`peer.source`、`peer.id`、`recall.{enabled,peer_scope,dedup_turns,max_items,score_threshold}`、`capture.{enabled,commit_token_threshold}`、`bypass.session_patterns`、`labels`。列表类跨层取并集，首元素写 `"!reset"` 可清空继承来的内容；不认识的 key 原样保留但不生效。hook 是非交互的，这些文件因此无提示直接信任，换来的是结构性的拒绝：连接与凭据类 key（`url`、`api_key`、`account`、`user`、`extra_headers` 等）一律剥离并告警，这些文件里的 `${VAR}` 永不展开。注册表目前没有写入方：条目由人工创建，`ov-memory-doctor` 会打印该放到哪个 slot 路径。提交进仓库的文件关掉了什么，由 `ov-memory-doctor` 播报而不是拦截 |
 | ovcli.conf `plugin` 段（共享标量，可被 `plugin.<harness>` 对象覆盖） | claude-code / codex / cursor / trae / trae-cn / zcode / opencode / dsh / pi | 每个 harness 键两种写法都认——`claude_code` 或 `claude-code`、`trae_cn` 或 `trae-cn`。注意：`ov config add/edit` 会以 Rust Config 结构重写整个文件，从而丢弃其不识别的 `plugin` 段；而 `ov config switch` 为字节复制，不受影响 |
-| ov.conf harness 段（`claude_code.*` / `codex.*`） | claude-code / codex（legacy 回落） | |
+| ov.conf harness 段（`<harness>.*`，legacy） | 每个 harness 读与自己同名的那段 | 凭据字段（`apiKey`/`accountId`/`userId`/`peerId`）按调用方 harness 取自己的段；调优旋钮目前是 claude-code / codex / dsh。两种写法指向同一段 |
 | harness 自有配置文件 | dsh cordis patch（会被 `plugin` 段压过）、openclaw `openclaw.json`、hermes `config.yaml`+`.env` | |
 
 **配置项生效范围速查**（这些旋钮只在列出的 harness 上生效）：

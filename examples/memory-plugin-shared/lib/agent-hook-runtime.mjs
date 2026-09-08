@@ -48,11 +48,15 @@ export function stableHash(...values) {
  * cannot move under a logger or fetch helper already built from the first load.
  */
 export function loadAgentHookConfig(clientId, cwd = process.cwd()) {
-  const credentials = resolveOpenVikingCredentials();
+  const credentials = resolveOpenVikingCredentials(process.env, clientId);
   const { settings, configured } = resolveSettings(clientId, { env: process.env, cwd });
   return {
     ...settings,
     ...credentials,
+    // The credential chain has no view of ovcli.conf's `plugin` section, which
+    // is where a key set through `plugin.<harness>.apiKey` lives; spreading an
+    // empty one over it would make that key inert.
+    apiKey: credentials.apiKey || settings.apiKey,
     // The credential chain owns the peer unless a `plugin` entry or a workspace
     // file names one, which is the more specific answer for this directory.
     peerId: configured.has("peerId") ? settings.peerId : credentials.peerId,

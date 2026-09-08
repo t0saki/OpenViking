@@ -19,7 +19,7 @@ import { createOpenVikingMcpProxy } from "../shared/mcp-proxy-core.mjs";
 
 export function readProxyConfig(env = process.env, cwd = process.cwd()) {
   const cfg = resolveConfig({}, env, cwd);
-  const creds = resolveOpenVikingCredentials(env);
+  const creds = resolveOpenVikingCredentials(env, "dsh");
   return buildMcpProxyConfig({
     baseUrl: cfg.endpoint,
     apiKey: cfg.apiKey,

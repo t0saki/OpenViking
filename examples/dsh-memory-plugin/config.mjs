@@ -24,8 +24,13 @@ const DEFAULT_ENDPOINT = "http://127.0.0.1:1933";
  * the more specific answer and stays ahead of the credential chain.
  */
 export function resolveConfig(input = {}, env = process.env, cwd = process.cwd()) {
-  const credentials = resolveOpenVikingCredentials(env);
-  const { settings, configured } = resolveSettings("dsh", { env, cwd, legacy: input });
+  const credentials = resolveOpenVikingCredentials(env, "dsh");
+  // ov.conf's `dsh` section is the legacy layer here as everywhere else, but
+  // the cordis patch shares that slot; the host named this process's settings,
+  // so it wins the overlap.
+  const ovSection = credentials.ovFile.dsh;
+  const legacy = { ...(ovSection && typeof ovSection === "object" ? ovSection : {}), ...input };
+  const { settings, configured } = resolveSettings("dsh", { env, cwd, legacy });
   const explicitPeerId = input.peerId || credentials.peerId;
   const config = {
     ...settings,

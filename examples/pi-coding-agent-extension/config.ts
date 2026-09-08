@@ -63,7 +63,7 @@ export interface OVConfig {
  * `ovcli.conf`'s `plugin` → defaults.
  */
 export function loadConfig(cwd: string = process.cwd()): OVConfig {
-  const creds = resolveOpenVikingCredentials();
+  const creds = resolveOpenVikingCredentials(process.env, "pi");
   const { settings, configured } = resolveSettings("pi", { cwd });
 
   const config = {

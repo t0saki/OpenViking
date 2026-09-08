@@ -187,3 +187,43 @@ test("the thin harnesses resolve the same layers as everyone else", () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+/**
+ * `plugin.<harness>.apiKey` was inert on these four: the credential chain never
+ * reads the `plugin` section, so its empty answer used to overwrite the one the
+ * settings layers had already found.
+ */
+test("an ovcli.conf plugin key reaches a thin harness when nothing else supplies one", () => {
+  const dir = mkdtempSync(join(tmpdir(), "ov-agent-hook-key-"));
+  const overrides = [
+    "OPENVIKING_CLI_CONFIG_FILE",
+    "OPENVIKING_CONFIG_FILE",
+    "OPENVIKING_HOME",
+    "OPENVIKING_API_KEY",
+    "OPENVIKING_BEARER_TOKEN",
+    "OPENVIKING_URL",
+    "OPENVIKING_BASE_URL",
+    "OPENVIKING_CREDENTIAL_SOURCE",
+    "OPENVIKING_CREDENTIALS_SOURCE",
+  ];
+  const saved = Object.fromEntries(overrides.map((key) => [key, process.env[key]]));
+  try {
+    for (const key of overrides) delete process.env[key];
+    writeFileSync(join(dir, "ovcli.conf"), JSON.stringify({
+      url: "http://127.0.0.1:1933",
+      plugin: { cursor: { apiKey: "sk-plugin-cursor" } },
+    }));
+    process.env.OPENVIKING_CLI_CONFIG_FILE = join(dir, "ovcli.conf");
+    process.env.OPENVIKING_CONFIG_FILE = join(dir, "ov.conf");
+    process.env.OPENVIKING_HOME = join(dir, "home");
+
+    assert.equal(loadAgentHookConfig("cursor", dir).apiKey, "sk-plugin-cursor");
+    assert.equal(loadAgentHookConfig("trae", dir).apiKey, "", "another harness's key stays its own");
+  } finally {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

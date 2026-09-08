@@ -118,3 +118,73 @@ test("credentialPath names the file that supplied the api_key", async () => {
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("each harness reads its own ov.conf section, not codex's", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "ov-creds-harness-"));
+  const ovPath = join(dir, "ov.conf");
+  await writeFile(ovPath, JSON.stringify({
+    server: { root_api_key: "root-key" },
+    codex: { apiKey: "sk-codex", accountId: "acct-codex", userId: "user-codex", peerId: "peer-codex" },
+    opencode: { apiKey: "sk-opencode", accountId: "acct-opencode", userId: "user-opencode", peerId: "peer-opencode" },
+    trae_cn: { apiKey: "sk-trae-cn" },
+  }));
+  const env = {
+    OPENVIKING_CONFIG_FILE: ovPath,
+    OPENVIKING_CLI_CONFIG_FILE: join(dir, "absent-ovcli.conf"),
+  };
+  try {
+    const codex = resolveOpenVikingCredentials(env);
+    assert.equal(codex.apiKey, "sk-codex");
+    assert.equal(codex.account, "acct-codex");
+    assert.equal(codex.user, "user-codex");
+    assert.equal(codex.peerId, "peer-codex");
+
+    const opencode = resolveOpenVikingCredentials(env, "opencode");
+    assert.equal(opencode.apiKey, "sk-opencode");
+    assert.equal(opencode.account, "acct-opencode");
+    assert.equal(opencode.user, "user-opencode");
+    assert.equal(opencode.peerId, "peer-opencode");
+
+    // Either spelling of a harness name reaches the snake_case section.
+    assert.equal(resolveOpenVikingCredentials(env, "trae-cn").apiKey, "sk-trae-cn");
+
+    // A harness with no section of its own inherits nothing from codex's; the
+    // chain carries on to server.root_api_key as it always did.
+    const cursor = resolveOpenVikingCredentials(env, "cursor");
+    assert.equal(cursor.apiKey, "root-key");
+    assert.equal(cursor.account, "");
+    assert.equal(cursor.user, "");
+    assert.equal(cursor.peerId, "");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("ovcli.conf still outranks the harness section, which outranks the root key", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "ov-creds-order-"));
+  const ovPath = join(dir, "ov.conf");
+  const cliPath = join(dir, "ovcli.conf");
+  await writeFile(ovPath, JSON.stringify({
+    server: { root_api_key: "root-key" },
+    opencode: { apiKey: "sk-opencode", peerId: "peer-opencode" },
+  }));
+  await writeFile(cliPath, JSON.stringify({ url: "http://127.0.0.1:1933", actor_peer_id: "cli-peer" }));
+  const env = { OPENVIKING_CONFIG_FILE: ovPath, OPENVIKING_CLI_CONFIG_FILE: cliPath };
+  try {
+    // ovcli.conf carries credential fields, so this is the pinned-file mode:
+    // ov.conf is not consulted at all and the harness section stays out.
+    const pinned = resolveOpenVikingCredentials(env, "opencode");
+    assert.equal(pinned.credentialSource, "ovcli");
+    assert.equal(pinned.apiKey, "");
+    assert.equal(pinned.peerId, "cli-peer");
+
+    // With ovcli.conf holding tuning only, the harness section supplies the key
+    // and still sits ahead of server.root_api_key.
+    await writeFile(cliPath, JSON.stringify({ plugin: { recallCompress: "off" } }));
+    const layered = resolveOpenVikingCredentials(env, "opencode");
+    assert.equal(layered.apiKey, "sk-opencode");
+    assert.equal(layered.credentialPath, ovPath);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

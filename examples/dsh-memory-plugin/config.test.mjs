@@ -65,3 +65,27 @@ test("the ovcli.conf plugin section outranks the cordis input", async () => {
   assert.equal(config.recallLimit, 5);
   assert.equal(config.captureMode, "keyword");
 });
+
+// This harness has no ov.conf section of its own in the layer stack — the
+// cordis input occupies it — so the section is merged in explicitly.
+test("ov.conf's dsh section is the lowest layer, under the cordis input", async () => {
+  const { mkdtempSync, writeFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const dir = mkdtempSync(join(tmpdir(), "dsh-ov-conf-"));
+  const ovPath = join(dir, "ov.conf");
+  writeFileSync(ovPath, JSON.stringify({
+    server: { root_api_key: "root-key" },
+    codex: { apiKey: "sk-codex", recallLimit: 9 },
+    dsh: { apiKey: "sk-dsh", recallLimit: 4, scoreThreshold: 0.6 },
+  }));
+  const env = {
+    OPENVIKING_CONFIG_FILE: ovPath,
+    OPENVIKING_CLI_CONFIG_FILE: join(dir, "absent-ovcli.conf"),
+  };
+
+  const config = resolveConfig({ recallLimit: 3 }, env, "/workspace/project");
+  assert.equal(config.apiKey, "sk-dsh");
+  assert.equal(config.recallLimit, 3);
+  assert.equal(config.scoreThreshold, 0.6);
+});

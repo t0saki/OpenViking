@@ -158,6 +158,18 @@ test("lintServerConf flags the plugin-only ov.conf keys a server refuses to star
   assert.deepEqual(lintServerConf(null), []);
 });
 
+test("lintServerConf covers every harness, not just the two with a legacy ov.conf layer", () => {
+  const findings = lintServerConf({ cursor: {}, pi: {} });
+  assert.deepEqual(
+    findings.map((f) => f.level),
+    ["warn", "warn"],
+  );
+  assert.match(findings[0].message, /'cursor' block/);
+  assert.match(findings[0].fix, /ovcli\.conf plugin\.cursor/);
+  assert.match(findings[1].message, /'pi' block/);
+  assert.match(findings[1].fix, /ovcli\.conf plugin\.pi/);
+});
+
 test("assessReady interprets the readiness checks", () => {
   const ok = { ok: true, status: 200, json: { status: "ready", checks: { agfs: { status: "ok", checks: { filesystem: "ok", multiwrite_sync: "not_supported" } }, vectordb: "ok", api_key_manager: "not_configured", embedding: "ok", ollama: "not_configured" } } };
   let report = createReport();
