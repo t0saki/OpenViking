@@ -90,11 +90,6 @@ export class OVClient {
   private peerId: string;
   connected: boolean = false;
 
-  private resolvedSpaces: Map<string, string> = new Map();
-
-  private static RESERVED_USER = new Set(["memories"]);
-  private static RESERVED_AGENT = new Set(["memories", "skills", "instructions", "workspaces"]);
-
   /** Read-only access to config (for value access across modules). */
   readonly cfg: OVConfig;
 
@@ -155,15 +150,6 @@ export class OVClient {
 
   // ========== Sessions ==========
 
-  /** POST /api/v1/sessions — create or reuse session */
-  async createSession(sessionId: string): Promise<boolean> {
-    const res = await this.fetchJSON<any>("/api/v1/sessions", {
-      method: "POST",
-      body: JSON.stringify({ session_id: sessionId }),
-    });
-    return res.ok;
-  }
-
   /** GET /api/v1/sessions/{id} — session metadata */
   async getSession(sessionId: string, autoCreate = false): Promise<OVSessionMeta | null> {
     const q = autoCreate ? "?auto_create=true" : "";
@@ -188,25 +174,6 @@ export class OVClient {
     const res = await this.fetchJSON<any>(
       `/api/v1/sessions/${encodeURIComponent(sessionId)}/messages`,
       { method: "POST", body: JSON.stringify({ role, content }) },
-      10000,
-    );
-    return res.ok;
-  }
-
-  /** POST /api/v1/sessions/{id}/messages — add a message with parts */
-  async addMessageParts(sessionId: string, role: string, parts: any[]): Promise<boolean> {
-    const res = await this.fetchJSON<any>(
-      `/api/v1/sessions/${encodeURIComponent(sessionId)}/messages`,
-      { method: "POST", body: JSON.stringify({ role, parts }) },
-      10000,
-    );
-    return res.ok;
-  }
-
-  async addMessagePayload(sessionId: string, payload: any): Promise<boolean> {
-    const res = await this.fetchJSON<any>(
-      `/api/v1/sessions/${encodeURIComponent(sessionId)}/messages`,
-      { method: "POST", body: JSON.stringify(payload) },
       10000,
     );
     return res.ok;
@@ -238,16 +205,6 @@ export class OVClient {
     keepRecentCount = this.cfg.commitKeepRecentCount,
   ): Promise<OVCommitResult | null> {
     return (await this.commitSessionResponse(sessionId, keepRecentCount)).result;
-  }
-
-  /** DELETE /api/v1/sessions/{id} */
-  async deleteSession(sessionId: string): Promise<boolean> {
-    const res = await this.fetchJSON<any>(
-      `/api/v1/sessions/${encodeURIComponent(sessionId)}`,
-      { method: "DELETE" },
-      10000,
-    );
-    return res.ok;
   }
 
   // ========== Search ==========
@@ -371,56 +328,6 @@ export class OVClient {
       30000,
     );
     return res.ok ? res.result : null;
-  }
-
-  // ========== URI Space Resolution ==========
-
-  async resolveScopeSpace(scope: "user" | "agent"): Promise<string> {
-    const cached = this.resolvedSpaces.get(scope);
-    if (cached) return cached;
-
-    // Probe system status for user identity fallback
-    let fallbackSpace = "default";
-    const statusRes = await this.fetchJSON<any>("/api/v1/system/status", undefined, 5000);
-    if (statusRes.ok && typeof statusRes.result?.user === "string" && statusRes.result.user.trim()) {
-      fallbackSpace = statusRes.result.user.trim();
-    }
-
-    // List scope root for actual namespaces
-    const reserved = scope === "user" ? OVClient.RESERVED_USER : OVClient.RESERVED_AGENT;
-    const entries = await this.ls(`viking://${scope}/`);
-    const spaces = entries
-      .filter(e => e.isDir && !e.name.startsWith(".") && !reserved.has(e.name))
-      .map(e => e.name);
-
-    if (spaces.length > 0) {
-      // Prefer the fallback space if it exists, then "default", then first available
-      let chosen = spaces[0];
-      if (spaces.includes(fallbackSpace)) chosen = fallbackSpace;
-      else if (spaces.includes("default")) chosen = "default";
-      this.resolvedSpaces.set(scope, chosen);
-      return chosen;
-    }
-
-    this.resolvedSpaces.set(scope, fallbackSpace);
-    return fallbackSpace;
-  }
-
-  async resolveTargetUri(targetUri: string): Promise<string> {
-    const trimmed = targetUri.trim().replace(/\/+$/, "");
-    const m = trimmed.match(/^viking:\/\/(user|agent)(?:\/(.*))?$/);
-    if (!m) return trimmed;
-    const scope = m[1] as "user" | "agent";
-    const rawRest = (m[2] ?? "").trim();
-    if (!rawRest) return trimmed;
-    const parts = rawRest.split("/").filter(Boolean);
-    if (parts.length === 0) return trimmed;
-
-    const reserved = scope === "user" ? OVClient.RESERVED_USER : OVClient.RESERVED_AGENT;
-    if (!reserved.has(parts[0])) return trimmed; // already has space
-
-    const space = await this.resolveScopeSpace(scope);
-    return `viking://${scope}/${space}/${parts.join("/")}`;
   }
 }
 
