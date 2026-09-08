@@ -11,6 +11,7 @@ import {
   checkWorkspace,
   classifyFetchError,
   createReport,
+  credentialSources,
   describeApiKey,
   inspectJsonFile,
   lintBaseUrl,
@@ -270,4 +271,123 @@ test("no doctor wrapper redefines a name doctor-core already exports", () => {
     const clashes = declared.filter((name) => exported.has(name));
     assert.deepEqual(clashes, [], `${rel} redeclares doctor-core exports: ${clashes.join(", ")}`);
   }
+});
+
+const CLI_PATH = "/nowhere/.openviking/ovcli.conf";
+const OV_PATH = "/nowhere/.openviking/ov.conf";
+const cliConf = (data) => ({ ok: true, path: CLI_PATH, data });
+const ovConf = (data) => ({ ok: true, path: OV_PATH, data });
+
+const CREDENTIAL_ENV = [
+  "OPENVIKING_URL",
+  "OPENVIKING_BASE_URL",
+  "OPENVIKING_API_KEY",
+  "OPENVIKING_BEARER_TOKEN",
+  "OPENVIKING_ACCOUNT",
+  "OPENVIKING_USER",
+];
+
+function withEnv(vars, fn) {
+  const saved = Object.fromEntries(CREDENTIAL_ENV.map((key) => [key, process.env[key]]));
+  try {
+    for (const key of CREDENTIAL_ENV) delete process.env[key];
+    Object.assign(process.env, vars);
+    return fn();
+  } finally {
+    for (const key of CREDENTIAL_ENV) {
+      if (saved[key] === undefined) delete process.env[key];
+      else process.env[key] = saved[key];
+    }
+  }
+}
+
+/**
+ * These labels are what a user reads when the key is not the one they meant, so
+ * they have to describe the chain that actually ran — which is why the key's
+ * layer comes off the config rather than being walked a second time here.
+ */
+test("credentialSources names the field inside the layer the chain reported", () => {
+  const cli = cliConf({
+    url: "http://cli:1933",
+    plugin: { claude_code: { apiKey: "sk-plugin-cc" }, apiKey: "sk-plugin" },
+  });
+  const ov = ovConf({
+    server: { url: "http://ov:1933", root_api_key: "sk-root" },
+    claude_code: { apiKey: "sk-section" },
+  });
+  const label = (cfg, files = cli) => credentialSources(
+    { harness: "claude-code", ...cfg },
+    files,
+    ov,
+  ).apiKey;
+
+  withEnv({ OPENVIKING_API_KEY: "sk-env" }, () => {
+    assert.equal(label({ credentialSource: "env", apiKeySource: "env" }), "env OPENVIKING_API_KEY");
+  });
+  withEnv({ OPENVIKING_BEARER_TOKEN: "sk-env" }, () => {
+    assert.equal(label({ credentialSource: "env", apiKeySource: "env" }), "env OPENVIKING_BEARER_TOKEN");
+  });
+
+  const pinned = { credentialSource: "ovcli", apiKeySource: "ovcli" };
+  assert.equal(label(pinned), `${CLI_PATH} plugin.claude_code.apiKey`);
+  assert.equal(label(pinned, cliConf({ url: "http://cli:1933", plugin: { apiKey: "sk-plugin" } })), `${CLI_PATH} plugin.apiKey`);
+  assert.equal(label(pinned, cliConf({ url: "http://cli:1933", api_key: "sk-cli" })), CLI_PATH);
+
+  assert.equal(label({ credentialSource: "auto", apiKeySource: "ov" }), `${OV_PATH} claude_code.apiKey`);
+  assert.equal(
+    credentialSources({ harness: "claude-code", credentialSource: "auto", apiKeySource: "ov" }, cli, ovConf({ server: { root_api_key: "sk-root" } })).apiKey,
+    `${OV_PATH} server.root_api_key`,
+  );
+
+  assert.equal(label({ credentialSource: "ovcli", apiKeySource: "none" }), "(none — ovcli.conf mode ignores env)");
+  assert.equal(label({ credentialSource: "auto", apiKeySource: "none" }), "(none)");
+});
+
+test("credentialSources reads the block named after the calling harness", () => {
+  const cli = cliConf({ plugin: { codex: { accountId: "acct-plugin-codex" } } });
+  const ov = ovConf({ codex: { accountId: "acct-ov-codex" }, cursor: { accountId: "acct-ov-cursor" } });
+  const cfg = { credentialSource: "auto", apiKeySource: "none" };
+
+  withEnv({}, () => {
+    assert.equal(credentialSources({ ...cfg, harness: "codex" }, cli, ov).account, `${CLI_PATH} plugin.codex.accountId`);
+    assert.equal(credentialSources({ ...cfg, harness: "cursor" }, cli, ov).account, `${OV_PATH} cursor.accountId`);
+    assert.equal(
+      credentialSources({ ...cfg, harness: "cursor" }, cli, ov, { section: "codex" }).account,
+      `${CLI_PATH} plugin.codex.accountId`,
+    );
+  });
+});
+
+test("credentialSources ranks the identity the way the credential chain does", () => {
+  const ov = ovConf({ server: { url: "http://ov:1933" }, codex: { accountId: "acct-ov", userId: "usr-ov" } });
+  const rows = (cfg, cli) => credentialSources({ harness: "codex", apiKeySource: "none", ...cfg }, cli, ov);
+  const full = cliConf({
+    url: "http://cli:1933",
+    account: "acct-cli",
+    plugin: { codex: { accountId: "acct-plugin" }, userId: "usr-plugin" },
+  });
+
+  withEnv({ OPENVIKING_URL: "http://env:1933", OPENVIKING_ACCOUNT: "acct-env", OPENVIKING_USER: "usr-env" }, () => {
+    const auto = rows({ credentialSource: "auto" }, full);
+    assert.equal(auto.url, "env");
+    assert.equal(auto.account, "env");
+    assert.equal(auto.user, "env");
+
+    // Pinned to ovcli.conf, neither the environment nor ov.conf is consulted.
+    const pinned = rows({ credentialSource: "ovcli" }, full);
+    assert.equal(pinned.url, CLI_PATH);
+    assert.equal(pinned.account, CLI_PATH);
+    assert.equal(pinned.user, `${CLI_PATH} plugin.userId`);
+    assert.equal(rows({ credentialSource: "ovcli" }, cliConf({ url: "http://cli:1933" })).account, "(unset)");
+  });
+
+  withEnv({}, () => {
+    // ovcli.conf's own field first, then its plugin section, then ov.conf —
+    // the identity ranks the way the key does.
+    assert.equal(rows({ credentialSource: "auto" }, full).account, CLI_PATH);
+    const noAccount = cliConf({ plugin: { codex: { accountId: "acct-plugin" } } });
+    assert.equal(rows({ credentialSource: "auto" }, noAccount).account, `${CLI_PATH} plugin.codex.accountId`);
+    assert.equal(rows({ credentialSource: "auto" }, cliConf({})).account, `${OV_PATH} codex.accountId`);
+    assert.equal(rows({ credentialSource: "auto" }, cliConf({})).url, OV_PATH);
+  });
 });

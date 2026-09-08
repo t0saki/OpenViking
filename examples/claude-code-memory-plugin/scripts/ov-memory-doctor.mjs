@@ -31,6 +31,7 @@ import {
   fileInfo,
   fmtAge,
   fmtBytes,
+  credentialSources,
   homeShort,
   inspectConfigFiles,
   inspectJsonFile,
@@ -227,32 +228,6 @@ function checkInstall(report, { cliOnPath }) {
     }
   }
   report.info("MCP wiring: `claude mcp list` shows the plugin server as plugin:openviking-memory:openviking (slow; run it when MCP tools are missing)");
-}
-
-export function credentialSources(cfg, cliConf, ovConf) {
-  const env = process.env;
-  const cliShort = homeShort(cliConf.path);
-  const ovShort = homeShort(ovConf.path);
-  const cli = cliConf.ok ? cliConf.data : {};
-  const ov = ovConf.ok ? ovConf.data : {};
-  const cc = ov.claude_code || {};
-  const server = ov.server || {};
-  // Pinned to ovcli.conf, the chain never looks at the environment. It still
-  // ends where this harness has always ended it, in ov.conf.
-  const cliMode = cfg.credentialSource === "ovcli";
-  const envUrl = env.OPENVIKING_URL || env.OPENVIKING_BASE_URL;
-  const url = (!cliMode && envUrl) ? "env" : cli.url ? cliShort : server.url ? ovShort : (server.host || server.port) ? `${ovShort} server.host/port` : "default (http://127.0.0.1:1933)";
-  // The `plugin` section ranks where the file it lives in ranks: under
-  // ovcli.conf's own `api_key`, over ov.conf.
-  const plugin = cli.plugin || {};
-  const pluginKey = plugin.claude_code?.apiKey ? `${cliShort} plugin.claude_code.apiKey` : plugin.apiKey ? `${cliShort} plugin.apiKey` : "";
-  const ovKey = cc.apiKey ? `${ovShort} claude_code.apiKey` : server.root_api_key ? `${ovShort} server.root_api_key` : "";
-  const apiKey = cliMode
-    ? (cli.api_key ? cliShort : pluginKey || ovKey || "(none — ovcli.conf mode ignores env)")
-    : env.OPENVIKING_BEARER_TOKEN ? "env OPENVIKING_BEARER_TOKEN" : env.OPENVIKING_API_KEY ? "env OPENVIKING_API_KEY" : cli.api_key ? cliShort : pluginKey || ovKey || "(none)";
-  const account = (!cliMode && env.OPENVIKING_ACCOUNT) ? "env" : cli.account ? cliShort : (!cliMode && cc.accountId) ? `${ovShort} claude_code.accountId` : "(unset)";
-  const user = (!cliMode && env.OPENVIKING_USER) ? "env" : cli.user ? cliShort : (!cliMode && cc.userId) ? `${ovShort} claude_code.userId` : "(unset)";
-  return { url, apiKey, account, user };
 }
 
 function checkConfig(report, cfg, host) {

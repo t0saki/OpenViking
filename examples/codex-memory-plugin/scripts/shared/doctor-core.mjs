@@ -1133,6 +1133,71 @@ export function inspectConfigFiles(report, { harness = "", launcherHint = "this 
 }
 
 /**
+ * Where each resolved credential came from, as one label per field.
+ *
+ * The key's layer is not re-derived here: `buildPluginConfig` already answered
+ * it in `apiKeySource`, and three doctors reconstructing that walk by hand is
+ * three chances to describe a chain nobody runs. What the files are still asked
+ * is which field inside the winning layer holds the value, because the layer
+ * alone cannot tell `plugin.<harness>.apiKey` from `api_key`, or a harness
+ * block from `server.root_api_key`.
+ *
+ * The identity has no such answer to read, so account and user follow the chain
+ * in `resolveOpenVikingCredentials` step for step: pinned to ovcli.conf it ends
+ * at that file's `plugin` section, and otherwise the environment wins and
+ * ov.conf's harness block is last.
+ */
+export function credentialSources(cfg, cliConf, ovConf, { section = harnessKey(cfg.harness || "") } = {}) {
+  const env = process.env;
+  const cliShort = homeShort(cliConf.path);
+  const ovShort = homeShort(ovConf.path);
+  const cli = cliConf.ok ? cliConf.data : {};
+  const ov = ovConf.ok ? ovConf.data : {};
+  const plugin = cli.plugin || {};
+  const scoped = (section && plugin[section]) || {};
+  const block = (section && ov[section]) || {};
+  const server = ov.server || {};
+  // Pinned to ovcli.conf, the chain never looks at the environment.
+  const pinned = cfg.credentialSource === "ovcli";
+
+  const envUrl = env.OPENVIKING_URL || env.OPENVIKING_BASE_URL;
+  const url = (!pinned && envUrl) ? "env"
+    : cli.url ? cliShort
+      : server.url ? ovShort
+        : (server.host || server.port) ? `${ovShort} server.host/port` : "default (http://127.0.0.1:1933)";
+
+  let apiKey;
+  if (cfg.apiKeySource === "env") {
+    apiKey = env.OPENVIKING_BEARER_TOKEN ? "env OPENVIKING_BEARER_TOKEN" : "env OPENVIKING_API_KEY";
+  } else if (cfg.apiKeySource === "ovcli") {
+    apiKey = cli.api_key ? cliShort
+      : scoped.apiKey ? `${cliShort} plugin.${section}.apiKey`
+        : plugin.apiKey ? `${cliShort} plugin.apiKey` : cliShort;
+  } else if (cfg.apiKeySource === "ov") {
+    apiKey = block.apiKey ? `${ovShort} ${section}.apiKey`
+      : server.root_api_key ? `${ovShort} server.root_api_key` : ovShort;
+  } else if (cfg.apiKeySource === "host") {
+    apiKey = "the host application";
+  } else {
+    apiKey = pinned ? "(none — ovcli.conf mode ignores env)" : "(none)";
+  }
+
+  const identity = (envName, cliValue, name) => (
+    (!pinned && env[envName]) ? "env"
+      : cliValue ? cliShort
+        : scoped[name] ? `${cliShort} plugin.${section}.${name}`
+          : plugin[name] ? `${cliShort} plugin.${name}`
+            : (!pinned && block[name]) ? `${ovShort} ${section}.${name}` : "(unset)"
+  );
+  return {
+    url,
+    apiKey,
+    account: identity("OPENVIKING_ACCOUNT", cli.account || cli.account_id, "accountId"),
+    user: identity("OPENVIKING_USER", cli.user || cli.user_id, "userId"),
+  };
+}
+
+/**
  * The resolved url, key and identity, each with the source it came from.
  * `sources` is the host's own credential chain rendered as one label per field.
  */

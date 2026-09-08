@@ -23,8 +23,8 @@ import { dirname, join, resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { loadAgentHookConfig } from "../../memory-plugin-shared/lib/agent-hook-runtime.mjs";
-import { harnessKey } from "../../memory-plugin-shared/lib/config-schema.mjs";
 import {
+  credentialSources,
   existsPath,
   fmtAge,
   fmtBytes,
@@ -168,31 +168,6 @@ function checkInstall(report) {
   for (const extra of SPEC.extras?.() || []) {
     if (!existsPath(extra)) report.warn(`${homeShort(extra)} is missing`, "", `re-run the installer with --harness ${CLIENT}`);
   }
-}
-
-/** The label for each resolved credential, in the order the shared loader tries them. */
-export function credentialSources(cfg, cliConf, ovConf) {
-  const env = process.env;
-  const cliShort = homeShort(cliConf.path);
-  const ovShort = homeShort(ovConf.path);
-  const cli = cliConf.ok ? cliConf.data : {};
-  const ov = ovConf.ok ? ovConf.data : {};
-  const section = ov[harnessKey(CLIENT)] || {};
-  const server = ov.server || {};
-  const pinned = cfg.credentialSource === "ovcli";
-  const envUrl = env.OPENVIKING_URL || env.OPENVIKING_BASE_URL;
-  const url = (!pinned && envUrl) ? "env"
-    : cli.url ? cliShort
-      : server.url ? ovShort
-        : (server.host || server.port) ? `${ovShort} server.host/port` : "default (http://127.0.0.1:1933)";
-  const apiKey = cfg.apiKeySource === "env" ? "env"
-    : cfg.credentialPath ? homeShort(cfg.credentialPath)
-      : pinned ? "(none — ovcli.conf mode ignores env)" : "(none)";
-  const account = (!pinned && env.OPENVIKING_ACCOUNT) ? "env"
-    : (cli.account || cli.account_id) ? cliShort : section.accountId ? `${ovShort} ${harnessKey(CLIENT)}.accountId` : "(unset)";
-  const user = (!pinned && env.OPENVIKING_USER) ? "env"
-    : (cli.user || cli.user_id) ? cliShort : section.userId ? `${ovShort} ${harnessKey(CLIENT)}.userId` : "(unset)";
-  return { url, apiKey, account, user };
 }
 
 function checkConfig(report, cfg, host) {
