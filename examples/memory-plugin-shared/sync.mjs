@@ -12,13 +12,6 @@ export const SHARED_DIR = join(ROOT, "examples", "memory-plugin-shared", "lib");
 // into another's, and modules nobody imported ended up vendored into four
 // directories while a module somebody did import went missing and became an
 // ERR_MODULE_NOT_FOUND on the first hook of a fresh install. Each target below
-// only says where its code lives and where its copies go; the file set is the
-// transitive closure of what that code actually imports.
-// What a plugin ships equals what it imports, and neither side is written down.
-// Hand-kept lists were the drift: a group named after one harness got spread
-// into another's, and modules nobody imported ended up vendored into four
-// directories while a module somebody did import went missing and became an
-// ERR_MODULE_NOT_FOUND on the first hook of a fresh install. Each target below
 // only says where its code lives, where its copies go, and whether the copies
 // have to be committed; the file set is the transitive closure of what that
 // code actually imports.
@@ -77,26 +70,48 @@ export const GENERATED_HEADER = "// GENERATED FROM examples/memory-plugin-shared
 
 // Skills are copied verbatim — a generated-from banner ahead of the `---`
 // frontmatter would break every skill loader.
+//
+// One entry per copy, the shape TARGETS uses, so the same assertions reach both
+// kinds of generated file. `committed` is true for every skill copy: .gitignore
+// covers the vendored shared/ directories only, and each host installs a skill
+// by copying its path out of this repository, so a copy git does not hold ships
+// nothing. Being a skill under examples/skills is not what ships it — an entry
+// here is.
 export const SKILLS_DIR = join(ROOT, "examples", "skills");
 export const SKILL_TARGETS = [
+  // Not shipped to openclaw-plugin: its REST tool surface has its own operator
+  // skill (openviking-context-database) with different tool names. Nor to
+  // agent-plugins, whose copy is a deliberately different hook-free variant.
   {
-    // Not shipped to openclaw-plugin: its REST tool surface has its own
-    // operator skill (openviking-context-database) with different tool names.
     skill: "openviking-memory",
-    dirs: [
-      join(ROOT, "examples", "codex-memory-plugin", "skills"),
-      join(ROOT, "examples", "claude-code-memory-plugin", "skills"),
-      join(ROOT, "examples", "agent-hook-plugin", "hosts", "cursor", "skills"),
-      join(ROOT, "examples", "dsh-memory-plugin", "skills"),
-    ],
+    dir: join(ROOT, "examples", "codex-memory-plugin", "skills"),
+    committed: true,
   },
   {
-    // Only the two harnesses that ship the experience workflow today.
+    skill: "openviking-memory",
+    dir: join(ROOT, "examples", "claude-code-memory-plugin", "skills"),
+    committed: true,
+  },
+  {
+    skill: "openviking-memory",
+    dir: join(ROOT, "examples", "agent-hook-plugin", "hosts", "cursor", "skills"),
+    committed: true,
+  },
+  {
+    skill: "openviking-memory",
+    dir: join(ROOT, "examples", "dsh-memory-plugin", "skills"),
+    committed: true,
+  },
+  // Only the two harnesses that ship the experience workflow today.
+  {
     skill: "ov-experience-memory",
-    dirs: [
-      join(ROOT, "examples", "codex-memory-plugin", "skills"),
-      join(ROOT, "examples", "claude-code-memory-plugin", "skills"),
-    ],
+    dir: join(ROOT, "examples", "codex-memory-plugin", "skills"),
+    committed: true,
+  },
+  {
+    skill: "ov-experience-memory",
+    dir: join(ROOT, "examples", "claude-code-memory-plugin", "skills"),
+    committed: true,
   },
 ];
 
@@ -271,7 +286,12 @@ async function copySkill(skill, targetDir) {
   for (const file of (await readdir(sourceDir)).sort()) {
     const target = join(targetDir, skill);
     await mkdir(target, { recursive: true });
-    await writeFile(join(target, file), await readFile(join(sourceDir, file), "utf-8"), "utf-8");
+    // Through a rename, for the reason the module copies are: a test can be
+    // byte-comparing this file while the staging script runs the generator.
+    const path = join(target, file);
+    const staging = `${path}.${process.pid}.tmp`;
+    await writeFile(staging, await readFile(join(sourceDir, file), "utf-8"), "utf-8");
+    await rename(staging, path);
   }
 }
 
@@ -312,11 +332,9 @@ async function main() {
     process.stdout.write(`unused lib/${file} — no target imports it\n`);
   }
 
-  for (const { skill, dirs } of SKILL_TARGETS) {
-    for (const dir of dirs) {
-      await copySkill(skill, dir);
-      process.stdout.write(`synced ${skill}/ -> ${relative(ROOT, dir)}\n`);
-    }
+  for (const { skill, dir } of SKILL_TARGETS) {
+    await copySkill(skill, dir);
+    process.stdout.write(`synced ${skill}/ -> ${relative(ROOT, dir)}\n`);
   }
 }
 
