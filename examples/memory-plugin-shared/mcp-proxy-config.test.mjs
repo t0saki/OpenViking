@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -10,9 +11,26 @@ import {
   resolveMcpActorPeerId,
   trimSlash,
 } from "./lib/mcp-proxy-config.mjs";
+import { createOpenVikingMcpProxy } from "./lib/mcp-proxy-core.mjs";
+import { ROOT } from "./sync.mjs";
 
 const OVCLI = join(homedir(), ".openviking", "ovcli.conf");
 const OV = join(homedir(), ".openviking", "ov.conf");
+
+// Every stdio MCP entrypoint in the tree, discovered rather than listed so a
+// new harness cannot ship a proxy that skips the shared shaping. The count is
+// pinned because a renamed directory would otherwise empty the loop and turn
+// the assertions below into a no-op. Stage 6b's thin-harness merge lowers it
+// to 6.
+const MCP_PROXY_COUNT = 8;
+
+const MCP_PROXIES = [
+  ...readdirSync(join(ROOT, "examples"), { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => `examples/${entry.name}/servers/mcp-proxy.mjs`)
+    .filter((rel) => existsSync(join(ROOT, rel))),
+  "agent-plugins/servers/mcp-proxy.mjs",
+].map((rel) => ({ rel, source: readFileSync(join(ROOT, rel), "utf-8") }));
 
 test("a base URL becomes the /mcp endpoint exactly once", () => {
   assert.equal(buildMcpProxyConfig({ baseUrl: "http://x:1933" }).mcpUrl, "http://x:1933/mcp");
@@ -98,23 +116,59 @@ test("path and URL helpers stay exported for entrypoints that need them", () => 
   assert.equal(defaultCredentialPaths({}).length, 2);
 });
 
-test("no MCP proxy derives its peer from the launch directory", async () => {
-  const { readFile } = await import("node:fs/promises");
-  const { dirname, join } = await import("node:path");
-  const { fileURLToPath } = await import("node:url");
-  const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
+test("every MCP proxy shapes its config through the shared builder", () => {
+  assert.equal(
+    MCP_PROXIES.length,
+    MCP_PROXY_COUNT,
+    `expected ${MCP_PROXY_COUNT} proxies, found ${MCP_PROXIES.map((p) => p.rel).join(", ")}`,
+  );
+  for (const { rel, source } of MCP_PROXIES) {
+    assert.match(
+      source,
+      /buildMcpProxyConfig\(/,
+      `${rel} must shape its config through buildMcpProxyConfig`,
+    );
+  }
+});
 
+test("no MCP proxy derives its peer from the launch directory", () => {
   // A proxy is long-lived and may start anywhere, so unlike a hook it cannot
   // re-derive a peer per turn. Codex already had this rule; it holds for all.
-  for (const proxy of [
-    "examples/claude-code-memory-plugin/servers/mcp-proxy.mjs",
-    "examples/codex-memory-plugin/servers/mcp-proxy.mjs",
-    "examples/opencode-plugin/servers/mcp-proxy.mjs",
-    "examples/dsh-memory-plugin/servers/mcp-proxy.mjs",
-    "agent-plugins/servers/mcp-proxy.mjs",
-  ]) {
-    const source = await readFile(join(root, proxy), "utf-8");
-    assert.doesNotMatch(source, /resolveEffectivePeerId/, `${proxy} must not derive a peer`);
-    assert.doesNotMatch(source, /cwd:\s*process\.cwd\(\)/, `${proxy} must not key a peer off its cwd`);
+  for (const { rel, source } of MCP_PROXIES) {
+    assert.doesNotMatch(source, /resolveEffectivePeerId/, `${rel} must not derive a peer`);
+    assert.doesNotMatch(source, /cwd:\s*process\.cwd\(\)/, `${rel} must not key a peer off its cwd`);
   }
+});
+
+test("the default peer scope puts no actor-peer header on the wire", async () => {
+  const sent = [];
+  const proxyFor = (harnessConfig) => createOpenVikingMcpProxy({
+    stdout: { write(_line, cb) { if (cb) cb(); return true; } },
+    fetchImpl: (_url, init) => {
+      sent.push(init.headers);
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        headers: { get: () => null },
+        text: async () => JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} }),
+      });
+    },
+    readConfig: () => buildMcpProxyConfig({
+      mcpUrl: "http://127.0.0.1:1933/mcp",
+      peerId: resolveMcpActorPeerId(harnessConfig),
+    }),
+    loggerFactory: () => ({ log() {}, logError() {} }),
+  });
+  const initialize = { jsonrpc: "2.0", id: 1, method: "initialize", params: {} };
+
+  await proxyFor({ peerId: "workspace-a" }).handleMessage({ ...initialize });
+  assert.equal(
+    sent[0]["X-OpenViking-Actor-Peer"],
+    undefined,
+    "the default scope is broad recall, so pinning an actor would narrow it behind the user's back",
+  );
+
+  await proxyFor({ peerId: "workspace-a", recallPeerScope: "actor" }).handleMessage({ ...initialize });
+  assert.equal(sent[1]["X-OpenViking-Actor-Peer"], "workspace-a");
 });
