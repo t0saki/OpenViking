@@ -579,10 +579,10 @@ MCP `write` / REST `content/write` 的三道 guard（`content_write.py`）：可
 ## openclaw
 
 - **集成文档**：[OpenClaw 插件](./03-openclaw.md)
-- **形态**：唯一 context-engine 全接管型（`ownsCompaction:true`）。15 原生工具（默认开 14）+ 5 slash + 4 hook + Gateway HTTP 路由 + feature-gate RPC。remote-only。版本 2026.6.18。
+- **形态**：唯一 context-engine 全接管型（`ownsCompaction:true`）。15 原生工具（默认开 14）+ 5 slash + 4 hook + Gateway HTTP 路由 + feature-gate RPC。remote-only。版本 2026.7.0。
 - **能力亮点**：检索拆两个默认不重叠入口——`memory_recall` 默认搜 memory、`ov_search` 默认搜 resource+user skills（都可显式参数越界）；`add_skill` 默认开；`memory_forget` memory-only 白名单（[§3.5](#_3-5-写入与删除的类型边界)）；三个 tool-result 工具读服务端外置输出（跨会话 guard）；ContextEngine 全接管（[§3.4.3](#_3-4-3-openclaw-contextengine)）；setup 向导带 key 角色探测与版本兼容检查。
 - **行为要点**：召回走 `/find` 不带 session_id（expansion/去重台账不参与，长会话中同一记忆可能重复注入）；关闭不触发 commit，归档依赖显式 `/new`/`/reset` 与 ~50% 阈值（[§3.3.3](#_3-3-3-关闭方式-×-harness-终局矩阵)）；无本地 pending queue（失败轮次不重放）；`compact()` 最长阻塞 5 分钟；召回默认对每条 leaf 记忆多一次 read（`recallPreferAbstract=false`）；配置严格校验，存在未知键/非法值时插件进入 setup-only 模式。
-- **配置**：`openclaw.json` 的 `plugins.entries.openviking.config` + 少量 env；认证头 `X-API-Key`（[§3.1.3](#_3-1-3-凭据体系)）；commit 阈值由 `commitTokenThresholdRatio` 控制（默认 0.5）；召回字符预算 4000。
+- **配置**：`openclaw.json` 的 `plugins.entries.openviking.config` + 少量 env，仍为空的字段回退共享凭据链；认证头 `X-API-Key` + `Authorization: Bearer` 双发（两者均见 [§3.1.3](#_3-1-3-凭据体系)）；commit 阈值由 `commitTokenThresholdRatio` 控制（默认 0.5）；召回字符预算 4000。
 - **维度索引**：工具面 [§1.1](#_1-1-主动工具面-agentic-调用能力) ｜召回 [§3.2](#_3-2-自动召回与注入) ｜ContextEngine [§3.4.3](#_3-4-3-openclaw-contextengine) ｜删除 [§3.5](#_3-5-写入与删除的类型边界) ｜commit [§3.3.2](#_3-3-2-常规-commit-触发条件)/[§3.3.3](#_3-3-3-关闭方式-×-harness-终局矩阵)。
 
 ## hermes（Nous Research）

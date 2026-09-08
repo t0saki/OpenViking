@@ -79,9 +79,10 @@ export const GENERATED_HEADER = "// GENERATED FROM examples/memory-plugin-shared
 // here is.
 export const SKILLS_DIR = join(ROOT, "examples", "skills");
 export const SKILL_TARGETS = [
-  // Not shipped to openclaw-plugin: its REST tool surface has its own operator
-  // skill (openviking-context-database) with different tool names. Nor to
-  // agent-plugins, whose copy is a deliberately different hook-free variant.
+  // openviking-memory is not shipped to openclaw-plugin: its REST tool surface
+  // has its own operator skill (openviking-context-database) with different tool
+  // names. Nor to agent-plugins, whose copy is a deliberately different hook-free
+  // variant.
   {
     skill: "openviking-memory",
     dir: join(ROOT, "examples", "codex-memory-plugin", "skills"),
@@ -102,7 +103,7 @@ export const SKILL_TARGETS = [
     dir: join(ROOT, "examples", "dsh-memory-plugin", "skills"),
     committed: true,
   },
-  // Only the two harnesses that ship the experience workflow today.
+  // Only the harnesses that ship the experience workflow today.
   {
     skill: "ov-experience-memory",
     dir: join(ROOT, "examples", "codex-memory-plugin", "skills"),
@@ -111,6 +112,11 @@ export const SKILL_TARGETS = [
   {
     skill: "ov-experience-memory",
     dir: join(ROOT, "examples", "claude-code-memory-plugin", "skills"),
+    committed: true,
+  },
+  {
+    skill: "ov-experience-memory",
+    dir: join(ROOT, "examples", "openclaw-plugin", "skills"),
     committed: true,
   },
 ];

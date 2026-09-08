@@ -30,6 +30,7 @@ PLUGINS=(
   "examples/opencode-plugin:examples/opencode-plugin/package.json"
   "examples/dsh-memory-plugin:examples/dsh-memory-plugin/package.json"
   "examples/pi-coding-agent-extension:examples/pi-coding-agent-extension/package.json"
+  "examples/openclaw-plugin:examples/openclaw-plugin/package.json"
 )
 
 # A change to the shared library reaches every plugin, and it no longer reaches

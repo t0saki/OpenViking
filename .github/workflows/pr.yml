@@ -100,18 +100,21 @@ jobs:
       - name: Install plugin dependencies
         run: npm ci --ignore-scripts
 
+      # The plugin builds its shared/ copies at pack time and keeps none in
+      # git, and --ignore-scripts skips the prepack that would make them, so a
+      # fresh checkout has nothing for the suite's `./shared/*.mjs` to resolve.
+      - name: Generate the shared runtime copies
+        run: node ../memory-plugin-shared/sync.mjs
+
       - name: Run the OpenClaw plugin Vitest suite
         # The suite is otherwise never exercised by CI, so regressions in
-        # examples/openclaw-plugin only surface in user installs.
-        # tests/ut/architecture-boundaries.test.ts is excluded until its 2
-        # pre-existing failures are resolved (see #4720 / #4731 / #4732);
-        # every other file passes (42 files / 675 tests).
+        # examples/openclaw-plugin only surface in user installs. Nothing is
+        # held out any more: the two failures that kept
+        # tests/ut/architecture-boundaries.test.ts excluded are fixed, and all
+        # 44 files / 754 tests pass.
         # The node_modules exclude restores vitest's default filters, which a
         # custom --exclude replaces.
-        run: >
-          npm test --
-          --exclude "tests/ut/architecture-boundaries.test.ts"
-          --exclude "**/node_modules/**"
+        run: npm test -- --exclude "**/node_modules/**"
 
   plugin-versions:
     runs-on: ubuntu-24.04
@@ -188,7 +191,9 @@ jobs:
             echo "langchain_changed=false" >> $GITHUB_OUTPUT
           fi
 
-          OPENCLAW_PATTERN="examples/openclaw-plugin/|\.github/workflows/pr\.yml"
+          # openclaw vendors modules out of the shared library, so a change
+          # confined to lib/ still reaches its runtime.
+          OPENCLAW_PATTERN="examples/openclaw-plugin/|examples/memory-plugin-shared/lib/|\.github/workflows/pr\.yml"
           OPENCLAW_CHANGED_FILES=$(git diff --name-only origin/${{ github.base_ref }} HEAD | grep -E "$OPENCLAW_PATTERN" || true)
 
           if [ -n "$OPENCLAW_CHANGED_FILES" ]; then
