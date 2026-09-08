@@ -121,6 +121,31 @@ function harnessSection(ovFile, harness) {
   return section && typeof section === "object" && !Array.isArray(section) ? section : {};
 }
 
+const AUTH_MODES = ["trusted", "api_key"];
+
+function normalizeAuthMode(value) {
+  const mode = str(value, "").toLowerCase();
+  return AUTH_MODES.includes(mode) ? mode : "";
+}
+
+/**
+ * Which auth mode the server is in, and with it whether the identity headers
+ * may go on the wire.
+ *
+ * An `api_key` server reads the account and the user out of the key and ignores
+ * `X-OpenViking-Account` / `X-OpenViking-User`, so sending them there tells
+ * every proxy on the path who the operator is and buys nothing. A named mode
+ * wins; ov.conf's server block answers next; failing both, a credential layer
+ * that supplied an identity at all means the deployment expects one.
+ */
+export function resolveAuthMode({ settings = {}, ovFile = {}, account = "", user = "" } = {}) {
+  const server = ovFile.server || {};
+  const authMode = normalizeAuthMode(settings.authMode)
+    || normalizeAuthMode(server.auth_mode)
+    || ((account || user) ? "trusted" : "api_key");
+  return { authMode, sendIdentityHeaders: authMode === "trusted" };
+}
+
 function sourceMode(env) {
   const raw = str(env.OPENVIKING_CREDENTIAL_SOURCE, str(env.OPENVIKING_CREDENTIALS_SOURCE, "auto"))
     .toLowerCase();

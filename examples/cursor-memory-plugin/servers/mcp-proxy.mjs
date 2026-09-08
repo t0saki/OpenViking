@@ -15,6 +15,7 @@ function readConfig() {
     apiKey: cfg.apiKey,
     account: cfg.account,
     user: cfg.user,
+    sendIdentityHeaders: cfg.sendIdentityHeaders,
     peerId: resolveMcpActorPeerId(cfg),
     userAgent: cfg.userAgent,
     timeoutMs: cfg.timeoutMs,

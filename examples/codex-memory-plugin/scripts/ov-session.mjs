@@ -27,10 +27,7 @@ function responseTraceId(body) {
 export function makeFetchJSON(cfg, { getActorPeerId = () => "" } = {}) {
   function makeHeaders() {
     const headers = { "Content-Type": "application/json" };
-    if (cfg.apiKey) {
-      headers["Authorization"] = `Bearer ${cfg.apiKey}`;
-      headers["X-API-Key"] = cfg.apiKey;
-    }
+    if (cfg.apiKey) headers["Authorization"] = `Bearer ${cfg.apiKey}`;
     if (cfg.sendIdentityHeaders && cfg.account) headers["X-OpenViking-Account"] = cfg.account;
     if (cfg.sendIdentityHeaders && cfg.user) headers["X-OpenViking-User"] = cfg.user;
     const actorPeerId = getActorPeerId();

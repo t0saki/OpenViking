@@ -31,6 +31,7 @@ import { join, resolve as resolvePath } from "node:path";
 import {
   buildUserAgent,
   readManifestVersion,
+  resolveAuthMode,
   resolveOpenVikingCredentials,
 } from "./shared/credentials.mjs";
 import { normalizeRewriteMode, resolveSettings } from "./shared/plugin-config.mjs";
@@ -215,6 +216,11 @@ export function loadConfig(cwd = process.cwd()) {
     apiKey,
     accountId,
     userId,
+    // The names the request builders read; `accountId`/`userId` are the knob
+    // spellings the doctor and the status line report.
+    account: accountId,
+    user: userId,
+    ...resolveAuthMode({ settings, ovFile, account: accountId, user: userId }),
     peerId: resolvePluginPeerId({ settings, configured, sources, credentials }),
     harness: "claude-code",
     userAgent: USER_AGENT,

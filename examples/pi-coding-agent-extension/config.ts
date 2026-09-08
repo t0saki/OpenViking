@@ -1,4 +1,4 @@
-import { buildUserAgent, resolveOpenVikingCredentials } from "./shared/credentials.mjs";
+import { buildUserAgent, resolveAuthMode, resolveOpenVikingCredentials } from "./shared/credentials.mjs";
 import { resolveSettings } from "./shared/plugin-config.mjs";
 import { resolveEffectivePeerId, resolvePluginPeerId } from "./shared/workspace-peer.mjs";
 
@@ -11,6 +11,9 @@ export interface OVConfig {
   apiKey: string;
   account: string;
   user: string;
+  /** `trusted` or `api_key`; only the former puts the identity on the wire. */
+  authMode: string;
+  sendIdentityHeaders: boolean;
   peerId: string;
   /** The pre-git workspace id, when it differs — recall still reaches it. */
   legacyPeerId: string;
@@ -72,6 +75,7 @@ export function loadConfig(cwd: string = process.cwd()): OVConfig {
     apiKey: creds.apiKey,
     account: creds.account,
     user: creds.user,
+    ...resolveAuthMode({ settings, ovFile: creds.ovFile, account: creds.account, user: creds.user }),
     peerId: resolvePluginPeerId({ settings, configured, sources, credentials: creds }),
     userAgent: buildUserAgent("pi", EXTENSION_VERSION),
     harness: "pi",

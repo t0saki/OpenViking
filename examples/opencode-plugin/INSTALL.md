@@ -128,7 +128,7 @@ It is recommended to provide the API key through an environment variable instead
 export OPENVIKING_API_KEY="your-api-key-here"
 ```
 
-API keys are resolved from environment variables or `~/.openviking/ovcli.conf` and sent as `Authorization: Bearer ...` by both hooks and the MCP proxy. `account` and `user` are trusted-mode identity headers sent as `X-OpenViking-Account` and `X-OpenViking-User`; leave them empty when using API-key mode with user/admin API keys. `peerId` is sent as `X-OpenViking-Actor-Peer` on data-plane memory/resource requests; captured session messages store it as body `peer_id`.
+API keys are resolved from environment variables or `~/.openviking/ovcli.conf` and sent as `Authorization: Bearer ...` by both hooks and the MCP proxy. `account` and `user` are trusted-mode identity headers sent as `X-OpenViking-Account` and `X-OpenViking-User`; an `api_key` server reads both out of the key, so the plugin withholds them there. `peerId` is sent as `X-OpenViking-Actor-Peer` on data-plane memory/resource requests; captured session messages store it as body `peer_id`.
 
 `OPENVIKING_API_KEY`, `OPENVIKING_ACCOUNT`, `OPENVIKING_USER`, and `OPENVIKING_PEER_ID` take precedence over the corresponding values in `ovcli.conf`.
 

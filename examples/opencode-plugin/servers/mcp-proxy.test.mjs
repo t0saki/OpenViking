@@ -55,6 +55,7 @@ function makeProxy(url) {
       apiKey: "test-key",
       account: "acct",
       user: "user",
+      sendIdentityHeaders: true,
       peerId: "peer",
       userAgent: "openviking-memory-opencode/9.9.9",
       timeoutMs: 5000,

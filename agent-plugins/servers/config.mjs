@@ -27,7 +27,7 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve as resolvePath, join } from "node:path";
 
-import { buildUserAgent, readManifestVersion } from "./shared/credentials.mjs";
+import { buildUserAgent, readManifestVersion, resolveAuthMode } from "./shared/credentials.mjs";
 
 const DEFAULT_OV_CONF_PATH = join(homedir(), ".openviking", "ov.conf");
 const DEFAULT_OVCLI_CONF_PATH = join(homedir(), ".openviking", "ovcli.conf");
@@ -141,6 +141,7 @@ export function loadConfig() {
     apiKey,
     accountId,
     userId,
+    ...resolveAuthMode({ ovFile, account: accountId, user: userId }),
     peerId,
     timeoutMs,
     userAgent: USER_AGENT,

@@ -3,7 +3,7 @@ import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { buildUserAgent, resolveOpenVikingCredentials } from "./credentials.mjs";
+import { buildUserAgent, resolveAuthMode, resolveOpenVikingCredentials } from "./credentials.mjs";
 import { createLogger } from "./debug-log.mjs";
 import { sendSessionMessages } from "./batch-send.mjs";
 import { enqueue, replayPending } from "./pending-queue.mjs";
@@ -53,6 +53,12 @@ export function loadAgentHookConfig(clientId, cwd = process.cwd()) {
   return {
     ...settings,
     ...credentials,
+    ...resolveAuthMode({
+      settings,
+      ovFile: credentials.ovFile,
+      account: credentials.account,
+      user: credentials.user,
+    }),
     // The credential chain has no view of ovcli.conf's `plugin` section, which
     // is where a key set through `plugin.<harness>.apiKey` lives; spreading an
     // empty one over it would make that key inert.
@@ -174,8 +180,8 @@ export function makeAgentFetchJSON(cfg, cwd = process.cwd()) {
     try {
       const headers = { "Content-Type": "application/json", ...(init.headers || {}) };
       if (cfg.apiKey) headers.Authorization = `Bearer ${cfg.apiKey}`;
-      if (cfg.account) headers["X-OpenViking-Account"] = cfg.account;
-      if (cfg.user) headers["X-OpenViking-User"] = cfg.user;
+      if (cfg.sendIdentityHeaders && cfg.account) headers["X-OpenViking-Account"] = cfg.account;
+      if (cfg.sendIdentityHeaders && cfg.user) headers["X-OpenViking-User"] = cfg.user;
       const peerId = options.actorPeerId ?? effectivePeer.peerId;
       if (peerId) headers["X-OpenViking-Actor-Peer"] = peerId;
       if (cfg.userAgent) headers["User-Agent"] = cfg.userAgent;

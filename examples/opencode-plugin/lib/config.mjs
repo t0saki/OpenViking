@@ -1,6 +1,6 @@
 import path from "path"
 import { homedir } from "os"
-import { buildUserAgent, readManifestVersion, resolveOpenVikingCredentials } from "./shared/credentials.mjs"
+import { buildUserAgent, readManifestVersion, resolveAuthMode, resolveOpenVikingCredentials } from "./shared/credentials.mjs"
 import { resolveSettings } from "./shared/plugin-config.mjs"
 import { resolveEffectivePeerId, resolvePluginPeerId } from "./shared/workspace-peer.mjs"
 
@@ -45,6 +45,7 @@ export function loadConfig(pluginRoot, projectDirectory) {
     user: creds.user,
     accountId: creds.account,
     userId: creds.user,
+    ...resolveAuthMode({ settings, ovFile: creds.ovFile, account: creds.account, user: creds.user }),
     peerId: resolvePluginPeerId({ settings, configured, sources, credentials: creds }),
     mcpUrl: creds.mcpUrl,
     credentialSource: creds.credentialSource,

@@ -2,11 +2,24 @@ export function buildUserAgent(harness: string, version?: string): string;
 
 export function readManifestVersion(manifest: string | URL): string;
 
+export function resolveAuthMode(input?: {
+  settings?: Record<string, unknown>;
+  ovFile?: Record<string, unknown>;
+  account?: string;
+  user?: string;
+}): { authMode: string; sendIdentityHeaders: boolean };
+
 export function resolveOpenVikingCredentials(
   env?: Record<string, string | undefined>,
   harness?: string,
 ): {
   credentialSource: string;
+  credentialPath: string;
+  cliPath: string;
+  cliPathCandidate: string;
+  ovPath: string;
+  cliFile: Record<string, unknown>;
+  ovFile: Record<string, unknown>;
   baseUrl: string;
   mcpUrl: string;
   apiKey: string;

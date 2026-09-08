@@ -46,7 +46,7 @@
 
 import { loadConfig } from "./config.mjs";
 import { createLogger } from "./debug-log.mjs";
-import { catchUpTurns, makeFetchJSON } from "./ov-session.mjs";
+import { catchUpTurns, commitOvSession, makeFetchJSON } from "./ov-session.mjs";
 import { detectRecallCompressorProfile } from "./recall-compressor-profile.mjs";
 import {
   clearEnded,
@@ -76,7 +76,7 @@ const HOOK_STARTED_AT = Date.now();
 
 // The sweep catches up unsent turns before committing, so it needs the same
 // HTTP helper the capture hooks use.
-const { fetchJSONRes } = makeFetchJSON(cfg, { getActorPeerId: () => activePeerId });
+const { fetchJSONRes, fetchJSON } = makeFetchJSON(cfg, { getActorPeerId: () => activePeerId });
 
 const COMMITTED_TTL_MS = (() => {
   const v = Number(process.env.OPENVIKING_CODEX_COMMITTED_TTL_MS);
@@ -119,52 +119,6 @@ async function replayPendingWrites() {
   } catch (err) {
     logError("pending-replay", err);
   }
-}
-
-function responseTraceId(body) {
-  return body?.result?.trace_id || body?.error?.trace_id || body?.trace_id || undefined;
-}
-
-async function requestJSON(path, init = {}, options = {}) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), cfg.captureTimeoutMs);
-  try {
-    const headers = { "Content-Type": "application/json" };
-    if (cfg.apiKey) {
-      headers["Authorization"] = `Bearer ${cfg.apiKey}`;
-      headers["X-API-Key"] = cfg.apiKey;
-    }
-    if (cfg.sendIdentityHeaders && cfg.account) headers["X-OpenViking-Account"] = cfg.account;
-    if (cfg.sendIdentityHeaders && cfg.user) headers["X-OpenViking-User"] = cfg.user;
-    const actorPeerId = options.actorPeerId ?? activePeerId;
-    if (actorPeerId) headers["X-OpenViking-Actor-Peer"] = actorPeerId;
-    if (cfg.userAgent) headers["User-Agent"] = cfg.userAgent;
-    const res = await fetch(`${cfg.baseUrl}${path}`, { ...init, headers, signal: controller.signal });
-    const body = await res.json().catch(() => null);
-    if (!body) return { ok: false, status: res.status };
-    const traceId = responseTraceId(body);
-    if (!res.ok || body.status === "error") {
-      return { ok: false, status: res.status, error: body.error || body, traceId };
-    }
-    return { ok: true, status: res.status, result: body.result ?? body, traceId };
-  } catch (error) {
-    return { ok: false, status: 0, error: { message: error?.message || String(error) } };
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-async function fetchJSON(path, init = {}, options = {}) {
-  const response = await requestJSON(path, init, options);
-  return response.ok ? response.result : null;
-}
-
-async function commitOvSession(ovSessionId) {
-  if (!ovSessionId) return null;
-  return requestJSON(
-    `/api/v1/sessions/${encodeURIComponent(ovSessionId)}/commit`,
-    { method: "POST", body: JSON.stringify({}) },
-  );
 }
 
 function truncateText(text, maxChars) {
@@ -215,7 +169,7 @@ async function buildSessionProfileContext() {
   }
   try {
     const profile = await buildProfileBlock(
-      requestJSON,
+      fetchJSONRes,
       cfg.profileTokenBudget,
       activePeerId,
     );
@@ -282,7 +236,7 @@ async function buildResumeArchiveContext(newSessionId) {
  */
 async function commitAndRelease(state, reason, endToken) {
   const ovSessionId = state.ovSessionId;
-  const commit = await commitOvSession(ovSessionId);
+  const commit = await commitOvSession(fetchJSONRes, ovSessionId);
   if (!commit?.ok) {
     log("commit", {
       reason,

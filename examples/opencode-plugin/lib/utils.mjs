@@ -215,8 +215,8 @@ export async function makeMultipartRequest(config, options) {
 function makeAuthHeaders(config, headers = {}, actorPeerId = "") {
   const result = { ...headers }
   if (config.apiKey) result["Authorization"] = `Bearer ${config.apiKey}`
-  if (config.account) result["X-OpenViking-Account"] = config.account
-  if (config.user) result["X-OpenViking-User"] = config.user
+  if (config.sendIdentityHeaders && config.account) result["X-OpenViking-Account"] = config.account
+  if (config.sendIdentityHeaders && config.user) result["X-OpenViking-User"] = config.user
   const peerId = String(actorPeerId || "").trim()
   if (peerId) result["X-OpenViking-Actor-Peer"] = peerId
   if (config.userAgent) result["User-Agent"] = config.userAgent

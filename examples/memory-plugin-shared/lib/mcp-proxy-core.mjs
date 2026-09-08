@@ -249,8 +249,8 @@ export function createOpenVikingMcpProxy({
     };
     if (includeSession && sessionId) headers["Mcp-Session-Id"] = sessionId;
     if (proxyConfig.apiKey) headers.Authorization = `Bearer ${proxyConfig.apiKey}`;
-    if (proxyConfig.account) headers["X-OpenViking-Account"] = proxyConfig.account;
-    if (proxyConfig.user) headers["X-OpenViking-User"] = proxyConfig.user;
+    if (proxyConfig.sendIdentityHeaders && proxyConfig.account) headers["X-OpenViking-Account"] = proxyConfig.account;
+    if (proxyConfig.sendIdentityHeaders && proxyConfig.user) headers["X-OpenViking-User"] = proxyConfig.user;
     if (proxyConfig.peerId) headers["X-OpenViking-Actor-Peer"] = proxyConfig.peerId;
     if (proxyConfig.userAgent) headers["User-Agent"] = proxyConfig.userAgent;
     return headers;

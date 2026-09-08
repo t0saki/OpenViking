@@ -56,8 +56,9 @@ PreCompact 60s. `recallTimeoutMs` (default 120000) must stay below
 
 Sent headers: `Authorization: Bearer <key>`, `X-OpenViking-Account/User` (trusted
 mode only), `X-OpenViking-Actor-Peer`, `User-Agent: openviking-memory-codex/<version>`.
-The open-source server also accepts `X-API-Key` (and prefers it when both are
-sent); the Volcengine-hosted OpenViking Service (`https://api.vikingdb.cn-beijing.volces.com/openviking`) accepts Bearer only.
+The plugin never sends `X-API-Key`. The open-source server still accepts it (and
+prefers it when both are sent), so a gateway that injects one shadows the key
+here; the Volcengine-hosted OpenViking Service (`https://api.vikingdb.cn-beijing.volces.com/openviking`) accepts Bearer only.
 
 The doctor checks explicit `features.hooks` first, then the live `hooks` entry
 from `codex features list`. Legacy `plugin_hooks` only decides the result when

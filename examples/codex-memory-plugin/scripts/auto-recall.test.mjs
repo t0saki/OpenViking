@@ -913,3 +913,70 @@ test("a bypassed directory gets no injected memory and makes no request", async 
     await rm(stateDir, { recursive: true, force: true });
   }
 });
+
+test("auto-recall authenticates with Bearer alone and gates the identity headers", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "ov-auto-recall-headers-"));
+  const seen = [];
+
+  const env = (baseUrl, identity) => ({
+    OPENVIKING_AUTO_RECALL: "1",
+    OPENVIKING_CODEX_STATE_DIR: stateDir,
+    OPENVIKING_STATE_DIR: stateDir,
+    OPENVIKING_HOME: join(stateDir, "home"),
+    OPENVIKING_CONFIG_FILE: join(stateDir, "missing-ov.conf"),
+    OPENVIKING_CLI_CONFIG_FILE: join(stateDir, "missing-ovcli.conf"),
+    OPENVIKING_CREDENTIAL_SOURCE: "env",
+    OPENVIKING_RECALL_COMPRESS: "0",
+    OPENVIKING_RECALL_LIMIT: "1",
+    OPENVIKING_RECALL_TIMEOUT_MS: "10000",
+    OPENVIKING_MIN_QUERY_LENGTH: "1",
+    OPENVIKING_SCORE_THRESHOLD: "0",
+    OPENVIKING_TIMEOUT_MS: "5000",
+    OPENVIKING_API_KEY: "recall-key",
+    OPENVIKING_URL: baseUrl,
+    ...identity,
+  });
+
+  try {
+    await withMockOpenViking(async (req, res) => {
+      const url = new URL(req.url, "http://127.0.0.1");
+      if (req.method === "GET" && url.pathname === "/health") {
+        writeJson(res, { status: "ok", result: { ok: true } });
+        return;
+      }
+      if (req.method === "POST" && url.pathname === "/api/v1/search/search") {
+        seen.push(req.headers);
+        await readRequestBody(req);
+        writeJson(res, {
+          status: "ok",
+          result: { entries: [], rendered: "", digest: "", stats: { returned: 0 } },
+        });
+        return;
+      }
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ status: "error", error: "not found" }));
+    }, async (baseUrl) => {
+      await runAutoRecall(
+        { prompt: "please use prior context", session_id: "cx-trusted" },
+        env(baseUrl, { OPENVIKING_ACCOUNT: "acct-a", OPENVIKING_USER: "user-a" }),
+      );
+      await runAutoRecall(
+        { prompt: "please use prior context", session_id: "cx-api-key" },
+        env(baseUrl, {}),
+      );
+    });
+
+    assert.equal(seen.length, 2);
+    const [trusted, apiKey] = seen;
+    assert.equal(trusted.authorization, "Bearer recall-key");
+    assert.equal(trusted["x-api-key"], undefined);
+    assert.equal(trusted["x-openviking-account"], "acct-a");
+    assert.equal(trusted["x-openviking-user"], "user-a");
+    assert.equal(apiKey.authorization, "Bearer recall-key");
+    assert.equal(apiKey["x-api-key"], undefined);
+    assert.equal(apiKey["x-openviking-account"], undefined);
+    assert.equal(apiKey["x-openviking-user"], undefined);
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});

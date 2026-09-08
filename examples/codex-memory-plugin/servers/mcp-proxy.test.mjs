@@ -57,6 +57,7 @@ function makeProxy({ url, configOverrides = {}, stdout, localToolProvider, readC
       apiKey: "test-key",
       account: "default",
       user: "zeus",
+      sendIdentityHeaders: true,
       peerId: "peer-a",
       userAgent: "openviking-memory-codex/9.9.9",
       timeoutMs: 5000,

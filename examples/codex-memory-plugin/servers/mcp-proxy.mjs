@@ -30,6 +30,7 @@ function readProxyConfig() {
     apiKey: creds.apiKey,
     account: creds.account,
     user: creds.user,
+    sendIdentityHeaders: cfg.sendIdentityHeaders,
     peerId: resolveMcpActorPeerId(cfg),
     userAgent: cfg.userAgent,
     timeoutMs: cfg.timeoutMs,

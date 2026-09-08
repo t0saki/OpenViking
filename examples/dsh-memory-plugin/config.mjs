@@ -1,5 +1,5 @@
 import { resolveSettings } from "./shared/plugin-config.mjs";
-import { buildUserAgent, resolveOpenVikingCredentials } from "./shared/credentials.mjs";
+import { buildUserAgent, resolveAuthMode, resolveOpenVikingCredentials } from "./shared/credentials.mjs";
 import { resolveEffectivePeerId, resolvePluginPeerId } from "./shared/workspace-peer.mjs";
 
 export const PLUGIN_VERSION = "0.4.0";
@@ -41,12 +41,15 @@ export function resolveConfig(input = {}, env = process.env, cwd = process.cwd()
     hostInput: input.peerId,
     env,
   });
+  const account = input.account || credentials.account;
+  const user = input.user || credentials.user;
   const config = {
     ...settings,
     endpoint: String(input.endpoint || credentials.baseUrl || DEFAULT_ENDPOINT).replace(/\/+$/, ""),
     apiKey: input.apiKey || credentials.apiKey,
-    account: input.account || credentials.account,
-    user: input.user || credentials.user,
+    account,
+    user,
+    ...resolveAuthMode({ settings, ovFile: credentials.ovFile, account, user }),
     peerId: explicitPeerId,
     explicitPeerId,
     userAgent: buildUserAgent("dsh", PLUGIN_VERSION),

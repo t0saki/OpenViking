@@ -128,8 +128,8 @@ export OPENVIKING_API_KEY="your-api-key-here"
 ```
 
 API key 会从环境变量或 `~/.openviking/ovcli.conf` 读取，并由 hooks 和 MCP proxy 作为 `Authorization: Bearer ...` 发送。`account` 和 `user` 是 trusted mode
-身份头，会作为 `X-OpenViking-Account`、`X-OpenViking-User` 发送；使用
-user/admin API key 的 API_KEY mode 时应留空。
+身份头，会作为 `X-OpenViking-Account`、`X-OpenViking-User` 发送；`api_key`
+模式的服务端从 key 里取身份，插件在那里不发这两个头。
 `peerId` 会作为 `X-OpenViking-Actor-Peer` 用于数据面的 memory/resource 请求；捕获 session message 时仍写入 body `peer_id`。需要 peer 维度路由时请显式配置。
 
 `OPENVIKING_API_KEY`、`OPENVIKING_ACCOUNT`、`OPENVIKING_USER`、

@@ -110,8 +110,8 @@ export class OVClient {
   private headers(): Record<string, string> {
     const h: Record<string, string> = { "Content-Type": "application/json" };
     if (this.apiKey) h["Authorization"] = `Bearer ${this.apiKey}`;
-    if (this.account) h["X-OpenViking-Account"] = this.account;
-    if (this.user) h["X-OpenViking-User"] = this.user;
+    if (this.cfg.sendIdentityHeaders && this.account) h["X-OpenViking-Account"] = this.account;
+    if (this.cfg.sendIdentityHeaders && this.user) h["X-OpenViking-User"] = this.user;
     if (this.peerId) h["X-OpenViking-Actor-Peer"] = this.peerId;
     if (this.cfg.userAgent) h["User-Agent"] = this.cfg.userAgent;
     return h;

@@ -172,3 +172,40 @@ test("the default peer scope puts no actor-peer header on the wire", async () =>
   await proxyFor({ peerId: "workspace-a", recallPeerScope: "actor" }).handleMessage({ ...initialize });
   assert.equal(sent[1]["X-OpenViking-Actor-Peer"], "workspace-a");
 });
+
+test("the identity headers follow the auth mode, not a resolved account", async () => {
+  const sent = [];
+  const proxyFor = (extra) => createOpenVikingMcpProxy({
+    stdout: { write(_line, cb) { if (cb) cb(); return true; } },
+    fetchImpl: (_url, init) => {
+      sent.push(init.headers);
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        headers: { get: () => null },
+        text: async () => JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} }),
+      });
+    },
+    readConfig: () => buildMcpProxyConfig({
+      mcpUrl: "http://127.0.0.1:1933/mcp",
+      account: "acme",
+      user: "alice",
+      ...extra,
+    }),
+    loggerFactory: () => ({ log() {}, logError() {} }),
+  });
+  const initialize = { jsonrpc: "2.0", id: 1, method: "initialize", params: {} };
+
+  await proxyFor({}).handleMessage({ ...initialize });
+  assert.equal(
+    sent[0]["X-OpenViking-Account"],
+    undefined,
+    "an api_key server reads the identity out of the key and every proxy on the path would see it",
+  );
+  assert.equal(sent[0]["X-OpenViking-User"], undefined);
+
+  await proxyFor({ sendIdentityHeaders: true }).handleMessage({ ...initialize });
+  assert.equal(sent[1]["X-OpenViking-Account"], "acme");
+  assert.equal(sent[1]["X-OpenViking-User"], "alice");
+});

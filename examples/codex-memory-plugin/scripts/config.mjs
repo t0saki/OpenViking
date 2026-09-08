@@ -43,7 +43,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { resolveOpenVikingCredentials } from "./ov-credentials.mjs";
-import { buildUserAgent, readManifestVersion } from "./shared/credentials.mjs";
+import { buildUserAgent, readManifestVersion, resolveAuthMode } from "./shared/credentials.mjs";
 import { resolveSettings } from "./shared/plugin-config.mjs";
 import { resolvePluginPeerId } from "./shared/workspace-peer.mjs";
 
@@ -66,11 +66,6 @@ function configBool(value, fallback) {
   return fallback;
 }
 
-function normalizeAuthMode(val) {
-  const mode = str(val, "").toLowerCase();
-  return ["trusted", "api_key"].includes(mode) ? mode : "";
-}
-
 /**
  * `cwd` selects the workspace layer (`.openviking/config.json` and the registry
  * entry for that directory). It defaults to this process's directory, which is
@@ -89,11 +84,6 @@ export function loadConfig(cwd = process.cwd()) {
     cwd: workspaceCwd,
     legacy: ovFile.codex,
   });
-  const server = ovFile.server || {};
-  const authMode = normalizeAuthMode(settings.authMode)
-    || normalizeAuthMode(server.auth_mode)
-    || ((creds.account || creds.user) ? "trusted" : "api_key");
-
   const peerId = resolvePluginPeerId({ settings, configured, sources, credentials: creds });
 
   const timeoutMs = settings.timeoutMs;
@@ -110,8 +100,7 @@ export function loadConfig(cwd = process.cwd()) {
     ovConfigPath: ovPath,
     credentialSource: creds.credentialSource,
     baseUrl: creds.baseUrl,
-    authMode,
-    sendIdentityHeaders: authMode === "trusted",
+    ...resolveAuthMode({ settings, ovFile, account: creds.account, user: creds.user }),
     // The credential chain has no view of ovcli.conf's `plugin` section, which
     // is where a key set through `plugin.codex.apiKey` lives.
     apiKey: creds.apiKey || settings.apiKey,

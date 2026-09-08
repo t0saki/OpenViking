@@ -438,7 +438,7 @@ async function checkConnection(report, cfg, { keyInfo, peer }, opts) {
     report.info("skipped (--offline)");
     return null;
   }
-  const conn = { baseUrl: cfg.baseUrl, apiKey: cfg.apiKey, account: cfg.accountId, user: cfg.userId, peerId: peer.peerId, userAgent: cfg.userAgent };
+  const conn = { baseUrl: cfg.baseUrl, apiKey: cfg.apiKey, account: cfg.sendIdentityHeaders ? cfg.accountId : "", user: cfg.sendIdentityHeaders ? cfg.userId : "", peerId: peer.peerId, userAgent: cfg.userAgent };
   const probes = await probeOpenViking(conn, { timeoutMs: opts.timeoutMs });
   const summary = assessProbes(report, probes, conn, keyInfo);
   return { probes, summary };

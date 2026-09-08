@@ -7,8 +7,8 @@ export class OpenVikingClient {
   headers(options = {}) {
     const headers = { "Content-Type": "application/json" };
     if (this.config.apiKey) headers.Authorization = `Bearer ${this.config.apiKey}`;
-    if (this.config.account) headers["X-OpenViking-Account"] = this.config.account;
-    if (this.config.user) headers["X-OpenViking-User"] = this.config.user;
+    if (this.config.sendIdentityHeaders && this.config.account) headers["X-OpenViking-Account"] = this.config.account;
+    if (this.config.sendIdentityHeaders && this.config.user) headers["X-OpenViking-User"] = this.config.user;
     const actorPeerId = options.actorPeerId ?? this.config.peerId;
     if (actorPeerId) headers["X-OpenViking-Actor-Peer"] = actorPeerId;
     if (this.config.userAgent) headers["User-Agent"] = this.config.userAgent;

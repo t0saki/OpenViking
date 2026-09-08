@@ -7,9 +7,7 @@ extractor (~30–60 s).
 ## 0. Prereqs
 
 - `ov` CLI installed and reachable
-- `~/.openviking/ovcli.conf` (or a per-tenant variant like `ovcli.conf.bob`)
-  pointing at the OV server you want to write to. The plugin sends
-  `X-API-Key`, `X-OpenViking-Account`, `X-OpenViking-User` from this file.
+- `~/.openviking/ovcli.conf` (or a per-tenant variant like `ovcli.conf.bob`) pointing at the OV server you want to write to. The plugin sends `Authorization: Bearer <api_key>` from this file, and `X-OpenViking-Account` / `X-OpenViking-User` only in trusted mode.
 - Node.js 22+
 
 ```bash

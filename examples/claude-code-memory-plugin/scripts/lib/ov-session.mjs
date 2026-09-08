@@ -60,8 +60,8 @@ export function makeFetchJSON(cfg, timeoutKey = "timeoutMs") {
     try {
       const headers = { "Content-Type": "application/json" };
       if (cfg.apiKey) headers["Authorization"] = `Bearer ${cfg.apiKey}`;
-      if (cfg.accountId) headers["X-OpenViking-Account"] = cfg.accountId;
-      if (cfg.userId) headers["X-OpenViking-User"] = cfg.userId;
+      if (cfg.sendIdentityHeaders && cfg.account) headers["X-OpenViking-Account"] = cfg.account;
+      if (cfg.sendIdentityHeaders && cfg.user) headers["X-OpenViking-User"] = cfg.user;
       const actorPeerId = options.actorPeerId ?? "";
       if (actorPeerId) headers["X-OpenViking-Actor-Peer"] = actorPeerId;
       if (cfg.userAgent) headers["User-Agent"] = cfg.userAgent;

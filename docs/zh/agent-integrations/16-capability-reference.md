@@ -195,7 +195,7 @@ per-harness 章节（档案卡）只写差异；所有共享事实均在本章�
 
 | 家族 | 消费者 | URL env | Key env | 身份 env | 认证头 |
 |---|---|---|---|---|---|
-| **A. JS 共享核**（`credentials.mjs`） | claude-code / codex（含 trae-cli）/ cursor / trae×2 / zcode / opencode / pi / dsh / agent-plugins | `OPENVIKING_URL` → `OPENVIKING_BASE_URL` | `OPENVIKING_BEARER_TOKEN` → `OPENVIKING_API_KEY` | `OPENVIKING_ACCOUNT` / `OPENVIKING_USER` / `OPENVIKING_PEER_ID` | `Authorization: Bearer`；注意 codex 的 4 个 hook 脚本会额外发送 `X-API-Key` 兼容头 |
+| **A. JS 共享核**（`credentials.mjs`） | claude-code / codex（含 trae-cli）/ cursor / trae×2 / zcode / opencode / pi / dsh / agent-plugins | `OPENVIKING_URL` → `OPENVIKING_BASE_URL` | `OPENVIKING_BEARER_TOKEN` → `OPENVIKING_API_KEY` | `OPENVIKING_ACCOUNT` / `OPENVIKING_USER` / `OPENVIKING_PEER_ID` | 只发 `Authorization: Bearer`；本家族任何 harness 都不发 `X-API-Key` |
 | **B. openclaw**（自有 `config.ts`） | openclaw | `OPENVIKING_BASE_URL` → `OPENVIKING_URL` | `OPENVIKING_API_KEY`（支持 SecretRef env/file） | `OPENVIKING_ACCOUNT_ID` / `OPENVIKING_USER_ID`（注意此处带 `_ID`） | `X-API-Key`（指向 OV Cloud 时注意其实际采用 Bearer 认证） |
 | **C. hermes**（Python） | hermes | `OPENVIKING_ENDPOINT` | `OPENVIKING_API_KEY` | `OPENVIKING_ACCOUNT` / `OPENVIKING_USER` / `OPENVIKING_AGENT`（=actor peer） | `X-API-Key` + `Bearer` 双发；有 key 时默认不发租户头（被服务端以 trusted 报错拒绝时会自动补头重试一次） |
 | **D. ov CLI**（Rust） | ov | conf 文件为主 | conf | `--account/--user/--actor-peer-id` | `X-API-Key`；LDAP Basic / OIDC Bearer 按 `auth_mode` 切换；api_key 含 ≥2 个 `.` 时自动附加 Bearer（JWT 兜底） |
@@ -207,7 +207,7 @@ per-harness 章节（档案卡）只写差异；所有共享事实均在本章�
 3. baseUrl：env → ovcli `url` → ov.conf `server.url` → `http://{server.host|127.0.0.1}:{server.port|1933}`（其中 `0.0.0.0` 归一为 `127.0.0.1`）；兜底 `http://127.0.0.1:1933`。
 4. apiKey：`BEARER_TOKEN` → `API_KEY` → ovcli `api_key` → ov.conf `<harness>.apiKey` → `server.root_api_key`。`<harness>` 是调用方 harness 自己的那段（snake_case，如 `trae_cn`；`claude-code` 与 `claude_code` 指向同一段）；account / user / peerId 在各自链条的同一位置读同一段。
 5. mcpUrl：`OPENVIKING_MCP_URL`（非 cli 模式）→ `${baseUrl}/mcp`。
-6. 统一请求头：`Authorization: Bearer` + `X-OpenViking-Account/User/Actor-Peer` + `User-Agent: openviking-memory-<harness>/<version>`。
+6. 统一请求头：`Authorization: Bearer` + `X-OpenViking-Account/User`（仅 trusted 模式）+ `X-OpenViking-Actor-Peer` + `User-Agent: openviking-memory-<harness>/<version>`。`api_key` 模式的服务端从 key 里取身份、忽略这两个头，所以那里不发，免得把身份报给链路上的每一层代理。模式解析顺序：`ovcli` `plugin.<harness>.authMode` → `plugin.authMode` → `ov.conf` `<harness>.authMode`（仅 claude-code、codex、dsh —— 只有这三家的 loader 把该段当设置层读）→ `ov.conf` `server.auth_mode` → 只要解析出了 account 或 user 就算 trusted。
 
 **workspace peer**（家族 A 各 harness 均适用；agent-plugins 包不做派生，只发显式 `OPENVIKING_PEER_ID`）：无显式 peerId 且 `OPENVIKING_WORKSPACE_PEER≠0` 时由 workspace 派生，随 `X-OpenViking-Actor-Peer` 发送（服务端会对该头校验，含 `/` 或 `\` 返回 400）。派生规则由 `peer.source` 决定，**默认 `git`**：先取归一化后的 `origin` URL，取不到回落到仓库根路径；不在仓库中则什么都不发送，在那里记下的内容进入用户级空间 `viking://user/<you>/memories`。例如在 `/Users/x/Dev/OpenViking/examples/codex-memory-plugin` 下、origin 为 `git@github.com:volcengine/OpenViking.git` 时，peer 是 `github.com-volcengine-openviking`——任意子目录、任意 worktree、任意机器、任意 clone 都是同一个值。`peer.source` 的读取层为 env `OPENVIKING_PEER_SOURCE`、ovcli.conf `plugin.peerSource` / `plugin.<harness>.peerSource`、workspace 文件的 `peer.source`；家族 A 的每个 harness 都会读这几层。
 
@@ -509,7 +509,7 @@ MCP `write` / REST `content/write` 的三道 guard（`content_write.py`）：可
 - **形态**：Codex 插件（marketplace），5 hook（SessionStart 70s / UserPromptSubmit 130s / Stop 30s / SessionEnd 3s / PreCompact 60s）+ MCP 代理 + 1 experience skill。版本 0.9.0。
 - **能力亮点**：本地召回压缩管线（`codex exec`，[§3.2.5](#_3-2-5-召回再摘要)）；SessionEnd（Codex ≥ 0.145）在正常退出时补齐 Stop 漏掉的轮次并 commit，SessionStart 的兜底扫描回收那些没触发 SessionEnd 的退出所遗留的未归档消息（[§3.3.3](#_3-3-3-关闭方式-×-harness-终局矩阵)）。
 - **行为要点**：session id 为 `cx-<safeId>`（确定性推导，不读 state）；SessionEnd 只在正常退出、且 Codex 0.145+ 时触发，信号、崩溃、旧版本以及 `codex app-server` 延后的场景都落到扫描路径；不使用磁盘 pending queue（离线靠游标不推进、下一轮重发补偿，[§3.3.4](#_3-3-4-pending-queue-离线补偿对照)）；idle-TTL 1800000ms、锁等待 120000ms（env 配置）；Stop 与 SessionEnd 默认 detach（`appended N turn(s)` 提示默认不展示）；单会话 mkdir 锁串行化 Stop worker、PreCompact、SessionEnd worker 与扫描。新增的 hook 事件在 Codex 侧没有信任记录，升级后需在 `/hooks` 中批准 SessionEnd。
-- **配置**：env + ovcli.conf `plugin.codex` + ov.conf `codex`；hooks 同时发送 Bearer 与 `X-API-Key` 兼容头（[§3.1.3](#_3-1-3-凭据体系)）。
+- **配置**：env + ovcli.conf `plugin.codex` + ov.conf `codex`；hooks 只用 `Authorization: Bearer` 认证（[§3.1.3](#_3-1-3-凭据体系)）。
 - **维度索引**：工具面 [§2.1](#_2-1-服务端-mcp-工具面) ｜召回 [§3.2](#_3-2-自动召回与注入) ｜commit [§3.3.2](#_3-3-2-常规-commit-触发条件)/[§3.3.3](#_3-3-3-关闭方式-×-harness-终局矩阵) ｜降级 [§3.6](#_3-6-降级与容错)。
 
 ## trae-cli（TraeCode CLI 2.0）

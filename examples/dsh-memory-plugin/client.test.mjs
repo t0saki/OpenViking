@@ -26,6 +26,7 @@ test("client sends OpenViking identity headers and preserves response trace ids"
     apiKey: "secret",
     account: "account-a",
     user: "user-a",
+    sendIdentityHeaders: true,
     peerId: "peer-a",
     userAgent: "openviking-memory-dsh/0.1.0",
     requestTimeoutMs: 1000,
