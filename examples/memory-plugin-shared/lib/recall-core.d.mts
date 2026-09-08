@@ -38,16 +38,39 @@ export function contextRequestTimeoutMs(
 
 export function normalizeContextEntry(entry?: unknown): NormalizedContextEntry;
 
-export function buildRecallBlock(
-  fetchJSON: (path: string, init?: any, options?: any) => Promise<{ ok: boolean; status?: number; result?: any; error?: any }>,
+export type RecallFetchJSON = (
+  path: string,
+  init?: any,
+  options?: any,
+) => Promise<{ ok: boolean; status?: number; result?: any; error?: any }>;
+
+export type RecallOptions = {
+  actorPeerId?: string;
+  legacyPeerId?: string;
+  sessionId?: string;
+  log?: (stage: string, data?: any) => void;
+};
+
+export type DetailedRecall = {
+  block: string;
+  contentCount: number;
+  hintCount: number;
+  budgetUsed: number;
+  stage: "server_assembled" | "ranked" | "no_results" | "filtered_out";
+};
+
+export function buildRecallBlockDetailed(
+  fetchJSON: RecallFetchJSON,
   cfg: Record<string, any>,
   query: string,
-  options?: {
-    actorPeerId?: string;
-    legacyPeerId?: string;
-    sessionId?: string;
-    log?: (stage: string, data?: any) => void;
-  },
+  options?: RecallOptions,
+): Promise<DetailedRecall>;
+
+export function buildRecallBlock(
+  fetchJSON: RecallFetchJSON,
+  cfg: Record<string, any>,
+  query: string,
+  options?: RecallOptions,
 ): Promise<string | null>;
 
 export function buildRecallEndpointBody(cfg?: Record<string, any>): Record<string, any>;

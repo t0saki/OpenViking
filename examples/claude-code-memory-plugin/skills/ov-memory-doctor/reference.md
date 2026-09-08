@@ -117,7 +117,7 @@ Plugin MCP proxy (what Claude Code shows for a failing tool call):
 
 Hook log (`cc-hooks.log`) stages worth grepping: `health_check`
 (connectivity), `push_turns` / `capture_write` / `pending_enqueue` (capture),
-`recall_context_assembled` / `search_summary` / `injection_built` (recall),
+`recall_context_assembled` / `recall_search_summary` / `recall_injection_built` (recall),
 `mcp-proxy` `start` (resolved `mcpUrl`, `hasApiKey` = present, not valid),
 `uncaught` (crash). Hooks: `session-start`, `auto-recall`, `auto-capture`,
 `session-end`, `pre-compact`, `subagent-start`, `subagent-stop`,
