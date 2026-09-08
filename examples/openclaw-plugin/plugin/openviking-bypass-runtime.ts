@@ -1,7 +1,7 @@
 import {
   compileSessionPatterns,
-  shouldBypassSession,
-} from "../text-utils.js";
+  matchesSessionPattern,
+} from "../shared/session-model.mjs";
 
 type BypassRuntimeConfig = {
   bypassSessionPatterns: string[];
@@ -15,10 +15,12 @@ type SessionBypassContext = {
 export function createOpenVikingBypassRuntime<TConfig extends BypassRuntimeConfig>(options: {
   cfg: TConfig;
 }) {
-  const bypassSessionPatterns = compileSessionPatterns(options.cfg.bypassSessionPatterns);
+  const bypassSessionPatterns = compileSessionPatterns(options.cfg.bypassSessionPatterns, {
+    segmentSeparator: ":",
+  });
 
   const isBypassedSession = (ctx?: SessionBypassContext): boolean =>
-    shouldBypassSession(ctx ?? {}, bypassSessionPatterns);
+    matchesSessionPattern([ctx?.sessionKey, ctx?.sessionId], bypassSessionPatterns);
 
   return {
     isBypassedSession,

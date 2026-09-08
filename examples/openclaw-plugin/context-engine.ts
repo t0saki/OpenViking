@@ -4,11 +4,8 @@ import type { RuntimeQueryConfigStore } from "./query-config.js";
 import {
   AUTO_RECALL_SOURCE_MARKER,
 } from "./auto-recall.js";
-import {
-  compileSessionPatterns,
-  getCaptureDecision,
-  shouldBypassSession,
-} from "./text-utils.js";
+import { getCaptureDecision } from "./text-utils.js";
+import { compileSessionPatterns, matchesSessionPattern } from "./shared/session-model.mjs";
 import type { RecallTraceEntry } from "./recall-trace.js";
 import { estimateAgentMessageTokens, estimateAgentMessagesTokens } from "./token-estimator.js";
 import { openClawSessionToOvStorageId } from "./routing/identity-routing.js";
@@ -277,12 +274,14 @@ export function createMemoryOpenVikingContextEngine(params: {
   } = params;
 
   const diagEnabled = cfg.emitStandardDiagnostics;
-  const bypassSessionPatterns = compileSessionPatterns(cfg.bypassSessionPatterns);
+  const bypassSessionPatterns = compileSessionPatterns(cfg.bypassSessionPatterns, {
+    segmentSeparator: ":",
+  });
   const diag = (stage: string, sessionId: string, data: Record<string, unknown>) =>
     emitDiag(logger, stage, sessionId, data, diagEnabled);
 
   const isBypassedSession = (params: { sessionId?: string; sessionKey?: string }): boolean =>
-    shouldBypassSession(params, bypassSessionPatterns);
+    matchesSessionPattern([params.sessionKey, params.sessionId], bypassSessionPatterns);
 
   async function doCommitOVSession(params: {
     sessionId: string;

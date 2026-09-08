@@ -1,11 +1,16 @@
 import { describe, expect, it } from "vitest";
 
 import { memoryOpenVikingConfigSchema } from "../../config.js";
-import {
-  compileSessionPatterns,
-  matchesSessionPattern,
-  shouldBypassSession,
-} from "../../text-utils.js";
+import { compileSessionPatterns, matchesSessionPattern } from "../../shared/session-model.mjs";
+
+/** OpenClaw session refs are colon-delimited, so a single `*` stops at a colon. */
+const compile = (patterns: string[]): RegExp[] =>
+  compileSessionPatterns(patterns, { segmentSeparator: ":" });
+
+const isBypassed = (
+  params: { sessionId?: string; sessionKey?: string },
+  patterns: RegExp[],
+): boolean => matchesSessionPattern([params.sessionKey, params.sessionId], patterns);
 
 describe("bypass session patterns", () => {
   it("parses bypass session patterns from config", () => {
@@ -40,7 +45,7 @@ describe("bypass session patterns", () => {
   });
 
   it("matches lossless-claw style session globs", () => {
-    const patterns = compileSessionPatterns([
+    const patterns = compile([
       "agent:*:cron:**",
       "agent:ops:maintenance:**",
     ]);
@@ -51,10 +56,10 @@ describe("bypass session patterns", () => {
   });
 
   it("prefers sessionKey over sessionId when deciding whether to bypass", () => {
-    const patterns = compileSessionPatterns(["agent:*:cron:**"]);
+    const patterns = compile(["agent:*:cron:**"]);
 
     expect(
-      shouldBypassSession(
+      isBypassed(
         {
           sessionId: "agent:main:cron:from-id",
           sessionKey: "agent:main:main",
@@ -65,10 +70,10 @@ describe("bypass session patterns", () => {
   });
 
   it("falls back to sessionId when sessionKey is unavailable", () => {
-    const patterns = compileSessionPatterns(["agent:*:cron:**"]);
+    const patterns = compile(["agent:*:cron:**"]);
 
     expect(
-      shouldBypassSession(
+      isBypassed(
         {
           sessionId: "agent:main:cron:nightly:run:1",
         },

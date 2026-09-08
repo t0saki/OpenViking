@@ -49,7 +49,7 @@
 | `config.ts` | 插件配置 schema、默认值、环境变量解析、peer identity routing 配置 |
 | `auto-recall.ts` | 自动召回查询清洗、召回超时控制、记忆块构建与注入 |
 | `memory-ranking.ts` | 显式 `memory_recall` 的结果去重、阈值过滤和本地重排；自动召回由服务端组装 |
-| `text-utils.ts` | 会话文本清洗、metadata/心跳/命令过滤、增量 turn 消息提取、bypass session pattern |
+| `text-utils.ts` | 会话文本清洗、metadata/心跳/命令过滤、增量 turn 消息提取 |
 | `commands/setup.ts` | setup/status CLI，配置写入、health check、root/user key 探测、slot 激活 |
 | `session-transcript-repair.ts` | 修复 toolCall/toolResult 配对、去重、孤儿 tool result 等 transcript 结构问题 |
 
