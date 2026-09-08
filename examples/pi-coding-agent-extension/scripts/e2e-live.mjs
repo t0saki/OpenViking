@@ -109,7 +109,7 @@ function copyExtension() {
   for (const name of readdirSync(EXT_SRC)) {
     const src = join(EXT_SRC, name);
     const dst = join(extDir, basename(name));
-    if (name.endsWith(".ts") || name === "README.md" || name === "DESIGN.md" || name === "TAKEOVER.md") {
+    if (name.endsWith(".ts") || name === "README.md" || name === "DESIGN.md") {
       copyFileSync(src, dst);
     } else if (["lib", "shared", "scripts"].includes(name)) {
       cpSync(src, dst, { recursive: true });

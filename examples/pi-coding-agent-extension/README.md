@@ -6,7 +6,7 @@ Long-term semantic memory and context takeover for [pi](https://github.com/earen
 > caller's own context space through `viking://~/memories` and `viking://~/skills`; the uid-less
 > `viking://user/memories` shorthand is rejected by newer servers.
 
-> Design informed by lessons from all three OpenViking agent plugins: synchronous recall from OpenClaw, production-hardened capture/ranking from Claude Code, and anti-patterns dodged from Hermes's stale prefetch approach. See [DESIGN.md](./DESIGN.md) for the base design and [TAKEOVER.md](./TAKEOVER.md) for the context-takeover layer.
+> Design informed by lessons from all three OpenViking agent plugins: synchronous recall from OpenClaw, production-hardened capture/ranking from Claude Code, and anti-patterns dodged from Hermes's stale prefetch approach. See [DESIGN.md](./DESIGN.md) for the module-by-module design, including the context-takeover layer.
 
 ## Quick Start
 
@@ -305,7 +305,7 @@ Both plugins share the same core design (informed by each other):
 
 ## Extension Structure
 
-See [DESIGN.md](./DESIGN.md) for the full design specification — comparison of all three OV plugins, detailed event flow, design rationale, and implementation guidance useful for building OV extensions for any agent harness.
+See [DESIGN.md](./DESIGN.md) for what each module is responsible for, how the modules meet pi's events, and the design ancestry shared with the other OpenViking plugins.
 
 ```
 pi-coding-agent-extension/
@@ -318,7 +318,7 @@ pi-coding-agent-extension/
 ├── lib/takeover-core.mjs # Pure context-takeover state machine
 ├── lib/recall-ledger.mjs # Injected recall blocks, replayed to keep prompt caches warm
 ├── index.ts             # Extension entry point (event handlers)
-├── TAKEOVER.md          # Context-takeover design
+├── DESIGN.md            # Module-by-module design, including context takeover
 └── README.md
 ```
 
