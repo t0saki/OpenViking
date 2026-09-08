@@ -42,8 +42,12 @@
 
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { resolveOpenVikingCredentials } from "./ov-credentials.mjs";
-import { buildUserAgent, readManifestVersion, resolveAuthMode } from "./shared/credentials.mjs";
+import {
+  buildUserAgent,
+  readManifestVersion,
+  resolveAuthMode,
+  resolveOpenVikingCredentials,
+} from "./shared/credentials.mjs";
 import { resolveSettings } from "./shared/plugin-config.mjs";
 import { resolvePluginPeerId } from "./shared/workspace-peer.mjs";
 

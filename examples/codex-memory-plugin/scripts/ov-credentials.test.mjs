@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { resolveOpenVikingCredentials } from "./ov-credentials.mjs";
+import { resolveOpenVikingCredentials } from "./shared/credentials.mjs";
 
 async function tempJson(prefix, value) {
   const dir = await mkdtemp(join(tmpdir(), prefix));

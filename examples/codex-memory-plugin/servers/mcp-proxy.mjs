@@ -12,7 +12,7 @@ import { resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadConfig } from "../scripts/config.mjs";
 import { createLogger } from "../scripts/debug-log.mjs";
-import { resolveOpenVikingCredentials } from "../scripts/ov-credentials.mjs";
+import { resolveOpenVikingCredentials } from "../scripts/shared/credentials.mjs";
 import {
   buildMcpProxyConfig,
   resolveMcpActorPeerId,
