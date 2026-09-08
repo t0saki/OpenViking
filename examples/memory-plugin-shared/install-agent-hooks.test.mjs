@@ -378,29 +378,6 @@ test("combined Cursor and TRAE install preserves unrelated hooks and is idempote
   }
 });
 
-test("Cursor-only install does not clean Claude or Codex shell configuration", () => {
-  const home = mkdtempSync(join(tmpdir(), "openviking-agent-scope-"));
-  try {
-    const rc = join(home, ".zshrc");
-    writeFileSync(rc, [
-      "before",
-      "# >>> openviking claude-code memory plugin >>>",
-      "legacy claude",
-      "# <<< openviking claude-code memory plugin <<<",
-      "# >>> openviking-codex-plugin >>>",
-      "legacy codex",
-      "# <<< openviking-codex-plugin <<<",
-      "after",
-      "",
-    ].join("\n"));
-    runInstall(home, "cursor");
-    assert.match(readFileSync(rc, "utf8"), /legacy claude/);
-    assert.match(readFileSync(rc, "utf8"), /legacy codex/);
-  } finally {
-    rmSync(home, { recursive: true, force: true });
-  }
-});
-
 test("malformed existing agent JSON fails without overwriting user configuration", () => {
   const home = mkdtempSync(join(tmpdir(), "openviking-agent-invalid-json-"));
   try {

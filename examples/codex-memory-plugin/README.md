@@ -40,8 +40,7 @@ Claude Code and Codex share this installer (drop `--harness codex` to pick inter
 2. Sets up `~/.openviking/ovcli.conf` interactively
 3. Registers the `openviking` marketplace — remote git by default (`codex plugin marketplace add https://github.com/volcengine/OpenViking.git`), or this checkout / a TOS archive in dev/archive mode — and enables `openviking-memory@openviking` with `features.plugin_hooks = true`
 4. Keeps the checked-in stdio `.mcp.json` intact; `servers/mcp-proxy.mjs` reads your active `ovcli.conf` at runtime
-5. Removes old OpenViking rc wrapper blocks and the pre-unification `openviking-plugins-local` marketplace when found
-6. Runs plugin-list and stdio MCP validation
+5. Runs plugin-list and stdio MCP validation
 
 After install:
 

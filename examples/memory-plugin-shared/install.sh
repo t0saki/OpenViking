@@ -64,12 +64,6 @@ PLUGIN_NAME="openviking-memory"
 DSH_PACKAGE="@openviking/dsh-memory-plugin"
 PLUGIN_ID="${PLUGIN_NAME}@${MARKETPLACE_NAME}"
 
-# Pre-unification names, cleaned up on upgrade.
-OLD_MARKETPLACE_NAME='openviking-plugins-local'
-CC_OLD_IDS="claude-code-memory-plugin@${OLD_MARKETPLACE_NAME} ${PLUGIN_NAME}@${OLD_MARKETPLACE_NAME}"
-CODEX_OLD_ID="${PLUGIN_NAME}@${OLD_MARKETPLACE_NAME}"
-CODEX_OLD_MARKETPLACE_ROOT="$HOME/.codex/${OLD_MARKETPLACE_NAME}-marketplace"
-
 CODEX_CONFIG="${CODEX_CONFIG_FILE:-$HOME/.codex/config.toml}"
 CC_SETTINGS="$HOME/.claude/settings.json"
 CC_KNOWN_MARKETPLACES="$HOME/.claude/plugins/known_marketplaces.json"
@@ -1443,38 +1437,6 @@ prepare_marketplace_dir() {
 }
 
 # ---------------------------------------------------------------------------
-# Legacy wrapper cleanup (pre-stdio installs)
-# ---------------------------------------------------------------------------
-
-strip_rc_block() {
-  local rc="$1" begin="$2" end="$3"
-  [ -n "$rc" ] && [ -f "$rc" ] || return 0
-  grep -qF "$begin" "$rc" || return 0
-  if ! grep -qF "$end" "$rc"; then
-    warn "Found $begin in $rc but missing end marker; leaving it untouched."
-    return 0
-  fi
-  awk -v b="$begin" -v e="$end" '
-    $0 == b {skip=1; next}
-    $0 == e {skip=0; next}
-    !skip
-  ' "$rc" > "$rc.tmp" && mv "$rc.tmp" "$rc"
-  info "$(t 'Removed legacy rc block from' '已移除旧的 rc 注入块：') $rc"
-}
-
-cleanup_rc_wrappers() {
-  local rc
-  for rc in "$HOME/.zshrc" "$HOME/.bashrc"; do
-    if contains_harness claude; then
-      strip_rc_block "$rc" '# >>> openviking claude-code memory plugin >>>' '# <<< openviking claude-code memory plugin <<<'
-    fi
-    if contains_harness codex; then
-      strip_rc_block "$rc" '# >>> openviking-codex-plugin >>>' '# <<< openviking-codex-plugin <<<'
-    fi
-  done
-}
-
-# ---------------------------------------------------------------------------
 # Claude Code
 # ---------------------------------------------------------------------------
 
@@ -1519,22 +1481,6 @@ claude_marketplace_current_source() {
       if (s) process.stdout.write(String(s.path || s.repo || s.url || ""));
     } catch {}
   ' "$CC_KNOWN_MARKETPLACES" "$MARKETPLACE_NAME" 2>/dev/null || true
-}
-
-migrate_claude_legacy_marketplace() {
-  local id plugin_list marketplace_list
-  plugin_list="$(claude_cmd plugin list 2>/dev/null || true)"
-  for id in $CC_OLD_IDS; do
-    if str_contains "$plugin_list" "$id"; then
-      info "$(t 'Removing pre-unification plugin install' '移除旧命名的插件安装') ($id)"
-      claude_cmd plugin uninstall "$id" >/dev/null 2>&1 || true
-    fi
-  done
-  marketplace_list="$(claude_cmd plugin marketplace list 2>/dev/null || true)"
-  if str_contains "$marketplace_list" "$OLD_MARKETPLACE_NAME"; then
-    info "$(t 'Removing pre-unification marketplace' '移除旧命名的 marketplace') ($OLD_MARKETPLACE_NAME)"
-    claude_cmd plugin marketplace remove "$OLD_MARKETPLACE_NAME" >/dev/null 2>&1 || true
-  fi
 }
 
 write_claude_remote_manifest() {
@@ -1708,7 +1654,6 @@ install_claude() {
     return 0
   }
   if has_plugin_subcommand; then
-    migrate_claude_legacy_marketplace
     install_claude_modern || return 1
   else
     warn "$(t "This Claude-format CLI doesn't expose 'plugin'." '当前 Claude 格式 CLI 没有 plugin 子命令。') ($CLAUDE_BIN)"
@@ -1796,36 +1741,6 @@ codex_marketplace_current_source() {
   ' "$MARKETPLACE_NAME" 2>/dev/null || true
 }
 
-migrate_codex_legacy_marketplace() {
-  codex_cmd plugin remove "$CODEX_OLD_ID" >/dev/null 2>&1 || true
-  codex_cmd plugin uninstall "$CODEX_OLD_ID" >/dev/null 2>&1 || true
-  if str_contains "$(codex_cmd plugin marketplace list 2>/dev/null || true)" "$OLD_MARKETPLACE_NAME"; then
-    info "$(t 'Removing pre-unification marketplace' '移除旧命名的 marketplace') ($OLD_MARKETPLACE_NAME)"
-    codex_cmd plugin marketplace remove "$OLD_MARKETPLACE_NAME" >/dev/null 2>&1 || true
-  fi
-  if is_native_codex_bin; then
-    [ -d "$CODEX_OLD_MARKETPLACE_ROOT" ] && rm -rf "$CODEX_OLD_MARKETPLACE_ROOT"
-    [ -d "$HOME/.codex/plugins/cache/$OLD_MARKETPLACE_NAME" ] && rm -rf "$HOME/.codex/plugins/cache/$OLD_MARKETPLACE_NAME"
-  fi
-  # Drop the old plugin id's config.toml section; the unified id gets its own.
-  if is_native_codex_bin && [ -f "$CODEX_CONFIG" ] && grep -qF "plugins.\"$CODEX_OLD_ID\"" "$CODEX_CONFIG"; then
-    node - "$CODEX_CONFIG" "$CODEX_OLD_ID" <<'NODE' || true
-const fs = require("node:fs");
-const [path, oldId] = process.argv.slice(2);
-const lines = fs.readFileSync(path, "utf8").split(/\n/);
-const out = [];
-let skip = false;
-for (const line of lines) {
-  const trimmed = line.trim();
-  if (/^\[/.test(trimmed)) skip = trimmed.startsWith(`[plugins."${oldId}"`);
-  if (!skip) out.push(line);
-}
-fs.writeFileSync(path, out.join("\n").replace(/\n*$/, "\n"));
-NODE
-    info "Removed old config.toml section for $CODEX_OLD_ID"
-  fi
-}
-
 codex_marketplace_sync() { # codex_marketplace_sync <expected-source> <add-args...>
   local needle="$1" current
   shift
@@ -1896,7 +1811,6 @@ install_codex() {
     warn "$(t 'Codex-format CLI not found; skipping:' '未找到 Codex 格式 CLI，跳过：') $CODEX_BIN"
     return 0
   }
-  migrate_codex_legacy_marketplace
   case "$SOURCE_MODE" in
     remote)
       # Codex doesn't expose which --ref a registered git marketplace is
@@ -3322,7 +3236,6 @@ select_dist
 configure_ovcli
 resolve_source_mode
 prepare_marketplace_dir
-cleanup_rc_wrappers
 
 if contains_harness claude; then
   while IFS= read -r CLAUDE_BIN; do
