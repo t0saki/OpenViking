@@ -1,53 +1,44 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { loadConfig } from "./config.mjs";
 
+// The layers, the knobs and the peer are the shared loader's, and
+// memory-plugin-shared/plugin-config.test.mjs holds this harness to them. What
+// is left here is what this harness answers itself: which file the credential
+// came from, and the tri-state digest mode.
 const OVERRIDES = [
   "OPENVIKING_CONFIG_FILE",
   "OPENVIKING_CLI_CONFIG_FILE",
   "OPENVIKING_HOME",
   "OPENVIKING_STATE_DIR",
-  "OPENVIKING_PEER_ID",
-  "OPENVIKING_AUTO_CAPTURE",
   "OPENVIKING_API_KEY",
   "OPENVIKING_BEARER_TOKEN",
-  "OPENVIKING_RECALL_LIMIT",
+  "OPENVIKING_RECALL_COMPRESS",
+  "OPENVIKING_RECALL_REWRITE",
 ];
 
 /**
  * Run loadConfig() against a throwaway ~/.openviking pair, with the env vars
  * that feed the credential chain reset to exactly what the case needs.
- *
- * `workspace` is written to `workspace/.openviking/config.json`; the bare
- * `.git` beside it is what makes that directory a workspace root, and
- * `other/` is a second directory with neither.
  */
-function withConfigs({ ov, cli, workspace, env = {} }, fn) {
+function withConfigs({ ov, cli, env = {} }, fn) {
   const dir = mkdtempSync(join(tmpdir(), "cc-config-"));
   const ovPath = join(dir, "ov.conf");
   const cliPath = join(dir, "ovcli.conf");
-  const workspaceDir = join(dir, "workspace");
-  const otherDir = join(dir, "other");
   const saved = Object.fromEntries(OVERRIDES.map((key) => [key, process.env[key]]));
   try {
     for (const key of OVERRIDES) delete process.env[key];
     if (ov) writeFileSync(ovPath, JSON.stringify(ov));
     if (cli) writeFileSync(cliPath, JSON.stringify(cli));
-    mkdirSync(join(workspaceDir, ".openviking"), { recursive: true });
-    mkdirSync(join(workspaceDir, ".git"), { recursive: true });
-    mkdirSync(otherDir, { recursive: true });
-    if (workspace) {
-      writeFileSync(join(workspaceDir, ".openviking", "config.json"), JSON.stringify(workspace));
-    }
     process.env.OPENVIKING_CONFIG_FILE = ovPath;
     process.env.OPENVIKING_CLI_CONFIG_FILE = cliPath;
     // Keeps the identity cache and the workspace registry out of the real home.
     process.env.OPENVIKING_HOME = join(dir, "home");
     Object.assign(process.env, env);
-    return fn({ ovPath, cliPath, workspaceDir, otherDir });
+    return fn({ ovPath, cliPath });
   } finally {
     for (const [key, value] of Object.entries(saved)) {
       if (value === undefined) delete process.env[key];
@@ -83,30 +74,6 @@ test("an ov.conf root_api_key is reported even when ovcli.conf exists", () => {
   });
 });
 
-test("an ov.conf claude_code.apiKey is reported as ov.conf", () => {
-  withConfigs({
-    ov: { claude_code: { apiKey: "sk-cc" } },
-    cli: { url: "http://127.0.0.1:1933" },
-  }, ({ ovPath }) => {
-    const cfg = loadConfig();
-    assert.equal(cfg.apiKey, "sk-cc");
-    assert.equal(cfg.apiKeySource, "ov");
-    assert.equal(cfg.credentialPath, ovPath);
-  });
-});
-
-test("an ovcli.conf plugin.claude_code.apiKey is reported as ovcli.conf", () => {
-  withConfigs({
-    ov: { server: {} },
-    cli: { url: "http://127.0.0.1:1933", plugin: { claude_code: { apiKey: "sk-plugin" } } },
-  }, ({ cliPath }) => {
-    const cfg = loadConfig();
-    assert.equal(cfg.apiKey, "sk-plugin");
-    assert.equal(cfg.apiKeySource, "ovcli");
-    assert.equal(cfg.credentialPath, cliPath);
-  });
-});
-
 test("an env api_key wins and carries no path", () => {
   withConfigs({
     ov: { server: { root_api_key: "sk-root" } },
@@ -117,39 +84,6 @@ test("an env api_key wins and carries no path", () => {
     assert.equal(cfg.apiKey, "sk-env");
     assert.equal(cfg.apiKeySource, "env");
     assert.equal(cfg.credentialPath, null);
-  });
-});
-
-test("the workspace layer follows the cwd it is handed, not the process's", () => {
-  withConfigs({
-    ov: { server: {} },
-    cli: { url: "http://127.0.0.1:1933", api_key: "sk-cli" },
-    workspace: { version: 1, peer: { id: "team-a" }, capture: { enabled: false } },
-  }, ({ workspaceDir, otherDir }) => {
-    const inside = loadConfig(workspaceDir);
-    assert.equal(inside.peerId, "team-a");
-    assert.equal(inside.autoCapture, false);
-
-    const outside = loadConfig(otherDir);
-    assert.equal(outside.peerId, "");
-    assert.equal(outside.autoCapture, true);
-  });
-});
-
-test("an omitted cwd falls back to this process's directory", () => {
-  withConfigs({
-    ov: { server: {} },
-    cli: { url: "http://127.0.0.1:1933", api_key: "sk-cli" },
-    workspace: { version: 1, capture: { enabled: false } },
-  }, ({ workspaceDir }) => {
-    const origin = process.cwd();
-    try {
-      process.chdir(workspaceDir);
-      assert.equal(loadConfig().autoCapture, false);
-      assert.equal(loadConfig("").autoCapture, false);
-    } finally {
-      process.chdir(origin);
-    }
   });
 });
 
@@ -165,76 +99,28 @@ test("no api_key anywhere reports no source", () => {
   });
 });
 
-test("the layers a knob resolves through, lowest to highest", () => {
-  withConfigs({
-    ov: { claude_code: { recallLimit: 2 } },
-    cli: {
-      url: "http://127.0.0.1:1933",
-      api_key: "sk-cli",
-      plugin: { recallLimit: 5, claude_code: { recallLimit: 6 } },
-    },
-    workspace: { version: 1, recall: { max_items: 8 } },
-  }, ({ workspaceDir, otherDir }) => {
-    // ov.conf's section is the lowest configured layer, so the shared plugin
-    // block covers it and the per-harness block covers that.
-    assert.equal(loadConfig(otherDir).recallLimit, 6);
-    assert.equal(loadConfig(workspaceDir).recallLimit, 8, "the workspace file outranks ovcli.conf");
-
-    process.env.OPENVIKING_RECALL_LIMIT = "9";
-    assert.equal(loadConfig(workspaceDir).recallLimit, 9, "the environment outranks every file");
-  });
-});
-
-test("a default does not report as a choice the user made", () => {
+// `recallRewrite` is a tri-state this harness reads from the shared on/off
+// switch, so a mode the switch cannot express still has to survive the trip.
+test("the digest mode is this harness's own tri-state, under either env name", () => {
   withConfigs({
     ov: { server: {} },
-    cli: { url: "http://127.0.0.1:1933", api_key: "sk-cli" },
-  }, ({ otherDir }) => {
-    // Several fields reach the server only when configured, so a default that
-    // reported as configured would send this plugin's opinion as the user's.
-    const cfg = loadConfig(otherDir);
-    assert.equal(cfg.recallLimit, 10);
-    assert.equal(cfg.recallLimitConfigured, false);
-    assert.equal(cfg.recallQueryExpansionConfigured, false);
-  });
-});
-
-test("ovcli.conf's actor_peer_id supplies the peer, and a configured one outranks it", () => {
-  withConfigs({
-    ov: { server: {} },
-    cli: { url: "http://127.0.0.1:1933", api_key: "sk-cli", actor_peer_id: "cli-peer" },
-  }, ({ otherDir }) => {
-    // `ov config switch` moves the peer with the credentials, so this harness
-    // has to read it from the same place every other one does.
-    assert.equal(loadConfig(otherDir).peerId, "cli-peer");
+    cli: { url: "http://127.0.0.1:1933", api_key: "sk-cli", plugin: { recallCompress: "server" } },
+  }, () => {
+    assert.equal(loadConfig().recallRewrite, "server");
   });
 
   withConfigs({
     ov: { server: {} },
-    cli: {
-      url: "http://127.0.0.1:1933",
-      api_key: "sk-cli",
-      actor_peer_id: "cli-peer",
-      plugin: { claude_code: { peerId: "cc-peer" } },
-    },
-  }, ({ otherDir }) => {
-    assert.equal(loadConfig(otherDir).peerId, "cc-peer");
+    cli: { url: "http://127.0.0.1:1933", api_key: "sk-cli", plugin: { recallCompress: "louder" } },
+  }, () => {
+    assert.equal(loadConfig().recallRewrite, "auto", "an unreadable mode falls back to auto");
   });
 
   withConfigs({
     ov: { server: {} },
-    cli: { url: "http://127.0.0.1:1933", api_key: "sk-cli", actor_peer_id: "cli-peer" },
-    workspace: { version: 1, peer: { id: "team-a" } },
-  }, ({ workspaceDir }) => {
-    assert.equal(loadConfig(workspaceDir).peerId, "team-a");
-  });
-});
-
-test("ov.conf's claude_code.peerId still applies when ovcli.conf names no peer", () => {
-  withConfigs({
-    ov: { claude_code: { peerId: "legacy-cc-peer" } },
-    cli: { url: "http://127.0.0.1:1933", api_key: "sk-cli" },
-  }, ({ otherDir }) => {
-    assert.equal(loadConfig(otherDir).peerId, "legacy-cc-peer");
+    cli: { url: "http://127.0.0.1:1933", api_key: "sk-cli", plugin: { recallCompress: "off" } },
+    env: { OPENVIKING_RECALL_REWRITE: "client" },
+  }, () => {
+    assert.equal(loadConfig().recallRewrite, "client", "the older env spelling still works");
   });
 });

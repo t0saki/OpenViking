@@ -2,6 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { resolveConfig } from "./config.mjs";
 
+// The layers, the knobs and the peer are the shared loader's, and
+// memory-plugin-shared/plugin-config.test.mjs holds this harness to them. What
+// is left here is the cordis input: the host hands this plugin its environment
+// and its settings, and no other harness has a layer like it.
+
 test("behavior environment overrides are applied and normalized", () => {
   const config = resolveConfig({}, {
     OPENVIKING_CLI_CONFIG_FILE: "/nonexistent/ovcli.conf",

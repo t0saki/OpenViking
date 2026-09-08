@@ -6,18 +6,20 @@ import test from "node:test";
 import { loadConfig } from "./config.mjs";
 import { isBypassed } from "./shared/session-model.mjs";
 
+// The layers, the knobs and the peer are the shared loader's, and
+// memory-plugin-shared/plugin-config.test.mjs holds this harness to them. What
+// is left here is the compression switch this harness reads as a boolean, and
+// the bypass patterns it is the only harness to resolve from every layer.
 const OVERRIDES = [
   "OPENVIKING_CONFIG_FILE",
   "OPENVIKING_CLI_CONFIG_FILE",
   "OPENVIKING_HOME",
   "OPENVIKING_STATE_DIR",
-  "OPENVIKING_CREDENTIAL_SOURCE",
-  "OPENVIKING_CREDENTIALS_SOURCE",
-  "OPENVIKING_PEER_ID",
-  "OPENVIKING_PEER_SOURCE",
-  "OPENVIKING_AUTO_CAPTURE",
   "OPENVIKING_BYPASS_SESSION",
   "OPENVIKING_BYPASS_SESSION_PATTERNS",
+  "OPENVIKING_RECALL_COMPRESS",
+  "OPENVIKING_RECALL_COMPRESS_MODEL",
+  "OPENVIKING_RECALL_COMPRESS_THINKING",
   "OPENVIKING_URL",
   "OPENVIKING_BASE_URL",
   "OPENVIKING_API_KEY",
@@ -61,89 +63,6 @@ function withConfigs({ ov, cli, workspace, env = {} }, fn) {
   }
 }
 
-test("a workspace file's peer.id is the peer this directory writes under", () => {
-  withConfigs({
-    cli: { url: "http://127.0.0.1:1933", api_key: "sk-cli", actor_peer_id: "cli-peer" },
-    workspace: { version: 1, peer: { id: "team-a" } },
-  }, ({ workspaceDir, otherDir }) => {
-    assert.equal(loadConfig(workspaceDir).peerId, "team-a");
-    // Same process, another directory: the ovcli.conf peer is untouched.
-    assert.equal(loadConfig(otherDir).peerId, "cli-peer");
-  });
-});
-
-test("OPENVIKING_PEER_ID still outranks a workspace peer.id", () => {
-  withConfigs({
-    cli: { url: "http://127.0.0.1:1933", api_key: "sk-cli", actor_peer_id: "cli-peer" },
-    workspace: { version: 1, peer: { id: "team-a" } },
-    env: { OPENVIKING_PEER_ID: "env-peer" },
-  }, ({ workspaceDir }) => {
-    assert.equal(loadConfig(workspaceDir).peerId, "env-peer");
-  });
-});
-
-test("a credential source pinned to ovcli.conf ignores the env peer", () => {
-  withConfigs({
-    cli: { url: "http://127.0.0.1:1933", api_key: "sk-cli", actor_peer_id: "cli-peer" },
-    env: { OPENVIKING_PEER_ID: "env-peer", OPENVIKING_CREDENTIAL_SOURCE: "cli" },
-  }, ({ otherDir }) => {
-    assert.equal(loadConfig(otherDir).peerId, "cli-peer");
-  });
-});
-
-test("an ovcli.conf plugin.codex.peerId outranks the file's actor peer", () => {
-  withConfigs({
-    cli: {
-      url: "http://127.0.0.1:1933",
-      api_key: "sk-cli",
-      actor_peer_id: "cli-peer",
-      plugin: { codex: { peerId: "plugin-peer" } },
-    },
-  }, ({ otherDir }) => {
-    assert.equal(loadConfig(otherDir).peerId, "plugin-peer");
-  });
-});
-
-test("ov.conf's codex.peerId keeps its place behind ovcli.conf", () => {
-  withConfigs({
-    ov: { codex: { peerId: "ov-peer" } },
-    cli: { url: "http://127.0.0.1:1933", api_key: "sk-cli", actor_peer_id: "cli-peer" },
-  }, ({ otherDir }) => {
-    assert.equal(loadConfig(otherDir).peerId, "cli-peer");
-  });
-});
-
-test("the workspace layer follows the cwd it is handed, not the process's", () => {
-  withConfigs({
-    cli: { url: "http://127.0.0.1:1933", api_key: "sk-cli" },
-    workspace: { version: 1, capture: { enabled: false }, recall: { max_items: 3 } },
-  }, ({ workspaceDir, otherDir }) => {
-    const inside = loadConfig(workspaceDir);
-    assert.equal(inside.autoCapture, false);
-    assert.equal(inside.recallLimit, 3);
-
-    const outside = loadConfig(otherDir);
-    assert.equal(outside.autoCapture, true);
-    assert.equal(outside.recallLimit, 10);
-  });
-});
-
-test("an omitted cwd falls back to this process's directory", () => {
-  withConfigs({
-    cli: { url: "http://127.0.0.1:1933", api_key: "sk-cli" },
-    workspace: { version: 1, capture: { enabled: false } },
-  }, ({ workspaceDir }) => {
-    const origin = process.cwd();
-    try {
-      process.chdir(workspaceDir);
-      assert.equal(loadConfig().autoCapture, false);
-      assert.equal(loadConfig("").autoCapture, false);
-    } finally {
-      process.chdir(origin);
-    }
-  });
-});
-
 test("a repository can carry the bypass patterns its contributors share", () => {
   withConfigs({
     cli: { url: "http://127.0.0.1:1933", api_key: "sk-cli" },
@@ -186,26 +105,30 @@ test("ov.conf's codex section still supplies the patterns when no env var does",
   });
 });
 
-// ovcli.conf is the client's own file, so a key set there outranks the server
-// config underneath it — the same order every other harness follows.
-test("ovcli.conf plugin.codex.apiKey outranks ov.conf, and ovcli.conf's own api_key outranks it", () => {
+// This harness reads the shared compression knob as a boolean, and calls a
+// compressor configured only once it has been told what to run.
+test("the compression switch is a boolean here, and a model is what configures one", () => {
   withConfigs({
-    cli: { plugin: { codex: { apiKey: "sk-plugin" } } },
+    cli: { url: "http://127.0.0.1:1933", api_key: "sk-cli", plugin: { recallCompress: "auto" } },
   }, ({ otherDir }) => {
-    assert.equal(loadConfig(otherDir).apiKey, "sk-plugin", "nothing else supplies a key");
+    const cfg = loadConfig(otherDir);
+    assert.equal(cfg.recallCompress, true, "\"auto\" is the Claude Code spelling of on");
+    assert.equal(cfg.recallCompressConfigured, false, "naming the switch is not naming a compressor");
   });
 
   withConfigs({
-    ov: { codex: { apiKey: "sk-codex" }, server: { root_api_key: "sk-root" } },
-    cli: { plugin: { codex: { apiKey: "sk-plugin" } } },
+    cli: { url: "http://127.0.0.1:1933", api_key: "sk-cli", plugin: { recallCompress: "off" } },
   }, ({ otherDir }) => {
-    assert.equal(loadConfig(otherDir).apiKey, "sk-plugin");
+    assert.equal(loadConfig(otherDir).recallCompress, false);
   });
 
   withConfigs({
-    ov: { server: { root_api_key: "sk-root" } },
-    cli: { api_key: "sk-cli", plugin: { codex: { apiKey: "sk-plugin" } } },
+    cli: {
+      url: "http://127.0.0.1:1933",
+      api_key: "sk-cli",
+      plugin: { codex: { recallCompressModel: "gpt-5.5" } },
+    },
   }, ({ otherDir }) => {
-    assert.equal(loadConfig(otherDir).apiKey, "sk-cli");
+    assert.equal(loadConfig(otherDir).recallCompressConfigured, true);
   });
 });

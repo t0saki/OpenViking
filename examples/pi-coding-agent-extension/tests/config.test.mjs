@@ -5,7 +5,12 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { loadConfig } from "../config.ts";
 import { isBypassed } from "../shared/session-model.mjs";
-import { deriveWorkspacePeerId } from "../shared/workspace-peer.mjs";
+
+// The layers, the knobs and the peer order are the shared loader's, and
+// memory-plugin-shared/plugin-config.test.mjs holds this harness to them. What
+// is left here is what this extension answers itself: the takeover knobs, the
+// peer it reports from the workspace resolution, and the two names it kept from
+// before it shared a loader.
 
 /**
  * Run `loadConfig()` with `body` as the extension's `plugin.pi` section of a
@@ -93,26 +98,6 @@ test("loadConfig reads the takeover knobs", async () => {
   });
 });
 
-test("a shared plugin knob applies, and the per-harness one overrides it", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "ov-pi-shared-knob-"));
-  const saved = process.env.OPENVIKING_CLI_CONFIG_FILE;
-  try {
-    await writeFile(join(dir, "ovcli.conf"), JSON.stringify({
-      url: "http://127.0.0.1:1933",
-      plugin: { recallLimit: 4, captureMode: "keyword", pi: { recallLimit: 7 } },
-    }), "utf8");
-    process.env.OPENVIKING_CLI_CONFIG_FILE = join(dir, "ovcli.conf");
-    const cfg = loadConfig();
-    assert.equal(cfg.recallLimit, 7);
-    assert.equal(cfg.recallLimitConfigured, true);
-    assert.equal(cfg.captureMode, "keyword");
-  } finally {
-    if (saved === undefined) delete process.env.OPENVIKING_CLI_CONFIG_FILE;
-    else process.env.OPENVIKING_CLI_CONFIG_FILE = saved;
-    await rm(dir, { recursive: true, force: true });
-  }
-});
-
 test("loadConfig clamps invalid takeover values", async () => {
   await withPluginSection({
     takeoverEnabled: "no",
@@ -144,6 +129,8 @@ test("loadConfig derives workspace peer by default", async () => {
   });
 });
 
+// This extension reports the whole workspace resolution's peer rather than the
+// one the layers named, so both directions of that have to hold.
 test("loadConfig prefers the plugin section peer over workspace derivation", async () => {
   await withPluginSection({
     peerId: " pi ",
@@ -151,40 +138,6 @@ test("loadConfig prefers the plugin section peer over workspace derivation", asy
   }, (cfg) => {
     assert.equal(cfg.peerId, "pi");
   });
-});
-
-test("loadConfig keeps the plugin section peer when workspace derivation is disabled", async () => {
-  await withPluginSection({
-    peerId: "pi",
-    workspacePeer: false,
-  }, (cfg) => {
-    assert.equal(cfg.peerId, "pi");
-    assert.equal(cfg.workspacePeer, false);
-  });
-});
-
-test("loadConfig gives the environment peer precedence over the plugin section peer", async () => {
-  await withPluginSection({
-    peerId: "config-peer",
-    recallPeerScope: "actor",
-    workspacePeer: false,
-  }, (cfg) => {
-    assert.equal(cfg.peerId, "explicit-peer");
-    assert.equal(cfg.workspacePeer, false);
-    assert.equal(cfg.recallPeerScope, "actor");
-  }, { OPENVIKING_PEER_ID: "explicit-peer" });
-});
-
-test("loadConfig leaves the debug log off when nothing asks for it", async () => {
-  await withPluginSection({}, (cfg) => {
-    assert.equal(cfg.debugLogPath, "");
-  });
-});
-
-test("loadConfig reads the debug log path from OPENVIKING_DEBUG_LOG", async () => {
-  await withPluginSection({}, (cfg) => {
-    assert.equal(cfg.debugLogPath, "/tmp/ov-pi-shared.log");
-  }, { OPENVIKING_DEBUG_LOG: "/tmp/ov-pi-shared.log" });
 });
 
 test("loadConfig still honours the deprecated OV_DEBUG_LOG", async () => {
@@ -205,31 +158,6 @@ test("loadConfig prefers OPENVIKING_DEBUG_LOG over the deprecated alias", async 
 test("loadConfig falls back to the plugin section debug log path", async () => {
   await withPluginSection({ debugLogPath: " /tmp/ov-pi-file.log " }, (cfg) => {
     assert.equal(cfg.debugLogPath, "/tmp/ov-pi-file.log");
-  });
-});
-
-test("loadConfig gives the plugin section peer precedence over the ovcli actor peer", async () => {
-  await withPluginSection({
-    peerId: "config-peer",
-  }, (cfg) => {
-    assert.equal(cfg.peerId, "config-peer");
-  }, {
-    OPENVIKING_CREDENTIAL_SOURCE: "cli",
-    OPENVIKING_URL: undefined,
-  }, {
-    url: "http://127.0.0.1:1933",
-    actor_peer_id: "ovcli-peer",
-  });
-});
-
-test("loadConfig keeps the pre-git peer so recall can still reach it", async () => {
-  await withPluginSection({}, (cfg) => {
-    const legacy = deriveWorkspacePeerId(process.cwd());
-    if (cfg.peerId === legacy) {
-      assert.equal(cfg.legacyPeerId, "", "nothing to fall back to when the ids already match");
-    } else {
-      assert.equal(cfg.legacyPeerId, legacy, "memories written before the git peer must stay reachable");
-    }
   });
 });
 
