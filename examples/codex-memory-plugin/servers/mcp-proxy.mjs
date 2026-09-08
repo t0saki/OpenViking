@@ -19,8 +19,6 @@ import {
 } from "../scripts/shared/mcp-proxy-config.mjs";
 import { createOpenVikingMcpProxy } from "../scripts/shared/mcp-proxy-core.mjs";
 
-export { createOpenVikingMcpProxy } from "../scripts/shared/mcp-proxy-core.mjs";
-
 function readProxyConfig() {
   const creds = resolveOpenVikingCredentials();
   const cfg = loadConfig();

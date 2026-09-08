@@ -15,8 +15,6 @@ import { createLogger } from "../lib/shared/debug-log.mjs"
 import { buildMcpProxyConfig, resolveMcpActorPeerId } from "../lib/shared/mcp-proxy-config.mjs"
 import { createOpenVikingMcpProxy } from "../lib/shared/mcp-proxy-core.mjs"
 
-export { createOpenVikingMcpProxy } from "../lib/shared/mcp-proxy-core.mjs"
-
 function readProxyConfig() {
   const cfg = loadConfig(resolvePath(fileURLToPath(import.meta.url), "..", ".."))
   return buildMcpProxyConfig({

@@ -55,6 +55,9 @@ jobs:
 
       - name: Run memory plugin tests
         run: |
+          # A pattern no plugin matches yet contributes nothing rather than
+          # reaching node as a literal.
+          shopt -s nullglob
           files=$(printf '%s\n' \
             examples/*/scripts/*.test.mjs \
             examples/*/scripts/lib/*.test.mjs \
