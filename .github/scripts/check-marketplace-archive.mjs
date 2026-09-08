@@ -63,8 +63,9 @@ function jsonStrings(value, out = []) {
  * The file a host-templated command names, if the plugin has it.
  *
  * Each host writes its plugin root differently — `${CLAUDE_PLUGIN_ROOT}`,
- * `__OPENVIKING_TRAE_ROOT__`, `$PLUGIN_DIR`, or nothing at all — so the prefix
- * is dropped a segment at a time until what is left is a file in the plugin.
+ * `__OPENVIKING_PLUGIN_ROOT__`, `$PLUGIN_DIR`, or nothing at all — so the
+ * prefix is dropped a segment at a time until what is left is a file in the
+ * plugin, which may be one the plugin reaches across its own boundary.
  */
 async function resolveInPlugin(root, token) {
   const parts = token.split("/").filter((part) => part && part !== ".");

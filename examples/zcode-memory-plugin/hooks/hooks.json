@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${ZCODE_PLUGIN_ROOT}/scripts/session-start.mjs\"",
+            "command": "node __OPENVIKING_PLUGIN_ROOT__/../memory-plugin-shared/lib/hook-entry.mjs session-start __OPENVIKING_CLIENT_ID__",
             "timeout": 30
           }
         ]
@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${ZCODE_PLUGIN_ROOT}/scripts/auto-recall.mjs\"",
+            "command": "node __OPENVIKING_PLUGIN_ROOT__/../memory-plugin-shared/lib/hook-entry.mjs user-prompt-submit __OPENVIKING_CLIENT_ID__",
             "timeout": 20
           }
         ]
@@ -28,7 +28,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${ZCODE_PLUGIN_ROOT}/scripts/uri-guard.mjs\"",
+            "command": "node __OPENVIKING_PLUGIN_ROOT__/scripts/uri-guard.mjs",
             "timeout": 5
           }
         ]
@@ -39,7 +39,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${ZCODE_PLUGIN_ROOT}/scripts/auto-capture.mjs\"",
+            "command": "node __OPENVIKING_PLUGIN_ROOT__/../memory-plugin-shared/lib/hook-entry.mjs stop __OPENVIKING_CLIENT_ID__",
             "timeout": 30
           }
         ]

@@ -5,6 +5,7 @@ capture-utils.mjs
 config-schema.mjs
 credentials.mjs
 debug-log.mjs
+hook-entry.mjs
 mcp-proxy-config.mjs
 mcp-proxy-core.mjs
 ov-http.mjs

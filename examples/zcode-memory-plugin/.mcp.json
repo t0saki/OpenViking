@@ -3,7 +3,7 @@
     "openviking": {
       "command": "node",
       "args": [
-        "${ZCODE_PLUGIN_ROOT}/servers/mcp-proxy.mjs"
+        "__OPENVIKING_PLUGIN_ROOT__/servers/mcp-proxy.mjs"
       ]
     }
   }

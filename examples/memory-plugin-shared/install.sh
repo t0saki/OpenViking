@@ -1984,6 +1984,7 @@ function shellArg(value) {
 function isOpenVikingHook(value) {
   const text = JSON.stringify(value || {});
   return text.includes("OPENVIKING_INTEGRATION_ID") || (text.includes("openviking") && [
+    "hook-entry.mjs",
     "cursor-hook.mjs",
     "trae-hook.mjs",
     "zcode-hook.mjs",
@@ -2013,21 +2014,10 @@ const envPrefix = Object.entries(integrationEnv)
   .join(" ");
 
 function renderHookCommand(command) {
-  let rendered = command;
-  const cursorMatch = /^node\s+\$\{CURSOR_PLUGIN_ROOT\}\/(.+)$/u.exec(rendered);
-  if (cursorMatch) {
-    rendered = `${shellArg(nodeBin)} ${shellArg(path.join(root, cursorMatch[1]))}`;
-  } else {
-    const pluginRootMatch = /^node\s+"?\$\{(?:CLAUDE_PLUGIN_ROOT|ZCODE_PLUGIN_ROOT)\}"?\/(.+?)"?$/u.exec(rendered);
-    if (pluginRootMatch) {
-      rendered = `${shellArg(nodeBin)} ${shellArg(path.join(root, pluginRootMatch[1]))}`;
-    } else {
-      const traeMatch = /^node\s+__OPENVIKING_TRAE_ROOT__\/(\S+)\s+(.+)$/u.exec(rendered);
-      if (!traeMatch) throw new Error(`Unsupported ${clientId} hook command template: ${command}`);
-      rendered = `${shellArg(nodeBin)} ${shellArg(path.join(root, traeMatch[1]))} ${traeMatch[2]
-        .replaceAll("__OPENVIKING_CLIENT_ID__", clientId)}`;
-    }
-  }
+  const match = /^node\s+"?__OPENVIKING_PLUGIN_ROOT__\/([^\s"]+)"?(\s.*)?$/u.exec(command);
+  if (!match) throw new Error(`Unsupported ${clientId} hook command template: ${command}`);
+  const args = (match[2] || "").replaceAll("__OPENVIKING_CLIENT_ID__", clientId);
+  const rendered = `${shellArg(nodeBin)} ${shellArg(path.join(root, match[1]))}${args}`;
   return `${envPrefix} ${rendered} # openviking-memory`;
 }
 
@@ -2203,6 +2193,7 @@ function write(file, value) {
 function ownsHook(value) {
   const text = JSON.stringify(value || {});
   return text.includes("openviking") && [
+    "hook-entry.mjs",
     "cursor-hook.mjs",
     "trae-hook.mjs",
     "zcode-hook.mjs",
@@ -2981,15 +2972,14 @@ $CODEX_BINS
 EOF
   fi
   if contains_harness cursor; then
-    if grep -q 'scripts/session-start.mjs' "$HOME/.cursor/hooks.json" 2>/dev/null \
-      && grep -q 'scripts/auto-recall.mjs' "$HOME/.cursor/hooks.json" 2>/dev/null \
-      && grep -q 'scripts/auto-capture.mjs' "$HOME/.cursor/hooks.json" 2>/dev/null \
+    if grep -q 'lib/hook-entry.mjs' "$HOME/.cursor/hooks.json" 2>/dev/null \
       && grep -q 'scripts/uri-guard.mjs' "$HOME/.cursor/hooks.json" 2>/dev/null \
       && grep -q 'OPENVIKING_INTEGRATION_ID' "$HOME/.cursor/hooks.json" 2>/dev/null \
       && grep -q 'mcp-proxy.mjs' "$HOME/.cursor/mcp.json" 2>/dev/null \
       && [ -f "$OV_HOME/agent-integrations/cursor/scripts/cursor-hook.mjs" ] \
       && [ -f "$OV_HOME/agent-integrations/cursor/scripts/uri-guard.mjs" ] \
       && [ -f "$OV_HOME/agent-integrations/memory-plugin-shared/lib/uri-guard.mjs" ] \
+      && [ -f "$OV_HOME/agent-integrations/memory-plugin-shared/lib/hook-entry.mjs" ] \
       && [ -f "$OV_HOME/agent-integrations/cursor/.cursor-plugin/plugin.json" ] \
       && [ -f "$OV_HOME/agent-integrations/cursor/integration.json" ] \
       && [ -f "$HOME/.cursor/rules/openviking-memory.mdc" ] \
@@ -2999,7 +2989,7 @@ EOF
       "$NODE_BIN" --check "$OV_HOME/agent-integrations/cursor/scripts/uri-guard.mjs" \
         || { ok=0; agent_fatal=1; }
       if printf '%s' '{}' | env HOME="$HOME" OPENVIKING_MEMORY_ENABLED=0 \
-        "$NODE_BIN" "$OV_HOME/agent-integrations/cursor/scripts/session-start.mjs" >/dev/null; then
+        "$NODE_BIN" "$OV_HOME/agent-integrations/memory-plugin-shared/lib/hook-entry.mjs" sessionStart cursor >/dev/null; then
         info "cursor: $(t 'installed Hook runtime passed its smoke test' '已安装的 Hook 运行时通过 smoke test')"
       else
         warn "cursor: $(t 'installed Hook runtime failed its smoke test' '已安装的 Hook 运行时 smoke test 失败')"
@@ -3014,21 +3004,20 @@ EOF
   if contains_harness trae; then
     local trae_mcp
     trae_mcp="$(trae_mcp_path trae)"
-    if grep -q 'scripts/session-start.mjs' "$HOME/.trae/hooks.json" 2>/dev/null \
-      && grep -q 'scripts/auto-recall.mjs' "$HOME/.trae/hooks.json" 2>/dev/null \
-      && grep -q 'scripts/auto-capture.mjs' "$HOME/.trae/hooks.json" 2>/dev/null \
+    if grep -q 'lib/hook-entry.mjs' "$HOME/.trae/hooks.json" 2>/dev/null \
       && grep -q 'scripts/uri-guard.mjs' "$HOME/.trae/hooks.json" 2>/dev/null \
       && grep -q 'OPENVIKING_INTEGRATION_ID' "$HOME/.trae/hooks.json" 2>/dev/null \
       && grep -q 'mcp-proxy.mjs' "$trae_mcp" 2>/dev/null \
       && [ -f "$OV_HOME/agent-integrations/trae/scripts/trae-hook.mjs" ] \
       && [ -f "$OV_HOME/agent-integrations/trae/scripts/uri-guard.mjs" ] \
-      && [ -f "$OV_HOME/agent-integrations/trae/integration.json" ]; then
+      && [ -f "$OV_HOME/agent-integrations/trae/integration.json" ] \
+      && [ -f "$OV_HOME/agent-integrations/memory-plugin-shared/lib/hook-entry.mjs" ]; then
       "$NODE_BIN" --check "$OV_HOME/agent-integrations/trae/scripts/trae-hook.mjs" \
         || { ok=0; agent_fatal=1; }
       "$NODE_BIN" --check "$OV_HOME/agent-integrations/trae/scripts/uri-guard.mjs" \
         || { ok=0; agent_fatal=1; }
       if ! printf '%s' '{}' | env HOME="$HOME" OPENVIKING_MEMORY_ENABLED=0 \
-        "$NODE_BIN" "$OV_HOME/agent-integrations/trae/scripts/session-start.mjs" trae >/dev/null; then
+        "$NODE_BIN" "$OV_HOME/agent-integrations/memory-plugin-shared/lib/hook-entry.mjs" session-start trae >/dev/null; then
         warn "trae: $(t 'installed Hook runtime failed its smoke test' '已安装的 Hook 运行时 smoke test 失败')"
         ok=0; agent_fatal=1
       fi
@@ -3041,21 +3030,20 @@ EOF
   if contains_harness trae-cn; then
     local trae_cn_mcp
     trae_cn_mcp="$(trae_mcp_path trae-cn)"
-    if grep -q 'scripts/session-start.mjs' "$HOME/.trae-cn/hooks.json" 2>/dev/null \
-      && grep -q 'scripts/auto-recall.mjs' "$HOME/.trae-cn/hooks.json" 2>/dev/null \
-      && grep -q 'scripts/auto-capture.mjs' "$HOME/.trae-cn/hooks.json" 2>/dev/null \
+    if grep -q 'lib/hook-entry.mjs' "$HOME/.trae-cn/hooks.json" 2>/dev/null \
       && grep -q 'scripts/uri-guard.mjs' "$HOME/.trae-cn/hooks.json" 2>/dev/null \
       && grep -q 'OPENVIKING_INTEGRATION_ID' "$HOME/.trae-cn/hooks.json" 2>/dev/null \
       && grep -q 'mcp-proxy.mjs' "$trae_cn_mcp" 2>/dev/null \
       && [ -f "$OV_HOME/agent-integrations/trae-cn/scripts/trae-hook.mjs" ] \
       && [ -f "$OV_HOME/agent-integrations/trae-cn/scripts/uri-guard.mjs" ] \
-      && [ -f "$OV_HOME/agent-integrations/trae-cn/integration.json" ]; then
+      && [ -f "$OV_HOME/agent-integrations/trae-cn/integration.json" ] \
+      && [ -f "$OV_HOME/agent-integrations/memory-plugin-shared/lib/hook-entry.mjs" ]; then
       "$NODE_BIN" --check "$OV_HOME/agent-integrations/trae-cn/scripts/trae-hook.mjs" \
         || { ok=0; agent_fatal=1; }
       "$NODE_BIN" --check "$OV_HOME/agent-integrations/trae-cn/scripts/uri-guard.mjs" \
         || { ok=0; agent_fatal=1; }
       if ! printf '%s' '{}' | env HOME="$HOME" OPENVIKING_MEMORY_ENABLED=0 \
-        "$NODE_BIN" "$OV_HOME/agent-integrations/trae-cn/scripts/session-start.mjs" trae-cn >/dev/null; then
+        "$NODE_BIN" "$OV_HOME/agent-integrations/memory-plugin-shared/lib/hook-entry.mjs" session-start trae-cn >/dev/null; then
         warn "trae-cn: $(t 'installed Hook runtime failed its smoke test' '已安装的 Hook 运行时 smoke test 失败')"
         ok=0; agent_fatal=1
       fi
@@ -3097,21 +3085,20 @@ EOF
   fi
   if contains_harness zcode; then
     local zcode_config="$HOME/.zcode/cli/config.json"
-    if grep -q 'scripts/session-start.mjs' "$zcode_config" 2>/dev/null \
-      && grep -q 'scripts/auto-recall.mjs' "$zcode_config" 2>/dev/null \
-      && grep -q 'scripts/auto-capture.mjs' "$zcode_config" 2>/dev/null \
+    if grep -q 'lib/hook-entry.mjs' "$zcode_config" 2>/dev/null \
       && grep -q 'scripts/uri-guard.mjs' "$zcode_config" 2>/dev/null \
       && grep -q 'OPENVIKING_INTEGRATION_ID' "$zcode_config" 2>/dev/null \
       && grep -q 'mcp-proxy.mjs' "$zcode_config" 2>/dev/null \
       && [ -f "$OV_HOME/agent-integrations/zcode/scripts/zcode-hook.mjs" ] \
       && [ -f "$OV_HOME/agent-integrations/zcode/scripts/uri-guard.mjs" ] \
-      && [ -f "$OV_HOME/agent-integrations/zcode/integration.json" ]; then
+      && [ -f "$OV_HOME/agent-integrations/zcode/integration.json" ] \
+      && [ -f "$OV_HOME/agent-integrations/memory-plugin-shared/lib/hook-entry.mjs" ]; then
       "$NODE_BIN" --check "$OV_HOME/agent-integrations/zcode/scripts/zcode-hook.mjs" \
         || { ok=0; agent_fatal=1; }
       "$NODE_BIN" --check "$OV_HOME/agent-integrations/zcode/scripts/uri-guard.mjs" \
         || { ok=0; agent_fatal=1; }
       if ! printf '%s' '{}' | env HOME="$HOME" OPENVIKING_MEMORY_ENABLED=0 \
-        "$NODE_BIN" "$OV_HOME/agent-integrations/zcode/scripts/session-start.mjs" >/dev/null; then
+        "$NODE_BIN" "$OV_HOME/agent-integrations/memory-plugin-shared/lib/hook-entry.mjs" session-start zcode >/dev/null; then
         warn "zcode: $(t 'installed Hook runtime failed its smoke test' '已安装的 Hook 运行时 smoke test 失败')"
         ok=0; agent_fatal=1
       fi

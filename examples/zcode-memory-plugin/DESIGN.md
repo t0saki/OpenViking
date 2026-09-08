@@ -31,7 +31,7 @@ Unlike TRAE/Cursor (which import shared lib via cross-directory relative paths),
 
 `install_zcode()` writes hooks and MCP config into `~/.zcode/cli/config.json` (the config-file scope), not via plugin marketplace registration. This mirrors the Cursor/TRAE install pattern.
 
-`${ZCODE_PLUGIN_ROOT}` in the source `hooks/hooks.json` is replaced by absolute paths at install time by `renderHookCommand()` in `install.sh`, so the config-file "no template expansion" limitation does not apply.
+`__OPENVIKING_PLUGIN_ROOT__` in the source `hooks/hooks.json` is replaced by absolute paths at install time by `renderHookCommand()` in `install.sh`, so the config-file "no template expansion" limitation does not apply.
 
 **Provenance**: Adversarial review R4 — config-file hooks require `hooks.enabled: true`; the merge script sets this automatically.
 

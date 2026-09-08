@@ -77,6 +77,19 @@ test("release marketplace archive supports a ZCode TOS install", () => {
       "Stop",
     ]);
     assert.ok(config.mcp.servers.openviking);
+
+    // The hook commands point across the plugin boundary at the runtime the
+    // installer assembles from the archive, so an entry the manifest forgot to
+    // carry is a hooks.json naming a script that is not there.
+    const commands = JSON.stringify(config.hooks.events)
+      .split(/"/u)
+      .filter((part) => part.includes("# openviking-memory"));
+    assert.ok(commands.length > 0, "no OpenViking hook commands were installed");
+    for (const command of commands) {
+      const script = /'([^']*\.mjs)'/u.exec(command)?.[1];
+      assert.ok(script, `${command} names no script`);
+      assert.ok(existsSync(script), `${script} is missing after install`);
+    }
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }

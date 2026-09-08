@@ -2,7 +2,7 @@
   "mcpServers": {
     "openviking": {
       "command": "node",
-      "args": ["servers/mcp-proxy.mjs"]
+      "args": ["__OPENVIKING_PLUGIN_ROOT__/servers/mcp-proxy.mjs"]
     }
   }
 }

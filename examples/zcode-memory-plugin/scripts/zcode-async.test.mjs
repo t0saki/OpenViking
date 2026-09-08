@@ -7,7 +7,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-const hook = fileURLToPath(new URL("./auto-capture.mjs", import.meta.url));
+const hook = fileURLToPath(new URL("../../memory-plugin-shared/lib/hook-entry.mjs", import.meta.url));
 
 // Mirrors OPENVIKING_TIMEOUT_MS below: the parent must never stall this long.
 const HOOK_TIMEOUT_MS = 5000;
@@ -35,7 +35,7 @@ function waitFor(predicate, timeoutMs = 5000) {
 
 function runHook(input, env) {
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, [hook], {
+    const child = spawn(process.execPath, [hook, "stop", "zcode"], {
       env: { ...process.env, ...env },
       stdio: ["pipe", "pipe", "pipe"],
     });
@@ -84,7 +84,7 @@ test("Stop returns before slow writes while detached worker finishes capture", a
   );
 
   const startedAt = Date.now();
-  const child = spawn(process.execPath, [hook], {
+  const child = spawn(process.execPath, [hook, "stop", "zcode"], {
     env: {
       ...process.env,
       HOME: home,

@@ -11,17 +11,11 @@ import { parseCursorTranscript } from "./cursor-transcript.mjs";
 import { evaluateCursorUriGuard } from "./uri-guard.mjs";
 
 const pluginRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const hookEntry = resolve(pluginRoot, "..", "memory-plugin-shared", "lib", "hook-entry.mjs");
 
 function runHook(event, input, env) {
-  const entrypoint = {
-    sessionStart: "session-start.mjs",
-    beforeSubmitPrompt: "auto-recall.mjs",
-    stop: "auto-capture.mjs",
-    preCompact: "pre-compact.mjs",
-    sessionEnd: "session-end.mjs",
-  }[event];
   return new Promise((resolveRun, reject) => {
-    const child = spawn(process.execPath, [join(pluginRoot, "scripts", entrypoint)], {
+    const child = spawn(process.execPath, [hookEntry, event, "cursor"], {
       env: { ...process.env, ...env },
       stdio: ["pipe", "pipe", "pipe"],
     });
@@ -45,11 +39,6 @@ test("Cursor command-installed integration contains Hook, Rule, Skill, and MCP e
     ".mcp.json",
     "openviking.integration.json",
     "scripts/cursor-hook.mjs",
-    "scripts/session-start.mjs",
-    "scripts/auto-recall.mjs",
-    "scripts/auto-capture.mjs",
-    "scripts/pre-compact.mjs",
-    "scripts/session-end.mjs",
     "scripts/cursor-transcript.mjs",
     "scripts/uri-guard.mjs",
     "servers/mcp-proxy.mjs",

@@ -11,6 +11,7 @@ import { buildTraeTurns, cleanTraeText } from "./trae-turns.mjs";
 import { evaluateTraeUriGuard } from "./uri-guard.mjs";
 
 const pluginRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
+const hookEntry = join(pluginRoot, "..", "memory-plugin-shared", "lib", "hook-entry.mjs");
 
 test("TRAE integration contains native Hook and MCP declarations", () => {
   for (const file of [
@@ -18,9 +19,6 @@ test("TRAE integration contains native Hook and MCP declarations", () => {
     ".mcp.json",
     "openviking.integration.json",
     "scripts/trae-hook.mjs",
-    "scripts/session-start.mjs",
-    "scripts/auto-recall.mjs",
-    "scripts/auto-capture.mjs",
     "scripts/uri-guard.mjs",
   ]) {
     assert.ok(existsSync(join(pluginRoot, file)), `${file} must exist`);
@@ -54,13 +52,8 @@ test("TRAE URI guard follows the Claude Code PreToolUse response contract", () =
 });
 
 function runHook(event, client, input, env) {
-  const entrypoint = {
-    "session-start": "session-start.mjs",
-    "user-prompt-submit": "auto-recall.mjs",
-    stop: "auto-capture.mjs",
-  }[event];
   return new Promise((resolveRun, reject) => {
-    const child = spawn(process.execPath, [join(pluginRoot, "scripts", entrypoint), client], {
+    const child = spawn(process.execPath, [hookEntry, event, client], {
       env: { ...process.env, ...env },
       stdio: ["pipe", "pipe", "pipe"],
     });

@@ -90,30 +90,33 @@ test("uri guard returns empty for unmatched tool name", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Source-file conventions: hooks.json and .mcp.json must use ZCODE_PLUGIN_ROOT
-// (not CLAUDE_PLUGIN_ROOT) in a .zcode-plugin/ plugin for naming consistency.
+// Source-file conventions: the installer expands the plugin root, and it knows
+// one spelling of it. A host-specific spelling reaches ZCode verbatim, where
+// nothing expands it.
 // ---------------------------------------------------------------------------
 
-test("hooks.json uses ZCODE_PLUGIN_ROOT, not CLAUDE_PLUGIN_ROOT", () => {
+const HOST_ROOT_VARIABLE = /(?:CLAUDE|CURSOR|ZCODE)_PLUGIN_ROOT/u;
+
+test("hooks.json templates the plugin root the installer expands", () => {
   const hooksJson = readFileSync(join(PLUGIN_ROOT, "hooks", "hooks.json"), "utf8");
   assert.ok(
-    !hooksJson.includes("CLAUDE_PLUGIN_ROOT"),
-    "hooks.json should use ${ZCODE_PLUGIN_ROOT}, not ${CLAUDE_PLUGIN_ROOT}",
+    !HOST_ROOT_VARIABLE.test(hooksJson),
+    "hooks.json should use __OPENVIKING_PLUGIN_ROOT__, not a host-specific root variable",
   );
   assert.ok(
-    hooksJson.includes("ZCODE_PLUGIN_ROOT"),
-    "hooks.json should reference ${ZCODE_PLUGIN_ROOT}",
+    hooksJson.includes("__OPENVIKING_PLUGIN_ROOT__"),
+    "hooks.json should reference __OPENVIKING_PLUGIN_ROOT__",
   );
 });
 
-test(".mcp.json uses ZCODE_PLUGIN_ROOT, not CLAUDE_PLUGIN_ROOT", () => {
+test(".mcp.json templates the plugin root the installer expands", () => {
   const mcpJson = readFileSync(join(PLUGIN_ROOT, ".mcp.json"), "utf8");
   assert.ok(
-    !mcpJson.includes("CLAUDE_PLUGIN_ROOT"),
-    ".mcp.json should use ${ZCODE_PLUGIN_ROOT}, not ${CLAUDE_PLUGIN_ROOT}",
+    !HOST_ROOT_VARIABLE.test(mcpJson),
+    ".mcp.json should use __OPENVIKING_PLUGIN_ROOT__, not a host-specific root variable",
   );
   assert.ok(
-    mcpJson.includes("ZCODE_PLUGIN_ROOT"),
-    ".mcp.json should reference ${ZCODE_PLUGIN_ROOT}",
+    mcpJson.includes("__OPENVIKING_PLUGIN_ROOT__"),
+    ".mcp.json should reference __OPENVIKING_PLUGIN_ROOT__",
   );
 });
