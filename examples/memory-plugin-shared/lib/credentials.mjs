@@ -6,6 +6,8 @@ import { fileURLToPath } from "node:url";
 const DEFAULT_OVCLI_CONF_PATH = join(homedir(), ".openviking", "ovcli.conf");
 const DEFAULT_OV_CONF_PATH = join(homedir(), ".openviking", "ov.conf");
 const DEFAULT_BASE_URL = "http://127.0.0.1:1933";
+const DEFAULT_TIMEOUT_MS = 15000;
+const MIN_TIMEOUT_MS = 1000;
 
 function str(val, fallback = "") {
   if (typeof val === "string" && val.trim()) return val.trim();
@@ -281,6 +283,70 @@ export function resolveOpenVikingCredentials(env = process.env, harness = "codex
     user,
     peerId,
     hasApiKey: Boolean(apiKey),
+  };
+}
+
+function envFlag(env, name) {
+  const raw = str(env[name], "").toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes";
+}
+
+function clampTimeout(value) {
+  const raw = str(value, "");
+  const parsed = raw ? Number(raw) : NaN;
+  return Math.max(MIN_TIMEOUT_MS, Math.floor(Number.isFinite(parsed) ? parsed : DEFAULT_TIMEOUT_MS));
+}
+
+/**
+ * Everything a stdio MCP proxy needs, for a package that ships no hooks.
+ *
+ * `buildPluginConfig` answers the same question one layer up, but reaching it
+ * means vendoring the knob schema and the workspace layers — a closure the
+ * portable agent-plugins bundle would carry in git to send one HTTP header.
+ * This is the connection half alone: the credential chain, the auth mode that
+ * decides whether the identity headers may go on the wire, the User-Agent, the
+ * request timeout, and the debug log.
+ *
+ * The api_key ends at `server.root_api_key` even when ovcli.conf pinned the
+ * chain to itself. A portable package has no installer to migrate anyone, so
+ * an install that names only a `url` there keeps the key it has always used.
+ */
+export function buildProxyConnection(harness, { env = process.env, manifestUrl = "", version = "" } = {}) {
+  const name = str(harness);
+  const credentials = resolveOpenVikingCredentials(env, name);
+
+  let { apiKey, apiKeySource, credentialPath } = credentials;
+  if (!apiKey) {
+    apiKey = str(credentials.ovFile?.server?.root_api_key);
+    if (apiKey) {
+      apiKeySource = "ov";
+      credentialPath = credentials.ovPath;
+    }
+  }
+
+  return {
+    harness: name,
+    userAgent: buildUserAgent(name, str(version) || (manifestUrl ? readManifestVersion(manifestUrl) : "")),
+    baseUrl: credentials.baseUrl,
+    mcpUrl: credentials.mcpUrl,
+    apiKey,
+    account: credentials.account,
+    user: credentials.user,
+    peerId: credentials.peerId,
+    ...resolveAuthMode({
+      ovFile: credentials.ovFile,
+      account: credentials.account,
+      user: credentials.user,
+    }),
+    credentialSource: credentials.credentialSource,
+    apiKeySource,
+    credentialPath,
+    hasApiKey: Boolean(apiKey),
+    watchedPaths: [credentials.cliPath, credentials.ovPath, credentials.cliPathCandidate],
+    timeoutMs: clampTimeout(env.OPENVIKING_TIMEOUT_MS),
+    debug: envFlag(env, "OPENVIKING_DEBUG"),
+    debugLogPath: str(env.OPENVIKING_DEBUG_LOG)
+      || join(homedir(), ".openviking", "logs", `${name}.log`),
   };
 }
 

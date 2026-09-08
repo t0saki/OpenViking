@@ -67,6 +67,24 @@ test("git holds the copies the directory-installed plugins need, and no others",
   }
 });
 
+// The portable bundle is the one target whose copies are both committed and
+// carried by hosts that install it as a plain directory, so every module it
+// reaches is committed code a reviewer reads. It has no hooks and no knobs; the
+// connection half of the shared loader (`buildProxyConnection`) is what keeps
+// it at five modules instead of the whole schema-and-workspace closure.
+test("the portable agent-plugins bundle stays connection-only", async () => {
+  const target = (await resolveTargets())
+    .find((entry) => relative(ROOT, entry.dir) === join("agent-plugins", "servers", "shared"));
+  assert.ok(target, "the agent-plugins bundle must stay a sync target");
+  assert.deepEqual(target.files, [
+    "credentials.mjs",
+    "debug-log.mjs",
+    "mcp-proxy-config.mjs",
+    "mcp-proxy-core.mjs",
+    "ov-http.mjs",
+  ]);
+});
+
 // A module lib/ carries that no plugin reaches is a capability with no consumer:
 // either a harness lost its wiring, or the module should go.
 test("every shared module is reachable from some plugin", async () => {

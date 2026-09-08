@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { buildProxyConnection } from "./lib/credentials.mjs";
 import {
   buildMcpProxyConfig,
   DEFAULT_PROXY_TIMEOUT_MS,
@@ -208,4 +210,87 @@ test("the identity headers follow the auth mode, not a resolved account", async 
   await proxyFor({ sendIdentityHeaders: true }).handleMessage({ ...initialize });
   assert.equal(sent[1]["X-OpenViking-Account"], "acme");
   assert.equal(sent[1]["X-OpenViking-User"], "alice");
+});
+
+async function credentialFiles(prefix, { ovcli, ov }) {
+  const dir = await mkdtemp(join(tmpdir(), prefix));
+  const cliPath = join(dir, "ovcli.conf");
+  const ovPath = join(dir, "ov.conf");
+  await writeFile(cliPath, JSON.stringify(ovcli, null, 2) + "\n");
+  await writeFile(ovPath, JSON.stringify(ov, null, 2) + "\n");
+  return {
+    dir,
+    cliPath,
+    ovPath,
+    env: { OPENVIKING_CLI_CONFIG_FILE: cliPath, OPENVIKING_CONFIG_FILE: ovPath },
+  };
+}
+
+// The portable bundle ships without an installer, so nobody moves a working
+// install's key out of ov.conf for it. ovcli.conf naming only a url pins the
+// credential chain to that file, and the chain has to keep going anyway.
+test("a portable proxy keeps the server key when ovcli.conf names only a url", async () => {
+  const files = await credentialFiles("ov-proxy-rootkey-", {
+    ovcli: { url: "https://ov.example.com" },
+    ov: { server: { root_api_key: "root-key" } },
+  });
+  try {
+    const cfg = buildProxyConnection("agent-plugins", { env: files.env });
+    assert.equal(cfg.baseUrl, "https://ov.example.com");
+    assert.equal(cfg.mcpUrl, "https://ov.example.com/mcp");
+    assert.equal(cfg.apiKey, "root-key");
+    assert.equal(cfg.hasApiKey, true);
+    assert.equal(cfg.apiKeySource, "ov");
+    assert.equal(cfg.credentialPath, files.ovPath);
+    assert.equal(cfg.credentialSource, "ovcli", "the mode is still what the chain ran in");
+  } finally {
+    await rm(files.dir, { recursive: true, force: true });
+  }
+});
+
+test("a portable proxy reports the auth mode, its own log path, and the files to watch", async () => {
+  const files = await credentialFiles("ov-proxy-shape-", {
+    ovcli: { url: "https://ov.example.com", api_key: "cli-key", account: "acme", user: "alice" },
+    ov: {},
+  });
+  try {
+    const cfg = buildProxyConnection("agent-plugins", { env: files.env, version: "1.2.3" });
+    assert.equal(cfg.apiKeySource, "ovcli");
+    assert.equal(cfg.authMode, "trusted", "a credential layer supplied an identity");
+    assert.equal(cfg.sendIdentityHeaders, true);
+    assert.equal(cfg.userAgent, "openviking-memory-agent-plugins/1.2.3");
+    assert.equal(cfg.timeoutMs, DEFAULT_PROXY_TIMEOUT_MS);
+    assert.equal(cfg.debug, false);
+    assert.equal(
+      cfg.debugLogPath,
+      join(homedir(), ".openviking", "logs", "agent-plugins.log"),
+    );
+    assert.deepEqual(
+      buildMcpProxyConfig({ watchedPaths: cfg.watchedPaths, env: files.env }).watchedPaths,
+      [files.cliPath, files.ovPath, OVCLI, OV],
+    );
+
+    const named = buildProxyConnection("agent-plugins", {
+      env: { ...files.env, OPENVIKING_DEBUG: "1", OPENVIKING_DEBUG_LOG: "/tmp/ov.log", OPENVIKING_TIMEOUT_MS: "60000" },
+    });
+    assert.equal(named.debug, true);
+    assert.equal(named.debugLogPath, "/tmp/ov.log");
+    assert.equal(named.timeoutMs, 60000);
+  } finally {
+    await rm(files.dir, { recursive: true, force: true });
+  }
+});
+
+test("an api_key deployment keeps the operator's identity off the wire", async () => {
+  const files = await credentialFiles("ov-proxy-apikey-", {
+    ovcli: { url: "https://ov.example.com", api_key: "cli-key", account: "acme" },
+    ov: { server: { auth_mode: "api_key" } },
+  });
+  try {
+    const cfg = buildProxyConnection("agent-plugins", { env: files.env });
+    assert.equal(cfg.authMode, "api_key");
+    assert.equal(cfg.sendIdentityHeaders, false);
+  } finally {
+    await rm(files.dir, { recursive: true, force: true });
+  }
 });

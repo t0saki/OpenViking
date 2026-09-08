@@ -30,3 +30,31 @@ export function resolveOpenVikingCredentials(
   peerId: string;
   hasApiKey: boolean;
 };
+
+export function buildProxyConnection(
+  harness: string,
+  options?: {
+    env?: Record<string, string | undefined>;
+    manifestUrl?: string | URL;
+    version?: string;
+  },
+): {
+  harness: string;
+  userAgent: string;
+  baseUrl: string;
+  mcpUrl: string;
+  apiKey: string;
+  account: string;
+  user: string;
+  peerId: string;
+  authMode: string;
+  sendIdentityHeaders: boolean;
+  credentialSource: string;
+  apiKeySource: string;
+  credentialPath: string;
+  hasApiKey: boolean;
+  watchedPaths: string[];
+  timeoutMs: number;
+  debug: boolean;
+  debugLogPath: string;
+};
