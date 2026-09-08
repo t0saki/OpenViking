@@ -17,7 +17,6 @@
  * Exit code 1 when any check fails, 0 otherwise. Never prints a full api key.
  */
 
-import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -25,13 +24,11 @@ import { fileURLToPath } from "node:url";
 import { isPluginEnabled, loadConfig } from "./config.mjs";
 import { STATE_DIR } from "./lib/state.mjs";
 import {
-  assessProbes,
-  checkServerHealth,
   collectEnv,
   countDirEntries,
-  createReport,
   describeApiKey,
   existsPath,
+  expandHome,
   fileInfo,
   fmtAge,
   fmtBytes,
@@ -39,16 +36,14 @@ import {
   inspectJsonFile,
   isLoopbackUrl,
   lintBaseUrl,
-  parseNodeMajor,
-  probeOpenViking,
   readStateFiles,
   runCommand,
+  runDoctor,
   scanDebugLog,
   scanRcFiles,
+  tryJson,
   unknownOvcliKeys,
   unknownPluginKeys,
-  whichCommand,
-  checkWorkspace,
   lintPeerScopeDowngrade,
   WORKSPACE_PEER_HINT,
 } from "./shared/doctor-core.mjs";
@@ -61,38 +56,8 @@ const PLUGIN_NAME = "openviking-memory";
 const MARKETPLACE = "openviking";
 const LEGACY_MARKETPLACE = "openviking-plugins-local";
 const CLAUDE_DIR = join(homedir(), ".claude");
-const RC_MARKERS = ["# >>> openviking claude-code memory plugin >>>", "# >>> openviking-codex-plugin >>>"];
 const STATE_FILES = ["last-recall.json", "last-capture.json", "last-session-event.json", "daily-stats.json", "server-probe.json", "host-cli-probe.json", "context-face.json"];
 const REQUIRED_PLUGIN_FILES = [".claude-plugin/plugin.json", "hooks/hooks.json", ".mcp.json", "servers/mcp-proxy.mjs", "scripts/config.mjs", "scripts/auto-recall.mjs", "scripts/auto-capture.mjs"];
-
-function parseArgs(argv) {
-  const opts = { json: false, offline: false, timeoutMs: 5000, color: process.stdout.isTTY && !process.env.NO_COLOR };
-  for (let i = 0; i < argv.length; i += 1) {
-    const arg = argv[i];
-    if (arg === "--json") opts.json = true;
-    else if (arg === "--offline" || arg === "--no-network") opts.offline = true;
-    else if (arg === "--no-color") opts.color = false;
-    else if (arg === "--timeout") opts.timeoutMs = Math.max(1000, Number(argv[++i]) || 5000);
-    else if (arg === "-h" || arg === "--help") {
-      console.log("usage: ov-memory-doctor.mjs [--json] [--offline] [--timeout <ms>] [--no-color]");
-      process.exit(0);
-    }
-  }
-  if (opts.json) opts.color = false;
-  return opts;
-}
-
-function expandHome(p) {
-  return p ? resolvePath(p.replace(/^~(?=$|\/)/, homedir())) : p;
-}
-
-function tryJson(path) {
-  try {
-    return JSON.parse(readFileSync(path, "utf-8"));
-  } catch {
-    return null;
-  }
-}
 
 function envBoolValue(name) {
   const v = process.env[name];
@@ -107,33 +72,7 @@ function envBoolValue(name) {
 // Sections
 // ---------------------------------------------------------------------------
 
-function checkEnvironment(report) {
-  report.section("Environment");
-  const nodeMajor = parseNodeMajor(process.version);
-  const nodePath = process.execPath;
-  if (nodeMajor >= 18) report.ok(`node ${process.version} (${nodePath})`);
-  else report.fail(`node ${process.version} is too old`, "hooks and the MCP proxy need Node.js 18+ (global fetch)", "install Node.js 18 or newer and make sure it is first on PATH");
-  const nodeOnPath = whichCommand("node");
-  if (!nodeOnPath) {
-    report.warn("`node` is not on PATH for this process", "hooks and .mcp.json invoke the bare command `node`; if Claude Code was launched without your shell profile (nvm/volta/fnm), hooks never start",
-      "put node on PATH for the environment that launches Claude Code, or set PATH in the `env` block of ~/.claude/settings.json");
-  } else if (resolvePath(nodeOnPath) !== resolvePath(nodePath)) {
-    report.info(`PATH resolves node to ${nodeOnPath} (this run used ${nodePath})`);
-  }
-
-  const claude = runCommand("claude", ["--version"], { timeoutMs: 15000 });
-  if (claude.ok) {
-    report.ok(`claude ${claude.stdout.split("\n")[0]}`);
-    const plugin = runCommand("claude", ["plugin", "--help"], { timeoutMs: 15000 });
-    if (!plugin.ok) report.warn("`claude plugin` subcommand unavailable", "this Claude Code build predates the plugin system; only the legacy settings.json hook install works", "upgrade Claude Code to 2.0+");
-  } else {
-    report.info(`claude CLI not found on PATH (${claude.error || "?"}) — install checks that need it are skipped`);
-  }
-  report.info(`platform ${process.platform} ${process.arch}, cwd ${homeShort(process.cwd())}`);
-  return { claudeOnPath: claude.ok };
-}
-
-function checkInstall(report, { claudeOnPath }) {
+function checkInstall(report, { cliOnPath }) {
   report.section("Plugin install");
   const manifest = tryJson(join(PLUGIN_ROOT, ".claude-plugin", "plugin.json"));
   const version = manifest?.version || "?";
@@ -263,12 +202,7 @@ function checkInstall(report, { claudeOnPath }) {
     report.warn("a user-scope MCP server named 'openviking' is registered besides the plugin's", JSON.stringify(userMcp).slice(0, 160),
       "claude mcp remove openviking -s user (the plugin ships its own MCP server)");
   }
-  const rc = scanRcFiles(RC_MARKERS);
-  const blocks = rc.filter((h) => h.kind === "block");
-  if (blocks.length) {
-    report.warn("shell rc files still carry a legacy openviking wrapper block", blocks.map((h) => `${h.file}: ${h.detail}`).join("\n"),
-      "delete the block between the >>> and <<< markers; it exports stale OPENVIKING_* values that override ovcli.conf");
-  }
+  const rc = scanRcFiles([]);
   const CONNECTION_VARS = /^OPENVIKING_(URL|BASE_URL|API_KEY|BEARER_TOKEN|ACCOUNT|USER|MEMORY_ENABLED|CONFIG_FILE|CLI_CONFIG_FILE|HOME)$/;
   for (const h of rc.filter((h) => h.kind === "export")) {
     const conn = h.vars.filter((v) => CONNECTION_VARS.test(v));
@@ -276,7 +210,7 @@ function checkInstall(report, { claudeOnPath }) {
     else report.info(`${h.file} exports ${h.detail}`);
   }
 
-  if (claudeOnPath) {
+  if (cliOnPath) {
     const list = runCommand("claude", ["plugin", "list", "--json"], { timeoutMs: 30000 });
     if (list.ok) {
       let rows = [];
@@ -432,18 +366,6 @@ function checkConfig(report, cfg) {
   return { keyInfo, cliConf, ovConf, peer };
 }
 
-async function checkConnection(report, cfg, { keyInfo, peer }, opts) {
-  report.section("Connection");
-  if (opts.offline) {
-    report.info("skipped (--offline)");
-    return null;
-  }
-  const conn = { baseUrl: cfg.baseUrl, apiKey: cfg.apiKey, account: cfg.sendIdentityHeaders ? cfg.accountId : "", user: cfg.sendIdentityHeaders ? cfg.userId : "", peerId: peer.peerId, userAgent: cfg.userAgent };
-  const probes = await probeOpenViking(conn, { timeoutMs: opts.timeoutMs });
-  const summary = assessProbes(report, probes, conn, keyInfo);
-  return { probes, summary };
-}
-
 function checkActivity(report, cfg, connection) {
   report.section("Recent activity");
   const inject = fileInfo(join(homedir(), ".openviking", "last_inject.md"));
@@ -503,44 +425,25 @@ function checkActivity(report, cfg, connection) {
 
 // ---------------------------------------------------------------------------
 
-async function main() {
-  const opts = parseArgs(process.argv.slice(2));
-  const report = createReport({ color: opts.color });
-  const envInfo = checkEnvironment(report);
-  checkInstall(report, envInfo);
-  const cfg = loadConfig();
-  const configInfo = checkConfig(report, cfg);
-  const workspace = checkWorkspace(report);
-  const connection = await checkConnection(report, cfg, configInfo, opts);
-  const serverHealth = await checkServerHealth(report, { baseUrl: cfg.baseUrl, ovConf: configInfo.ovConf, health: connection?.probes?.health, offline: opts.offline, timeoutMs: opts.timeoutMs });
-  checkActivity(report, cfg, connection);
+const HOST = {
+  harness: "claude-code",
+  pluginRoot: PLUGIN_ROOT,
+  cliName: "claude",
+  launcherHint: "Claude Code",
+  nodePathFix: "put node on PATH for the environment that launches Claude Code, or set PATH in the `env` block of ~/.claude/settings.json",
+  onCliFound(report, cli) {
+    report.ok(`claude ${cli.stdout.split("\n")[0]}`);
+    const plugin = runCommand("claude", ["plugin", "--help"], { timeoutMs: 15000 });
+    if (!plugin.ok) report.warn("`claude plugin` subcommand unavailable", "this Claude Code build predates the plugin system; only the legacy settings.json hook install works", "upgrade Claude Code to 2.0+");
+  },
+  loadConfig,
+  checkInstall,
+  checkConfig,
+  checkActivity,
+  resolveIdentity: (cfg) => ({ account: cfg.accountId, user: cfg.userId }),
+};
 
-  if (opts.json) {
-    const out = {
-      harness: "claude-code",
-      pluginRoot: PLUGIN_ROOT,
-      generatedAt: new Date().toISOString(),
-      resolved: {
-        baseUrl: cfg.baseUrl,
-        apiKey: configInfo.keyInfo.display,
-        apiKeyFormat: configInfo.keyInfo.format,
-        account: cfg.accountId,
-        user: cfg.userId,
-        peerId: configInfo.peer.peerId,
-      },
-      workspace,
-      server: connection?.summary || null,
-      serverHealth,
-      ...report.toJSON(),
-    };
-    console.log(JSON.stringify(out, null, 2));
-  } else {
-    console.log(report.render());
-  }
-  process.exitCode = report.exitCode();
-}
-
-main().catch((err) => {
+runDoctor(HOST).catch((err) => {
   console.error("ov-memory-doctor failed:", err?.stack || err?.message || err);
   process.exit(2);
 });

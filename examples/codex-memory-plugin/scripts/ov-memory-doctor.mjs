@@ -25,27 +25,23 @@ import { fileURLToPath } from "node:url";
 import { loadConfig } from "./config.mjs";
 import { getStateDir } from "./session-state.mjs";
 import {
-  assessProbes,
-  checkServerHealth,
   collectEnv,
-  createReport,
   describeApiKey,
   existsPath,
+  expandHome,
   fmtAge,
   fmtBytes,
   homeShort,
   inspectJsonFile,
   isLoopbackUrl,
   lintBaseUrl,
-  parseNodeMajor,
-  probeOpenViking,
   runCommand,
+  runDoctor,
   scanDebugLog,
   scanRcFiles,
+  tryJson,
   unknownOvcliKeys,
   unknownPluginKeys,
-  whichCommand,
-  checkWorkspace,
   lintPeerScopeDowngrade,
   WORKSPACE_PEER_HINT,
 } from "./shared/doctor-core.mjs";
@@ -60,33 +56,7 @@ const CODEX_DIR = join(homedir(), ".codex");
 const CODEX_CONFIG = process.env.CODEX_CONFIG_FILE || join(CODEX_DIR, "config.toml");
 const CACHE_DIR = join(CODEX_DIR, "plugins", "cache", MARKETPLACE, PLUGIN_NAME);
 const HOOK_EVENTS = ["session_start", "user_prompt_submit", "stop", "session_end", "pre_compact"];
-const RC_MARKERS = ["# >>> openviking-codex-plugin >>>", "codex-plugin.rc.sh"];
 const REQUIRED_PLUGIN_FILES = [".codex-plugin/plugin.json", "hooks/hooks.json", ".mcp.json", "servers/mcp-proxy.mjs", "scripts/config.mjs", "scripts/auto-recall.mjs", "scripts/auto-capture.mjs", "scripts/session-end.mjs", "scripts/ov-session.mjs"];
-
-function parseArgs(argv) {
-  const opts = { json: false, offline: false, timeoutMs: 5000, color: process.stdout.isTTY && !process.env.NO_COLOR };
-  for (let i = 0; i < argv.length; i += 1) {
-    const arg = argv[i];
-    if (arg === "--json") opts.json = true;
-    else if (arg === "--offline" || arg === "--no-network") opts.offline = true;
-    else if (arg === "--no-color") opts.color = false;
-    else if (arg === "--timeout") opts.timeoutMs = Math.max(1000, Number(argv[++i]) || 5000);
-    else if (arg === "-h" || arg === "--help") {
-      console.log("usage: ov-memory-doctor.mjs [--json] [--offline] [--timeout <ms>] [--no-color]");
-      process.exit(0);
-    }
-  }
-  if (opts.json) opts.color = false;
-  return opts;
-}
-
-function tryJson(path) {
-  try {
-    return JSON.parse(readFileSync(path, "utf-8"));
-  } catch {
-    return null;
-  }
-}
 
 /**
  * Minimal TOML reader — enough for config.toml's [section] headers (including
@@ -127,20 +97,6 @@ function readToml(path) {
 // ---------------------------------------------------------------------------
 // Sections
 // ---------------------------------------------------------------------------
-
-function checkEnvironment(report) {
-  report.section("Environment");
-  const nodeMajor = parseNodeMajor(process.version);
-  if (nodeMajor >= 18) report.ok(`node ${process.version} (${process.execPath})`);
-  else report.fail(`node ${process.version} is too old`, "hooks and the MCP proxy need Node.js 18+ (global fetch)", "install Node.js 18 or newer");
-  if (!whichCommand("node")) report.warn("`node` is not on PATH for this process", "hooks and .mcp.json invoke the bare command `node`", "put node on PATH for the environment that launches Codex");
-
-  const codex = runCommand("codex", ["--version"], { timeoutMs: 15000 });
-  if (codex.ok) report.ok(codex.stdout.split("\n")[0]);
-  else report.info(`codex CLI not found on PATH (${codex.error || "?"}) — install checks that need it are skipped`);
-  report.info(`platform ${process.platform} ${process.arch}, cwd ${homeShort(process.cwd())}`);
-  return { codexOnPath: codex.ok };
-}
 
 export function parseFeaturesList(stdout) {
   const map = new Map();
@@ -217,7 +173,7 @@ export function assessHooksFeature(features, cliFeatures = null) {
   };
 }
 
-function checkInstall(report, { codexOnPath }) {
+function checkInstall(report, { cliOnPath }) {
   report.section("Plugin install");
   const manifest = tryJson(join(PLUGIN_ROOT, ".codex-plugin", "plugin.json"));
   const version = manifest?.version || "?";
@@ -240,7 +196,7 @@ function checkInstall(report, { codexOnPath }) {
 
   // codex CLI view
   let listed = null;
-  if (codexOnPath) {
+  if (cliOnPath) {
     const list = runCommand("codex", ["plugin", "list", "--json"], { timeoutMs: 30000 });
     if (list.ok) {
       const rows = tryJsonText(list.stdout)?.installed || [];
@@ -286,7 +242,7 @@ function checkInstall(report, { codexOnPath }) {
     report.warn(`${homeShort(CODEX_CONFIG)} not found`, "Codex has never been configured on this machine");
   } else {
     let cliFeatures = null;
-    if (codexOnPath) {
+    if (cliOnPath) {
       const featRes = runCommand("codex", ["features", "list"], { timeoutMs: 5000 });
       if (featRes.ok) cliFeatures = parseFeaturesList(featRes.stdout);
     }
@@ -329,9 +285,7 @@ function checkInstall(report, { codexOnPath }) {
   }
 
   // Legacy artifacts
-  const rc = scanRcFiles(RC_MARKERS);
-  const blocks = rc.filter((h) => h.kind === "block");
-  if (blocks.length) report.warn("shell rc files still source the legacy codex wrapper", blocks.map((h) => `${h.file}: ${h.detail}`).join("\n"), "remove the block; it exports stale OPENVIKING_* values that override ovcli.conf");
+  const rc = scanRcFiles([]);
   const CONNECTION_VARS = /^OPENVIKING_(URL|BASE_URL|API_KEY|BEARER_TOKEN|ACCOUNT|USER|CONFIG_FILE|CLI_CONFIG_FILE|CREDENTIAL_SOURCE|HOME)$/;
   for (const h of rc.filter((h) => h.kind === "export")) {
     const conn = h.vars.filter((v) => CONNECTION_VARS.test(v));
@@ -375,9 +329,8 @@ function credentialSources(cfg, cliConf, ovConf) {
 
 function checkConfig(report, cfg) {
   report.section("Configuration");
-  const expand = (p) => (p ? resolvePath(p.replace(/^~(?=$|\/)/, homedir())) : p);
-  const cliPath = expand(process.env.OPENVIKING_CLI_CONFIG_FILE || join(homedir(), ".openviking", "ovcli.conf"));
-  const ovPath = expand(process.env.OPENVIKING_CONFIG_FILE || join(homedir(), ".openviking", "ov.conf"));
+  const cliPath = expandHome(process.env.OPENVIKING_CLI_CONFIG_FILE || join(homedir(), ".openviking", "ovcli.conf"));
+  const ovPath = expandHome(process.env.OPENVIKING_CONFIG_FILE || join(homedir(), ".openviking", "ov.conf"));
   const cliConf = inspectJsonFile(cliPath);
   const ovConf = inspectJsonFile(ovPath);
 
@@ -474,21 +427,6 @@ function checkConfig(report, cfg) {
   return { keyInfo, peer, ovConf };
 }
 
-async function checkConnection(report, cfg, { keyInfo, peer }, opts) {
-  report.section("Connection");
-  if (opts.offline) {
-    report.info("skipped (--offline)");
-    return null;
-  }
-  const conn = { baseUrl: cfg.baseUrl, apiKey: cfg.apiKey, account: cfg.sendIdentityHeaders ? cfg.account : "", user: cfg.sendIdentityHeaders ? cfg.user : "", peerId: peer.peerId, userAgent: cfg.userAgent };
-  const probes = await probeOpenViking(conn, { timeoutMs: opts.timeoutMs });
-  const summary = assessProbes(report, probes, { ...conn, account: cfg.account, user: cfg.user }, keyInfo);
-  if (summary.authMode && summary.authMode !== "dev" && summary.authMode !== cfg.authMode) {
-    report.warn(`plugin auth mode '${cfg.authMode}' differs from the server's '${summary.authMode}'`, cfg.authMode === "trusted" ? "identity headers are sent but the server ignores them in api_key mode" : "the server expects X-OpenViking-Account/User headers", "set account/user in ovcli.conf for trusted servers, or remove them (or set OPENVIKING_AUTH_MODE) for api_key servers");
-  }
-  return { probes, summary };
-}
-
 function checkActivity(report, cfg, connection) {
   report.section("Recent activity");
   const stateDir = getStateDir();
@@ -545,43 +483,23 @@ function checkActivity(report, cfg, connection) {
 
 // ---------------------------------------------------------------------------
 
-async function main() {
-  const opts = parseArgs(process.argv.slice(2));
-  const report = createReport({ color: opts.color });
-  const envInfo = checkEnvironment(report);
-  checkInstall(report, envInfo);
-  const cfg = loadConfig();
-  const configInfo = checkConfig(report, cfg);
-  const workspace = checkWorkspace(report);
-  const connection = await checkConnection(report, cfg, configInfo, opts);
-  const serverHealth = await checkServerHealth(report, { baseUrl: cfg.baseUrl, ovConf: configInfo.ovConf, health: connection?.probes?.health, offline: opts.offline, timeoutMs: opts.timeoutMs });
-  checkActivity(report, cfg, connection);
-
-  if (opts.json) {
-    console.log(JSON.stringify({
-      harness: "codex",
-      pluginRoot: PLUGIN_ROOT,
-      generatedAt: new Date().toISOString(),
-      resolved: {
-        baseUrl: cfg.baseUrl,
-        apiKey: configInfo.keyInfo.display,
-        apiKeyFormat: configInfo.keyInfo.format,
-        account: cfg.account,
-        user: cfg.user,
-        peerId: configInfo.peer.peerId,
-        credentialSource: cfg.credentialSource,
-        authMode: cfg.authMode,
-      },
-      workspace,
-      server: connection?.summary || null,
-      serverHealth,
-      ...report.toJSON(),
-    }, null, 2));
-  } else {
-    console.log(report.render());
-  }
-  process.exitCode = report.exitCode();
-}
+const HOST = {
+  harness: "codex",
+  pluginRoot: PLUGIN_ROOT,
+  cliName: "codex",
+  launcherHint: "Codex",
+  loadConfig,
+  checkInstall,
+  checkConfig,
+  checkActivity,
+  resolveIdentity: (cfg) => ({ account: cfg.account, user: cfg.user }),
+  extraResolved: (cfg) => ({ credentialSource: cfg.credentialSource, authMode: cfg.authMode }),
+  onSummary(report, summary, cfg) {
+    if (summary.authMode && summary.authMode !== "dev" && summary.authMode !== cfg.authMode) {
+      report.warn(`plugin auth mode '${cfg.authMode}' differs from the server's '${summary.authMode}'`, cfg.authMode === "trusted" ? "identity headers are sent but the server ignores them in api_key mode" : "the server expects X-OpenViking-Account/User headers", "set account/user in ovcli.conf for trusted servers, or remove them (or set OPENVIKING_AUTH_MODE) for api_key servers");
+    }
+  },
+};
 
 function isDirectRun() {
   if (!process.argv[1]) return false;
@@ -593,7 +511,7 @@ function isDirectRun() {
 }
 
 if (isDirectRun()) {
-  main().catch((err) => {
+  runDoctor(HOST).catch((err) => {
     console.error("ov-memory-doctor failed:", err?.stack || err?.message || err);
     process.exit(2);
   });

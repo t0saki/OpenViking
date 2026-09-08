@@ -6,7 +6,9 @@
  * state directory) and delegates everything that is the same everywhere to
  * this module: config-file inspection, API key display, base URL linting,
  * environment sweep, server probes and their interpretation, state/log
- * inspection, and report rendering.
+ * inspection, and report rendering. `runDoctor(hostSpec)` owns the run itself:
+ * the argument parsing, the section order, the `--json` envelope and the exit
+ * code, calling back into the host for the sections only it can produce.
  *
  * Nothing here reads harness config; callers pass a resolved connection
  * `{ baseUrl, apiKey, account, user, peerId, userAgent }`.
@@ -15,7 +17,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve as resolvePath } from "node:path";
 
 import { HARNESS_CONFIG_KEYS, HARNESS_KEYS, pluginConfigKeys } from "./config-schema.mjs";
 import { buildOvHeaders } from "./ov-http.mjs";
@@ -1077,4 +1079,133 @@ export async function checkServerHealth(report, { baseUrl, ovConf, health, offli
   else if (!answered) report.info("skipped /ready — the server did not answer /health");
   else summary.ready = assessReady(report, await probeReady(baseUrl, { timeoutMs })).ready;
   return summary;
+}
+
+// ---------------------------------------------------------------------------
+// The run
+// ---------------------------------------------------------------------------
+
+export function parseArgs(argv) {
+  const opts = { json: false, offline: false, timeoutMs: 5000, color: process.stdout.isTTY && !process.env.NO_COLOR };
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+    if (arg === "--json") opts.json = true;
+    else if (arg === "--offline" || arg === "--no-network") opts.offline = true;
+    else if (arg === "--no-color") opts.color = false;
+    else if (arg === "--timeout") opts.timeoutMs = Math.max(1000, Number(argv[++i]) || 5000);
+    else if (arg === "-h" || arg === "--help") {
+      console.log("usage: ov-memory-doctor.mjs [--json] [--offline] [--timeout <ms>] [--no-color]");
+      process.exit(0);
+    }
+  }
+  if (opts.json) opts.color = false;
+  return opts;
+}
+
+export function expandHome(p) {
+  return p ? resolvePath(p.replace(/^~(?=$|\/)/, homedir())) : p;
+}
+
+export function tryJson(path) {
+  try {
+    return JSON.parse(readFileSync(path, "utf-8"));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The "Environment" section. `launcherHint` names the host in the prose ("the
+ * environment that launches Claude Code"); `onCliFound` lets a host report its
+ * CLI its own way and add probes of its own between the version line and the
+ * platform line.
+ */
+export function checkEnvironment(report, { cliName, cliVersionArgs = ["--version"], launcherHint, nodePathFix, onCliFound } = {}) {
+  report.section("Environment");
+  const nodeMajor = parseNodeMajor(process.version);
+  const nodePath = process.execPath;
+  if (nodeMajor >= 18) report.ok(`node ${process.version} (${nodePath})`);
+  else report.fail(`node ${process.version} is too old`, "hooks and the MCP proxy need Node.js 18+ (global fetch)", "install Node.js 18 or newer and make sure it is first on PATH");
+  const nodeOnPath = whichCommand("node");
+  if (!nodeOnPath) {
+    report.warn("`node` is not on PATH for this process",
+      `hooks and .mcp.json invoke the bare command \`node\`; if ${launcherHint} was launched without your shell profile (nvm/volta/fnm), hooks never start`,
+      nodePathFix || `put node on PATH for the environment that launches ${launcherHint}`);
+  } else if (resolvePath(nodeOnPath) !== resolvePath(nodePath)) {
+    report.info(`PATH resolves node to ${nodeOnPath} (this run used ${nodePath})`);
+  }
+
+  const cli = runCommand(cliName, cliVersionArgs, { timeoutMs: 15000 });
+  if (cli.ok) {
+    if (onCliFound) onCliFound(report, cli);
+    else report.ok(cli.stdout.split("\n")[0]);
+  } else {
+    report.info(`${cliName} CLI not found on PATH (${cli.error || "?"}) — install checks that need it are skipped`);
+  }
+  report.info(`platform ${process.platform} ${process.arch}, cwd ${homeShort(process.cwd())}`);
+  return { cliOnPath: cli.ok };
+}
+
+/**
+ * The "Connection" section. `account`/`user` are the configured identity: they
+ * only reach the wire when the harness sends identity headers, but the probe
+ * report compares them against what the key claims either way. `onSummary`
+ * carries the host's verdict on the answer (Codex compares auth modes).
+ */
+export async function checkConnection(report, cfg, { keyInfo, peer, account = "", user = "" }, opts, { onSummary } = {}) {
+  report.section("Connection");
+  if (opts.offline) {
+    report.info("skipped (--offline)");
+    return null;
+  }
+  const conn = { baseUrl: cfg.baseUrl, apiKey: cfg.apiKey, account: cfg.sendIdentityHeaders ? account : "", user: cfg.sendIdentityHeaders ? user : "", peerId: peer.peerId, userAgent: cfg.userAgent };
+  const probes = await probeOpenViking(conn, { timeoutMs: opts.timeoutMs });
+  const summary = assessProbes(report, probes, { ...conn, account, user }, keyInfo);
+  if (onSummary) onSummary(report, summary, cfg);
+  return { probes, summary };
+}
+
+/**
+ * Run one harness's doctor. `host` is the harness spec: the `checkEnvironment`
+ * fields above, `loadConfig()`, the three sections only the host can produce
+ * (`checkInstall`, `checkConfig`, `checkActivity`), `resolveIdentity(cfg)` for
+ * the account/user spelling that harness uses, and optionally `onSummary` and
+ * `extraResolved(cfg)` for extra `--json` fields.
+ */
+export async function runDoctor(host) {
+  const opts = parseArgs(process.argv.slice(2));
+  const report = createReport({ color: opts.color });
+  const envInfo = checkEnvironment(report, host);
+  host.checkInstall(report, envInfo);
+  const cfg = host.loadConfig();
+  const configInfo = host.checkConfig(report, cfg);
+  const workspace = checkWorkspace(report);
+  const identity = host.resolveIdentity(cfg);
+  const connection = await checkConnection(report, cfg, { ...configInfo, ...identity }, opts, host);
+  const serverHealth = await checkServerHealth(report, { baseUrl: cfg.baseUrl, ovConf: configInfo.ovConf, health: connection?.probes?.health, offline: opts.offline, timeoutMs: opts.timeoutMs });
+  host.checkActivity(report, cfg, connection);
+
+  if (opts.json) {
+    console.log(JSON.stringify({
+      harness: host.harness,
+      pluginRoot: host.pluginRoot,
+      generatedAt: new Date().toISOString(),
+      resolved: {
+        baseUrl: cfg.baseUrl,
+        apiKey: configInfo.keyInfo.display,
+        apiKeyFormat: configInfo.keyInfo.format,
+        account: identity.account,
+        user: identity.user,
+        peerId: configInfo.peer.peerId,
+        ...(host.extraResolved ? host.extraResolved(cfg) : {}),
+      },
+      workspace,
+      server: connection?.summary || null,
+      serverHealth,
+      ...report.toJSON(),
+    }, null, 2));
+  } else {
+    console.log(report.render());
+  }
+  process.exitCode = report.exitCode();
 }

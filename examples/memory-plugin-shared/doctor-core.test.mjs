@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
   assessProbes,
@@ -231,4 +232,17 @@ test("checkWorkspace tells a directory that is no workspace what to create", () 
   assert.equal(found.root, dir);
   assert.equal(found.rootKind, "config");
   assert.match(marked.render(), /workspace {2}/);
+});
+
+test("no doctor wrapper redefines a name doctor-core already exports", () => {
+  const read = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf-8");
+  const exported = new Set(
+    [...read("./lib/doctor-core.mjs").matchAll(/^export (?:async function|function|const) (\w+)/gm)].map((m) => m[1]),
+  );
+  assert.ok(exported.has("runDoctor"));
+  for (const rel of ["../claude-code-memory-plugin/scripts/ov-memory-doctor.mjs", "../codex-memory-plugin/scripts/ov-memory-doctor.mjs"]) {
+    const declared = [...read(rel).matchAll(/^(?:export )?(?:async function|function|const) (\w+)\s*(?:\(|=\s*(?:async\s*)?(?:function|\())/gm)].map((m) => m[1]);
+    const clashes = declared.filter((name) => exported.has(name));
+    assert.deepEqual(clashes, [], `${rel} redeclares doctor-core exports: ${clashes.join(", ")}`);
+  }
 });
