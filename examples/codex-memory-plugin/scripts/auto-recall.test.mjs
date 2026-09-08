@@ -522,6 +522,31 @@ test("auto-recall gives the compressor full content from the raw-search fallback
   }
 });
 
+test("auto-recall repairs a mangled viking:// URI in the compressed digest", async () => {
+  const uri = "viking://user/zeus/memories/preferences/editor.md";
+  const result = await runEndpointCompressionCase({
+    prompt: "Which editor do I prefer?",
+    entry: {
+      uri,
+      score: 0.91,
+      type: "preferences",
+      mode: "summary",
+      summary: "Use Vim",
+    },
+    rendered: "<memory_group>Use Vim</memory_group>",
+    compressorOutput: [
+      "OpenViking memory digest:",
+      "- [preferences] Use Vim (viking://user/zeus/memories/preference/edtior.md)",
+    ].join("\n"),
+    extraEnv: { OPENVIKING_RECALL_COMPRESS_MIN_INPUT_CHARS: "0" },
+  });
+
+  const injected = result.output.hookSpecificOutput.additionalContext;
+  assert.ok(injected.includes(`(${uri})`), injected);
+  assert.ok(!injected.includes("edtior"), injected);
+  assert.equal(result.compressorCalls, 1);
+});
+
 test("auto-recall passes the configured compressor base URL to Codex", async () => {
   const result = await runEndpointCompressionCase({
     prompt: "Explain HTTP 429",
