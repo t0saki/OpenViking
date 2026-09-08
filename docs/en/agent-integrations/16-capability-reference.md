@@ -297,7 +297,7 @@ On the server side, `session_id` handling diverges into two distinct execution p
   - **pi**: Injected into the `systemPrompt`, re-assembled for every prompt (10000 budget, always resident).
   - *Note:* `openclaw` and `hermes` do not perform profile injection.
 - **Archive injection** (pulls the previous archive summary back upon resume):
-  - **claude-code**: `source=resume/compact`, `token_budget=32000`, ≤5 `pre_archive_abstracts`.
+  - **claude-code**: `source=resume/compact`, `token_budget=32000`.
   - **codex**: On resume, when the local `ovSessionId` has already been cleared (32000 budget / truncated to 6000 characters).
   - **opencode**: Executed as part B of the opening injection (32000 budget).
   - **pi**: Active in non-takeover mode (32000 budget).

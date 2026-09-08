@@ -12,10 +12,10 @@
  *      OPENVIKING_PROFILE_TOKEN_BUDGET (default 10000 tokens, CJK-aware).
  *
  *   2. Archive injection (resume/compact only): OV's persistent session's
- *      latest_archive_overview + pre-archive abstracts, fetched at
- *      OPENVIKING_RESUME_CONTEXT_BUDGET tokens. For "compact" this is OV's
- *      canonical long-term record alongside CC's own compact summary; for
- *      "resume" it re-hydrates context lost when CC restarted.
+ *      latest_archive_overview, fetched at OPENVIKING_RESUME_CONTEXT_BUDGET
+ *      tokens. For "compact" this is OV's canonical long-term record alongside
+ *      CC's own compact summary; for "resume" it re-hydrates context lost when
+ *      CC restarted.
  *
  * The composed payload is mirrored to ~/.openviking/last_inject.md for audit.
  */
@@ -70,19 +70,11 @@ function formatArchiveSection(sessionCtx) {
   const overview = (sessionCtx.latest_archive_overview || "").trim();
   if (!overview) return null;
 
-  const abstracts = Array.isArray(sessionCtx.pre_archive_abstracts)
-    ? sessionCtx.pre_archive_abstracts.filter((a) => typeof a === "string" && a.trim())
-    : [];
-
-  const lines = [
+  return [
     "<session-archive>",
     `  <archive-overview>${overview}</archive-overview>`,
-  ];
-  for (const abs of abstracts.slice(0, 5)) {
-    lines.push(`  <archive-abstract>${abs.trim()}</archive-abstract>`);
-  }
-  lines.push("</session-archive>");
-  return lines.join("\n");
+    "</session-archive>",
+  ].join("\n");
 }
 
 function writeLastInject(content) {

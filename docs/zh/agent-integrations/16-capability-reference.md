@@ -289,7 +289,7 @@ JS 系 harness 的召回逻辑均由 `recall-core.mjs` 中的三级降级链处�
 
 - **实现**：`profile-inject.mjs`——读 `viking://user/<space>/memories/profile.md` 全文 + `preferences/`、`entities/` 递归清单（abs_limit=512）。预算估算引入 CJK 感知（≥U+3000 记 1.5 token/字，其余 chars/4）；profile 占一半预算，超限则采用"头 8 行 + 尾部"的中段省略；清单超限则追加 `... +N more` 提示。
 - **谁注入、何时、预算**：claude-code（SessionStart 全部 source，10000）；codex（SessionStart startup/clear/resume，10000）；cursor/trae×2/zcode（SessionStart，6000，2s 去抖）；opencode（每会话首条 chat.message 一次，10000，进程内 Set 去重，subagent 会话跳过；注意开场注入每会话只尝试一次，失败后本进程内不重试）；dsh（每 session 投一次 `profileDelivered`，10000；compaction 之后不重投）；pi（进 systemPrompt，每个 prompt 重拼，10000 常驻）。openclaw、hermes 无 profile 注入。
-- **archive 注入**（resume 场景把上次归档摘要拉回来）：claude-code（source=resume/compact，`token_budget=32000`，≤5 条 pre_archive_abstracts）；codex（resume 且本地 ovSessionId 已清时，32000/截 6000 字符）；opencode（开场注入 B 部分，32000）；pi 非 takeover 模式（32000）。
+- **archive 注入**（resume 场景把上次归档摘要拉回来）：claude-code（source=resume/compact，`token_budget=32000`）；codex（resume 且本地 ovSessionId 已清时，32000/截 6000 字符）；opencode（开场注入 B 部分，32000）；pi 非 takeover 模式（32000）。
 - **repo 上下文注入**：opencode 独有——通过 `experimental.chat.system.transform` 把已索引仓库列表放进 system prompt。
 
 ### 3.2.4 超时与预算链
