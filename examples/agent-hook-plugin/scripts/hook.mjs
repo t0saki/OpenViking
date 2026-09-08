@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 
 /**
- * The one hook entry cursor, TRAE and ZCode all run.
+ * The one hook entry cursor, TRAE, ZCode and Kimi Code all run.
  *
- * Each host names it from its own hooks.json, passing the event and the client
- * id as arguments; the adapter under `hosts/` supplies everything that differs
- * — the event vocabulary, the response envelope, how a prompt is read out of
- * the payload, and how a finished turn is captured. The state machine around
- * those four things is the same in all three, so it lives here.
+ * Each host names it from its own hooks template, passing the event and the
+ * client id as arguments; the adapter under `hosts/` supplies everything that
+ * differs — the event vocabulary, the response envelope, how a prompt is read
+ * out of the payload, and how a finished turn is captured. The state machine
+ * around those four things is the same in all of them, so it lives here.
  */
 
 import {
@@ -52,7 +52,10 @@ function emit(block) {
   if (emitted) return;
   emitted = true;
   const value = host.envelope(event, block || "");
-  if (value) process.stdout.write(`${JSON.stringify(value)}\n`);
+  if (!value) return;
+  // A host whose envelope is a string appends stdout to the conversation as it
+  // stands; serializing it would show the JSON document to the user.
+  process.stdout.write(typeof value === "string" ? `${value}\n` : `${JSON.stringify(value)}\n`);
 }
 
 const normalize = (input) => (host.normalizeInput ? host.normalizeInput(input) : input);
@@ -66,14 +69,30 @@ async function sessionStart(ctx) {
     const state = await readHookState(clientId, ctx.nativeSessionId);
     const now = Date.now();
     if (now - Number(state.lastSessionStartAt || 0) < 2000) return "";
-    await writeHookState(clientId, ctx.nativeSessionId, { ...state, lastSessionStartAt: now });
+    await writeHookState(clientId, ctx.nativeSessionId, {
+      ...state,
+      lastSessionStartAt: now,
+      // A restarted session owes its first prompt the profile again.
+      ...(host.profileOnPrompt ? { profileInjected: false } : {}),
+    });
     await replayAgentPending(ctx.fetchJSON, log).catch((error) => logError("pending", error));
+    // A host that cannot inject here says nothing; its profile rides the prompt.
+    if (host.profileOnPrompt) return "";
     const profile = await buildAgentProfile(ctx.fetchJSON, ctx.cfg, ctx.cwd).catch((error) => {
       logError("profile", error);
       return null;
     });
     return contextBlock("session-start", profile);
   });
+}
+
+async function profileForPrompt(ctx, state) {
+  if (!host.profileOnPrompt || state.profileInjected) return "";
+  const profile = await buildAgentProfile(ctx.fetchJSON, ctx.cfg, ctx.cwd).catch((error) => {
+    logError("profile", error);
+    return null;
+  });
+  return contextBlock("session-start", profile);
 }
 
 async function promptSubmit(ctx) {
@@ -96,15 +115,19 @@ async function promptSubmit(ctx) {
           logError("recall", error);
           return null;
         });
+    const profileBlock = await profileForPrompt(ctx, state);
     await writeHookState(clientId, ctx.nativeSessionId, {
       ...state,
       promptHash,
       promptEventId,
       promptAt: now,
       recallBlock,
+      ...(host.profileOnPrompt
+        ? { profileInjected: Boolean(state.profileInjected || profileBlock) }
+        : {}),
       ...(host.tracksPendingPrompt ? { pendingPrompt: { prompt, hash: promptHash, at: now } } : {}),
     });
-    return recallBlock || "";
+    return [profileBlock, recallBlock].filter(Boolean).join("\n\n");
   });
 }
 
@@ -121,7 +144,10 @@ async function capture(ctx) {
 async function main() {
   // The write path answers before it works, so the detach decision is taken
   // against this process's directory, before stdin is consumed.
-  if (host.detachesCapture && stageName === "capture" && isCaptureEnabled(cfg)
+  const detaches = typeof host.detachesCapture === "function"
+    ? host.detachesCapture(event)
+    : Boolean(host.detachesCapture);
+  if (detaches && stageName === "capture" && isCaptureEnabled(cfg)
     && await maybeDetach(cfg, { approve: () => emit() })) {
     return;
   }

@@ -1,0 +1,40 @@
+{
+  "hooks": [
+    {
+      "event": "SessionStart",
+      "command": "node __OPENVIKING_PLUGIN_ROOT__/scripts/hook.mjs session-start __OPENVIKING_CLIENT_ID__",
+      "timeout": 30
+    },
+    {
+      "event": "UserPromptSubmit",
+      "command": "node __OPENVIKING_PLUGIN_ROOT__/scripts/hook.mjs user-prompt-submit __OPENVIKING_CLIENT_ID__",
+      "timeout": 20
+    },
+    {
+      "event": "PreToolUse",
+      "matcher": "Read|Glob|Grep",
+      "command": "node __OPENVIKING_PLUGIN_ROOT__/scripts/uri-guard.mjs __OPENVIKING_CLIENT_ID__",
+      "timeout": 5
+    },
+    {
+      "event": "Stop",
+      "command": "node __OPENVIKING_PLUGIN_ROOT__/scripts/hook.mjs stop __OPENVIKING_CLIENT_ID__",
+      "timeout": 30
+    },
+    {
+      "event": "PreCompact",
+      "command": "node __OPENVIKING_PLUGIN_ROOT__/scripts/hook.mjs pre-compact __OPENVIKING_CLIENT_ID__",
+      "timeout": 30
+    },
+    {
+      "event": "SessionEnd",
+      "command": "node __OPENVIKING_PLUGIN_ROOT__/scripts/hook.mjs session-end __OPENVIKING_CLIENT_ID__",
+      "timeout": 30
+    },
+    {
+      "event": "Interrupt",
+      "command": "node __OPENVIKING_PLUGIN_ROOT__/scripts/hook.mjs interrupt __OPENVIKING_CLIENT_ID__",
+      "timeout": 10
+    }
+  ]
+}
