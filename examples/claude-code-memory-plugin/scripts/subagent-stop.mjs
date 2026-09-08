@@ -7,10 +7,10 @@
  *   { session_id, agent_id, agent_type, agent_transcript_path, ... }
  *
  * Regular in-subagent hooks never fire, so this is the only place we can
- * capture the subagent's turns. We read its transcript jsonl, extract
- * tier-1 parts (text + tool-use name list), and push to the isolated
- * ovSessionId we created in subagent-start.mjs. An immediate commit runs
- * so the subagent's context is archived before the parent continues.
+ * capture the subagent's turns. We read its transcript jsonl with the same
+ * reader auto-capture uses and push the turns to the isolated ovSessionId we
+ * created in subagent-start.mjs. An immediate commit runs so the subagent's
+ * context is archived before the parent continues.
  *
  * Each subagent is written to a distinct OpenViking session derived from the
  * parent session id and Claude's subagent id.
@@ -21,6 +21,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { isPluginEnabled, loadConfig } from "./config.mjs";
 import { createLogger } from "./debug-log.mjs";
+import { extractCaptureTurns, parseTranscript } from "./cc-transcript.mjs";
 import {
   commitSession,
   deriveOvSessionId,
@@ -67,167 +68,6 @@ async function loadState(subagentId) {
   } catch {
     return null;
   }
-}
-
-function parseTranscript(content) {
-  const lines = content.split("\n").filter(l => l.trim());
-  const out = [];
-  for (const line of lines) {
-    try { out.push(JSON.parse(line)); } catch { /* skip */ }
-  }
-  return out;
-}
-
-// Tool result (output) retention. 0 = drop tool_result entirely; >0 = keep, truncated.
-// Default 0 — see auto-capture.mjs for rationale. Mirrors auto-capture.mjs.
-const TOOL_RESULT_MAX_CHARS = 0;
-
-function formatToolInput(value) {
-  // Tool inputs are agent-authored; we keep them verbatim.
-  if (typeof value === "string") return value;
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return String(value);
-  }
-}
-
-function truncateToolResult(s) {
-  if (TOOL_RESULT_MAX_CHARS <= 0) return null; // drop
-  if (typeof s !== "string") s = String(s ?? "");
-  if (s.length <= TOOL_RESULT_MAX_CHARS) return s;
-  return (
-    s.slice(0, TOOL_RESULT_MAX_CHARS) +
-    `\n... [truncated, ${s.length - TOOL_RESULT_MAX_CHARS} more chars]`
-  );
-}
-
-function extractToolResultText(content) {
-  if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return "";
-  return content
-    .filter((b) => b && b.type === "text" && typeof b.text === "string")
-    .map((b) => b.text)
-    .join("\n");
-}
-
-// Structured parts (parts-mode capture) — mirrors auto-capture.mjs. Tool calls /
-// results become dedicated `tool` parts instead of being inlined into content,
-// and tool_output is reported verbatim so the server can externalize it.
-function truncateToolOutput(s) {
-  if (typeof s !== "string") s = String(s ?? "");
-  const max = cfg.captureToolMaxChars;
-  if (s.length <= max) return s;
-  return s.slice(0, max) + `\n... [truncated, ${s.length - max} more chars]`;
-}
-
-function collectToolNamesById(messages) {
-  const map = {};
-  for (const msg of messages) {
-    const content = msg?.content ?? msg?.message?.content;
-    if (!Array.isArray(content)) continue;
-    for (const block of content) {
-      if (
-        block?.type === "tool_use" &&
-        typeof block.id === "string" &&
-        typeof block.name === "string"
-      ) {
-        map[block.id] = block.name;
-      }
-    }
-  }
-  return map;
-}
-
-function buildParts(content, toolNameById) {
-  const out = [];
-  if (typeof content === "string") {
-    if (content.trim()) out.push({ type: "text", text: content });
-    return out;
-  }
-  if (!Array.isArray(content)) return out;
-  for (const block of content) {
-    if (!block || typeof block !== "object") continue;
-    if (block.type === "text" && typeof block.text === "string") {
-      if (block.text.trim()) out.push({ type: "text", text: block.text });
-    } else if (block.type === "tool_use" && typeof block.name === "string") {
-      out.push({
-        type: "tool",
-        tool_id: typeof block.id === "string" ? block.id : undefined,
-        tool_name: block.name,
-        tool_input:
-          block.input && typeof block.input === "object" ? block.input : undefined,
-        tool_status: "running",
-      });
-    } else if (block.type === "tool_result") {
-      const id = typeof block.tool_use_id === "string" ? block.tool_use_id : undefined;
-      out.push({
-        type: "tool",
-        tool_id: id,
-        tool_name: id ? toolNameById[id] : undefined,
-        tool_output: truncateToolOutput(extractToolResultText(block.content)),
-        tool_status: block.is_error ? "error" : "completed",
-      });
-    }
-  }
-  return out;
-}
-
-/**
- * Tier-1 parts extraction — shared shape with auto-capture.mjs.
- * Kept inline here so SubagentStop does not import auto-capture's globals.
- * Inlines tool_use input verbatim; tool_result content is dropped by default
- * (TOOL_RESULT_MAX_CHARS = 0) and retained only if explicitly enabled.
- */
-function extractTurns(messages) {
-  const toolNameById = collectToolNamesById(messages);
-  const turns = [];
-  for (const msg of messages) {
-    if (!msg || typeof msg !== "object") continue;
-    let role = msg.role;
-    let text = "";
-    const toolNames = [];
-    let parts = [];
-
-    const harvestContent = (content) => {
-      if (typeof content === "string") {
-        text = content;
-      } else if (Array.isArray(content)) {
-        const parts = [];
-        for (const block of content) {
-          if (!block || typeof block !== "object") continue;
-          if (block.type === "text" && typeof block.text === "string") {
-            parts.push(block.text);
-          } else if (block.type === "tool_use" && typeof block.name === "string") {
-            toolNames.push(block.name);
-            parts.push(`[tool: ${block.name}]\n${formatToolInput(block.input)}`);
-          } else if (block.type === "tool_result") {
-            const resultText = extractToolResultText(block.content);
-            const truncated = resultText ? truncateToolResult(resultText) : null;
-            if (truncated) {
-              parts.push(`[tool result]\n${truncated}`);
-            }
-          }
-        }
-        text = parts.join("\n\n");
-      }
-    };
-
-    let rawContent;
-    if (msg.content !== undefined) {
-      rawContent = msg.content;
-    } else if (typeof msg.message === "object" && msg.message) {
-      role = msg.message.role || role;
-      rawContent = msg.message.content;
-    }
-    harvestContent(rawContent);
-    parts = buildParts(rawContent, toolNameById);
-
-    if (role !== "user" && role !== "assistant") continue;
-    if (parts.length === 0) continue;
-    turns.push({ role, text: text.trim(), toolNames, parts });
-  }
-  return turns;
 }
 
 async function pushTurns(ovSessionId, turns, { peerId = null, enqueueOnly = false } = {}) {
@@ -346,7 +186,7 @@ async function main() {
   }
 
   const messages = parseTranscript(transcript);
-  const turns = extractTurns(messages);
+  const turns = extractCaptureTurns(messages, cfg);
   log("transcript_parse", {
     subagentId,
     ovSessionId,

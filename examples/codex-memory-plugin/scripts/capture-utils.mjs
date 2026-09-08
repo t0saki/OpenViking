@@ -2,7 +2,9 @@ import {
   extractCaptureTurns as extractSharedCaptureTurns,
 } from "./shared/capture-utils.mjs";
 
-export * from "./shared/capture-utils.mjs";
+// Named one by one rather than re-exported wholesale: this module has an
+// `extractCaptureTurns` of its own, and `export *` would let the shared one
+// through under the same name with nothing to say which a caller holds.
 
 function mcpResultText(result) {
   const ok = result?.Ok;

@@ -277,9 +277,15 @@ test("the client-ranked fallback degrades past the budget to URI hints", async (
   assert.equal(state.tokens_budget, 200);
 });
 
-// The ranking pipeline lives in the shared recall core. A second copy here is
-// what this plugin spent a release drifting away from.
-const SHARED_ONLY_SYMBOLS = ["buildQueryProfile", "lexicalOverlapBoost", "rankItem"];
+// The ranking pipeline lives in the shared recall core and the transcript walk
+// in the shared capture utilities. A second copy of either here is what this
+// plugin spent a release drifting away from.
+const SHARED_ONLY_SYMBOLS = [
+  "buildQueryProfile",
+  "lexicalOverlapBoost",
+  "rankItem",
+  "extractAllTurns",
+];
 
 async function ownSourceFiles(dir) {
   const out = [];
@@ -292,7 +298,7 @@ async function ownSourceFiles(dir) {
   return out;
 }
 
-test("the plugin keeps no ranking copy of its own", async () => {
+test("the plugin keeps no ranking or transcript copy of its own", async () => {
   const pattern = new RegExp(`function\\s+(${SHARED_ONLY_SYMBOLS.join("|")})\\b`);
   const hits = [];
   for (const file of await ownSourceFiles(PLUGIN_DIR)) {

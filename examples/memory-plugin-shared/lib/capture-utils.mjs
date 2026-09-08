@@ -263,7 +263,13 @@ export function extractTextFromPayload(payload, options = {}) {
   return chunks.join("\n\n");
 }
 
-function collectToolNamesByIdFromEntries(entries) {
+/**
+ * Map every tool call id in a transcript to the name of the tool it invoked.
+ *
+ * A result block names the call by id only, so the name has to come from the
+ * call that preceded it. Pass the map as `toolNameById` to the extractors.
+ */
+export function collectToolNamesByIdFromEntries(entries) {
   const map = {};
   for (const entry of entries || []) {
     const payload = entry?.payload && typeof entry.payload === "object" ? entry.payload : entry;
@@ -456,12 +462,24 @@ function stripInjectedDigestBlocks(text) {
   return out.join("\n");
 }
 
+/**
+ * Drop everything in a turn that the conversation did not put there.
+ *
+ * Recall injects a context block into the prompt, and the host adds notes of
+ * its own; captured back unchanged, this turn's injection becomes next turn's
+ * memory and the loop feeds on itself. Formatting the conversation did author
+ * — newlines, code fences — survives.
+ */
 export function sanitizeCapturedText(text) {
   let value = String(text || "");
   value = value
     .replace(/\u0000/g, "")
     .replace(/<openviking-context\b[^>]*>[\s\S]*?<\/openviking-context>/gi, " ")
     .replace(/<relevant-memor(?:y|ies)\b[^>]*>[\s\S]*?<\/relevant-memor(?:y|ies)>/gi, " ")
+    // Claude Code wraps its own out-of-band notes to the model in these two
+    // shapes. They are the host talking to itself, not the conversation.
+    .replace(/<system-reminder\b[^>]*>[\s\S]*?<\/system-reminder>/gi, " ")
+    .replace(/^[ \t]*\[Subagent Context\][^\n]*$/gim, " ")
     .replace(/^\s*Sender\s*\([^)]+\)\s*```[\s\S]*?```\s*/gim, " ")
     .replace(/^\s*Conversation (?:metadata|info):\s*```[\s\S]*?```\s*/gim, " ")
     .replace(/^\s*\[?\d{4}-\d{2}-\d{2}[T ][^\]\n]{3,80}\]?\s*/gm, "")

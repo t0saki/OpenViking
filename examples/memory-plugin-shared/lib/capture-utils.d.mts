@@ -1,3 +1,4 @@
+export function collectToolNamesByIdFromEntries(entries: any[]): Record<string, string>;
 export function extractPartsFromPayload(payload: any, options?: Record<string, any>): any[];
 export function extractTextFromPayload(payload: any, options?: Record<string, any>): string;
 export function shouldCaptureText(text: string, role: string, cfg?: Record<string, any>): {
