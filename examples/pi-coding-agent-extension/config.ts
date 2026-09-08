@@ -1,7 +1,8 @@
+import { readManifestVersion } from "./shared/credentials.mjs";
 import { buildPluginConfig } from "./shared/plugin-config.mjs";
 
-/** Hand-maintained: this extension ships no manifest to read a version from. */
-export const EXTENSION_VERSION = "0.3.0";
+/** The version the User-Agent reports, read from the manifest the gate checks. */
+export const EXTENSION_VERSION = readManifestVersion(new URL("./package.json", import.meta.url));
 
 export interface OVConfig {
   enabled: boolean;

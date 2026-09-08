@@ -29,6 +29,7 @@ pi-coding-agent-extension/
 ├── takeover.ts   # binds the takeover state machine to pi
 ├── tools.ts      # the seven model-facing viking_* tools
 ├── index.ts      # entry point: event handlers and the /viking command
+├── package.json  # name and version; pi loads index.ts regardless
 ├── lib/          # pi-specific logic kept out of the event handlers
 ├── shared/       # generated copy of memory-plugin-shared/lib
 ├── scripts/      # live e2e harness
@@ -43,7 +44,7 @@ Defines `OVConfig` and resolves it once at load time. Knobs come from `resolveSe
 
 Credentials — server URL, API key, account, user — come from `resolveOpenVikingCredentials(process.env, "pi")`, and `resolveAuthMode` decides between `trusted` and `api_key`, which is what gates whether identity headers go on the wire at all. The peer identity is resolved twice on purpose: `resolvePluginPeerId` picks the id from the configured layers, then `resolveEffectivePeerId` maps it onto the workspace and also returns `legacyPeerId`, the pre-git workspace id that recall still has to reach.
 
-Two older spellings are kept alive because setups depend on them: `bypassPatterns` holds the same list as the shared `bypassSessionPatterns`, and `OV_DEBUG_LOG` is read alongside the shared `OPENVIKING_DEBUG_LOG`. `EXTENSION_VERSION` is a hand-maintained constant — the extension ships no manifest to read a version from — and feeds the shared `User-Agent` builder.
+Two older spellings are kept alive because setups depend on them: `bypassPatterns` holds the same list as the shared `bypassSessionPatterns`, and `OV_DEBUG_LOG` is read alongside the shared `OPENVIKING_DEBUG_LOG`. `EXTENSION_VERSION` reads `package.json`, the same manifest the release gate watches for a bump, and feeds the shared `User-Agent` builder.
 
 ### client.ts
 

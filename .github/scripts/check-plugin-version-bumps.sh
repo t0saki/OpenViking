@@ -5,8 +5,10 @@
 # rather than by the commit the marketplace ref points at, so a frozen version
 # string means users keep running the build they already have no matter how
 # many fixes land on main. Every other host in this list distributes by the same
-# kind of manifest. The generated `shared/` copies live inside each plugin
-# directory, so a shared-library change reaches this check through them.
+# kind of manifest, except pi, which is copied wholesale and reports its manifest
+# version as the build talking on the wire. The generated `shared/` copies live
+# inside each plugin directory, so a shared-library change reaches this check
+# through them.
 #
 # Usage: check-plugin-version-bumps.sh <base-ref>
 set -euo pipefail
@@ -27,6 +29,7 @@ PLUGINS=(
   "examples/agent-hook-plugin:examples/agent-hook-plugin/.claude-plugin/plugin.json"
   "examples/opencode-plugin:examples/opencode-plugin/package.json"
   "examples/dsh-memory-plugin:examples/dsh-memory-plugin/package.json"
+  "examples/pi-coding-agent-extension:examples/pi-coding-agent-extension/package.json"
 )
 
 # A change to the shared library reaches every plugin, and it no longer reaches

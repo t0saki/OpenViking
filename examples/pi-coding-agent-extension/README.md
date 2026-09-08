@@ -318,6 +318,7 @@ pi-coding-agent-extension/
 ├── lib/takeover-core.mjs # Pure context-takeover state machine
 ├── lib/recall-ledger.mjs # Injected recall blocks, replayed to keep prompt caches warm
 ├── index.ts             # Extension entry point (event handlers)
+├── package.json         # Name and version (the User-Agent's, and the release gate's)
 ├── DESIGN.md            # Module-by-module design, including context takeover
 └── README.md
 ```
