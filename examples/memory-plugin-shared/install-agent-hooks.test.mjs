@@ -39,7 +39,7 @@ function runInstaller(home, args, extraEnv = {}) {
   });
 }
 
-function runInstall(home, harnesses = "cursor,trae,trae-cn") {
+function runInstall(home, harnesses = "cursor,trae,trae-cn,zcode") {
   const result = runInstaller(home, [
     "--harness", harnesses,
     "--source", "dev",
@@ -51,9 +51,9 @@ function runInstall(home, harnesses = "cursor,trae,trae-cn") {
   assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
 }
 
-function runUninstall(home) {
+function runUninstall(home, harnesses = "cursor,trae,trae-cn,zcode") {
   const result = runInstaller(home, [
-    "--harness", "cursor,trae,trae-cn",
+    "--harness", harnesses,
     "--uninstall",
     "--yes",
   ]);
@@ -243,13 +243,14 @@ exit 0
   }
 });
 
-test("combined Cursor and TRAE install preserves unrelated hooks and is idempotent", () => {
+test("combined hook-host install preserves unrelated hooks and is idempotent", () => {
   const home = mkdtempSync(join(tmpdir(), "openviking-agent-hooks-"));
   try {
     const cursorHooks = join(home, ".cursor", "hooks.json");
     const cursorMcpPath = join(home, ".cursor", "mcp.json");
     const traeHooks = join(home, ".trae", "hooks.json");
     const traeCnHooks = join(home, ".trae-cn", "hooks.json");
+    const zcodeConfig = join(home, ".zcode", "cli", "config.json");
     writeJson(cursorHooks, { version: 1, hooks: {
       stop: [{ command: "third-party stop" }],
       postToolUse: [{ command: "node /tmp/openviking/cursor-hook.mjs postToolUse # openviking-memory" }],
@@ -300,6 +301,11 @@ test("combined Cursor and TRAE install preserves unrelated hooks and is idempote
         label,
       );
     }
+    const zcodeEvents = JSON.parse(readFileSync(zcodeConfig, "utf8")).hooks.events;
+    assert.equal(
+      zcodeEvents.PreToolUse.filter((entry) => JSON.stringify(entry).includes("uri-guard.mjs")).length,
+      1,
+    );
 
     const cursorServers = JSON.parse(readFileSync(cursorMcpPath, "utf8")).mcpServers;
     const cursorMcp = cursorServers.openviking;
@@ -393,6 +399,20 @@ test("combined Cursor and TRAE install preserves unrelated hooks and is idempote
     assert.equal(Boolean(JSON.parse(readFileSync(traeMcp, "utf8")).mcpServers.openviking), false);
     assert.equal(Boolean(JSON.parse(readFileSync(traeCnMcp, "utf8")).mcpServers.openviking), false);
     assert.ok(JSON.parse(readFileSync(traeCnMcp, "utf8")).mcpServers["third-party"]);
+    // Every event the installer wrote has to come back empty, the URI guard's
+    // included: a surviving entry runs a script the uninstall just deleted.
+    const cursorEventsAfter = JSON.parse(readFileSync(cursorHooks, "utf8")).hooks;
+    for (const event of ["beforeReadFile", "beforeShellExecution"]) {
+      assert.deepEqual(cursorEventsAfter[event] || [], [], event);
+    }
+    for (const [file, label] of [[traeHooks, "trae"], [traeCnHooks, "trae-cn"]]) {
+      assert.deepEqual(JSON.parse(readFileSync(file, "utf8")).hooks.PreToolUse || [], [], label);
+    }
+    assert.deepEqual(
+      JSON.parse(readFileSync(zcodeConfig, "utf8")).hooks?.events?.PreToolUse || [],
+      [],
+      "zcode",
+    );
     assert.equal(existsSync(join(home, ".openviking", "agent-integrations", "memory-plugin-shared")), false);
   } finally {
     rmSync(home, { recursive: true, force: true });

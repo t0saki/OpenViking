@@ -2200,7 +2200,7 @@ function write(file, value) {
 }
 function ownsHook(value) {
   const text = JSON.stringify(value || {});
-  return text.includes("openviking") && [
+  return text.includes("OPENVIKING_INTEGRATION_ID") || (text.includes("openviking") && [
     "hook.mjs",
     "hook-entry.mjs",
     "session-start.mjs",
@@ -2210,8 +2210,9 @@ function ownsHook(value) {
     "session-end.mjs",
     "trae-auto-recall.mjs",
     "trae-auto-capture.mjs",
+    "uri-guard.mjs",
     "claude-code-memory-plugin/scripts/session-start.mjs",
-  ].some((name) => text.includes(name));
+  ].some((name) => text.includes(name)));
 }
 const hooks = read(hooksPath);
 const mcp = read(mcpPath);
