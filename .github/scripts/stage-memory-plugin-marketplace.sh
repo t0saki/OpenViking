@@ -11,6 +11,22 @@ node "${ROOT}/examples/memory-plugin-shared/sync.mjs" >/dev/null
 
 rm -rf "${STAGE}"
 mkdir -p "${STAGE}"
+
+# The archive ships these directories whole. What each of them has to contain is
+# derived below, not listed here.
+DIRS=(
+  .claude-plugin
+  .agents
+  claude-code-memory-plugin
+  codex-memory-plugin
+  cursor-memory-plugin
+  trae-memory-hooks
+  zcode-memory-plugin
+  opencode-plugin
+  pi-coding-agent-extension
+  memory-plugin-shared
+)
+
 # Tar drops the plugins' node_modules on the way through, over a hundred
 # megabytes the archive has no use for. Copying only tracked files would drop
 # the generated shared copies the archive does need.
@@ -18,77 +34,14 @@ tar -cf - \
   --exclude=node_modules \
   --exclude=.git \
   -C "${ROOT}/examples" \
-  .claude-plugin \
-  .agents \
-  claude-code-memory-plugin \
-  codex-memory-plugin \
-  cursor-memory-plugin \
-  trae-memory-hooks \
-  zcode-memory-plugin \
-  opencode-plugin \
-  pi-coding-agent-extension \
-  memory-plugin-shared \
+  "${DIRS[@]}" \
   | tar -xf - -C "${STAGE}"
 
-for required in \
-  claude-code-memory-plugin/skills/ov-experience-memory/SKILL.md \
-  codex-memory-plugin/skills/ov-experience-memory/SKILL.md \
-  cursor-memory-plugin/.cursor-plugin/plugin.json \
-  cursor-memory-plugin/hooks/hooks.json \
-  cursor-memory-plugin/.mcp.json \
-  cursor-memory-plugin/openviking.integration.json \
-  cursor-memory-plugin/scripts/cursor-hook.mjs \
-  cursor-memory-plugin/scripts/session-start.mjs \
-  cursor-memory-plugin/scripts/auto-recall.mjs \
-  cursor-memory-plugin/scripts/auto-capture.mjs \
-  cursor-memory-plugin/scripts/pre-compact.mjs \
-  cursor-memory-plugin/scripts/session-end.mjs \
-  cursor-memory-plugin/scripts/cursor-transcript.mjs \
-  cursor-memory-plugin/scripts/uri-guard.mjs \
-  cursor-memory-plugin/servers/mcp-proxy.mjs \
-  cursor-memory-plugin/rules/openviking-memory.mdc \
-  cursor-memory-plugin/skills/openviking-memory/SKILL.md \
-  claude-code-memory-plugin/skills/openviking-memory/SKILL.md \
-  claude-code-memory-plugin/skills/ov-memory-doctor/SKILL.md \
-  claude-code-memory-plugin/scripts/ov-memory-doctor.mjs \
-  codex-memory-plugin/skills/openviking-memory/SKILL.md \
-  codex-memory-plugin/skills/ov-memory-doctor/SKILL.md \
-  codex-memory-plugin/scripts/ov-memory-doctor.mjs \
-  trae-memory-hooks/hooks/hooks.json \
-  trae-memory-hooks/.mcp.json \
-  trae-memory-hooks/openviking.integration.json \
-  trae-memory-hooks/scripts/trae-hook.mjs \
-  trae-memory-hooks/scripts/session-start.mjs \
-  trae-memory-hooks/scripts/auto-recall.mjs \
-  trae-memory-hooks/scripts/auto-capture.mjs \
-  trae-memory-hooks/scripts/trae-turns.mjs \
-  trae-memory-hooks/scripts/uri-guard.mjs \
-  trae-memory-hooks/servers/mcp-proxy.mjs \
-  zcode-memory-plugin/.zcode-plugin/plugin.json \
-  zcode-memory-plugin/hooks/hooks.json \
-  zcode-memory-plugin/.mcp.json \
-  zcode-memory-plugin/openviking.integration.json \
-  zcode-memory-plugin/scripts/zcode-hook.mjs \
-  zcode-memory-plugin/scripts/zcode-capture.mjs \
-  zcode-memory-plugin/scripts/zcode-turns.mjs \
-  zcode-memory-plugin/servers/mcp-proxy.mjs \
-  memory-plugin-shared/lib/agent-hook-runtime.mjs \
-  memory-plugin-shared/lib/agent-uri-guard.mjs \
-  memory-plugin-shared/lib/async-writer.mjs \
-  memory-plugin-shared/lib/batch-send.mjs \
-  memory-plugin-shared/lib/capture-utils.mjs \
-  memory-plugin-shared/lib/config-schema.mjs \
-  memory-plugin-shared/lib/plugin-config.mjs \
-  memory-plugin-shared/lib/mcp-proxy-config.mjs \
-  memory-plugin-shared/lib/mcp-proxy-core.mjs \
-  memory-plugin-shared/lib/retryable.mjs \
-  memory-plugin-shared/lib/uri-guard.mjs \
-  pi-coding-agent-extension/shared/credentials.mjs \
-  pi-coding-agent-extension/shared/plugin-config.mjs \
-  opencode-plugin/lib/shared/credentials.mjs \
-  opencode-plugin/lib/shared/plugin-config.mjs; do
-  test -f "${STAGE}/${required}" || {
-    echo "Marketplace archive is missing ${required}" >&2
+for dir in "${DIRS[@]}"; do
+  test -d "${STAGE}/${dir}" || {
+    echo "Marketplace archive is missing ${dir}/" >&2
     exit 1
   }
 done
+
+node "${ROOT}/.github/scripts/check-marketplace-archive.mjs" "${STAGE}"

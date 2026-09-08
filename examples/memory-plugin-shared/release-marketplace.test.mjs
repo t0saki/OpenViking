@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const installer = join(ROOT, "examples", "memory-plugin-shared", "install.sh");
 const stageScript = join(ROOT, ".github", "scripts", "stage-memory-plugin-marketplace.sh");
+const archiveCheck = join(ROOT, ".github", "scripts", "check-marketplace-archive.mjs");
 
 function run(command, args, options = {}) {
   return spawnSync(command, args, {
@@ -76,6 +77,34 @@ test("release marketplace archive supports a ZCode TOS install", () => {
       "Stop",
     ]);
     assert.ok(config.mcp.servers.openviking);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+// The archive's contents are derived from the plugins' manifests and the shared
+// sync, so nothing here restates them. What this pins is that the derivation is
+// wired up at all: an archive missing a copy only the generator produces has to
+// fail the stage, not ship.
+test("staging rejects an archive missing a generated shared copy", () => {
+  const tmp = mkdtempSync(join(tmpdir(), "openviking-marketplace-check-"));
+  try {
+    const stage = join(tmp, "memory-plugin-marketplace");
+    const staged = run("bash", [stageScript, stage]);
+    assert.equal(staged.status, 0, `${staged.stdout}\n${staged.stderr}`);
+
+    const generated = [
+      join("opencode-plugin", "lib", "shared", "plugin-config.mjs"),
+      join("pi-coding-agent-extension", "shared", "plugin-config.mjs"),
+    ];
+    for (const file of generated) {
+      assert.ok(existsSync(join(stage, file)), `${file} is not in the staged tree`);
+    }
+
+    rmSync(join(stage, generated[0]));
+    const rechecked = run("node", [archiveCheck, stage]);
+    assert.equal(rechecked.status, 1, `${rechecked.stdout}\n${rechecked.stderr}`);
+    assert.match(rechecked.stderr, /opencode-plugin\/lib\/shared\/plugin-config\.mjs/);
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
