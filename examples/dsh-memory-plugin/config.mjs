@@ -31,7 +31,10 @@ export function resolveConfig(input = {}, env = process.env, cwd = process.cwd()
   const ovSection = credentials.ovFile.dsh;
   const legacy = { ...(ovSection && typeof ovSection === "object" ? ovSection : {}), ...input };
   const { settings, configured } = resolveSettings("dsh", { env, cwd, legacy });
-  const explicitPeerId = input.peerId || credentials.peerId;
+  // The credential chain resolves to "" whenever no actor peer is named, so a
+  // peer configured for this harness is what it falls back to, not what it
+  // overwrites.
+  const explicitPeerId = input.peerId || credentials.peerId || settings.peerId;
   const config = {
     ...settings,
     endpoint: String(input.endpoint || credentials.baseUrl || DEFAULT_ENDPOINT).replace(/\/+$/, ""),

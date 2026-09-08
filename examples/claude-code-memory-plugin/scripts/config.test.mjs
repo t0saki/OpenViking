@@ -198,3 +198,34 @@ test("a default does not report as a choice the user made", () => {
     assert.equal(cfg.recallQueryExpansionConfigured, false);
   });
 });
+
+test("ovcli.conf's actor_peer_id supplies the peer, and a configured one outranks it", () => {
+  withConfigs({
+    ov: { server: {} },
+    cli: { url: "http://127.0.0.1:1933", api_key: "sk-cli", actor_peer_id: "cli-peer" },
+  }, ({ otherDir }) => {
+    // `ov config switch` moves the peer with the credentials, so this harness
+    // has to read it from the same place every other one does.
+    assert.equal(loadConfig(otherDir).peerId, "cli-peer");
+  });
+
+  withConfigs({
+    ov: { server: {} },
+    cli: {
+      url: "http://127.0.0.1:1933",
+      api_key: "sk-cli",
+      actor_peer_id: "cli-peer",
+      plugin: { claude_code: { peerId: "cc-peer" } },
+    },
+  }, ({ otherDir }) => {
+    assert.equal(loadConfig(otherDir).peerId, "cc-peer");
+  });
+
+  withConfigs({
+    ov: { server: {} },
+    cli: { url: "http://127.0.0.1:1933", api_key: "sk-cli", actor_peer_id: "cli-peer" },
+    workspace: { version: 1, peer: { id: "team-a" } },
+  }, ({ workspaceDir }) => {
+    assert.equal(loadConfig(workspaceDir).peerId, "team-a");
+  });
+});

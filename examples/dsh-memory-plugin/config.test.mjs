@@ -89,3 +89,25 @@ test("ov.conf's dsh section is the lowest layer, under the cordis input", async 
   assert.equal(config.recallLimit, 3);
   assert.equal(config.scoreThreshold, 0.6);
 });
+
+// The credential chain used to overwrite the peer rather than supply it, so an
+// ovcli.conf naming no actor peer erased one configured for this harness.
+test("a configured peer survives an empty credential peer", async () => {
+  const { mkdtempSync, writeFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const dir = mkdtempSync(join(tmpdir(), "dsh-peer-"));
+  const cliPath = join(dir, "ovcli.conf");
+  writeFileSync(cliPath, JSON.stringify({
+    url: "http://127.0.0.1:1933",
+    plugin: { dsh: { peerId: "dsh-peer" } },
+  }));
+
+  const config = resolveConfig({}, {
+    OPENVIKING_CONFIG_FILE: join(dir, "absent-ov.conf"),
+    OPENVIKING_CLI_CONFIG_FILE: cliPath,
+  }, "/workspace/project");
+
+  assert.equal(config.peerId, "dsh-peer");
+  assert.equal(config.explicitPeerId, "dsh-peer");
+});

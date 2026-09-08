@@ -9,8 +9,9 @@
  *   ov.conf's `claude_code` section (legacy) → the schema's defaults
  *
  * What stays here is what only this harness knows: which file supplied the
- * credential, the log path named after the plugin, and the two knobs whose
- * fallback is derived from another knob.
+ * credential, the log path named after the plugin, the two knobs whose fallback
+ * is derived from another knob, and the peer, which falls back to the
+ * credential chain when no layer names one.
  *
  * Enable/disable:
  *   - OPENVIKING_MEMORY_ENABLED env var (0/false/no = off, 1/true/yes = on)
@@ -27,7 +28,11 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve as resolvePath } from "node:path";
 
-import { buildUserAgent, readManifestVersion } from "./shared/credentials.mjs";
+import {
+  buildUserAgent,
+  readManifestVersion,
+  resolveOpenVikingCredentials,
+} from "./shared/credentials.mjs";
 import { normalizeRewriteMode, resolveSettings } from "./shared/plugin-config.mjs";
 
 const DEFAULT_OV_CONF_PATH = join(homedir(), ".openviking", "ov.conf");
@@ -140,6 +145,10 @@ export function loadConfig(cwd = process.cwd()) {
     cwd: workspaceCwd,
     legacy: ovFile.claude_code,
   });
+  // The peer travels with the credentials, so `ov config switch` moves it here
+  // too. Only the peer is taken from this chain; the api key below is resolved
+  // separately.
+  const credentials = resolveOpenVikingCredentials(process.env, "claude_code");
 
   // baseUrl: env → ovcli.url → ov.server.url → http://{host}:{port}
   const envUrl = str(process.env.OPENVIKING_URL, null) || str(process.env.OPENVIKING_BASE_URL, null);
@@ -205,6 +214,9 @@ export function loadConfig(cwd = process.cwd()) {
     apiKey,
     accountId,
     userId,
+    // The credential chain owns the peer unless a `plugin` entry or a workspace
+    // file names one, which is the more specific answer for this directory.
+    peerId: configured.has("peerId") ? settings.peerId : credentials.peerId,
     harness: "claude-code",
     userAgent: USER_AGENT,
     captureTimeoutMs,
