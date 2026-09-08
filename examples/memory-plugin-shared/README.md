@@ -2,6 +2,8 @@
 
 This directory contains shared JavaScript modules. `sync.mjs` vendors each module into the plugins whose code imports it — Claude Code, Codex, OpenCode, dsh, pi, openclaw and the bundled `agent-plugins` servers — together with the matching `lib/*.d.mts` declaration for the targets written in TypeScript. cursor, trae, trae-cn and zcode vendor nothing: the installer copies the modules `lib/MANIFEST` names — the same sync writes it — to `$OV_HOME/agent-integrations/memory-plugin-shared/lib`, and they import it from there.
 
+`lib/install/` is the exception: it holds the installer's own JavaScript — the JSONC editor OpenCode's config needs and the hooks/mcp merge cursor, trae, trae-cn and zcode install through — which runs from `install.sh` and never from a hook. No shared module imports it, so it stays out of every closure and out of `lib/MANIFEST`.
+
 When the copies are made follows how the plugin is delivered. Claude Code, Codex and `agent-plugins` are installed by pointing a host at a directory in this repository, so their copies are committed and a push to main regenerates them. OpenCode, dsh and openclaw publish as npm packages and pi is tarred by the installer, so those build their copies at pack time and keep none in git — run `node examples/memory-plugin-shared/sync.mjs` once in a fresh checkout before running their tests.
 
 > **Requires an OpenViking server with `viking://~` home-alias support.** Recall targets the

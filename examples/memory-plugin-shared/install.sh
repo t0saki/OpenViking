@@ -1408,6 +1408,42 @@ plugin_dir_on_disk() { # plugin_dir_on_disk <plugin-subdir>
   return 1
 }
 
+# The installer's own JavaScript: the JSONC editor OpenCode's config needs and
+# the hooks/mcp merge every config-driven host installs through. It is not part
+# of the runtime the plugins ship, so it travels with whatever copy of this
+# script is running rather than with `lib/MANIFEST`.
+#
+# `--uninstall` runs before any source is resolved, and the documented uninstall
+# pipes this script from a URL, where there is no sibling directory to read. So
+# this only ever looks at what is already on disk — the running script's
+# sibling, the assembled runtime, and a marketplace or source root an earlier
+# step resolved. Never plugin_dir_on_disk: it would clone a repository, or exit
+# for want of git, just to remove hooks.
+install_lib_dir() {
+  local src self candidate
+  src="${BASH_SOURCE[0]:-}"
+  self=""
+  if [ -n "$src" ]; then
+    self="$(cd "$(dirname "$src")" >/dev/null 2>&1 && pwd -P)" || self=""
+  fi
+  for candidate in \
+    "${self:+$self/lib/install}" \
+    "$OV_HOME/agent-integrations/memory-plugin-shared/lib/install" \
+    "${MKT_DIR:+$MKT_DIR/memory-plugin-shared/lib/install}" \
+    "${SRC_ROOT:+$SRC_ROOT/examples/memory-plugin-shared/lib/install}"; do
+    [ -n "$candidate" ] && [ -d "$candidate" ] || continue
+    printf '%s' "$candidate"
+    return 0
+  done
+  return 1
+}
+
+require_install_lib_dir() {
+  install_lib_dir && return 0
+  err "$(t 'Installer runtime not found:' '未找到安装器运行时：') memory-plugin-shared/lib/install"
+  return 1
+}
+
 prepare_marketplace_dir() {
   case "$SOURCE_MODE" in
     dev)
@@ -1946,6 +1982,9 @@ assemble_agent_integration() { # assemble_agent_integration <host> <dest-name>
     cp "$shared/lib/$file" "$shared_dest.tmp/$file" || return 1
   done < "$manifest"
   cp "$manifest" "$shared_dest.tmp/MANIFEST"
+  # Not part of the closure and never imported by a hook; it is here so that an
+  # uninstall piped from a URL can reclaim this host's entries without a source.
+  cp -R "$shared/lib/install" "$shared_dest.tmp/install" || return 1
   rm -rf "$shared_dest"
   mkdir -p "$(dirname "$shared_dest")"
   mv "$shared_dest.tmp" "$shared_dest"
@@ -1953,285 +1992,44 @@ assemble_agent_integration() { # assemble_agent_integration <host> <dest-name>
 }
 
 agent_write_json_configs() { # agent_write_json_configs <kind> <hooks> <mcp> <root> <client-id> <node-bin>
-  local kind="$1" hooks_path="$2" mcp_path="$3" root="$4" client_id="$5" node_bin="$6"
-  "$NODE_BIN" - "$kind" "$hooks_path" "$mcp_path" "$root" "$client_id" "$node_bin" "$SOURCE_MODE" <<'NODE'
-const fs = require("node:fs");
-const path = require("node:path");
-const [kind, hooksPath, mcpPath, root, clientId, nodeBin, sourceMode] = process.argv.slice(2);
+  local lib
+  lib="$(require_install_lib_dir)" || return 1
+  "$NODE_BIN" "$lib/host-json-config.mjs" write "$1" "$2" "$3" "$4" "$5" "$6" "$SOURCE_MODE"
+}
 
-function readJson(file) {
-  if (!fs.existsSync(file)) return {};
-  try {
-    const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      throw new Error("top-level value must be an object");
-    }
-    return parsed;
-  } catch (error) {
-    throw new Error(`Cannot safely update ${file}: ${error.message}`);
+agent_remove_json_configs() { # agent_remove_json_configs <hooks> [mcp]
+  local lib
+  # An uninstall that cannot find the runtime still has to remove everything it
+  # can and tell the user what it left behind; aborting here would leave both
+  # the host's entries and the integration directory they point at.
+  lib="$(install_lib_dir)" || {
+    warn "$(t 'Installer runtime not found; remove the OpenViking hook and MCP entries by hand from:' '未找到安装器运行时，请手动移除以下文件中的 OpenViking hook 与 MCP 条目：') $1${2:+, $2}"
+    return 0
   }
-}
-
-function atomicWrite(file, value) {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const next = JSON.stringify(value, null, 2) + "\n";
-  let previous = "";
-  try { previous = fs.readFileSync(file, "utf8"); } catch {}
-  if (previous === next) return;
-  if (previous) fs.writeFileSync(`${file}.bak`, previous, { mode: 0o600 });
-  const tmp = `${file}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, next, { mode: 0o600 });
-  fs.renameSync(tmp, file);
-}
-
-function shellArg(value) {
-  return `'${String(value).replace(/'/g, `'"'"'`)}'`;
-}
-
-function isOpenVikingHook(value) {
-  const text = JSON.stringify(value || {});
-  return text.includes("OPENVIKING_INTEGRATION_ID") || (text.includes("openviking") && [
-    "hook.mjs",
-    "hook-entry.mjs",
-    "session-start.mjs",
-    "auto-recall.mjs",
-    "auto-capture.mjs",
-    "pre-compact.mjs",
-    "session-end.mjs",
-    "trae-auto-recall.mjs",
-    "trae-auto-capture.mjs",
-    "claude-code-memory-plugin/scripts/session-start.mjs",
-  ].some((name) => text.includes(name)));
-}
-
-// One plugin serves every config-driven host; `kind` names the host directory
-// this client's configuration templates live in.
-const hostDir = path.join(root, "hosts", kind);
-const packageManifest = readJson(path.join(hostDir, "openviking.integration.json"));
-if (packageManifest.id !== "openviking-memory" || !Array.isArray(packageManifest.clients)
-  || !packageManifest.clients.includes(clientId)) {
-  throw new Error(`Invalid OpenViking integration manifest for ${clientId}`);
-}
-const integrationEnv = {
-  OPENVIKING_INTEGRATION_ID: packageManifest.id,
-  OPENVIKING_INTEGRATION_VERSION: packageManifest.version,
-  OPENVIKING_HOOK_SOURCE: clientId,
-};
-const envPrefix = Object.entries(integrationEnv)
-  .map(([key, value]) => `${key}=${shellArg(value)}`)
-  .join(" ");
-
-function renderHookCommand(command) {
-  const match = /^node\s+"?__OPENVIKING_PLUGIN_ROOT__\/([^\s"]+)"?(\s.*)?$/u.exec(command);
-  if (!match) throw new Error(`Unsupported ${clientId} hook command template: ${command}`);
-  const args = (match[2] || "").replaceAll("__OPENVIKING_CLIENT_ID__", clientId);
-  const rendered = `${shellArg(nodeBin)} ${shellArg(path.join(root, match[1]))}${args}`;
-  return `${envPrefix} ${rendered} # openviking-memory`;
-}
-
-function renderHookValue(value) {
-  if (Array.isArray(value)) return value.map(renderHookValue);
-  if (!value || typeof value !== "object") return value;
-  return Object.fromEntries(Object.entries(value).map(([key, child]) => [
-    key,
-    key === "command" && typeof child === "string" ? renderHookCommand(child) : renderHookValue(child),
-  ]));
-}
-
-const hookTemplate = readJson(path.join(hostDir, "hooks.json"));
-if (!hookTemplate.hooks || typeof hookTemplate.hooks !== "object" || Array.isArray(hookTemplate.hooks)) {
-  throw new Error(`Invalid ${clientId} hooks template`);
-}
-const hooksConfig = readJson(hooksPath);
-hooksConfig.version = Number.isFinite(Number(hooksConfig.version)) ? Number(hooksConfig.version) : 1;
-hooksConfig.hooks = hooksConfig.hooks && typeof hooksConfig.hooks === "object" && !Array.isArray(hooksConfig.hooks)
-  ? hooksConfig.hooks : {};
-
-for (const [event, entries] of Object.entries(hookTemplate.hooks)) {
-  if (!Array.isArray(entries)) throw new Error(`Invalid ${clientId} hook entries for ${event}`);
-  const current = Array.isArray(hooksConfig.hooks[event]) ? hooksConfig.hooks[event] : [];
-  hooksConfig.hooks[event] = [
-    ...current.filter((item) => !isOpenVikingHook(item)),
-    ...renderHookValue(entries),
-  ];
-}
-if (kind === "cursor") {
-  if (Array.isArray(hooksConfig.hooks.postToolUse)) {
-    const remaining = hooksConfig.hooks.postToolUse.filter((item) => !isOpenVikingHook(item));
-    if (remaining.length) hooksConfig.hooks.postToolUse = remaining;
-    else delete hooksConfig.hooks.postToolUse;
-  }
-}
-atomicWrite(hooksPath, hooksConfig);
-
-const mcpTemplate = readJson(path.join(hostDir, ".mcp.json"));
-const templateServer = mcpTemplate.mcpServers?.openviking;
-if (!templateServer || typeof templateServer !== "object" || Array.isArray(templateServer)) {
-  throw new Error(`Invalid ${clientId} MCP template`);
-}
-const mcp = readJson(mcpPath);
-mcp.mcpServers = mcp.mcpServers && typeof mcp.mcpServers === "object" && !Array.isArray(mcp.mcpServers)
-  ? mcp.mcpServers : {};
-function isKnownLegacyOpenVikingServer(value) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  if (value.env?.OPENVIKING_INTEGRATION_ID === "openviking-memory") return true;
-  if (typeof value.url !== "string") return false;
-  try {
-    const url = new URL(value.url);
-    const local = ["127.0.0.1", "localhost", "::1"].includes(url.hostname)
-      && url.port === "1933" && url.pathname.replace(/\/$/u, "") === "/mcp";
-    const cloud = url.hostname === "api.vikingdb.cn-beijing.volces.com"
-      && url.pathname.replace(/\/$/u, "") === "/openviking/mcp";
-    return local || cloud;
-  } catch {
-    return false;
-  }
-}
-// Migrate only the exact OpenViking endpoints published by the earlier manual
-// guides. A coincidentally named third-party server must remain untouched.
-if (isKnownLegacyOpenVikingServer(mcp.mcpServers["ov-mcp-server"])) {
-  delete mcp.mcpServers["ov-mcp-server"];
-}
-const server = {
-  ...templateServer,
-  command: nodeBin,
-  args: [path.join(root, "servers", "mcp-proxy.mjs")],
-  env: { ...(templateServer.env || {}), ...integrationEnv },
-};
-mcp.mcpServers.openviking = server;
-atomicWrite(mcpPath, mcp);
-
-const installedManifestPath = path.join(root, "integration.json");
-const previousManifest = readJson(installedManifestPath);
-const now = new Date().toISOString();
-const unchangedInstall = previousManifest.version === packageManifest.version
-  && previousManifest.source === sourceMode
-  && previousManifest.hooksConfig === hooksPath
-  && previousManifest.mcpConfig === mcpPath;
-atomicWrite(installedManifestPath, {
-  schemaVersion: 1,
-  id: packageManifest.id,
-  version: packageManifest.version,
-  client: clientId,
-  installMode: "managed-native",
-  source: sourceMode,
-  capabilities: packageManifest.capabilities,
-  hooksConfig: hooksPath,
-  mcpConfig: mcpPath,
-  installedAt: previousManifest.installedAt || now,
-  updatedAt: unchangedInstall ? previousManifest.updatedAt || previousManifest.installedAt || now : now,
-});
-NODE
+  "$NODE_BIN" "$lib/host-json-config.mjs" remove "$1" "${2:-}"
 }
 
 agent_remove_trae_cli_configs() { # agent_remove_trae_cli_configs <hooks> <traecli.toml>
   local hooks_path="$1" config_path="$2"
-  "$NODE_BIN" - "$hooks_path" "$config_path" <<'NODE'
-const fs = require("node:fs");
-const path = require("node:path");
-const [hooksPath, configPath] = process.argv.slice(2);
-
-function atomicWrite(file, content) {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const tmp = `${file}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, content, { mode: 0o600 });
-  fs.renameSync(tmp, file);
-}
-
-function ownsHook(value) {
-  const text = JSON.stringify(value || {}).toLowerCase();
-  return text.includes("openviking_integration_id")
-    || (text.includes("openviking") && [
-      "trae-cli-hook.mjs",
-      "session-start.mjs",
-      "auto-recall.mjs",
-      "auto-capture.mjs",
-      "uri-guard.mjs",
-    ].some((name) => text.includes(name)));
-}
-
-if (fs.existsSync(hooksPath)) {
-  const hooks = JSON.parse(fs.readFileSync(hooksPath, "utf8"));
-  for (const event of Object.keys(hooks.hooks || {})) {
-    if (!Array.isArray(hooks.hooks[event])) continue;
-    hooks.hooks[event] = hooks.hooks[event].filter((item) => !ownsHook(item));
-    if (hooks.hooks[event].length === 0) delete hooks.hooks[event];
-  }
-  atomicWrite(hooksPath, `${JSON.stringify(hooks, null, 2)}\n`);
-}
-
-if (fs.existsSync(configPath)) {
-  const lines = fs.readFileSync(configPath, "utf8").split(/\r?\n/u);
-  const prefix = 'mcp_servers."openviking-memory"';
-  const out = [];
-  let skipping = false;
-  for (const line of lines) {
-    const match = /^\s*\[([^\]]+)\]\s*$/u.exec(line);
-    if (match) skipping = match[1] === prefix || match[1].startsWith(`${prefix}.`);
-    if (!skipping) out.push(line);
-  }
-  atomicWrite(configPath, `${out.join("\n").replace(/\n{3,}/gu, "\n\n").trimEnd()}\n`);
-}
-NODE
-}
-
-agent_remove_json_configs() { # agent_remove_json_configs <hooks> <mcp>
-  local hooks_path="$1" mcp_path="$2"
-  "$NODE_BIN" - "$hooks_path" "$mcp_path" <<'NODE'
-const fs = require("node:fs");
-const [hooksPath, mcpPath] = process.argv.slice(2);
-function read(file) {
-  if (!fs.existsSync(file)) return null;
-  try {
-    const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      throw new Error("top-level value must be an object");
+  # The hooks file answers to the same "is this entry ours" the other hosts use;
+  # only the TOML this host keeps its MCP servers in is its own problem.
+  agent_remove_json_configs "$hooks_path"
+  [ -f "$config_path" ] || return 0
+  local stripped tmp="$config_path.$$.tmp"
+  stripped="$(awk -v target='mcp_servers."openviking-memory"' '
+    BEGIN { prefix = target "." }
+    /^[[:space:]]*\[[^]]+\][[:space:]]*$/ {
+      name = $0
+      sub(/^[[:space:]]*\[/, "", name)
+      sub(/\][[:space:]]*$/, "", name)
+      skip = (name == target || index(name, prefix) == 1)
     }
-    return parsed;
-  } catch (error) {
-    throw new Error(`Cannot safely update ${file}: ${error.message}`);
-  }
-}
-function write(file, value) {
-  const next = JSON.stringify(value, null, 2) + "\n";
-  const tmp = `${file}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, next, { mode: 0o600 });
-  fs.renameSync(tmp, file);
-}
-function ownsHook(value) {
-  const text = JSON.stringify(value || {});
-  return text.includes("OPENVIKING_INTEGRATION_ID") || (text.includes("openviking") && [
-    "hook.mjs",
-    "hook-entry.mjs",
-    "session-start.mjs",
-    "auto-recall.mjs",
-    "auto-capture.mjs",
-    "pre-compact.mjs",
-    "session-end.mjs",
-    "trae-auto-recall.mjs",
-    "trae-auto-capture.mjs",
-    "uri-guard.mjs",
-    "claude-code-memory-plugin/scripts/session-start.mjs",
-  ].some((name) => text.includes(name)));
-}
-const hooks = read(hooksPath);
-const mcp = read(mcpPath);
-if (hooks?.hooks && typeof hooks.hooks === "object") {
-  for (const event of Object.keys(hooks.hooks)) {
-    if (!Array.isArray(hooks.hooks[event])) continue;
-    hooks.hooks[event] = hooks.hooks[event].filter((item) => !ownsHook(item));
-    if (hooks.hooks[event].length === 0) delete hooks.hooks[event];
-  }
-  write(hooksPath, hooks);
-}
-if (mcp?.mcpServers?.openviking) {
-  const text = JSON.stringify(mcp.mcpServers.openviking);
-  if (text.includes("agent-integrations") && text.includes("mcp-proxy.mjs")) {
-    delete mcp.mcpServers.openviking;
-    write(mcpPath, mcp);
-  }
-}
-NODE
+    skip { next }
+    /^[[:space:]]*$/ { blank = 1; next }
+    { if (started && blank) print ""; print; started = 1; blank = 0 }
+  ' "$config_path")"
+  ( umask 077; printf '%s\n' "$stripped" >"$tmp" )
+  mv "$tmp" "$config_path"
 }
 
 uninstall_agent_integrations() {
@@ -2371,77 +2169,9 @@ zcode_mcp_path() {
 }
 
 zcode_merge_config() { # zcode_merge_config <config_path> <hooks_path> <mcp_path>
-  "$NODE_BIN" - "$1" "$2" "$3" <<'ZCODE_MERGE_NODE'
-const fs = require("node:fs");
-const path = require("node:path");
-const [configPath, hooksPath, mcpPath] = process.argv.slice(2);
-
-// --- Safe read: ENOENT → empty config; parse error → abort, do NOT overwrite ---
-let config = {};
-const exists = fs.existsSync(configPath);
-if (exists) {
-  let raw;
-  try {
-    raw = fs.readFileSync(configPath, "utf8");
-  } catch (e) {
-    process.stderr.write(`Cannot read ${configPath}: ${e.message}\n`);
-    process.exit(1);
-  }
-  try {
-    config = JSON.parse(raw);
-  } catch (e) {
-    process.stderr.write(`${configPath} is malformed and will NOT be overwritten: ${e.message}\n`);
-    process.exit(1);
-  }
-  if (typeof config !== "object" || config === null || Array.isArray(config)) {
-    process.stderr.write(`${configPath} top-level value is not an object; refusing to overwrite\n`);
-    process.exit(1);
-  }
-}
-
-// --- Merge hooks ---
-if (fs.existsSync(hooksPath)) {
-  const hooks = JSON.parse(fs.readFileSync(hooksPath, "utf8"));
-  config.hooks = config.hooks || {};
-  config.hooks.enabled = true;
-  config.hooks.events = config.hooks.events || {};
-  if (hooks.hooks) {
-    for (const [event, handlers] of Object.entries(hooks.hooks)) {
-      const existing = (config.hooks.events[event] || []).filter(
-        (group) => !JSON.stringify(group).includes("openviking-memory"),
-      );
-      config.hooks.events[event] = [...existing, ...handlers];
-    }
-  }
-}
-
-// --- Merge MCP: only manage entries tagged as openviking-memory ---
-if (fs.existsSync(mcpPath)) {
-  const stat = fs.statSync(mcpPath);
-  if (stat.size > 0) {
-    const mcp = JSON.parse(fs.readFileSync(mcpPath, "utf8"));
-    config.mcp = config.mcp || {};
-    config.mcp.servers = config.mcp.servers || {};
-    const incoming = mcp.mcpServers || {};
-    if (mcp.openviking) incoming.openviking = mcp.openviking;
-    for (const [name, server] of Object.entries(incoming)) {
-      const existing = config.mcp.servers[name];
-      // Only replace if the entry doesn't exist OR is already managed by us
-      if (existing && !JSON.stringify(existing).includes("openviking-memory")) {
-        process.stderr.write(`Skipping ${name} MCP server: already exists and is not managed by OpenViking\n`);
-        continue;
-      }
-      config.mcp.servers[name] = server;
-    }
-  }
-}
-
-// --- Atomic write: backup + tmp + rename ---
-if (exists) fs.copyFileSync(configPath, `${configPath}.bak`);
-const tmp = `${configPath}.${process.pid}.tmp`;
-fs.writeFileSync(tmp, JSON.stringify(config, null, 2) + "\n");
-fs.renameSync(tmp, configPath);
-ZCODE_MERGE_NODE
+  local lib
+  lib="$(require_install_lib_dir)" || return 1
+  "$NODE_BIN" "$lib/host-json-config.mjs" merge-zcode "$1" "$2" "$3"
 }
 
 install_zcode() {
@@ -2525,340 +2255,12 @@ opencode_install_mcp_proxy_snapshot() {
 }
 
 opencode_write_config() {
-  local cfg="$1" plugin_spec="$2" mcp_proxy="$3"
+  local cfg="$1" plugin_spec="$2" mcp_proxy="$3" lib
+  lib="$(require_install_lib_dir)" || return 1
   mkdir -p "$(dirname "$cfg")"
   [ -f "$cfg" ] || printf '{\n}\n' > "$cfg"
   cp "$cfg" "$cfg.bak.$(date +%Y%m%d-%H%M%S)"
-  node - "$cfg" "$plugin_spec" "$mcp_proxy" <<'NODE'
-const fs = require("node:fs");
-const file = process.argv[2];
-const pluginSpec = process.argv[3] || "";
-const mcpProxy = process.argv[4] || "";
-let raw = "";
-try { raw = fs.readFileSync(file, "utf8"); } catch {}
-
-function stripJsonc(s) {
-  let out = "";
-  let i = 0;
-  while (i < s.length) {
-    const ch = s[i];
-    const next = s[i + 1];
-    if (ch === '"' || ch === "'") {
-      const end = readStringEnd(s, i);
-      out += s.slice(i, end);
-      i = end;
-    } else if (ch === "/" && next === "/") {
-      i += 2;
-      while (i < s.length && s[i] !== "\n") i++;
-    } else if (ch === "/" && next === "*") {
-      i += 2;
-      while (i < s.length && !(s[i] === "*" && s[i + 1] === "/")) i++;
-      i = Math.min(s.length, i + 2);
-    } else {
-      out += ch;
-      i++;
-    }
-  }
-  return out.replace(/,\s*([}\]])/g, "$1");
-}
-
-function readStringEnd(s, start) {
-  const quote = s[start];
-  let i = start + 1;
-  while (i < s.length) {
-    if (s[i] === "\\") {
-      i += 2;
-    } else if (s[i] === quote) {
-      return i + 1;
-    } else {
-      i++;
-    }
-  }
-  return s.length;
-}
-
-function skipTrivia(s, i, end = s.length) {
-  while (i < end) {
-    if (/\s/.test(s[i])) {
-      i++;
-    } else if (s[i] === "/" && s[i + 1] === "/") {
-      i += 2;
-      while (i < end && s[i] !== "\n") i++;
-    } else if (s[i] === "/" && s[i + 1] === "*") {
-      i += 2;
-      while (i < end && !(s[i] === "*" && s[i + 1] === "/")) i++;
-      i = Math.min(end, i + 2);
-    } else {
-      break;
-    }
-  }
-  return i;
-}
-
-function parseStringLiteral(s, start) {
-  const end = readStringEnd(s, start);
-  try {
-    return { value: JSON.parse(s.slice(start, end)), end };
-  } catch {
-    return { value: "", end };
-  }
-}
-
-function findTopLevelObject(s) {
-  const start = skipTrivia(s, 0);
-  if (s[start] !== "{") return null;
-  let depth = 0;
-  let i = start;
-  while (i < s.length) {
-    if (s[i] === '"' || s[i] === "'") {
-      i = readStringEnd(s, i);
-      continue;
-    }
-    if (s[i] === "/" && (s[i + 1] === "/" || s[i + 1] === "*")) {
-      i = skipTrivia(s, i);
-      continue;
-    }
-    if (s[i] === "{" || s[i] === "[") depth++;
-    if (s[i] === "}" || s[i] === "]") {
-      depth--;
-      if (depth === 0 && s[i] === "}") return { start, end: i };
-    }
-    i++;
-  }
-  return null;
-}
-
-function findObjectRangeAt(s, start, end = s.length) {
-  const objectStart = skipTrivia(s, start, end);
-  if (s[objectStart] !== "{") return null;
-  let depth = 0;
-  let i = objectStart;
-  while (i < end) {
-    if (s[i] === '"' || s[i] === "'") {
-      i = readStringEnd(s, i);
-      continue;
-    }
-    if (s[i] === "/" && (s[i + 1] === "/" || s[i + 1] === "*")) {
-      i = skipTrivia(s, i, end);
-      continue;
-    }
-    if (s[i] === "{" || s[i] === "[") depth++;
-    if (s[i] === "}" || s[i] === "]") {
-      depth--;
-      if (depth === 0 && s[i] === "}") return { start: objectStart, end: i };
-    }
-    i++;
-  }
-  return null;
-}
-
-function findArrayRangeAt(s, start, end = s.length) {
-  const arrayStart = skipTrivia(s, start, end);
-  if (s[arrayStart] !== "[") return null;
-  let depth = 0;
-  let i = arrayStart;
-  while (i < end) {
-    if (s[i] === '"' || s[i] === "'") {
-      i = readStringEnd(s, i);
-      continue;
-    }
-    if (s[i] === "/" && (s[i + 1] === "/" || s[i + 1] === "*")) {
-      i = skipTrivia(s, i, end);
-      continue;
-    }
-    if (s[i] === "{" || s[i] === "[") depth++;
-    if (s[i] === "}" || s[i] === "]") {
-      depth--;
-      if (depth === 0 && s[i] === "]") return { start: arrayStart, end: i };
-    }
-    i++;
-  }
-  return null;
-}
-
-function findTopLevelProperty(s, objectRange, name) {
-  let depth = 1;
-  let i = objectRange.start + 1;
-  while (i < objectRange.end) {
-    if (s[i] === "/" && (s[i + 1] === "/" || s[i + 1] === "*")) {
-      i = skipTrivia(s, i, objectRange.end);
-      continue;
-    }
-    if (s[i] === '"' || s[i] === "'") {
-      const keyStart = i;
-      const parsed = parseStringLiteral(s, i);
-      i = parsed.end;
-      const afterKey = skipTrivia(s, i, objectRange.end);
-      if (depth === 1 && parsed.value === name && s[afterKey] === ":") {
-        const valueStart = skipTrivia(s, afterKey + 1, objectRange.end);
-        return {
-          keyStart,
-          valueStart,
-          replaceEnd: findPropertyReplaceEnd(s, valueStart, objectRange.end),
-        };
-      }
-      continue;
-    }
-    if (s[i] === "{" || s[i] === "[") depth++;
-    if (s[i] === "}" || s[i] === "]") depth--;
-    i++;
-  }
-  return null;
-}
-
-function findPropertyReplaceEnd(s, valueStart, objectEnd) {
-  let depth = 0;
-  let i = skipTrivia(s, valueStart, objectEnd);
-  let lastTokenEnd = i;
-  while (i < objectEnd) {
-    if (s[i] === '"' || s[i] === "'") {
-      i = readStringEnd(s, i);
-      lastTokenEnd = i;
-      continue;
-    }
-    if (s[i] === "/" && (s[i + 1] === "/" || s[i + 1] === "*")) {
-      i = skipTrivia(s, i, objectEnd);
-      continue;
-    }
-    if (depth === 0 && s[i] === ",") return lastTokenEnd;
-    if (s[i] === "{" || s[i] === "[") depth++;
-    if (s[i] === "}" || s[i] === "]") depth--;
-    if (!/\s/.test(s[i])) lastTokenEnd = i + 1;
-    i++;
-  }
-  return lastTokenEnd;
-}
-
-function findLineIndent(s, index) {
-  const lineStart = s.lastIndexOf("\n", index - 1) + 1;
-  const prefix = s.slice(lineStart, index);
-  return /^[ \t]*$/.test(prefix) ? prefix : "";
-}
-
-function detectPropertyIndent(s, objectRange) {
-  let i = objectRange.start + 1;
-  while (i < objectRange.end) {
-    i = skipTrivia(s, i, objectRange.end);
-    if (s[i] === '"' || s[i] === "'") return findLineIndent(s, i) || "  ";
-    if (s[i] === "{" || s[i] === "[") break;
-    i++;
-  }
-  const closeIndent = findLineIndent(s, objectRange.end);
-  return `${closeIndent}  `;
-}
-
-function hasTopLevelProperty(s, objectRange) {
-  let i = objectRange.start + 1;
-  while (i < objectRange.end) {
-    i = skipTrivia(s, i, objectRange.end);
-    if (s[i] === '"' || s[i] === "'") return true;
-    i++;
-  }
-  return false;
-}
-
-function objectEndsWithComma(s, objectRange) {
-  const body = s.slice(objectRange.start + 1, objectRange.end);
-  return body.trimEnd().endsWith(",");
-}
-
-function rangeHasValue(s, range) {
-  let i = range.start + 1;
-  while (i < range.end) {
-    i = skipTrivia(s, i, range.end);
-    if (i < range.end) return true;
-  }
-  return false;
-}
-
-function formatProperty(name, value, indent) {
-  const json = JSON.stringify(value, null, 2);
-  const formatted = json.split("\n").map((line, idx) => idx === 0 ? line : `${indent}${line}`).join("\n");
-  return `${JSON.stringify(name)}: ${formatted}`;
-}
-
-function setPropertyInObject(s, objectRange, name, value) {
-  const existing = findTopLevelProperty(s, objectRange, name);
-  if (existing) {
-    const indent = findLineIndent(s, existing.keyStart) || detectPropertyIndent(s, objectRange);
-    return `${s.slice(0, existing.keyStart)}${formatProperty(name, value, indent)}${s.slice(existing.replaceEnd)}`;
-  }
-
-  const indent = detectPropertyIndent(s, objectRange);
-  const closeIndent = findLineIndent(s, objectRange.end);
-  const needsComma = hasTopLevelProperty(s, objectRange) && !objectEndsWithComma(s, objectRange);
-  const prefix = needsComma ? "," : "";
-  const insertion = `${prefix}\n${indent}${formatProperty(name, value, indent)}\n${closeIndent}`;
-  return `${s.slice(0, objectRange.end)}${insertion}${s.slice(objectRange.end)}`;
-}
-
-function setTopLevelProperty(s, name, value) {
-  let objectRange = findTopLevelObject(s);
-  if (!objectRange) {
-    s = "{\n}\n";
-    objectRange = findTopLevelObject(s);
-  }
-  return setPropertyInObject(s, objectRange, name, value);
-}
-
-function setNestedObjectProperty(s, parentName, childName, childValue, fallbackParentValue) {
-  let objectRange = findTopLevelObject(s);
-  if (!objectRange) {
-    s = "{\n}\n";
-    objectRange = findTopLevelObject(s);
-  }
-  const parent = findTopLevelProperty(s, objectRange, parentName);
-  if (!parent) return setPropertyInObject(s, objectRange, parentName, fallbackParentValue);
-  const parentRange = findObjectRangeAt(s, parent.valueStart, parent.replaceEnd);
-  if (!parentRange) return setPropertyInObject(s, objectRange, parentName, fallbackParentValue);
-  return setPropertyInObject(s, parentRange, childName, childValue);
-}
-
-function appendStringToTopLevelArray(s, name, value) {
-  let objectRange = findTopLevelObject(s);
-  if (!objectRange) {
-    s = "{\n}\n";
-    objectRange = findTopLevelObject(s);
-  }
-  const prop = findTopLevelProperty(s, objectRange, name);
-  if (!prop) return setPropertyInObject(s, objectRange, name, [value]);
-  const arrayRange = findArrayRangeAt(s, prop.valueStart, prop.replaceEnd);
-  if (!arrayRange) return setPropertyInObject(s, objectRange, name, [value]);
-  const propIndent = findLineIndent(s, prop.keyStart) || detectPropertyIndent(s, objectRange);
-  const itemIndent = `${propIndent}  `;
-  const closeIndent = findLineIndent(s, arrayRange.end) || propIndent;
-  const needsComma = rangeHasValue(s, arrayRange) && !s.slice(arrayRange.start + 1, arrayRange.end).trimEnd().endsWith(",");
-  const prefix = needsComma ? "," : "";
-  const insertion = `${prefix}\n${itemIndent}${JSON.stringify(value)}\n${closeIndent}`;
-  return `${s.slice(0, arrayRange.end)}${insertion}${s.slice(arrayRange.end)}`;
-}
-
-let data = {};
-try { data = raw.trim() ? JSON.parse(stripJsonc(raw)) : {}; } catch { data = {}; }
-let nextRaw = raw.trim() ? raw : "{\n}\n";
-if (pluginSpec) {
-  const next = Array.isArray(data.plugin) ? data.plugin.slice() : [];
-  if (!next.includes(pluginSpec)) {
-    next.push(pluginSpec);
-    nextRaw = appendStringToTopLevelArray(nextRaw, "plugin", pluginSpec);
-  }
-  data.plugin = next;
-}
-if (mcpProxy) {
-  data.mcp = data.mcp && typeof data.mcp === "object" && !Array.isArray(data.mcp) ? data.mcp : {};
-  if (!data.mcp.openviking || data.mcp.openviking.enabled !== false) {
-    data.mcp.openviking = {
-      type: "local",
-      command: ["node", mcpProxy],
-      enabled: true,
-      timeout: 15000,
-    };
-    nextRaw = setNestedObjectProperty(nextRaw, "mcp", "openviking", data.mcp.openviking, data.mcp);
-  }
-}
-if (!nextRaw.endsWith("\n")) nextRaw += "\n";
-fs.writeFileSync(file, nextRaw);
-NODE
+  "$NODE_BIN" "$lib/jsonc-edit.mjs" "$cfg" "$plugin_spec" "$mcp_proxy"
 }
 
 opencode_install_file_plugin() {

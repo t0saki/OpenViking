@@ -180,7 +180,7 @@ per-harness 章节（档案卡）只写差异；所有共享事实均在本章�
 
 ### 3.1.2 统一安装器
 
-统一安装脚本 `examples/memory-plugin-shared/install.sh`（3424 行）覆盖 10 个 harness id：`claude, codex, cursor, trae, trae-cn, trae-cli, zcode, opencode, pi, dsh`（其中 openclaw 走自有渠道；`trae-cli` 则复用 codex 安装流程，[§3.1.1](#_3-1-1-判定矩阵)）。要点如下：
+统一安装脚本 `examples/memory-plugin-shared/install.sh` 覆盖 10 个 harness id：`claude, codex, cursor, trae, trae-cn, trae-cli, zcode, opencode, pi, dsh`（其中 openclaw 走自有渠道；`trae-cli` 则复用 codex 安装流程，[§3.1.1](#_3-1-1-判定矩阵)）。要点如下：
 
 - 双分发：`--dist github|tos`；三源：`--source remote|archive|dev`。以 `bash <(curl …)` 方式执行时会从 `/dev/tty` 读取输入，从而保留交互。
 - 官方 docs 的规范一键命令是不带 `--harness` 的裸命令（执行后进入 TUI 多选）；而各插件自带的 setup-helper 转发脚本在调用时会自动补 `--harness`。

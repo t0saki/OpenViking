@@ -178,7 +178,7 @@ Core modules at a glance (detailed further in the per-dimension sections):
 
 ### 3.1.2 Unified installer
 
-The unified install script (`examples/memory-plugin-shared/install.sh`, 3424 lines) supports ten harness IDs: `claude, codex, cursor, trae, trae-cn, trae-cli, zcode, opencode, pi, dsh`. (Note that `openclaw` uses its own distribution channel, while `trae-cli` reuses the `codex` install flow, as detailed in [§3.1.1](#_3-1-1-decision-matrix)). Key highlights:
+The unified install script (`examples/memory-plugin-shared/install.sh`) supports ten harness IDs: `claude, codex, cursor, trae, trae-cn, trae-cli, zcode, opencode, pi, dsh`. (Note that `openclaw` uses its own distribution channel, while `trae-cli` reuses the `codex` install flow, as detailed in [§3.1.1](#_3-1-1-decision-matrix)). Key highlights:
 
 - **Interactive prompts:** Two distributions (`--dist github|tos`) and three sources (`--source remote|archive|dev`) are available. When executed via `bash <(curl …)`, it reads input directly from `/dev/tty` to ensure prompts remain interactive.
 - **Usage:** In the official documentation, the canonical one-line command omits the `--harness` flag, which launches a TUI multi-select menu. However, the setup-helper forwarding scripts bundled with each plugin append the `--harness` flag automatically.

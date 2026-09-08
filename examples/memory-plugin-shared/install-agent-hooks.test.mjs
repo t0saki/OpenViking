@@ -40,8 +40,8 @@ function writeJson(file, value) {
   writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`);
 }
 
-function runInstaller(home, args, extraEnv = {}) {
-  return spawnSync("bash", [installer, ...args], {
+function runInstaller(home, args, extraEnv = {}, script = installer) {
+  return spawnSync("bash", [script, ...args], {
     cwd: checkout,
     env: {
       ...process.env,
@@ -427,6 +427,11 @@ test("combined hook-host install preserves unrelated hooks and is idempotent", (
       [],
       "zcode",
     );
+    // A backup taken while removing entries would keep a copy of them, so the
+    // uninstall writes none and reclaims the one the install left.
+    for (const file of [cursorHooks, cursorMcpPath, traeHooks, traeMcp, traeCnHooks, traeCnMcp]) {
+      assert.equal(existsSync(`${file}.bak`), false, `${file}.bak`);
+    }
     assert.equal(existsSync(join(home, ".openviking", "agent-integrations", "memory-plugin-shared")), false);
   } finally {
     rmSync(home, { recursive: true, force: true });
@@ -456,6 +461,37 @@ for (const client of ["cursor", "trae", "trae-cn", "zcode"]) {
     }
   });
 }
+
+// The documented uninstall pipes install.sh from a URL, so the running script
+// has no lib/ sibling, and the first uninstall drops the assembled copy under
+// $OV_HOME. Nothing left to read is not a reason to abort — and never a reason
+// to fetch sources.
+test("uninstall with no installer runtime on disk removes what it can and fetches nothing", () => {
+  const home = mkdtempSync(join(tmpdir(), "openviking-uninstall-sourceless-"));
+  try {
+    runInstall(home, "cursor");
+    const detached = join(home, "install.sh");
+    cpSync(installer, detached);
+    rmSync(join(home, ".openviking", "agent-integrations", "memory-plugin-shared"), {
+      recursive: true,
+      force: true,
+    });
+    const result = runInstaller(home, ["--harness", "cursor", "--uninstall", "--lang", "en", "--yes"], {
+      OPENVIKING_REPO_URL: "file:///nonexistent/openviking.git",
+      OPENVIKING_REPO_DIR: join(home, "openviking-repo"),
+    }, detached);
+    const output = `${result.stdout}\n${result.stderr}`;
+    assert.equal(result.status, 0, output);
+    assert.doesNotMatch(output, /Cloning|Refreshing checkout/u, output);
+    assert.equal(existsSync(join(home, "openviking-repo")), false);
+    assert.equal(existsSync(join(home, ".openviking", "agent-integrations", "cursor")), false);
+    assert.equal(existsSync(join(home, ".cursor", "rules", "openviking-memory.mdc")), false);
+    // The host's own files could not be edited, so the uninstall has to name them.
+    assert.match(result.stdout, /by hand from:.*\.cursor\/hooks\.json/u, output);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
 
 test("malformed existing agent JSON fails without overwriting user configuration", () => {
   const home = mkdtempSync(join(tmpdir(), "openviking-agent-invalid-json-"));
