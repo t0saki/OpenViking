@@ -232,6 +232,8 @@ transformContext auto recall 流程：
 | Header | 来源 | 说明 |
 | --- | --- | --- |
 | `X-API-Key` | `apiKey` / `OPENVIKING_API_KEY` | OpenViking API Key |
+| `Authorization` | `apiKey` / `OPENVIKING_API_KEY` | 同一个 key 的 `Bearer <key>` 形式 |
+| `User-Agent` | `package.json` 的 version | `openviking-memory-openclaw/<version>` |
 | `X-OpenViking-Account` | `accountId` / `OPENVIKING_ACCOUNT_ID` | Root key 或 trusted 部署需要的租户 account |
 | `X-OpenViking-User` | `userId` / `OPENVIKING_USER_ID` | Root key 或 trusted 部署需要的用户 |
 | `X-OpenViking-Actor-Peer` | 当前 session 解析出的 agentId | 用于 peer scope 隔离 |
@@ -328,7 +330,7 @@ transformContext auto recall 流程：
 | `PUT /api/v1/admin/accounts/{account_id}/users/{user_id}/role` | ROOT | 修改角色 | 运维使用 |
 | `POST /api/v1/admin/accounts/{account_id}/users/{user_id}/key` | ROOT/ADMIN | 重置用户 API key | key 泄露/轮换时使用 |
 
-认证方式：OpenViking HTTP 支持 `X-API-Key: <key>` 和 `Authorization: Bearer <key>`；插件固定使用 `X-API-Key`。如果服务端启用了多租户且当前 key 需要显式租户上下文，插件还会附加 `X-OpenViking-Account`、`X-OpenViking-User`、`X-OpenViking-Actor-Peer`。
+认证方式：OpenViking HTTP 支持 `X-API-Key: <key>` 和 `Authorization: Bearer <key>`；插件两个都发，服务端优先读 `X-API-Key`。如果服务端启用了多租户且当前 key 需要显式租户上下文，插件还会附加 `X-OpenViking-Account`、`X-OpenViking-User`、`X-OpenViking-Actor-Peer`。
 
 ### 6.3 URI 与命名空间
 

@@ -1,5 +1,5 @@
 import {
-  resolveOpenVikingRequestHeaders,
+  buildSetupProbeHeaders,
   type OpenVikingRequestHeaders,
 } from "../../request-headers.js";
 
@@ -67,12 +67,8 @@ export function createSetupNetworkProbes({
       const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
       const sessionsUrl = `${baseUrl.replace(/\/+$/, "")}/api/v1/sessions?limit=1`;
       try {
-        const configuredRequestHeaders = resolveOpenVikingRequestHeaders({ headers: configuredHeaders });
-        const headers: Record<string, string> = {};
-        headers["X-API-Key"] = apiKey;
-        Object.assign(headers, configuredRequestHeaders);
         const response = await transport(sessionsUrl, {
-          headers,
+          headers: buildSetupProbeHeaders({ apiKey, configuredHeaders }),
           signal: controller.signal,
         });
 
@@ -98,14 +94,8 @@ export function createSetupNetworkProbes({
           }
 
           try {
-            const probeHeaders: Record<string, string> = {
-              "X-API-Key": apiKey,
-              "X-OpenViking-Account": "__probe__",
-              "X-OpenViking-User": "__probe__",
-              ...configuredRequestHeaders,
-            };
             const probe2 = await transport(sessionsUrl, {
-              headers: probeHeaders,
+              headers: buildSetupProbeHeaders({ apiKey, configuredHeaders, tenantProbe: true }),
               signal: controller.signal,
             });
             if (probe2.status !== response.status) {
@@ -140,14 +130,8 @@ export function createSetupNetworkProbes({
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
       try {
-        const configuredRequestHeaders = resolveOpenVikingRequestHeaders({ headers: configuredHeaders });
-        const headers: Record<string, string> = {};
-        if (apiKey) {
-          headers["X-API-Key"] = apiKey;
-        }
-        Object.assign(headers, configuredRequestHeaders);
         const response = await transport(`${baseUrl.replace(/\/+$/, "")}/health`, {
-          headers,
+          headers: buildSetupProbeHeaders({ apiKey, configuredHeaders }),
           signal: controller.signal,
         });
         if (response.ok) {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  buildSetupProbeHeaders,
   cleanOpenVikingRequestHeaders,
   resolveOpenVikingRequestHeaders,
 } from "../../request-headers.js";
@@ -41,6 +42,28 @@ describe("OpenViking request headers", () => {
     })).toEqual({
       token: "explicit-token",
       "X-API-Key": "explicit-key",
+    });
+  });
+
+  it("builds setup probe headers with the key, the tenant placeholders and the overrides", () => {
+    expect(buildSetupProbeHeaders()).toEqual({});
+    expect(buildSetupProbeHeaders({ apiKey: "sk-probe" })).toEqual({
+      "X-API-Key": "sk-probe",
+    });
+    expect(buildSetupProbeHeaders({ apiKey: "sk-probe", tenantProbe: true })).toEqual({
+      "X-API-Key": "sk-probe",
+      "X-OpenViking-Account": "__probe__",
+      "X-OpenViking-User": "__probe__",
+    });
+    expect(buildSetupProbeHeaders({
+      apiKey: "sk-probe",
+      tenantProbe: true,
+      configuredHeaders: { "X-API-Key": "sk-from-config", openviking: "i18n-instance" },
+    })).toEqual({
+      "X-API-Key": "sk-from-config",
+      "X-OpenViking-Account": "__probe__",
+      "X-OpenViking-User": "__probe__",
+      openviking: "i18n-instance",
     });
   });
 

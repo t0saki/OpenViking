@@ -3,6 +3,7 @@ import {
   defaultResourcePackager,
   type ResourcePackager,
 } from "./adapters/resource-packager.js";
+import { buildUserAgent, readManifestVersion } from "./shared/credentials.mjs";
 import {
   buildContextSearchBody,
   contextRequestTimeoutMs,
@@ -242,6 +243,13 @@ const DEFAULT_WAIT_REQUEST_TIMEOUT_MS = 120_000;
 export const DEFAULT_PHASE2_POLL_TIMEOUT_MS = 300_000;
 const WAIT_REQUEST_TIMEOUT_BUFFER_MS = 5_000;
 
+// The built entry runs from dist/, the sources from the package root.
+export const PLUGIN_USER_AGENT = buildUserAgent(
+  "openclaw",
+  readManifestVersion(new URL("./package.json", import.meta.url)) ||
+    readManifestVersion(new URL("../package.json", import.meta.url)),
+);
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -348,8 +356,12 @@ export class OpenVikingClient {
     try {
       const headers = new Headers(init.headers ?? {});
       const tenantHeaders = this.resolveTenantHeaders();
+      headers.set("User-Agent", PLUGIN_USER_AGENT);
       if (tenantHeaders.apiKey) {
+        // X-API-Key stays for gateway deployments that route on it; the server
+        // reads it first and falls back to Bearer, so both can travel together.
         headers.set("X-API-Key", tenantHeaders.apiKey);
+        headers.set("Authorization", `Bearer ${tenantHeaders.apiKey}`);
       }
       if (tenantHeaders.accountId) {
         headers.set("X-OpenViking-Account", tenantHeaders.accountId);

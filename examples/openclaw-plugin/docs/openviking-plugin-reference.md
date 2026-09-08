@@ -66,7 +66,7 @@ $OPENCLAW_STATE_DIR/openclaw.json
 | --- | --- | --- | --- | --- |
 | `mode` | string | `"remote"` | — | 当前仅支持远程模式。旧的 local mode 会被迁移到 remote。 |
 | `baseUrl` | string | `http://127.0.0.1:1933` | `OPENVIKING_BASE_URL` / `OPENVIKING_URL` | OpenViking Server HTTP 地址；末尾 `/` 会自动去掉。 |
-| `apiKey` | string | 空 | `OPENVIKING_API_KEY` | OpenViking API Key；请求时写入 `X-API-Key`。 |
+| `apiKey` | string | 空 | `OPENVIKING_API_KEY` | OpenViking API Key；请求时写入 `X-API-Key` 与 `Authorization: Bearer`。 |
 | `accountId` | string | 空 | `OPENVIKING_ACCOUNT_ID` | 高级租户路由字段；请求时写入 `X-OpenViking-Account`。Root key 或 trusted 部署通常需要。 |
 | `userId` | string | 空 | `OPENVIKING_USER_ID` | 高级租户路由字段；请求时写入 `X-OpenViking-User`。Root key 或 trusted 部署通常需要。 |
 | `timeoutMs` | number | `15000` | — | OpenViking HTTP 请求超时，最低会 clamp 到 `1000`。 |
@@ -506,6 +506,8 @@ curl 'http://127.0.0.1:<gateway-port>/api/openviking/recall-traces/ov_search-178
 | Header | 来源 | 说明 |
 | --- | --- | --- |
 | `X-API-Key` | `apiKey` | API Key。 |
+| `Authorization` | `apiKey` | 同一个 key 的 `Bearer <key>` 形式。 |
+| `User-Agent` | `package.json` 的 version | `openviking-memory-openclaw/<version>`。 |
 | `X-OpenViking-Account` | `accountId` | 租户 account。 |
 | `X-OpenViking-User` | `userId` | 租户 user。 |
 | `X-OpenViking-Actor-Peer` | 当前解析出的 actor peer | Actor peer 数据面路由。 |

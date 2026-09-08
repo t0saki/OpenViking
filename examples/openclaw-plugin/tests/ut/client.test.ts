@@ -1,13 +1,20 @@
+import { readFileSync } from "node:fs";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { OpenVikingClient } from "../../client.js";
+import { OpenVikingClient, PLUGIN_USER_AGENT } from "../../client.js";
 import type { ResourcePackager } from "../../adapters/resource-packager.js";
 import { isMemoryUri } from "../../routing/memory-uri.js";
 import { buildContextSearchBody } from "../../shared/recall-core.mjs";
+
+function pluginVersion(): string {
+  return JSON.parse(
+    readFileSync(new URL("../../package.json", import.meta.url), "utf-8"),
+  ).version as string;
+}
 
 function okResponse(result: unknown): Response {
   return new Response(JSON.stringify({ status: "ok", result }), {
@@ -476,6 +483,57 @@ describe("OpenVikingClient tenant headers (advanced accountId / userId overrides
     expect(headers.get("X-API-Key")).toBe("sk-root");
     expect(headers.get("X-OpenViking-Account")).toBe("acct-123");
     expect(headers.get("X-OpenViking-User")).toBe("user-456");
+  });
+
+  it("sends the api key as both X-API-Key and a Bearer token", async () => {
+    const transport = vi.fn().mockResolvedValue(okResponse({ status: "ok" }));
+
+    const client = new OpenVikingClient(
+      "http://127.0.0.1:1933", "sk-user", "agent", 5000,
+      "", "", undefined, false, true, { transport },
+    );
+    await client.healthCheck();
+
+    const [, init] = transport.mock.calls[0] as [string, RequestInit];
+    const headers = new Headers(init.headers);
+    expect(headers.get("X-API-Key")).toBe("sk-user");
+    expect(headers.get("Authorization")).toBe("Bearer sk-user");
+  });
+
+  it("sends the harness User-Agent and no auth header without an api key", async () => {
+    const transport = vi.fn().mockResolvedValue(okResponse({ status: "ok" }));
+
+    const client = new OpenVikingClient(
+      "http://127.0.0.1:1933", "", "agent", 5000,
+      "", "", undefined, false, true, { transport },
+    );
+    await client.healthCheck();
+
+    const [, init] = transport.mock.calls[0] as [string, RequestInit];
+    const headers = new Headers(init.headers);
+    expect(headers.get("User-Agent")).toBe(PLUGIN_USER_AGENT);
+    expect(PLUGIN_USER_AGENT).toBe(`openviking-memory-openclaw/${pluginVersion()}`);
+    expect(headers.get("Authorization")).toBeNull();
+  });
+
+  it("lets configured headers override the Bearer token and the User-Agent", async () => {
+    const transport = vi.fn().mockResolvedValue(okResponse({ status: "ok" }));
+
+    const client = new OpenVikingClient(
+      "http://127.0.0.1:1933", "sk-explicit", "agent", 5000,
+      "", "", undefined, false, true,
+      {
+        transport,
+        headers: { Authorization: "Bearer gateway-token", "User-Agent": "gateway/1.0" },
+      },
+    );
+    await client.healthCheck();
+
+    const [, init] = transport.mock.calls[0] as [string, RequestInit];
+    const headers = new Headers(init.headers);
+    expect(headers.get("Authorization")).toBe("Bearer gateway-token");
+    expect(headers.get("User-Agent")).toBe("gateway/1.0");
+    expect(headers.get("X-API-Key")).toBe("sk-explicit");
   });
 
   it("applies configured headers after explicit API and tenant headers", async () => {

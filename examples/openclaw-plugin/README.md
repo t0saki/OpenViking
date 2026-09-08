@@ -57,7 +57,7 @@ Once installed, the plugin provides these agent tools:
 - **What is sent**: User/assistant message text from each turn (after stripping injected memory blocks and metadata noise).
 - **Where it goes**: Your configured OpenViking server (`baseUrl`). The plugin only sends data to that server; downstream model/provider data handling (embedding, VLM) depends on the server's configuration.
 - **Storage**: All data lives on your OpenViking server under `viking://user/*` (including `viking://user/sessions/*`) and `viking://resources/*`.
-- **API Key**: Sent as `X-API-Key` header over your configured connection. Never logged or forwarded.
+- **API Key**: Sent as `X-API-Key` and `Authorization: Bearer` headers over your configured connection. Never logged or forwarded.
 - **Multi-tenant isolation**: Supports `accountId` and `userId`. Optional `peer_role` / `peer_prefix` controls whether OpenClaw speakers are written as OpenViking `peer_id`.
 
 ## Verify

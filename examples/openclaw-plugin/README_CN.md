@@ -89,7 +89,7 @@ Agent 会自动完成安装 → 配置 → 重启 → 验证。详见 [INSTALL-A
 - **发送内容**：每轮 user/assistant 消息文本（已剥离注入的记忆块和元数据噪音）。
 - **发送去向**：仅发往你配置的 OpenViking 服务（`baseUrl`）。插件本身只与该服务通信；服务端对 embedding、VLM 等模型的调用取决于服务端配置。
 - **存储位置**：所有数据存储在你的 OpenViking 服务上，命名空间包括 `viking://user/*`、`viking://session/*`、`viking://resources/*` 等。
-- **API Key**：通过 `X-API-Key` header 发送，不会被日志记录或转发。
+- **API Key**：通过 `X-API-Key` 与 `Authorization: Bearer` header 发送，不会被日志记录或转发。
 - **多租户隔离**：支持 `accountId`、`userId`。可选的 `peer_role` / `peer_prefix` 控制是否把 OpenClaw 说话人写入 OpenViking `peer_id`，并在数据面使用 `X-OpenViking-Actor-Peer`。
 
 ## 验证
