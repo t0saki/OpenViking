@@ -37,7 +37,7 @@ Every clone of one repository therefore shares one peer: project memory follows 
 
 Resolution order is:
 
-1. Explicit peer: `OPENVIKING_PEER_ID`, `peer.id` in a workspace layer, `actor_peer_id` / `peer_id` in `ovcli.conf`, or the harness-specific legacy peer config.
+1. Explicit peer: `OPENVIKING_PEER_ID`, then `peer.id` in a workspace layer or `peerId` in `ovcli.conf`'s `plugin` section, then `actor_peer_id` / `peer_id` in `ovcli.conf`, then the harness's own section of `ov.conf`.
 2. The peer derived by `peer.source`, when `workspacePeer` is not `false`.
 3. No peer.
 

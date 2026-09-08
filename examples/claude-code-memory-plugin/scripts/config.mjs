@@ -9,9 +9,9 @@
  *   ov.conf's `claude_code` section (legacy) → the schema's defaults
  *
  * What stays here is what only this harness knows: which file supplied the
- * credential, the log path named after the plugin, the two knobs whose fallback
- * is derived from another knob, and the peer, which falls back to the
- * credential chain when no layer names one.
+ * credential, the log path named after the plugin, and the two knobs whose
+ * fallback is derived from another knob. The peer runs the same chain as every
+ * other harness, in `shared/workspace-peer.mjs`.
  *
  * Enable/disable:
  *   - OPENVIKING_MEMORY_ENABLED env var (0/false/no = off, 1/true/yes = on)
@@ -34,6 +34,7 @@ import {
   resolveOpenVikingCredentials,
 } from "./shared/credentials.mjs";
 import { normalizeRewriteMode, resolveSettings } from "./shared/plugin-config.mjs";
+import { resolvePluginPeerId } from "./shared/workspace-peer.mjs";
 
 const DEFAULT_OV_CONF_PATH = join(homedir(), ".openviking", "ov.conf");
 const DEFAULT_OVCLI_CONF_PATH = join(homedir(), ".openviking", "ovcli.conf");
@@ -141,7 +142,7 @@ export function loadConfig(cwd = process.cwd()) {
   const configPath = ovConf?.configPath || cliConf?.configPath || null;
 
   const server = ovFile.server || {};
-  const { settings, configured, plugin } = resolveSettings("claude-code", {
+  const { settings, configured, plugin, sources } = resolveSettings("claude-code", {
     cwd: workspaceCwd,
     legacy: ovFile.claude_code,
   });
@@ -214,9 +215,7 @@ export function loadConfig(cwd = process.cwd()) {
     apiKey,
     accountId,
     userId,
-    // The credential chain owns the peer unless a `plugin` entry or a workspace
-    // file names one, which is the more specific answer for this directory.
-    peerId: configured.has("peerId") ? settings.peerId : credentials.peerId,
+    peerId: resolvePluginPeerId({ settings, configured, sources, credentials }),
     harness: "claude-code",
     userAgent: USER_AGENT,
     captureTimeoutMs,

@@ -208,11 +208,11 @@ test("loadConfig falls back to the plugin section debug log path", async () => {
   });
 });
 
-test("loadConfig gives the ovcli actor peer precedence over the plugin section peer", async () => {
+test("loadConfig gives the plugin section peer precedence over the ovcli actor peer", async () => {
   await withPluginSection({
     peerId: "config-peer",
   }, (cfg) => {
-    assert.equal(cfg.peerId, "ovcli-peer");
+    assert.equal(cfg.peerId, "config-peer");
   }, {
     OPENVIKING_CREDENTIAL_SOURCE: "cli",
     OPENVIKING_URL: undefined,

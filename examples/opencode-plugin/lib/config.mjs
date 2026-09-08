@@ -2,7 +2,7 @@ import path from "path"
 import { homedir } from "os"
 import { buildUserAgent, readManifestVersion, resolveOpenVikingCredentials } from "./shared/credentials.mjs"
 import { resolveSettings } from "./shared/plugin-config.mjs"
-import { resolveEffectivePeerId } from "./shared/workspace-peer.mjs"
+import { resolveEffectivePeerId, resolvePluginPeerId } from "./shared/workspace-peer.mjs"
 
 /**
  * Configuration for the opencode plugin.
@@ -31,7 +31,7 @@ function expandHome(value) {
 
 export function loadConfig(pluginRoot, projectDirectory) {
   const creds = resolveOpenVikingCredentials(process.env, "opencode")
-  const { settings, configured } = resolveSettings("opencode", {
+  const { settings, configured, sources } = resolveSettings("opencode", {
     cwd: projectDirectory || process.cwd(),
   })
 
@@ -45,11 +45,7 @@ export function loadConfig(pluginRoot, projectDirectory) {
     user: creds.user,
     accountId: creds.account,
     userId: creds.user,
-    // Shared credentials only carry a peer when ovcli.conf sets actor_peer_id
-    // (or OPENVIKING_PEER_ID is exported); without one the plugin section's
-    // peerId still applies so authenticated setups keep writing peer-scoped
-    // data instead of silently dropping into the shared user tree (#4487).
-    peerId: creds.peerId || settings.peerId,
+    peerId: resolvePluginPeerId({ settings, configured, sources, credentials: creds }),
     mcpUrl: creds.mcpUrl,
     credentialSource: creds.credentialSource,
     credentialPath: creds.cliPath || creds.ovPath || "",

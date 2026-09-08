@@ -320,9 +320,9 @@ test("loadConfig falls back to config peerId when shared credentials define none
   })
 })
 
-test("loadConfig keeps ovcli actor_peer_id over the plugin section peerId", async () => {
+test("loadConfig keeps the plugin section peerId over ovcli actor_peer_id", async () => {
   const snapshot = { ...process.env }
-  await withTempDir("ov-oc-peer-cli-wins-", async (dir) => {
+  await withTempDir("ov-oc-peer-plugin-wins-", async (dir) => {
     try {
       for (const key of Object.keys(process.env)) {
         if (key.startsWith("OPENVIKING_")) delete process.env[key]
@@ -339,8 +339,8 @@ test("loadConfig keeps ovcli actor_peer_id over the plugin section peerId", asyn
       process.env.OPENVIKING_CLI_CONFIG_FILE = ovcli
 
       const cfg = loadConfig(dir, project)
-      assert.equal(cfg.peerId, "cli-peer")
-      assert.deepEqual(cfg.effectivePeer, { peerId: "cli-peer", source: "explicit", origin: "explicit", legacyPeerId: "" })
+      assert.equal(cfg.peerId, "config-peer")
+      assert.deepEqual(cfg.effectivePeer, { peerId: "config-peer", source: "explicit", origin: "explicit", legacyPeerId: "" })
     } finally {
       restoreOpenVikingEnv(snapshot)
     }

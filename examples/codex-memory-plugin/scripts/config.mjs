@@ -45,6 +45,7 @@ import { join } from "node:path";
 import { resolveOpenVikingCredentials } from "./ov-credentials.mjs";
 import { buildUserAgent, readManifestVersion } from "./shared/credentials.mjs";
 import { resolveSettings } from "./shared/plugin-config.mjs";
+import { resolvePluginPeerId } from "./shared/workspace-peer.mjs";
 
 const USER_AGENT = buildUserAgent(
   "codex",
@@ -84,7 +85,7 @@ export function loadConfig(cwd = process.cwd()) {
   const configPath = cliPath || ovPath || null;
 
   const workspaceCwd = str(cwd, "") || process.cwd();
-  const { settings, configured, plugin } = resolveSettings("codex", {
+  const { settings, configured, sources } = resolveSettings("codex", {
     cwd: workspaceCwd,
     legacy: ovFile.codex,
   });
@@ -93,20 +94,7 @@ export function loadConfig(cwd = process.cwd()) {
     || normalizeAuthMode(server.auth_mode)
     || ((creds.account || creds.user) ? "trusted" : "api_key");
 
-  // A workspace file's `peer.id` (and ovcli.conf's plugin.codex.peerId) is
-  // projected into the plugin layer; reading only the credential chain dropped
-  // it. A repository's pin is the more specific answer, so it outranks the file
-  // peer that chain ends in — but not OPENVIKING_PEER_ID, and not a credential
-  // source pinned to ovcli.conf, where env peers are meant not to apply.
-  // ov.conf's codex.peerId stays where it was, behind ovcli.conf, inside
-  // creds.peerId — which is why this reads the plugin layer and not `settings`.
-  const envPeerId = creds.credentialSource === "ovcli"
-    ? null
-    : str(process.env.OPENVIKING_PEER_ID, null);
-  const peerId = envPeerId
-    || str(plugin.peerId, null)
-    || str(plugin.peer_id, null)
-    || creds.peerId;
+  const peerId = resolvePluginPeerId({ settings, configured, sources, credentials: creds });
 
   const timeoutMs = settings.timeoutMs;
   // A write gets a longer budget than a read, and a digest has to finish inside

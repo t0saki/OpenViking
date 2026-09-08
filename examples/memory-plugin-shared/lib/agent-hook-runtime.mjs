@@ -12,7 +12,7 @@ import { buildRecallBlock, isRecallEnabled } from "./recall-core.mjs";
 import { resolveSettings } from "./plugin-config.mjs";
 import { isRetryableFailure } from "./retryable.mjs";
 import { deriveHarnessSessionId, isBypassed } from "./session-model.mjs";
-import { resolveEffectivePeerId } from "./workspace-peer.mjs";
+import { resolveEffectivePeerId, resolvePluginPeerId } from "./workspace-peer.mjs";
 
 const STATE_VERSION = 1;
 const STATE_DIR_MODE = 0o700;
@@ -49,7 +49,7 @@ export function stableHash(...values) {
  */
 export function loadAgentHookConfig(clientId, cwd = process.cwd()) {
   const credentials = resolveOpenVikingCredentials(process.env, clientId);
-  const { settings, configured } = resolveSettings(clientId, { env: process.env, cwd });
+  const { settings, configured, sources } = resolveSettings(clientId, { env: process.env, cwd });
   return {
     ...settings,
     ...credentials,
@@ -57,9 +57,7 @@ export function loadAgentHookConfig(clientId, cwd = process.cwd()) {
     // is where a key set through `plugin.<harness>.apiKey` lives; spreading an
     // empty one over it would make that key inert.
     apiKey: credentials.apiKey || settings.apiKey,
-    // The credential chain owns the peer unless a `plugin` entry or a workspace
-    // file names one, which is the more specific answer for this directory.
-    peerId: configured.has("peerId") ? settings.peerId : credentials.peerId,
+    peerId: resolvePluginPeerId({ settings, configured, sources, credentials }),
     clientId,
     userAgent: buildUserAgent(clientId, process.env.OPENVIKING_INTEGRATION_VERSION),
     recallLimitConfigured: configured.has("recallLimit"),

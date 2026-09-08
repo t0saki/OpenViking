@@ -164,10 +164,10 @@ with an explicit actor peer so one person's memories are not recalled into
 another person's session.
 
 `OPENVIKING_API_KEY`, `OPENVIKING_ACCOUNT`, `OPENVIKING_USER`,
-and `OPENVIKING_PEER_ID` take precedence over `ovcli.conf`. The `plugin`
-section's `peerId` still applies whenever the shared credentials do not carry a
-peer of their own, so an authenticated setup keeps writing peer-scoped data
-instead of dropping into the shared user tree.
+and `OPENVIKING_PEER_ID` take precedence over `ovcli.conf`. Below the
+environment, the `plugin` section's `peerId` takes precedence over
+`ovcli.conf`'s `actor_peer_id`: a peer written for this harness is the more
+specific answer, and this is the order every memory plugin follows.
 
 `OPENVIKING_CLI_CONFIG_FILE` points the plugin at an `ovcli.conf` somewhere other than `~/.openviking/ovcli.conf`.
 

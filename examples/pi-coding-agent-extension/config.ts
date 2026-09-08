@@ -1,6 +1,6 @@
 import { buildUserAgent, resolveOpenVikingCredentials } from "./shared/credentials.mjs";
 import { resolveSettings } from "./shared/plugin-config.mjs";
-import { resolveEffectivePeerId } from "./shared/workspace-peer.mjs";
+import { resolveEffectivePeerId, resolvePluginPeerId } from "./shared/workspace-peer.mjs";
 
 /** Hand-maintained: this extension ships no manifest to read a version from. */
 export const EXTENSION_VERSION = "0.3.0";
@@ -64,7 +64,7 @@ export interface OVConfig {
  */
 export function loadConfig(cwd: string = process.cwd()): OVConfig {
   const creds = resolveOpenVikingCredentials(process.env, "pi");
-  const { settings, configured } = resolveSettings("pi", { cwd });
+  const { settings, configured, sources } = resolveSettings("pi", { cwd });
 
   const config = {
     ...settings,
@@ -72,7 +72,7 @@ export function loadConfig(cwd: string = process.cwd()): OVConfig {
     apiKey: creds.apiKey,
     account: creds.account,
     user: creds.user,
-    peerId: creds.peerId || settings.peerId,
+    peerId: resolvePluginPeerId({ settings, configured, sources, credentials: creds }),
     userAgent: buildUserAgent("pi", EXTENSION_VERSION),
     harness: "pi",
     // `bypassSessionPatterns` is the name the shared matcher reads and every

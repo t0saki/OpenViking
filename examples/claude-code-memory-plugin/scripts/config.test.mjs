@@ -229,3 +229,12 @@ test("ovcli.conf's actor_peer_id supplies the peer, and a configured one outrank
     assert.equal(loadConfig(workspaceDir).peerId, "team-a");
   });
 });
+
+test("ov.conf's claude_code.peerId still applies when ovcli.conf names no peer", () => {
+  withConfigs({
+    ov: { claude_code: { peerId: "legacy-cc-peer" } },
+    cli: { url: "http://127.0.0.1:1933", api_key: "sk-cli" },
+  }, ({ otherDir }) => {
+    assert.equal(loadConfig(otherDir).peerId, "legacy-cc-peer");
+  });
+});

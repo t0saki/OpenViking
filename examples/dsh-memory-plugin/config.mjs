@@ -1,6 +1,6 @@
 import { resolveSettings } from "./shared/plugin-config.mjs";
 import { buildUserAgent, resolveOpenVikingCredentials } from "./shared/credentials.mjs";
-import { resolveEffectivePeerId } from "./shared/workspace-peer.mjs";
+import { resolveEffectivePeerId, resolvePluginPeerId } from "./shared/workspace-peer.mjs";
 
 export const PLUGIN_VERSION = "0.4.0";
 
@@ -30,11 +30,17 @@ export function resolveConfig(input = {}, env = process.env, cwd = process.cwd()
   // so it wins the overlap.
   const ovSection = credentials.ovFile.dsh;
   const legacy = { ...(ovSection && typeof ovSection === "object" ? ovSection : {}), ...input };
-  const { settings, configured } = resolveSettings("dsh", { env, cwd, legacy });
-  // The credential chain resolves to "" whenever no actor peer is named, so a
-  // peer configured for this harness is what it falls back to, not what it
-  // overwrites.
-  const explicitPeerId = input.peerId || credentials.peerId || settings.peerId;
+  const { settings, configured, sources } = resolveSettings("dsh", { env, cwd, legacy });
+  // The host named this process's peer, so it stays ahead of every file; the
+  // rest of the order is the one every harness follows.
+  const explicitPeerId = resolvePluginPeerId({
+    settings,
+    configured,
+    sources,
+    credentials,
+    hostInput: input.peerId,
+    env,
+  });
   const config = {
     ...settings,
     endpoint: String(input.endpoint || credentials.baseUrl || DEFAULT_ENDPOINT).replace(/\/+$/, ""),
