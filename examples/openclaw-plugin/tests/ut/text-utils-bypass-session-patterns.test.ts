@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { memoryOpenVikingConfigSchema } from "../config.js";
+import { memoryOpenVikingConfigSchema } from "../../config.js";
 import {
   compileSessionPatterns,
   matchesSessionPattern,
   shouldBypassSession,
-} from "../text-utils.js";
+} from "../../text-utils.js";
 
 describe("bypass session patterns", () => {
   it("parses bypass session patterns from config", () => {
