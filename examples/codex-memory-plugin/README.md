@@ -347,6 +347,42 @@ node "$(ls -d ~/.codex/plugins/cache/openviking/openviking-memory/*/ | sort -V |
 
 Or invoke the `$ov-memory-doctor` skill in Codex, which runs the same script and walks the report. When the server runs on the same machine (loopback url) the report adds a Server health section — whether anything listens on the port, plugin-only keys in ov.conf that stop the server from starting, and `GET /ready`; everything else server-side (config validation, live embedding probe, native engine, disk) stays with `openviking-server doctor`.
 
+## Testing
+
+There is no `package.json` and no build step, so the suite runs straight through Node's own test runner:
+
+```bash
+cd examples/codex-memory-plugin
+node --test scripts/*.test.mjs servers/mcp-proxy.test.mjs
+```
+
+CI runs the same files (`.github/workflows/pr.yml`), so a green local run is the same signal. They cover every hook end to end against a stubbed server — the deterministic `cx-<codex_session_id>` derivation, incremental append and idempotent re-runs, the PreCompact and SessionEnd commit paths with their `.ended.<ts>` markers and locks, the SessionStart sweep (idle TTL, cursor retention, `source=resume`), recall assembly, and the MCP proxy contract.
+
+### Live checks
+
+Two legs need a real server and real Codex auth, so they stay manual. Prerequisites: the `ov` CLI installed and reachable, Node.js 22+, and `~/.openviking/ovcli.conf` (or a per-tenant variant like `ovcli.conf.bob`) pointing at the OpenViking server you want to write to. The plugin sends `Authorization: Bearer <api_key>` from this file, and `X-OpenViking-Account` / `X-OpenViking-User` only in trusted mode.
+
+**Memory extraction landed in the user namespace.** After a session commits, wait ~60 s for OV's extractor, then:
+
+```bash
+export OV_CONF=$HOME/.openviking/ovcli.conf.bob   # or whichever tenant
+OPENVIKING_CONFIG_FILE=$OV_CONF ov ls viking://user/<your-user>/memories/
+OPENVIKING_CONFIG_FILE=$OV_CONF ov read viking://user/<your-user>/memories/profile.md
+```
+
+Expect new entries describing the preferences the conversation stated, with timestamps from this run.
+
+**Codex CLI smoke test** (requires codex auth):
+
+```bash
+codex plugin marketplace add /path/to/OpenViking-codex-marketplace   # if not already
+codex                                                                 # interactive
+# Have a brief conversation that mentions a clear preference,
+# then /compact (manual PreCompact) to force a commit, then exit.
+```
+
+Then re-run the extraction check above.
+
 ## Plugin Structure
 
 ```
@@ -382,7 +418,6 @@ codex-memory-plugin/
 │   └── install.sh               # One-line installer
 ├── .mcp.json                    # stdio MCP wiring
 ├── DESIGN.md
-├── VERIFICATION.md
 └── README.md
 ```
 

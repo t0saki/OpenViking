@@ -496,7 +496,7 @@ General HTTP timeouts are 15000ms (with a 1000ms floor). MCP proxy requests time
 | harness | statusline | slash command | rule/skill | setup wizard | other |
 |---|---|---|---|---|---|
 | claude-code | ✅ A separate process writes to `settings.json` (rich segments, 1-min TTL) | ✅ `/openviking-memory:ov` (server status + identity + injection provenance) | 1 experience skill | ✅ Line-based Q&A | `uri-guard` is not gated by the plugin toggle |
-| codex / trae-cli | ❌ | ❌ | 1 experience skill | ✅ | 8-step SOP in `VERIFICATION.md` |
+| codex / trae-cli | ❌ | ❌ | 1 experience skill | ✅ | Live checks in `README.md`'s Testing section |
 | cursor | ❌ | ❌ | Rule (`alwaysApply`) + skill | ❌ (Shares the installer TUI) | Standalone `uri-guard`, independent of the plugin toggle |
 | trae/trae-cn | ❌ | ❌ | None | ❌ | — |
 | zcode | ❌ | ❌ | None | ❌ | — |

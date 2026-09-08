@@ -477,7 +477,7 @@ MCP `write` / REST `content/write` 的三道 guard（`content_write.py`）：可
 | harness | statusline | slash command | rule/skill | setup 向导 | 其他 |
 |---|---|---|---|---|---|
 | claude-code | ✅ 独立进程写 settings.json（段位丰富，1min TTL） | ✅ `/openviking-memory:ov`（服务状态 + 身份 + 注入溯源） | 1 experience skill | ✅ 行式问答 | uri-guard 不受插件开关门控 |
-| codex / trae-cli | ❌ | ❌ | 1 experience skill | ✅ | VERIFICATION.md 8 步 SOP |
+| codex / trae-cli | ❌ | ❌ | 1 experience skill | ✅ | README.md Testing 一节的 live 检查 |
 | cursor | ❌ | ❌ | rule（alwaysApply）+ skill | ❌（共用安装器 TUI） | 独立 uri-guard，不受插件开关控制 |
 | trae/trae-cn | ❌ | ❌ | 无 | ❌ | — |
 | zcode | ❌ | ❌ | 无 | ❌ | — |
