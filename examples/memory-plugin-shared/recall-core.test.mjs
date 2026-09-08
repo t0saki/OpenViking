@@ -139,6 +139,15 @@ test("the deadline follows the stages the request actually asks for", async () =
   assert.ok(withRewrite > withSession, "a digest must outlast a plain expanded request");
 });
 
+test("explicit recall context timeout applies without rewrite or expansion", () => {
+  const timeout = contextRequestTimeoutMs(
+    { recallContextTimeoutMs: 25000, timeoutMs: 15000 },
+    { session_id: "s1", query_expansion: "off" },
+  );
+
+  assert.equal(timeout, 25000);
+});
+
 test("buildRecallBlock prefers a cited server digest", async () => {
   const legacyCachePath = await tempPath("context-face.json");
   const block = await buildRecallBlock(async () => ({

@@ -9,6 +9,7 @@
 
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { mkdtemp, rm } from "node:fs/promises";
 import http from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -29,6 +30,36 @@ export function buildConfigForTest(harness) {
       OPENVIKING_HOME: dir,
     },
   });
+}
+
+const PENDING_ENV_KEYS = [
+  "OPENVIKING_PENDING_DIR",
+  "OPENVIKING_PENDING_MAX_RETRIES",
+  "OPENVIKING_PENDING_REPLAY_LIMIT",
+  "OPENVIKING_PENDING_TTL_DAYS",
+];
+
+/**
+ * Run `fn` against an empty pending queue in a throwaway directory.
+ *
+ * The queue reads its directory and its limits from the environment, so the
+ * knobs are cleared for the duration and every one of them is restored after,
+ * whether or not the test set it.
+ */
+export async function withPendingDir(fn) {
+  const saved = PENDING_ENV_KEYS.map((key) => [key, process.env[key]]);
+  const dir = await mkdtemp(join(tmpdir(), "openviking-pending-test-"));
+  for (const key of PENDING_ENV_KEYS) delete process.env[key];
+  process.env.OPENVIKING_PENDING_DIR = dir;
+  try {
+    return await fn(dir);
+  } finally {
+    for (const [key, value] of saved) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    await rm(dir, { recursive: true, force: true });
+  }
 }
 
 /** The JSON body of a request, or `null` when the request carried no body. */
