@@ -131,7 +131,7 @@ export function isLegacyLocalMode(existing: Record<string, unknown>): boolean {
   return mode !== "remote";
 }
 
-function nonEmptyOpenVikingRequestHeaders(value: unknown): OpenVikingRequestHeaders | undefined {
+export function nonEmptyOpenVikingRequestHeaders(value: unknown): OpenVikingRequestHeaders | undefined {
   const headers = cleanOpenVikingRequestHeaders(value);
   return Object.keys(headers).length > 0 ? headers : undefined;
 }

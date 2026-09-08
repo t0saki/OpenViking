@@ -50,7 +50,8 @@
 | `auto-recall.ts` | 自动召回查询清洗、召回超时控制、记忆块构建与注入 |
 | `memory-ranking.ts` | 显式 `memory_recall` 的结果去重、阈值过滤和本地重排；自动召回由服务端组装 |
 | `text-utils.ts` | 会话文本清洗、metadata/心跳/命令过滤、增量 turn 消息提取 |
-| `commands/setup.ts` | setup/status CLI，配置写入、health check、root/user key 探测、slot 激活 |
+| `commands/setup.ts` | setup/status CLI：命令注册、readline 问答、结果打印 |
+| `services/setup/` | setup 服务层：配置写入与 slot 激活（`config-writer.ts`）、非交互/交互/status 流程（`setup-flow.ts`）、health check 与 root/user key 探测（`probe-service.ts`）、包元信息与版本兼容 |
 | `session-transcript-repair.ts` | 修复 toolCall/toolResult 配对、去重、孤儿 tool result 等 transcript 结构问题 |
 
 ---
@@ -1296,6 +1297,7 @@ npm run build
 | --- | --- |
 | `tests/ut/config.test.ts` | 配置默认值、环境变量、peer policy |
 | `tests/ut/setup-command.test.ts` / `setup-cli.test.ts` | setup/status、slot 激活、root key 探测 |
+| `tests/ut/setup-cli-e2e.test.ts` | `registerSetupCli` 端到端：命令注册、非交互写入、readline 向导、status 输出 |
 | `tests/ut/context-engine-*.test.ts` | assemble/afterTurn/compact、消息合并、预算、工具配对 |
 | `tests/ut/memory-ranking.test.ts` | 召回排序、去重、阈值 |
 | `tests/ut/tools.test.ts` | 工具注册、memory/resource/skill/tool-result 行为 |

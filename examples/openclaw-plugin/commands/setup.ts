@@ -1,70 +1,37 @@
-import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as readline from "node:readline";
-import { fileURLToPath } from "node:url";
 import { getEnv } from "../runtime-utils.js";
+import { createSetupNetworkProbes } from "../services/setup/probe-service.js";
 import {
-  cleanOpenVikingRequestHeaders,
-  type OpenVikingRequestHeaders,
-} from "../request-headers.js";
+  COMPATIBLE_SERVER_MAX,
+  COMPATIBLE_SERVER_MIN,
+  PLUGIN_VERSION,
+} from "../services/setup/package-metadata.js";
+import { checkVersionCompatibility } from "../services/setup/version-compatibility.js";
+import { setExitCodeOnFailure } from "../services/setup/exit-utils.js";
 import {
-  createSetupNetworkProbes,
-  type SetupApiKeyProbeResult,
-  type SetupHealthResult,
-} from "../services/setup/probe-service.js";
+  defaultSetupIO,
+  getExistingPluginConfig,
+  readOpenClawConfig,
+} from "../services/setup/config-writer.js";
+import {
+  createOpenVikingSetupService,
+  isLegacyLocalMode,
+  maskKey,
+  nonEmptyOpenVikingRequestHeaders,
+  type ApiKeyProbeResult,
+  type HealthResult,
+  type SetupParams,
+  type SetupResult,
+  type SlotActivationResult,
+  type StatusResult,
+} from "../services/setup/setup-flow.js";
 
 const HOME = os.homedir();
 const OPENCLAW_DIR = getEnv("OPENCLAW_STATE_DIR") || path.join(HOME, ".openclaw");
 const DEFAULT_REMOTE_URL = "http://127.0.0.1:1933";
 
-function findPluginPackageRoot(fromDir = path.dirname(fileURLToPath(import.meta.url))): string | null {
-  let current = path.resolve(fromDir);
-  for (let depth = 0; depth < 5; depth += 1) {
-    if (
-      fs.existsSync(path.join(current, "package.json")) &&
-      fs.existsSync(path.join(current, "openclaw.plugin.json"))
-    ) {
-      return current;
-    }
-
-    const parent = path.dirname(current);
-    if (parent === current) break;
-    current = parent;
-  }
-  return null;
-}
-
-function readPluginVersion(): string {
-  try {
-    const packageRoot = findPluginPackageRoot();
-    if (!packageRoot) return "unknown";
-    const pkgPath = path.join(packageRoot, "package.json");
-    const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
-    return String(pkg.version ?? "unknown");
-  } catch {
-    return "unknown";
-  }
-}
-
-function readCompatRangeFromManifest(): { min: string; max: string } {
-  try {
-    const packageRoot = findPluginPackageRoot();
-    if (!packageRoot) return { min: "", max: "" };
-    const manifestPath = path.join(packageRoot, "install-manifest.json");
-    const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
-    const compat = manifest?.compatibility ?? {};
-    return {
-      min: String(compat.minOpenvikingVersion ?? ""),
-      max: String(compat.maxOpenvikingVersion ?? ""),
-    };
-  } catch {
-    return { min: "", max: "" };
-  }
-}
-
-const PLUGIN_VERSION = readPluginVersion();
-const { min: COMPATIBLE_SERVER_MIN, max: COMPATIBLE_SERVER_MAX } = readCompatRangeFromManifest();
 const CONFIG_KEYS_TO_PRESERVE = [
   "targetUri",
   "headers",
@@ -93,6 +60,8 @@ const DEFAULT_SETUP_PEER_ROLE: PeerRole = "none";
 type RecallTargetType = "resource" | "user" | "agent";
 const ALLOWED_RECALL_TARGET_TYPES = ["resource", "user", "agent"] as const;
 
+type PeerFields = { peer_role?: unknown; peer_prefix?: unknown };
+
 type CommandProgram = {
   command: (name: string) => CommandBuilder;
 };
@@ -112,16 +81,6 @@ function tr(langZh: boolean, en: string, zh: string): string {
   return langZh ? zh : en;
 }
 
-function maskKey(key: string): string {
-  if (key.length <= 8) return "****";
-  return `${key.slice(0, 4)}...${key.slice(-4)}`;
-}
-
-function nonEmptyOpenVikingRequestHeaders(value: unknown): OpenVikingRequestHeaders | undefined {
-  const headers = cleanOpenVikingRequestHeaders(value);
-  return Object.keys(headers).length > 0 ? headers : undefined;
-}
-
 function isValidPeerPrefixInput(value: string): boolean {
   const trimmed = value.trim();
   return !trimmed || /^[a-zA-Z0-9_-]+$/.test(trimmed);
@@ -135,13 +94,13 @@ function normalizePeerRole(value: unknown): PeerRole | undefined {
   return undefined;
 }
 
-function resolveExistingPeerRole(existing: Record<string, unknown> | null | undefined): PeerRole {
+function resolveExistingPeerRole(existing: PeerFields | null | undefined): PeerRole {
   const explicit = normalizePeerRole(existing?.peer_role);
   if (explicit) return explicit;
   return DEFAULT_SETUP_PEER_ROLE;
 }
 
-function resolveExistingPeerPrefix(existing: Record<string, unknown> | null | undefined): string {
+function resolveExistingPeerPrefix(existing: PeerFields | null | undefined): string {
   const value = existing?.peer_prefix;
   if (typeof value !== "string" || !value.trim()) return "";
   const trimmed = value.trim();
@@ -271,42 +230,6 @@ function ask(rl: readline.Interface, prompt: string, defaultValue = ""): Promise
   });
 }
 
-type VersionCompatibility = "compatible" | "server_too_old" | "server_too_new" | "unknown";
-
-type HealthResult = SetupHealthResult;
-
-function parseVersionTuple(v: string): number[] | null {
-  const cleaned = v.replace(/^v/i, "").split("-")[0];
-  const parts = cleaned.split(".").map(Number);
-  if (parts.some(isNaN)) return null;
-  return parts;
-}
-
-function compareVersions(a: number[], b: number[]): number {
-  const len = Math.max(a.length, b.length);
-  for (let i = 0; i < len; i++) {
-    const diff = (a[i] ?? 0) - (b[i] ?? 0);
-    if (diff !== 0) return diff;
-  }
-  return 0;
-}
-
-function checkVersionCompatibility(serverVersion: string): VersionCompatibility {
-  if (!serverVersion) return "unknown";
-  const sv = parseVersionTuple(serverVersion);
-  if (!sv) return "unknown";
-
-  if (COMPATIBLE_SERVER_MIN) {
-    const minV = parseVersionTuple(COMPATIBLE_SERVER_MIN);
-    if (minV && compareVersions(sv, minV) < 0) return "server_too_old";
-  }
-  if (COMPATIBLE_SERVER_MAX) {
-    const maxV = parseVersionTuple(COMPATIBLE_SERVER_MAX);
-    if (maxV && compareVersions(sv, maxV) > 0) return "server_too_new";
-  }
-  return "compatible";
-}
-
 function formatCompatRange(): string {
   if (COMPATIBLE_SERVER_MIN && COMPATIBLE_SERVER_MAX) return `${COMPATIBLE_SERVER_MIN} ~ ${COMPATIBLE_SERVER_MAX}`;
   if (COMPATIBLE_SERVER_MIN) return `>= ${COMPATIBLE_SERVER_MIN}`;
@@ -314,82 +237,22 @@ function formatCompatRange(): string {
   return "any";
 }
 
-type ApiKeyProbeResult = SetupApiKeyProbeResult;
-
 const setupProbes = createSetupNetworkProbes({
   pluginVersion: PLUGIN_VERSION,
   compatRange: formatCompatRange(),
-  checkVersionCompatibility,
+  checkVersionCompatibility: (serverVersion) =>
+    checkVersionCompatibility(serverVersion, {
+      min: COMPATIBLE_SERVER_MIN,
+      max: COMPATIBLE_SERVER_MAX,
+    }),
 });
 
-function readOpenClawConfig(configPath: string): Record<string, unknown> {
-  if (!fs.existsSync(configPath)) return {};
-  try {
-    return JSON.parse(fs.readFileSync(configPath, "utf-8"));
-  } catch {
-    return {};
-  }
-}
-
-function getExistingPluginConfig(config: Record<string, unknown>): Record<string, unknown> | null {
-  const plugins = config.plugins as Record<string, unknown> | undefined;
-  if (!plugins) return null;
-  const entries = plugins.entries as Record<string, unknown> | undefined;
-  if (!entries) return null;
-  const entry = entries.openviking as Record<string, unknown> | undefined;
-  if (!entry) return null;
-  const cfg = entry.config as Record<string, unknown> | undefined;
-  return cfg && cfg.mode ? cfg : null;
-}
-
-function backupConfig(configPath: string): string | null {
-  if (!fs.existsSync(configPath)) return null;
-  const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-  const backupPath = `${configPath}.bak.${timestamp}`;
-  try {
-    fs.copyFileSync(configPath, backupPath);
-    return backupPath;
-  } catch {
-    return null;
-  }
-}
-
-function ensureInstallRecord(plugins: Record<string, unknown>): void {
-  const installs = plugins.installs as Record<string, unknown> | undefined;
-  if (installs && typeof installs === "object") {
-    delete installs.openviking;
-  }
-
-  if (!plugins.allow) plugins.allow = [];
-  const allow = plugins.allow as string[];
-  if (!allow.includes("openviking")) {
-    allow.push("openviking");
-  }
-}
-
-function writeConfig(
-  configPath: string,
-  pluginCfg: Record<string, unknown>,
-): void {
-  const configDir = path.dirname(configPath);
-  if (!fs.existsSync(configDir)) fs.mkdirSync(configDir, { recursive: true });
-
-  backupConfig(configPath);
-
-  const config = readOpenClawConfig(configPath);
-
-  if (!config.plugins) config.plugins = {};
-  const plugins = config.plugins as Record<string, unknown>;
-  if (!plugins.entries) plugins.entries = {};
-  const entries = plugins.entries as Record<string, unknown>;
-
-  const existingEntry = (entries.openviking as Record<string, unknown>) ?? {};
-  entries.openviking = { ...existingEntry, config: pluginCfg };
-
-  ensureInstallRecord(plugins);
-
-  fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + "\n", "utf-8");
-}
+const setupService = createOpenVikingSetupService({
+  io: defaultSetupIO,
+  defaultRemoteUrl: DEFAULT_REMOTE_URL,
+  checkServiceHealth: setupProbes.checkServiceHealth,
+  probeApiKeyType: setupProbes.probeApiKeyType,
+});
 
 function detectLangZh(options: Record<string, unknown>): boolean {
   if (options.zh) return true;
@@ -397,84 +260,50 @@ function detectLangZh(options: Record<string, unknown>): boolean {
   return /^zh/i.test(lang);
 }
 
-function isLegacyLocalMode(existing: Record<string, unknown>): boolean {
-  const mode = existing.mode;
-  return mode !== "remote";
-}
-
-type SetupResult = {
-  success: boolean;
-  action: "configured" | "existing" | "error" | "slot_blocked";
-  config?: {
-    mode: string;
-    baseUrl: string;
-    apiKey?: string;
-    peer_role?: PeerRole;
-    peer_prefix?: string;
-    accountId?: string;
-    userId?: string;
-    recallTargetTypes?: string[];
-  };
-  health?: HealthResult;
-  keyProbe?: ApiKeyProbeResult;
-  slot: SlotActivationResult;
-  error?: string;
+type NonInteractiveSetupParams = Omit<SetupParams, "peerRole" | "peerPrefix"> & {
+  peerRole?: string;
+  peerPrefix?: string;
 };
 
-function setExitCodeOnFailure(result: { success: boolean }): void {
-  if (!result.success) {
-    process.exitCode = 1;
+async function runNonInteractiveSetup(
+  configPath: string,
+  params: NonInteractiveSetupParams,
+): Promise<SetupResult> {
+  try {
+    const peerRole = resolveSetupPeerRole(params.peerRole);
+    const peerPrefix = (params.peerPrefix ?? "").trim();
+    if (!isValidPeerPrefixInput(peerPrefix)) {
+      throw new Error("peer_prefix may only contain letters, digits, underscores, and hyphens, or be empty");
+    }
+    return await setupService.setupNonInteractive(configPath, {
+      ...params,
+      peerRole,
+      peerPrefix: peerPrefix || undefined,
+    });
+  } catch (err) {
+    return {
+      success: false,
+      action: "error",
+      slot: { activated: false, replaced: false },
+      error: String(err instanceof Error ? err.message : err),
+    };
   }
 }
 
-type StatusResult = {
-  configured: boolean;
-  config?: {
-    mode: string;
-    baseUrl: string;
-    hasApiKey: boolean;
-    peer_role: PeerRole;
-    peer_prefix?: string;
-    hasAccountId: boolean;
-    hasUserId: boolean;
+async function getStatus(configPath: string): Promise<StatusResult> {
+  const status = await setupService.getStatus(configPath);
+  if (!status.config) return status;
+
+  const { peer_prefix: _rawPeerPrefix, ...rest } = status.config;
+  const peerPrefix = resolveExistingPeerPrefix(status.config);
+  return {
+    ...status,
+    config: {
+      ...rest,
+      peer_role: resolveExistingPeerRole(status.config),
+      ...(peerPrefix ? { peer_prefix: peerPrefix } : {}),
+    },
   };
-  health?: HealthResult;
-  keyProbe?: ApiKeyProbeResult;
-  slotActive: boolean;
-};
-
-type SlotActivationResult = {
-  activated: boolean;
-  previousOwner?: string;
-  replaced: boolean;
-};
-
-function activateContextEngineSlot(configPath: string, force = false): SlotActivationResult {
-  const config = readOpenClawConfig(configPath);
-  if (!config.plugins) config.plugins = {};
-  const plugins = config.plugins as Record<string, unknown>;
-  if (!plugins.slots) plugins.slots = {};
-  const slots = plugins.slots as Record<string, unknown>;
-
-  const current = slots.contextEngine as string | undefined;
-
-  if (current === "openviking") return { activated: false, replaced: false };
-
-  if (current && current !== "openviking" && !force) {
-    return { activated: false, previousOwner: current, replaced: false };
-  }
-
-  slots.contextEngine = "openviking";
-  fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + "\n", "utf-8");
-  return { activated: true, previousOwner: current || undefined, replaced: !!current };
-}
-
-function isContextEngineSlotActive(configPath: string): boolean {
-  const config = readOpenClawConfig(configPath);
-  const plugins = config.plugins as Record<string, unknown> | undefined;
-  if (!plugins) return false;
-  const slots = plugins.slots as Record<string, unknown> | undefined;
-  return slots?.contextEngine === "openviking";
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -520,7 +349,7 @@ export function registerSetupCli(api: any): void {
           const nonInteractive = !!baseUrl;
 
           if (nonInteractive) {
-            const result = await setupNonInteractive(configPath, {
+            const result = await runNonInteractiveSetup(configPath, {
               baseUrl: baseUrl!,
               apiKey,
               peerRole,
@@ -579,9 +408,10 @@ export function registerSetupCli(api: any): void {
                 return;
               }
 
+              const existingBaseUrl = String(existing.baseUrl ?? DEFAULT_REMOTE_URL);
               console.log(tr(zh, "Existing configuration found:", "已找到现有配置："));
               console.log(`  mode:    ${existing.mode}`);
-              console.log(`  baseUrl: ${existing.baseUrl ?? DEFAULT_REMOTE_URL}`);
+              console.log(`  baseUrl: ${existingBaseUrl}`);
               if (existing.apiKey) console.log(`  apiKey:  ${maskKey(String(existing.apiKey))}`);
               console.log(`  peer_role: ${resolveExistingPeerRole(existing)}`);
               const existingPeerPrefix = resolveExistingPeerPrefix(existing);
@@ -596,10 +426,16 @@ export function registerSetupCli(api: any): void {
               console.log(tr(zh, "✓ Using existing configuration", "✓ 使用现有配置"));
               console.log("");
 
-              await runRemoteCheck(zh, existing);
+              console.log(tr(
+                zh,
+                `Testing connectivity to ${existingBaseUrl}...`,
+                `正在测试连接 ${existingBaseUrl}...`,
+              ));
+              const existingResult = await setupService.useExistingRemoteConfig(configPath, existing);
+              if (existingResult.health) printHealthResult(zh, existingResult.health);
+              console.log("");
 
-              const slotResult = activateContextEngineSlot(configPath);
-              printSlotResult(zh, slotResult);
+              printSlotResult(zh, existingResult.slot);
 
               console.log(tr(zh,
                 "✓ Plugin is ready. Run `openclaw gateway --force` to activate.",
@@ -683,141 +519,13 @@ function printCompatibilityWarning(zh: boolean, health: HealthResult): void {
   }
 }
 
-async function runRemoteCheck(
-  zh: boolean,
-  existing: Record<string, unknown>,
-): Promise<void> {
-  const baseUrl = String(existing.baseUrl ?? DEFAULT_REMOTE_URL);
-  const apiKey = existing.apiKey ? String(existing.apiKey) : undefined;
-  const headers = nonEmptyOpenVikingRequestHeaders(existing.headers);
-  console.log(tr(zh, `Testing connectivity to ${baseUrl}...`, `正在测试连接 ${baseUrl}...`));
-  const health = await setupProbes.checkServiceHealth(baseUrl, apiKey, headers);
+function printHealthResult(zh: boolean, health: HealthResult): void {
   if (health.ok) {
     const ver = health.version ? ` (version: ${health.version})` : "";
     console.log(`  ✓ ${tr(zh, `Connected successfully${ver}`, `连接成功${ver}`)}`);
     printCompatibilityWarning(zh, health);
   } else {
     console.log(`  ✗ ${tr(zh, `Connection failed: ${health.error}`, `连接失败: ${health.error}`)}`);
-  }
-  console.log("");
-}
-
-async function setupNonInteractive(
-  configPath: string,
-  params: {
-    baseUrl: string;
-    apiKey?: string;
-    peerRole?: string;
-    peerPrefix?: string;
-    accountId?: string;
-    userId?: string;
-    recallTargetTypes?: string[];
-    allowOffline?: boolean;
-    forceSlot?: boolean;
-  },
-): Promise<SetupResult> {
-  try {
-    const { baseUrl, apiKey, peerPrefix, accountId, userId, recallTargetTypes, allowOffline, forceSlot } = params;
-    const resolvedPeerRole = resolveSetupPeerRole(params.peerRole);
-    const resolvedPeerPrefix = (peerPrefix ?? "").trim();
-    if (!isValidPeerPrefixInput(resolvedPeerPrefix)) {
-      throw new Error("peer_prefix may only contain letters, digits, underscores, and hyphens, or be empty");
-    }
-
-    // Phase 1: validate connectivity and key type BEFORE writing config
-    const health = await setupProbes.checkServiceHealth(baseUrl, apiKey);
-
-    if (!health.ok && !allowOffline) {
-      return {
-        success: false,
-        action: "error",
-        config: { mode: "remote", baseUrl },
-        health,
-        slot: { activated: false, replaced: false },
-        error: `Server unreachable: ${health.error}. Use --allow-offline to save config anyway.`,
-      };
-    }
-
-    const keyProbe = health.ok ? await setupProbes.probeApiKeyType(baseUrl, apiKey) : undefined;
-
-    if (keyProbe?.keyType === "root_key" && (!accountId || !userId)) {
-      const missing: string[] = [];
-      if (!accountId) missing.push("--account-id");
-      if (!userId) missing.push("--user-id");
-      return {
-        success: false,
-        action: "error",
-        config: {
-          mode: "remote",
-          baseUrl,
-          ...(apiKey ? { apiKey: maskKey(apiKey) } : {}),
-        },
-        health,
-        keyProbe,
-        slot: { activated: false, replaced: false },
-        error: `Root API key detected. Missing: ${missing.join(", ")}. Re-run with: ${missing.map(f => `${f} <value>`).join(" ")}`,
-      };
-    }
-
-    // Phase 2: all checks passed (or --allow-offline), write config and activate slot
-    const pluginCfg: Record<string, unknown> = { mode: "remote", baseUrl };
-    if (apiKey) pluginCfg.apiKey = apiKey;
-    pluginCfg.peer_role = resolvedPeerRole;
-    if (resolvedPeerPrefix) pluginCfg.peer_prefix = resolvedPeerPrefix;
-    if (accountId) pluginCfg.accountId = accountId;
-    if (userId) pluginCfg.userId = userId;
-    if (recallTargetTypes && recallTargetTypes.length > 0) {
-      pluginCfg.recallTargetTypes = recallTargetTypes;
-    }
-
-    writeConfig(configPath, pluginCfg);
-    const slot = activateContextEngineSlot(configPath, !!forceSlot);
-
-    if (!slot.activated && slot.previousOwner) {
-      return {
-        success: false,
-        action: "slot_blocked",
-        config: {
-          mode: "remote",
-          baseUrl,
-          ...(apiKey ? { apiKey: maskKey(apiKey) } : {}),
-          peer_role: resolvedPeerRole,
-          ...(resolvedPeerPrefix ? { peer_prefix: resolvedPeerPrefix } : {}),
-          ...(accountId ? { accountId } : {}),
-          ...(userId ? { userId } : {}),
-          ...(recallTargetTypes && recallTargetTypes.length > 0 ? { recallTargetTypes } : {}),
-        },
-        health,
-        keyProbe,
-        slot,
-        error: `contextEngine slot is owned by "${slot.previousOwner}". Config was saved but slot was NOT changed. Use --force-slot to replace.`,
-      };
-    }
-
-    return {
-      success: true,
-      action: "configured",
-      config: {
-        mode: "remote",
-        baseUrl,
-        ...(apiKey ? { apiKey: maskKey(apiKey) } : {}),
-        peer_role: resolvedPeerRole,
-        ...(resolvedPeerPrefix ? { peer_prefix: resolvedPeerPrefix } : {}),
-        ...(accountId ? { accountId } : {}),
-        ...(userId ? { userId } : {}),
-        ...(recallTargetTypes && recallTargetTypes.length > 0 ? { recallTargetTypes } : {}),
-      },
-      health,
-      keyProbe,
-      slot,
-    };
-  } catch (err) {
-    return {
-      success: false,
-      action: "error",
-      slot: { activated: false, replaced: false },
-      error: String(err instanceof Error ? err.message : err),
-    };
   }
 }
 
@@ -837,12 +545,8 @@ function printSetupResult(zh: boolean, result: SetupResult): void {
       if (result.config.recallTargetTypes) console.log(`  recallTargetTypes: ${result.config.recallTargetTypes.join(",")}`);
     }
     console.log("");
-    if (result.health?.ok) {
-      const ver = result.health.version ? ` (version: ${result.health.version})` : "";
-      console.log(`  ✓ ${tr(zh, `Connected successfully${ver}`, `连接成功${ver}`)}`);
-      printCompatibilityWarning(zh, result.health);
-    } else if (result.health) {
-      console.log(`  ✗ ${tr(zh, `Connection failed: ${result.health.error}`, `连接失败: ${result.health.error}`)}`);
+    if (result.health) {
+      printHealthResult(zh, result.health);
     }
     if (result.keyProbe) {
       printKeyProbeWarning(zh, result.keyProbe);
@@ -860,39 +564,6 @@ function printSetupResult(zh: boolean, result: SetupResult): void {
     }
   }
   console.log("");
-}
-
-async function getStatus(configPath: string): Promise<StatusResult> {
-  const config = readOpenClawConfig(configPath);
-  const existing = getExistingPluginConfig(config);
-  const slotActive = isContextEngineSlotActive(configPath);
-
-  if (!existing) {
-    return { configured: false, slotActive };
-  }
-
-  const baseUrl = String(existing.baseUrl ?? DEFAULT_REMOTE_URL);
-  const apiKey = existing.apiKey ? String(existing.apiKey) : undefined;
-  const headers = nonEmptyOpenVikingRequestHeaders(existing.headers);
-  const health = await setupProbes.checkServiceHealth(baseUrl, apiKey, headers);
-  const keyProbe = health.ok ? await setupProbes.probeApiKeyType(baseUrl, apiKey, headers) : undefined;
-
-  const peerPrefix = resolveExistingPeerPrefix(existing);
-  return {
-    configured: true,
-    config: {
-      mode: String(existing.mode ?? "remote"),
-      baseUrl,
-      hasApiKey: !!existing.apiKey,
-      peer_role: resolveExistingPeerRole(existing),
-      ...(peerPrefix ? { peer_prefix: peerPrefix } : {}),
-      hasAccountId: !!existing.accountId,
-      hasUserId: !!existing.userId,
-    },
-    health,
-    keyProbe,
-    slotActive,
-  };
 }
 
 function printSlotResult(zh: boolean, slot: SlotActivationResult): void {
@@ -1019,12 +690,8 @@ async function setupRemote(
 
   console.log(tr(zh, `Testing connectivity to ${baseUrl}...`, `正在测试连接 ${baseUrl}...`));
   const health = await setupProbes.checkServiceHealth(baseUrl, apiKey || undefined, headers);
-  if (health.ok) {
-    const ver = health.version ? ` (version: ${health.version})` : "";
-    console.log(`  ✓ ${tr(zh, `Connected successfully${ver}`, `连接成功${ver}`)}`);
-    printCompatibilityWarning(zh, health);
-  } else {
-    console.log(`  ✗ ${tr(zh, `Connection failed: ${health.error}`, `连接失败: ${health.error}`)}`);
+  printHealthResult(zh, health);
+  if (!health.ok) {
     console.log("");
     console.log(tr(zh,
       "  The configuration will still be saved. Make sure the server is reachable\n  before starting the gateway.",
@@ -1033,24 +700,15 @@ async function setupRemote(
   }
   console.log("");
 
-  const pluginCfg: Record<string, unknown> = {
-    ...preserveCurrentConfig(existing),
-    mode: "remote",
+  const { slot } = await setupService.saveInteractiveRemoteConfig(configPath, {
+    existing: preserveCurrentConfig(existing),
     baseUrl,
-  };
-  if (apiKey) pluginCfg.apiKey = apiKey;
-  else delete pluginCfg.apiKey;
-  pluginCfg.peer_role = peerRole;
-  if (peerPrefix) pluginCfg.peer_prefix = peerPrefix;
-  else delete pluginCfg.peer_prefix;
-  if (accountId) pluginCfg.accountId = accountId;
-  else delete pluginCfg.accountId;
-  if (userId) pluginCfg.userId = userId;
-  else delete pluginCfg.userId;
-
-  writeConfig(configPath, pluginCfg);
-
-  const slotResult = activateContextEngineSlot(configPath);
+    apiKey: apiKey || undefined,
+    peerRole,
+    peerPrefix: peerPrefix || undefined,
+    accountId: accountId || undefined,
+    userId: userId || undefined,
+  });
 
   console.log("");
   console.log(`  ${tr(zh, "mode:", "模式:")}    remote`);
@@ -1060,7 +718,7 @@ async function setupRemote(
   if (peerPrefix) console.log(`  peer_prefix: ${peerPrefix}`);
   if (accountId) console.log(`  accountId: ${accountId}`);
   if (userId) console.log(`  userId:  ${userId}`);
-  printSlotResult(zh, slotResult);
+  printSlotResult(zh, slot);
   console.log("");
   console.log(tr(zh,
     "Run `openclaw gateway --force` to activate the plugin.",
@@ -1070,21 +728,9 @@ async function setupRemote(
 }
 
 export const __test__ = {
-  isLegacyLocalMode,
   isValidPeerPrefixInput,
   normalizePeerRole,
   resolveSetupPeerRole,
   normalizeSetupRecallTargetTypes,
-  activateContextEngineSlot,
-  isContextEngineSlotActive,
-  getStatus,
-  setupNonInteractive,
-  checkVersionCompatibility,
-  parseVersionTuple,
-  compareVersions,
-  ensureInstallRecord,
-  findPluginPackageRoot,
-  readCompatRangeFromManifest,
-  readPluginVersion,
-  setExitCodeOnFailure,
+  preserveCurrentConfig,
 };
