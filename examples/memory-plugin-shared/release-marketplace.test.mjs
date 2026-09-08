@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
@@ -24,6 +24,11 @@ test("release marketplace archive supports a ZCode TOS install", () => {
     const stage = join(tmp, "memory-plugin-marketplace");
     const staged = run("bash", [stageScript, stage]);
     assert.equal(staged.status, 0, `${staged.stdout}\n${staged.stderr}`);
+
+    const bundled = readdirSync(stage, { recursive: true, encoding: "utf8" }).filter((entry) =>
+      entry.split(sep).includes("node_modules"),
+    );
+    assert.deepEqual(bundled.slice(0, 3), [], "marketplace archive carries development dependencies");
 
     const zipped = run("zip", ["-rq", join(tmp, "memory-plugin-marketplace.zip"), "memory-plugin-marketplace"], {
       cwd: tmp,

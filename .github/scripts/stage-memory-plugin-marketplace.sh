@@ -11,18 +11,24 @@ node "${ROOT}/examples/memory-plugin-shared/sync.mjs" >/dev/null
 
 rm -rf "${STAGE}"
 mkdir -p "${STAGE}"
-cp -R \
-  "${ROOT}/examples/.claude-plugin" \
-  "${ROOT}/examples/.agents" \
-  "${ROOT}/examples/claude-code-memory-plugin" \
-  "${ROOT}/examples/codex-memory-plugin" \
-  "${ROOT}/examples/cursor-memory-plugin" \
-  "${ROOT}/examples/trae-memory-hooks" \
-  "${ROOT}/examples/zcode-memory-plugin" \
-  "${ROOT}/examples/opencode-plugin" \
-  "${ROOT}/examples/pi-coding-agent-extension" \
-  "${ROOT}/examples/memory-plugin-shared" \
-  "${STAGE}/"
+# Tar drops the plugins' node_modules on the way through, over a hundred
+# megabytes the archive has no use for. Copying only tracked files would drop
+# the generated shared copies the archive does need.
+tar -cf - \
+  --exclude=node_modules \
+  --exclude=.git \
+  -C "${ROOT}/examples" \
+  .claude-plugin \
+  .agents \
+  claude-code-memory-plugin \
+  codex-memory-plugin \
+  cursor-memory-plugin \
+  trae-memory-hooks \
+  zcode-memory-plugin \
+  opencode-plugin \
+  pi-coding-agent-extension \
+  memory-plugin-shared \
+  | tar -xf - -C "${STAGE}"
 
 for required in \
   claude-code-memory-plugin/skills/ov-experience-memory/SKILL.md \
