@@ -24,31 +24,28 @@ import { fileURLToPath } from "node:url";
 import { isPluginEnabled, loadConfig } from "./config.mjs";
 import { STATE_DIR } from "./lib/state.mjs";
 import {
-  collectEnv,
   countDirEntries,
-  describeApiKey,
   existsPath,
   expandHome,
   fileInfo,
   fmtAge,
   fmtBytes,
   homeShort,
+  inspectConfigFiles,
   inspectJsonFile,
-  isLoopbackUrl,
-  lintBaseUrl,
   readStateFiles,
+  reportCredentials,
+  reportPeer,
+  reportTimeouts,
+  reportToggles,
   runCommand,
   runDoctor,
   scanDebugLog,
   scanRcFiles,
+  sweepEnv,
   tryJson,
-  unknownOvcliKeys,
-  unknownPluginKeys,
-  lintPeerScopeDowngrade,
-  WORKSPACE_PEER_HINT,
 } from "./shared/doctor-core.mjs";
 import { isBypassed } from "./shared/session-model.mjs";
-import { resolveEffectivePeerId } from "./shared/workspace-peer.mjs";
 
 const PLUGIN_ROOT = resolvePath(dirname(fileURLToPath(import.meta.url)), "..");
 const PLUGIN_ID = "openviking-memory@openviking";
@@ -246,36 +243,9 @@ function credentialSources(cliConf, ovConf) {
   return { url, apiKey, account, user };
 }
 
-function checkConfig(report, cfg) {
+function checkConfig(report, cfg, host) {
   report.section("Configuration");
-  const cliPath = expandHome(process.env.OPENVIKING_CLI_CONFIG_FILE || join(homedir(), ".openviking", "ovcli.conf"));
-  const ovPath = expandHome(process.env.OPENVIKING_CONFIG_FILE || join(homedir(), ".openviking", "ov.conf"));
-  const cliConf = inspectJsonFile(cliPath);
-  const ovConf = inspectJsonFile(ovPath);
-
-  for (const [label, conf] of [["ovcli.conf", cliConf], ["ov.conf", ovConf]]) {
-    if (!conf.exists) {
-      report.info(`${label}: ${homeShort(conf.path)} not present`);
-    } else if (!conf.ok) {
-      report.fail(`${label} cannot be parsed — the plugin treats it as absent`, `${homeShort(conf.path)}: ${conf.error}`, "fix the JSON (a trailing comma or comment is enough to break it)");
-    } else {
-      report.ok(`${label}: ${homeShort(conf.path)} (mode ${conf.mode}, ${fmtBytes(conf.size)})`);
-      if (label === "ovcli.conf") {
-        if (conf.mode !== "600" && conf.mode !== "400") report.warn("ovcli.conf is not private", `mode ${conf.mode}; it holds the api key`, `chmod 600 ${homeShort(conf.path)}`);
-        const unknown = unknownOvcliKeys(conf.data);
-        if (unknown.length) report.warn("ovcli.conf has keys nobody reads", unknown.join(", "), "typos such as apiKey/base_url/token are silently ignored — use url, api_key, account, user");
-        // `plugin` is on the allowlist above, so until now nothing inside it
-        // was ever checked and a misspelled knob just sat there doing nothing.
-        for (const { key, suggestion } of unknownPluginKeys(conf.data.plugin)) {
-          report.warn(`ovcli.conf ${key} is not a knob any plugin reads`, "", suggestion ? `did you mean ${suggestion}?` : "remove it, or check the plugin README for the knob you meant");
-        }
-        if (conf.data.extra_headers && Object.keys(conf.data.extra_headers).some((h) => /^x-api-key$/i.test(h))) {
-          report.warn("ovcli.conf extra_headers sets X-API-Key", "the server prefers X-API-Key over Authorization: Bearer, so it shadows api_key");
-        }
-      }
-      if (label === "ov.conf" && conf.data.claude_code) report.info("ov.conf has a legacy claude_code block (still honoured; prefer ovcli.conf plugin.claude_code or env vars)");
-    }
-  }
+  const { cliConf, ovConf } = inspectConfigFiles(report, host);
 
   // Enable verdict
   const enabled = isPluginEnabled();
@@ -290,78 +260,24 @@ function checkConfig(report, cfg) {
   else report.fail(`plugin disabled — every hook exits immediately (${reason})`, "", envEnabled === false ? "unset OPENVIKING_MEMORY_ENABLED" : "create ~/.openviking/ovcli.conf with url + api_key, or set OPENVIKING_MEMORY_ENABLED=1 plus OPENVIKING_URL/OPENVIKING_API_KEY");
 
   // Resolved values + sources
-  const src = credentialSources(cliConf, ovConf);
-  report.info(`url      ${cfg.baseUrl}  ← ${src.url}`);
-  for (const p of lintBaseUrl(cfg.baseUrl)) report[p.level](p.message, "", p.fix);
-  if (src.url.startsWith("default") && !isLoopbackUrl(cfg.baseUrl)) report.info("url fell back to the built-in default");
-  else if (src.url.startsWith("default")) report.warn("no url configured — using the built-in default http://127.0.0.1:1933", "only right when the server runs on this machine", "set url in ovcli.conf or OPENVIKING_URL");
-
-  const keyInfo = describeApiKey(cfg.apiKey);
-  report.info(`api_key  ${keyInfo.display}  ← ${src.apiKey}`);
-  for (const p of keyInfo.problems) report.warn(`api key ${p}`, "", "re-copy the key exactly as issued");
-  if (src.apiKey.includes("root_api_key")) {
-    report.warn("api key falls back to ov.conf server.root_api_key", "the root key is refused on tenant data APIs and /mcp in api_key mode; against a remote server it is simply the wrong key",
-      "put a user/admin key in ovcli.conf api_key (or OPENVIKING_API_KEY)");
-  }
-  if (!keyInfo.present && !isLoopbackUrl(cfg.baseUrl)) report.warn("no api key configured for a non-local server", "", "set api_key in ovcli.conf or OPENVIKING_API_KEY");
-  report.info(`account  ${cfg.accountId || "(unset)"}  ← ${src.account}`);
-  report.info(`user     ${cfg.userId || "(unset)"}  ← ${src.user}`);
-  if (keyInfo.format === "v2") {
-    if (cfg.accountId && keyInfo.account && cfg.accountId !== keyInfo.account) report.warn(`configured account '${cfg.accountId}' differs from the key's account '${keyInfo.account}'`, "in api_key mode the key wins");
-    if (cfg.userId && keyInfo.user && cfg.userId !== keyInfo.user) report.warn(`configured user '${cfg.userId}' differs from the key's user '${keyInfo.user}'`, "in api_key mode the key wins");
-  }
-  const peer = resolveEffectivePeerId({ cfg, cwd: process.cwd() });
-  report.info(`peer     ${peer.peerId || "(none)"}  ← ${peer.source} (${peer.origin})`);
-  if (peer.origin === "unresolved") {
-    report.info(
-      "no peer is sent: this directory is in no git repository, so its memories go to your user-level space",
-      `to give it a memory of its own, create .openviking/config.json here with ${WORKSPACE_PEER_HINT}`,
-    );
-  } else if (peer.source === "none") {
-    report.warn(
-      "no peer is sent, so recall defaults to every memory under this user",
-      "sending a peer narrows the search to this workspace",
-      'unset OPENVIKING_WORKSPACE_PEER, or set peer.source to "git"',
-    );
-  }
-  if (peer.legacyPeerId) {
-    report.info(
-      `previous peer  ${peer.legacyPeerId}`,
-      cfg.recallPeerScope === "actor"
-        ? "recall asks it separately, because peer_scope actor turns off the server's cross-peer sweep"
-        : "already covered by the server's cross-peer sweep under peer_scope all",
-    );
-  }
-  for (const p of lintPeerScopeDowngrade()) report[p.level](p.message, p.detail, p.fix);
-  report.info(`timeouts ${cfg.timeoutMs}ms request, ${cfg.captureTimeoutMs}ms capture; recall limit ${cfg.recallLimit}, threshold ${cfg.scoreThreshold}`);
+  const keyInfo = reportCredentials(report, cfg, credentialSources(cliConf, ovConf), { account: cfg.accountId, user: cfg.userId });
+  const peer = reportPeer(report, cfg);
+  reportTimeouts(report, cfg, host);
 
   const toggles = [`auto-inject ${cfg.noAutoInject ? "OFF" : "on"}`, `auto-recall ${cfg.autoRecall ? "on" : "OFF"}`, `auto-capture ${cfg.autoCapture ? "on" : "OFF"}`, `recall compress ${cfg.recallRewrite}`, `write path ${cfg.writePathAsync ? "async" : "sync"}`];
-  report.info(`toggles  ${toggles.join(", ")}`);
-  if (!cfg.autoRecall || !cfg.autoCapture || cfg.noAutoInject) report.warn("one or more injection paths are switched off", toggles.join(", "), "check OPENVIKING_AUTO_RECALL / OPENVIKING_AUTO_CAPTURE / OPENVIKING_NO_AUTO_INJECT and ovcli.conf plugin.claude_code");
+  reportToggles(report, cfg, host, toggles);
   if (cfg.bypassSession) report.warn("OPENVIKING_BYPASS_SESSION is on — every hook skips the server", "", "unset it");
   if (cfg.bypassSessionPatterns?.length) {
     const hit = isBypassed(cfg, { cwd: process.cwd() });
     report[hit ? "warn" : "info"](`bypass patterns: ${cfg.bypassSessionPatterns.join(", ")}${hit ? " — MATCH the current cwd" : ""}`, hit ? "recall/capture are skipped in this directory" : "", hit ? "narrow OPENVIKING_BYPASS_SESSION_PATTERNS" : "");
   }
-  report.info(`debug log ${cfg.debug ? "on" : "off"} → ${homeShort(cfg.debugLogPath)}${cfg.debug ? "" : " (set OPENVIKING_DEBUG=1 in Claude Code's environment to record hook errors)"}`);
 
-  // Environment sweep
-  const env = collectEnv();
-  if (env.openviking.length) {
-    report.info("OPENVIKING_* in this environment", env.openviking.map((e) => `${e.name}=${e.value}`).join("\n"));
-    if (env.openviking.some((e) => e.name === "OPENVIKING_MCP_URL")) report.warn("OPENVIKING_MCP_URL has no effect on this plugin", "the proxy always targets <url>/mcp", "unset it and fix url instead");
+  sweepEnv(report, cfg, host, (r, env) => {
+    if (env.openviking.some((e) => e.name === "OPENVIKING_MCP_URL")) r.warn("OPENVIKING_MCP_URL has no effect on this plugin", "the proxy always targets <url>/mcp", "unset it and fix url instead");
     if (env.openviking.some((e) => ["OPENVIKING_URL", "OPENVIKING_BASE_URL", "OPENVIKING_API_KEY", "OPENVIKING_BEARER_TOKEN"].includes(e.name)) && cliConf.ok && (cliConf.data.url || cliConf.data.api_key)) {
-      report.info("env vars override the url/api_key in ovcli.conf — edits to the file do not take effect while they are set");
+      r.info("env vars override the url/api_key in ovcli.conf — edits to the file do not take effect while they are set");
     }
-  } else {
-    report.info("no OPENVIKING_* environment variables set");
-  }
-  if (env.proxy.length) {
-    report.warn(`proxy variables set: ${env.proxy.map((e) => e.name).join(", ")}`, "Node's fetch ignores HTTP(S)_PROXY unless NODE_USE_ENV_PROXY=1 (Node 24+); curl honours them, so curl may succeed while hooks fail",
-      isLoopbackUrl(cfg.baseUrl) ? "harmless for a local server" : "set NODE_USE_ENV_PROXY=1 (or reach the server without the proxy) in the environment that launches Claude Code");
-  }
-  if (env.node.length) report.info(`node TLS/proxy env: ${env.node.map((e) => `${e.name}=${e.value}`).join(", ")}`);
-  if (/^https:/i.test(cfg.baseUrl) && env.node.some((e) => e.name === "NODE_TLS_REJECT_UNAUTHORIZED" && e.value === "0")) report.warn("NODE_TLS_REJECT_UNAUTHORIZED=0 disables certificate checks", "", "prefer NODE_EXTRA_CA_CERTS=<ca.pem>");
+  });
 
   return { keyInfo, cliConf, ovConf, peer };
 }
@@ -431,6 +347,8 @@ const HOST = {
   cliName: "claude",
   launcherHint: "Claude Code",
   nodePathFix: "put node on PATH for the environment that launches Claude Code, or set PATH in the `env` block of ~/.claude/settings.json",
+  // Recall runs on the plain request timeout here; only Codex gives it its own.
+  timeoutBudgets: { UserPromptSubmit: "timeoutMs", Stop: "captureTimeoutMs" },
   onCliFound(report, cli) {
     report.ok(`claude ${cli.stdout.split("\n")[0]}`);
     const plugin = runCommand("claude", ["plugin", "--help"], { timeoutMs: 15000 });

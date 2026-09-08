@@ -47,6 +47,8 @@ is a legitimate path prefix; `/api/v1` or `/mcp` suffixes are not.
 
 Peers minted before this need no migration: the old cwd-derived id is recomputed locally, `peer_scope: "all"` already sweeps it, and under `"actor"` recall asks it separately. Doctor prints it as `previous peer`. Across the workspace layers lists union rather than replace, with a leading `"!reset"` dropping what the lower layers contributed; unknown keys are kept and ignored, and a file declaring a version other than `1` is skipped with a warning.
 
+Hook budgets in `hooks/hooks.json`: SessionStart 120s, UserPromptSubmit 60s, Stop and SubagentStop 45s, PreCompact and SessionEnd 30s, SubagentStart 10s, PreToolUse and PostToolUse 5s. `timeoutMs` (default 15000) must stay below 60s and `captureTimeoutMs` (default 30000, derived as twice `timeoutMs` when it is not set) at or below 45s; doctor warns when either outgrows its hook.
+
 Sent headers: `Authorization: Bearer <key>`, `X-OpenViking-Account/User` (trusted
 mode only), `X-OpenViking-Actor-Peer`, `User-Agent: openviking-memory-claude-code/<version>`.
 The plugin never sends `X-API-Key`. The open-source server still accepts it (and

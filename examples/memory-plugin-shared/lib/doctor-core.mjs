@@ -19,12 +19,13 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve as resolvePath } from "node:path";
 
-import { HARNESS_CONFIG_KEYS, HARNESS_KEYS, pluginConfigKeys } from "./config-schema.mjs";
+import { HARNESS_CONFIG_KEYS, HARNESS_KEYS, harnessKey, KNOB_BY_NAME, pluginConfigKeys } from "./config-schema.mjs";
 import { buildOvHeaders } from "./ov-http.mjs";
 import { resolveWorkspaceSettings } from "./plugin-config.mjs";
 import { peerScopeMemoPath } from "./recall-core.mjs";
 import { CONFIG_DIR_NAME, LOCAL_FILE, TEAM_FILE, workspaceConfigPaths } from "./workspace-config.mjs";
 import { findWorkspaceRoot, resolveWorkspaceIdentity } from "./workspace-identity.mjs";
+import { resolveEffectivePeerId } from "./workspace-peer.mjs";
 import { entryPath } from "./workspace-registry.mjs";
 
 /**
@@ -1082,6 +1083,167 @@ export async function checkServerHealth(report, { baseUrl, ovConf, health, offli
 }
 
 // ---------------------------------------------------------------------------
+// Configuration segments
+//
+// The "Configuration" section is host-composed: these are the parts every
+// harness reports identically, called in order, with the host slotting its own
+// lines in between (Claude Code's enable verdict, Codex's credential-source
+// block). Each segment takes the harness spec `runDoctor` already carries.
+// ---------------------------------------------------------------------------
+
+/** ovcli.conf and ov.conf: where they are, whether they parse, what sits in them. */
+export function inspectConfigFiles(report, { harness = "", launcherHint = "this harness" } = {}) {
+  const key = harnessKey(harness);
+  const cliConf = inspectJsonFile(expandHome(process.env.OPENVIKING_CLI_CONFIG_FILE || join(homedir(), ".openviking", "ovcli.conf")));
+  const ovConf = inspectJsonFile(expandHome(process.env.OPENVIKING_CONFIG_FILE || join(homedir(), ".openviking", "ov.conf")));
+
+  for (const [label, conf] of [["ovcli.conf", cliConf], ["ov.conf", ovConf]]) {
+    if (!conf.exists) {
+      report.info(`${label}: ${homeShort(conf.path)} not present`);
+      continue;
+    }
+    if (!conf.ok) {
+      report.fail(`${label} cannot be parsed — the plugin treats it as absent`, `${homeShort(conf.path)}: ${conf.error}`, "fix the JSON (a trailing comma or comment is enough to break it)");
+      continue;
+    }
+    report.ok(`${label}: ${homeShort(conf.path)} (mode ${conf.mode}, ${fmtBytes(conf.size)})`);
+    if (label === "ov.conf") {
+      if (key && conf.data[key]) report.info(`ov.conf has a legacy ${key} block (still honoured; prefer ovcli.conf plugin.${key} or env vars)`);
+      continue;
+    }
+    if (conf.mode !== "600" && conf.mode !== "400") report.warn("ovcli.conf is not private", `mode ${conf.mode}; it holds the api key`, `chmod 600 ${homeShort(conf.path)}`);
+    const unknown = unknownOvcliKeys(conf.data);
+    if (unknown.length) report.warn("ovcli.conf has keys nobody reads", unknown.join(", "), "typos such as apiKey/base_url/token are silently ignored — use url, api_key, account, user");
+    // `plugin` is on the ovcli allowlist, so nothing inside it is checked
+    // there — a misspelled knob would just sit doing nothing.
+    for (const { key: knob, suggestion } of unknownPluginKeys(conf.data.plugin)) {
+      report.warn(`ovcli.conf ${knob} is not a knob any plugin reads`, "", suggestion ? `did you mean ${suggestion}?` : "remove it, or check the plugin README for the knob you meant");
+    }
+    if (conf.data.extra_headers && Object.keys(conf.data.extra_headers).some((h) => /^x-api-key$/i.test(h))) {
+      report.warn("ovcli.conf extra_headers sets X-API-Key", "the server prefers X-API-Key over Authorization: Bearer, so it shadows api_key");
+    }
+    const sections = Object.keys(conf.data.plugin || {}).filter((k) => HARNESS_CONFIG_KEYS.has(k));
+    const others = sections.filter((k) => harnessKey(k) !== key);
+    if (key && others.length && !sections.some((k) => harnessKey(k) === key)) {
+      report.info(`ovcli.conf ${others.map((k) => `plugin.${k}`).join(", ")} settings do not apply to ${launcherHint} (use plugin.${key})`);
+    }
+  }
+  return { cliConf, ovConf };
+}
+
+/**
+ * The resolved url, key and identity, each with the source it came from.
+ * `sources` is the host's own credential chain rendered as one label per field.
+ */
+export function reportCredentials(report, cfg, sources, { account = "", user = "" } = {}) {
+  report.info(`url      ${cfg.baseUrl}  ← ${sources.url}`);
+  for (const p of lintBaseUrl(cfg.baseUrl)) report[p.level](p.message, "", p.fix);
+  if (sources.url.startsWith("default") && !isLoopbackUrl(cfg.baseUrl)) report.info("url fell back to the built-in default");
+  else if (sources.url.startsWith("default")) report.warn("no url configured — using the built-in default http://127.0.0.1:1933", "only right when the server runs on this machine", "set url in ovcli.conf or OPENVIKING_URL");
+
+  const keyInfo = describeApiKey(cfg.apiKey);
+  report.info(`api_key  ${keyInfo.display}  ← ${sources.apiKey}`);
+  for (const p of keyInfo.problems) report.warn(`api key ${p}`, "", "re-copy the key exactly as issued");
+  if (sources.apiKey.includes("root_api_key")) {
+    report.warn("api key falls back to ov.conf server.root_api_key", "the root key is refused on tenant data APIs and /mcp in api_key mode; against a remote server it is simply the wrong key",
+      "put a user/admin key in ovcli.conf api_key (or OPENVIKING_API_KEY)");
+  }
+  if (!keyInfo.present && !isLoopbackUrl(cfg.baseUrl)) report.warn("no api key configured for a non-local server", "", "set api_key in ovcli.conf or OPENVIKING_API_KEY");
+  report.info(`account  ${account || "(unset)"}  ← ${sources.account}`);
+  report.info(`user     ${user || "(unset)"}  ← ${sources.user}`);
+  if (keyInfo.format === "v2") {
+    if (account && keyInfo.account && account !== keyInfo.account) report.warn(`configured account '${account}' differs from the key's account '${keyInfo.account}'`, "in api_key mode the key wins");
+    if (user && keyInfo.user && user !== keyInfo.user) report.warn(`configured user '${user}' differs from the key's user '${keyInfo.user}'`, "in api_key mode the key wins");
+  }
+  return keyInfo;
+}
+
+/** The peer this directory sends, where it came from, and what it costs when there is none. */
+export function reportPeer(report, cfg, { cwd = process.cwd() } = {}) {
+  const peer = resolveEffectivePeerId({ cfg, cwd });
+  report.info(`peer     ${peer.peerId || "(none)"}  ← ${peer.source} (${peer.origin})`);
+  if (peer.origin === "unresolved") {
+    report.info(
+      "no peer is sent: this directory is in no git repository, so its memories go to your user-level space",
+      `to give it a memory of its own, create .openviking/config.json here with ${WORKSPACE_PEER_HINT}`,
+    );
+  } else if (peer.source === "none") {
+    report.warn(
+      "no peer is sent, so recall defaults to every memory under this user",
+      "sending a peer narrows the search to this workspace",
+      'unset OPENVIKING_WORKSPACE_PEER, or set peer.source to "git"',
+    );
+  }
+  if (peer.legacyPeerId) {
+    report.info(
+      `previous peer  ${peer.legacyPeerId}`,
+      cfg.recallPeerScope === "actor"
+        ? "recall asks it separately, because peer_scope actor turns off the server's cross-peer sweep"
+        : "already covered by the server's cross-peer sweep under peer_scope all",
+    );
+  }
+  for (const p of lintPeerScopeDowngrade()) report[p.level](p.message, p.detail, p.fix);
+  return peer;
+}
+
+const TIMEOUT_LABELS = { timeoutMs: "request", recallTimeoutMs: "recall", captureTimeoutMs: "capture" };
+
+/**
+ * The timeouts line and the hook-budget check. `timeoutBudgets` maps a hook
+ * event to the knob that governs the request inside it, so each harness names
+ * the knob its own recall and capture paths actually read — a request that
+ * outlives its hook is killed by the host before it can answer.
+ */
+export function reportTimeouts(report, cfg, { pluginRoot = "", launcherHint = "the harness", timeoutBudgets = {} } = {}) {
+  const knobs = [...new Set(["timeoutMs", ...Object.values(timeoutBudgets)])];
+  report.info(`timeouts ${knobs.map((knob) => `${cfg[knob]}ms ${TIMEOUT_LABELS[knob] || knob}`).join(", ")}; recall limit ${cfg.recallLimit}, threshold ${cfg.scoreThreshold}`);
+
+  const hooks = tryJson(join(pluginRoot, "hooks", "hooks.json"))?.hooks || {};
+  for (const [event, knob] of Object.entries(timeoutBudgets)) {
+    const budget = Number(hooks[event]?.[0]?.hooks?.[0]?.timeout) * 1000 || 0;
+    if (!budget || !(cfg[knob] > budget)) continue;
+    report.warn(`${TIMEOUT_LABELS[knob] || knob} timeout ${cfg[knob]}ms exceeds the ${event} hook budget ${budget}ms`,
+      `${launcherHint} kills the hook before the request can finish`,
+      `lower ${KNOB_BY_NAME.get(knob)?.env || knob}`);
+  }
+}
+
+/** The switches that decide whether anything is injected at all. */
+export function reportToggles(report, cfg, { harness = "" } = {}, toggles = []) {
+  report.info(`toggles  ${toggles.join(", ")}`);
+  if (!cfg.autoRecall || !cfg.autoCapture || cfg.noAutoInject) {
+    report.warn("one or more injection paths are switched off", toggles.join(", "),
+      `check OPENVIKING_AUTO_RECALL / OPENVIKING_AUTO_CAPTURE / OPENVIKING_NO_AUTO_INJECT and ovcli.conf plugin.${harnessKey(harness)}`);
+  }
+}
+
+/**
+ * Where the hooks log, and what the environment does to them. `extra` adds the
+ * host's own reading of the OPENVIKING_* vars it found.
+ */
+export function sweepEnv(report, cfg, { launcherHint = "the harness" } = {}, extra) {
+  report.info(`debug log ${cfg.debug ? "on" : "off"} → ${homeShort(cfg.debugLogPath)}${cfg.debug ? "" : ` (set OPENVIKING_DEBUG=1 in ${launcherHint}'s environment to record hook errors)`}`);
+
+  const env = collectEnv();
+  if (env.openviking.length) {
+    report.info("OPENVIKING_* in this environment", env.openviking.map((e) => `${e.name}=${e.value}`).join("\n"));
+    if (extra) extra(report, env);
+  } else {
+    report.info("no OPENVIKING_* environment variables set");
+  }
+  if (env.proxy.length) {
+    report.warn(`proxy variables set: ${env.proxy.map((e) => e.name).join(", ")}`,
+      "Node's fetch ignores HTTP(S)_PROXY unless NODE_USE_ENV_PROXY=1 (Node 24+); curl honours them, so curl may succeed while hooks fail",
+      isLoopbackUrl(cfg.baseUrl) ? "harmless for a local server" : `set NODE_USE_ENV_PROXY=1 (or reach the server without the proxy) in the environment that launches ${launcherHint}`);
+  }
+  if (env.node.length) report.info(`node TLS/proxy env: ${env.node.map((e) => `${e.name}=${e.value}`).join(", ")}`);
+  if (/^https:/i.test(cfg.baseUrl) && env.node.some((e) => e.name === "NODE_TLS_REJECT_UNAUTHORIZED" && e.value === "0")) {
+    report.warn("NODE_TLS_REJECT_UNAUTHORIZED=0 disables certificate checks", "", "prefer NODE_EXTRA_CA_CERTS=<ca.pem>");
+  }
+  return env;
+}
+
+// ---------------------------------------------------------------------------
 // The run
 // ---------------------------------------------------------------------------
 
@@ -1170,7 +1332,8 @@ export async function checkConnection(report, cfg, { keyInfo, peer, account = ""
  * fields above, `loadConfig()`, the three sections only the host can produce
  * (`checkInstall`, `checkConfig`, `checkActivity`), `resolveIdentity(cfg)` for
  * the account/user spelling that harness uses, and optionally `onSummary` and
- * `extraResolved(cfg)` for extra `--json` fields.
+ * `extraResolved(cfg)` for extra `--json` fields. `checkConfig` is handed the
+ * spec back, because the configuration segments it composes are driven by it.
  */
 export async function runDoctor(host) {
   const opts = parseArgs(process.argv.slice(2));
@@ -1178,7 +1341,7 @@ export async function runDoctor(host) {
   const envInfo = checkEnvironment(report, host);
   host.checkInstall(report, envInfo);
   const cfg = host.loadConfig();
-  const configInfo = host.checkConfig(report, cfg);
+  const configInfo = host.checkConfig(report, cfg, host);
   const workspace = checkWorkspace(report);
   const identity = host.resolveIdentity(cfg);
   const connection = await checkConnection(report, cfg, { ...configInfo, ...identity }, opts, host);

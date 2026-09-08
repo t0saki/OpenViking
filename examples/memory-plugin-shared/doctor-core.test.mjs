@@ -240,8 +240,9 @@ test("no doctor wrapper redefines a name doctor-core already exports", () => {
     [...read("./lib/doctor-core.mjs").matchAll(/^export (?:async function|function|const) (\w+)/gm)].map((m) => m[1]),
   );
   assert.ok(exported.has("runDoctor"));
+  assert.ok(exported.has("inspectConfigFiles"));
   for (const rel of ["../claude-code-memory-plugin/scripts/ov-memory-doctor.mjs", "../codex-memory-plugin/scripts/ov-memory-doctor.mjs"]) {
-    const declared = [...read(rel).matchAll(/^(?:export )?(?:async function|function|const) (\w+)\s*(?:\(|=\s*(?:async\s*)?(?:function|\())/gm)].map((m) => m[1]);
+    const declared = [...read(rel).matchAll(/^(?:export )?(?:async function|function|const) (\w+)\s*[(=]/gm)].map((m) => m[1]);
     const clashes = declared.filter((name) => exported.has(name));
     assert.deepEqual(clashes, [], `${rel} redeclares doctor-core exports: ${clashes.join(", ")}`);
   }
