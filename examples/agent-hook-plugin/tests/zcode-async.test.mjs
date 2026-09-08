@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+
+import { expectExit, runHookScript } from "../../memory-plugin-shared/testing/support.mjs";
 
 const hook = fileURLToPath(new URL("../scripts/hook.mjs", import.meta.url));
 
@@ -34,18 +35,7 @@ function waitFor(predicate, timeoutMs = 5000) {
 }
 
 function runHook(input, env) {
-  return new Promise((resolve) => {
-    const child = spawn(process.execPath, [hook, "stop", "zcode"], {
-      env: { ...process.env, ...env },
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.on("data", (chunk) => { stdout += chunk; });
-    child.stderr.on("data", (chunk) => { stderr += chunk; });
-    child.on("close", (status) => resolve({ status, stdout, stderr }));
-    child.stdin.end(JSON.stringify(input));
-  });
+  return runHookScript(hook, { argv: ["stop", "zcode"], input, env });
 }
 
 test("Stop returns before slow writes while detached worker finishes capture", async (t) => {
@@ -84,26 +74,20 @@ test("Stop returns before slow writes while detached worker finishes capture", a
   );
 
   const startedAt = Date.now();
-  const child = spawn(process.execPath, [hook, "stop", "zcode"], {
+  const run = await runHookScript(hook, {
+    argv: ["stop", "zcode"],
+    input: { session_id: sessionId, cwd: home },
     env: {
-      ...process.env,
       HOME: home,
       OPENVIKING_URL: `http://127.0.0.1:${server.address().port}`,
       OPENVIKING_WRITE_PATH_ASYNC: "1",
       OPENVIKING_TIMEOUT_MS: String(HOOK_TIMEOUT_MS),
     },
-    stdio: ["pipe", "pipe", "pipe"],
   });
-  child.stdin.end(JSON.stringify({ session_id: sessionId, cwd: home }));
-  let stdout = "";
-  let stderr = "";
-  child.stdout.on("data", (chunk) => { stdout += chunk; });
-  child.stderr.on("data", (chunk) => { stderr += chunk; });
-  const exitCode = await new Promise((resolve) => child.on("close", resolve));
   const elapsedMs = Date.now() - startedAt;
 
-  assert.equal(exitCode, 0, stderr);
-  assert.equal(stdout, "");
+  expectExit(run);
+  assert.equal(run.stdout, "");
   // Core async-path guarantee, independent of wall-clock speed: every server
   // response is delayed 700ms, so a parent that exits with zero completed
   // responses provably never awaited the network. A synchronous fallback
@@ -184,16 +168,14 @@ test("400 failure does not advance state and successful retry prevents duplicate
     OPENVIKING_TIMEOUT_MS: String(HOOK_TIMEOUT_MS),
   };
 
-  const first = await runHook({ session_id: sessionId, cwd: home }, env);
-  assert.equal(first.status, 0, first.stderr);
+  expectExit(await runHook({ session_id: sessionId, cwd: home }, env));
   const failedState = JSON.parse(readFileSync(statePath, "utf8"));
   assert.equal(failedState.lastTurnId ?? null, null);
   assert.deepEqual(failedState.capturedTurnIds, []);
   assert.deepEqual(failedState.pendingPrompt, pendingPrompt);
   assert.equal(requests.length, 1);
 
-  const second = await runHook({ session_id: sessionId, cwd: home }, env);
-  assert.equal(second.status, 0, second.stderr);
+  expectExit(await runHook({ session_id: sessionId, cwd: home }, env));
   const retriedBatch = requests.filter(({ url }) => url?.endsWith("/messages/batch"))[1];
   assert.deepEqual(JSON.parse(retriedBatch.body), {
     messages: [
@@ -211,7 +193,6 @@ test("400 failure does not advance state and successful retry prevents duplicate
   assert.equal(successfulState.captured, undefined);
 
   const requestCountAfterSuccess = requests.length;
-  const third = await runHook({ session_id: sessionId, cwd: home }, env);
-  assert.equal(third.status, 0, third.stderr);
+  expectExit(await runHook({ session_id: sessionId, cwd: home }, env));
   assert.equal(requests.length, requestCountAfterSuccess);
 });

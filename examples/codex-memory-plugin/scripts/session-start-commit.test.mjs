@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
-import http from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { readRequestBody, withMockOpenViking, writeJson } from "../../memory-plugin-shared/testing/support.mjs";
 import { enqueue } from "./shared/pending-queue.mjs";
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
@@ -26,28 +26,6 @@ async function endedMarkerExists(dir, id) {
 
 function writeEndedMarker(dir, id, ts) {
   return writeFile(join(dir, `${id}.ended.${ts}`), String(ts));
-}
-
-
-function writeJson(res, value) {
-  res.writeHead(200, { "Content-Type": "application/json" });
-  res.end(JSON.stringify(value));
-}
-
-async function withMockOpenViking(handler, fn) {
-  const server = http.createServer((req, res) => {
-    Promise.resolve(handler(req, res)).catch((error) => {
-      res.writeHead(500, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ status: "error", error: String(error?.stack || error) }));
-    });
-  });
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  try {
-    const { port } = server.address();
-    return await fn(`http://127.0.0.1:${port}`);
-  } finally {
-    await new Promise((resolve) => server.close(resolve));
-  }
 }
 
 function runSessionStart(input, env) {
@@ -473,18 +451,6 @@ test("resume clears a stale SessionEnd marker for the resumed session", async ()
     await rm(stateDir, { recursive: true, force: true });
   }
 });
-
-function readRequestBody(req) {
-  return new Promise((resolve, reject) => {
-    const chunks = [];
-    req.on("data", (chunk) => chunks.push(chunk));
-    req.on("end", () => {
-      const raw = Buffer.concat(chunks).toString("utf-8");
-      try { resolve(raw ? JSON.parse(raw) : null); } catch (error) { reject(error); }
-    });
-    req.on("error", reject);
-  });
-}
 
 function turn(role, content) {
   return JSON.stringify({ payload: { message: { role, content } } });

@@ -1,35 +1,21 @@
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
+import { expectExit, runHookScript } from "../../memory-plugin-shared/testing/support.mjs";
 import { parseCursorTranscript } from "../hosts/cursor-transcript.mjs";
 import { evaluateHostUriGuard } from "../scripts/uri-guard.mjs";
 
 const pluginRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const hookEntry = resolve(pluginRoot, "scripts", "hook.mjs");
 
-function runHook(event, input, env) {
-  return new Promise((resolveRun, reject) => {
-    const child = spawn(process.execPath, [hookEntry, event, "cursor"], {
-      env: { ...process.env, ...env },
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.on("data", (chunk) => { stdout += chunk; });
-    child.stderr.on("data", (chunk) => { stderr += chunk; });
-    child.on("error", reject);
-    child.on("close", (code) => {
-      if (code !== 0) reject(new Error(stderr || `hook exited ${code}`));
-      else resolveRun(JSON.parse(stdout.trim() || "{}"));
-    });
-    child.stdin.end(JSON.stringify(input));
-  });
+async function runHook(event, input, env) {
+  const run = expectExit(await runHookScript(hookEntry, { argv: [event, "cursor"], input, env }));
+  return JSON.parse(run.stdout.trim() || "{}");
 }
 
 test("Cursor command-installed integration contains Hook, Rule, Skill, and MCP entrypoints", () => {

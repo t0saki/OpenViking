@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -7,6 +6,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
+import { expectExit, runHookScript } from "../../memory-plugin-shared/testing/support.mjs";
 import { buildTraeTurns, cleanTraeText } from "../hosts/trae-turns.mjs";
 import { evaluateHostUriGuard } from "../scripts/uri-guard.mjs";
 
@@ -51,23 +51,9 @@ test("TRAE URI guard follows the Claude Code PreToolUse response contract", () =
   }), {});
 });
 
-function runHook(event, client, input, env) {
-  return new Promise((resolveRun, reject) => {
-    const child = spawn(process.execPath, [hookEntry, event, client], {
-      env: { ...process.env, ...env },
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.on("data", (chunk) => { stdout += chunk; });
-    child.stderr.on("data", (chunk) => { stderr += chunk; });
-    child.on("error", reject);
-    child.on("close", (code) => {
-      if (code !== 0) reject(new Error(stderr || `hook exited ${code}`));
-      else resolveRun(JSON.parse(stdout.trim() || "{}"));
-    });
-    child.stdin.end(JSON.stringify(input));
-  });
+async function runHook(event, client, input, env) {
+  const run = expectExit(await runHookScript(hookEntry, { argv: [event, client], input, env }));
+  return JSON.parse(run.stdout.trim() || "{}");
 }
 
 test("TRAE capture uses event fields rather than a transcript path", () => {
