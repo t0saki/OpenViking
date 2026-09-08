@@ -161,57 +161,6 @@ export async function makeRequest(config, options) {
   }
 }
 
-export async function makeMultipartRequest(config, options) {
-  const url = `${normalizeEndpoint(config.endpoint)}${options.endpoint}`
-  const headers = makeAuthHeaders(config, options.headers ?? {}, options.actorPeerId)
-
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? config.timeoutMs)
-  let onAbort = null
-
-  if (options.abortSignal) {
-    if (options.abortSignal.aborted) controller.abort()
-    onAbort = () => controller.abort()
-    options.abortSignal.addEventListener("abort", onAbort, { once: true })
-  }
-
-  try {
-    const response = await fetch(url, {
-      method: options.method,
-      headers,
-      body: options.body,
-      signal: controller.signal,
-    })
-
-    const text = await response.text()
-    const payload = text ? parseJsonOrText(text) : {}
-
-    if (!response.ok) {
-      const rawError = typeof payload === "object" ? payload.error ?? payload.message : payload
-      const errorMessage = typeof rawError === "string" ? rawError : JSON.stringify(rawError)
-      if (response.status === 401 || response.status === 403) {
-        throw new Error("Authentication failed. Check api_key/account/user in ~/.openviking/ovcli.conf, or the OPENVIKING_* environment variables.")
-      }
-      throw new Error(`Request failed (${response.status}): ${errorMessage}`)
-    }
-
-    return payload
-  } catch (error) {
-    if (error?.name === "AbortError") {
-      throw new Error(`Request timeout after ${options.timeoutMs ?? config.timeoutMs}ms`)
-    }
-    if (error?.message?.includes("fetch failed") || error?.code === "ECONNREFUSED") {
-      throw new Error(`OpenViking service unavailable at ${config.endpoint}. Start it with: openviking-server --config ~/.openviking/ov.conf`)
-    }
-    throw error
-  } finally {
-    clearTimeout(timeout)
-    if (options.abortSignal && onAbort) {
-      options.abortSignal.removeEventListener("abort", onAbort)
-    }
-  }
-}
-
 function makeAuthHeaders(config, headers = {}, actorPeerId = "") {
   const result = { ...headers }
   if (config.apiKey) result["Authorization"] = `Bearer ${config.apiKey}`
@@ -245,21 +194,4 @@ export function unwrapResponse(response) {
     throw new Error(getResponseErrorMessage(response.error))
   }
   return response.result
-}
-
-export function validateVikingUri(uri, toolName = "tool") {
-  if (typeof uri !== "string" || !uri.startsWith("viking://")) {
-    log("ERROR", toolName, "Invalid Viking URI", { uri })
-    return 'Error: Invalid URI format. Must start with "viking://".'
-  }
-  return null
-}
-
-export function ensureRemoteUrl(value) {
-  try {
-    const url = new URL(value)
-    return url.protocol === "http:" || url.protocol === "https:"
-  } catch {
-    return false
-  }
 }
