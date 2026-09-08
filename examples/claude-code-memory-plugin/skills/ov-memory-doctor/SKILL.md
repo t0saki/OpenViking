@@ -143,10 +143,6 @@ same `~/.openviking/ovcli.conf` (they show account/user/role for the key).
 `ov config list` reveals whether a different profile was switched in with
 `ov config switch` — that also retargets the plugin.
 
-Recall corpus probe: `node ${CLAUDE_PLUGIN_ROOT}/scripts/debug-recall.mjs "<query>"`
-prints config, health and raw `/search/find` hits. It is a connectivity and
-corpus check, not a replay of the hook's exact ranking.
-
 Server side (only meaningful when the server runs on this machine):
 
 ```bash
@@ -187,8 +183,6 @@ ask before stopping or restarting it.
 
 - Never print a full API key or the raw contents of `ovcli.conf`; the
   doctor's masked forms are the limit.
-- Never run `scripts/debug-capture.mjs` with a live Claude Code session id —
-  it overwrites that session's capture cursor and uses an obsolete API flow.
 - `scripts/setup.mjs` needs a TTY and, on older plugin versions, an existing
   `ovcli.conf`; on a fresh machine write the file directly or re-run the installer.
 - Never pipe `claude plugin list` into `grep -q`; capture the output first
