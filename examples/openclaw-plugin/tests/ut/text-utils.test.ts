@@ -6,8 +6,6 @@ import {
   extractNewTurnMessages,
   extractNewTurnTexts,
   extractLatestUserText,
-  pickRecentUniqueTexts,
-  looksLikeQuestionOnlyText,
 } from "../../text-utils.js";
 
 describe("sanitizeUserTextForCapture", () => {
@@ -388,50 +386,5 @@ describe("extractLatestUserText", () => {
       { role: "user", content: "<relevant-memories>only memory</relevant-memories>" },
     ];
     expect(extractLatestUserText(messages)).toBe("real content here");
-  });
-});
-
-describe("pickRecentUniqueTexts", () => {
-  it("deduplicates and preserves recent-first order", () => {
-    const result = pickRecentUniqueTexts(["a", "b", "a", "c"], 3);
-    expect(result).toEqual(["b", "a", "c"]);
-  });
-
-  it("respects limit", () => {
-    const result = pickRecentUniqueTexts(["a", "b", "c", "d", "e"], 2);
-    expect(result).toHaveLength(2);
-  });
-
-  it("returns empty for empty input", () => {
-    expect(pickRecentUniqueTexts([], 5)).toEqual([]);
-  });
-
-  it("returns empty for limit=0", () => {
-    expect(pickRecentUniqueTexts(["a", "b"], 0)).toEqual([]);
-  });
-});
-
-describe("looksLikeQuestionOnlyText", () => {
-  it("pure question → true", () => {
-    expect(looksLikeQuestionOnlyText("what is this?")).toBe(true);
-  });
-
-  it("question with memory intent → false", () => {
-    expect(looksLikeQuestionOnlyText("记住这个重要的事情，好吗？")).toBe(false);
-  });
-
-  it("long text with question mark → false (exceeds 280 chars)", () => {
-    const longText = "a".repeat(300) + "?";
-    expect(looksLikeQuestionOnlyText(longText)).toBe(false);
-  });
-
-  it("multi-speaker text with question → false", () => {
-    const text = "Alice: what do you think?\nBob: I think it's fine";
-    expect(looksLikeQuestionOnlyText(text)).toBe(false);
-  });
-
-  it("text without question cue → false", () => {
-    // "is" matches QUESTION_CUE_RE, so use text without any question cue words
-    expect(looksLikeQuestionOnlyText("hello world good morning")).toBe(false);
   });
 });

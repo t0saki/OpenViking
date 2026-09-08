@@ -183,3 +183,56 @@ test("the Codex adapter is the extractCaptureTurns its callers import", async ()
   assert.equal(codex.extractCaptureTurns(rollout, CAPTURE_CONFIG).length, 2)
   assert.deepEqual(extractCaptureTurns(rollout, CAPTURE_CONFIG), [])
 })
+
+test("acknowledgements are dropped by default and kept when a harness says so", () => {
+  assert.equal(shouldCaptureText("好的", "user").reason, "ack")
+  assert.equal(shouldCaptureText("好的", "user", { dropAck: false }).reason, "too_short")
+})
+
+test("a bare question is only dropped where the harness asks for it", () => {
+  const question = "what is this project about?"
+  assert.equal(shouldCaptureText(question, "user").shouldCapture, true)
+  const dropped = shouldCaptureText(question, "user", { dropQuestionOnly: true })
+  assert.equal(dropped.shouldCapture, false)
+  assert.equal(dropped.reason, "question_only")
+})
+
+test("dropQuestionOnly keeps a question that asks to remember something", () => {
+  const decision = shouldCaptureText("记住这个重要的事情，好吗？", "user", { dropQuestionOnly: true })
+  assert.equal(decision.shouldCapture, true)
+})
+
+test("dropQuestionOnly keeps a pasted multi-speaker transcript", () => {
+  const decision = shouldCaptureText("Alice: what do you think?\nBob: I think it's fine", "user", {
+    dropQuestionOnly: true,
+  })
+  assert.equal(decision.shouldCapture, true)
+})
+
+test("dropQuestionOnly keeps a long turn that happens to end in a question mark", () => {
+  const decision = shouldCaptureText(`${"a".repeat(300)}?`, "user", { dropQuestionOnly: true })
+  assert.equal(decision.shouldCapture, true)
+})
+
+test("dropQuestionOnly keeps a turn with no question cue in it", () => {
+  const decision = shouldCaptureText("hello world good morning", "user", { dropQuestionOnly: true })
+  assert.equal(decision.shouldCapture, true)
+})
+
+test("keyword mode keeps only what a memory trigger matches", () => {
+  const kept = shouldCaptureText("记住我的名字叫张三，我是工程师", "user", { mode: "keyword" })
+  assert.equal(kept.shouldCapture, true)
+  assert.ok(kept.trigger instanceof RegExp)
+  assert.equal(
+    shouldCaptureText("今天天气不错啊，适合出去走走散步放松一下心情", "user", { mode: "keyword" }).reason,
+    "no_trigger",
+  )
+})
+
+test("preSanitize unwraps a host envelope before anything is classified", () => {
+  const decision = shouldCaptureText("System: [10:00] Compacted the earlier turns", "user", {
+    preSanitize: (text) => text.replace(/^System:\s*\[.*?\]\s*Compacted\s*/i, ""),
+  })
+  assert.equal(decision.shouldCapture, true)
+  assert.equal(decision.text, "the earlier turns")
+})

@@ -119,7 +119,7 @@ transformContext auto recall 流程：
 
 1. 若 `autoCapture=false`、heartbeat 或 session 被 bypass，直接跳过。
 2. 根据 `prePromptMessageCount` 只提取本轮新增消息，不重写全量 transcript。
-3. `extractNewTurnMessages` 将 user/assistant 文本和 toolResult 转成 OpenViking parts：`text-utils.ts:342`。
+3. 将 user/assistant 文本和 toolResult 转成 OpenViking parts：`text-utils.ts` 的 `extractNewTurnMessages()`。
 4. 清理 `<relevant-memories>`、metadata、时间戳、心跳等噪音。
 5. 逐条调用 `POST /api/v1/sessions/{sessionId}/messages`：`context-engine.ts:1378`、`client.ts:703`。
 6. 调 `GET /api/v1/sessions/{sessionId}` 读取 `pending_tokens`：`context-engine.ts:1389`、`client.ts:770`。

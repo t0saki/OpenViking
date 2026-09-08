@@ -24,6 +24,28 @@ const DEFAULT_TOOL_MAX_CHARS = 1000000;
 
 const ACK_RE = /^(?:ok|okay|k|yes|yep|no|nope|thanks|thank you|thx|done|收到|好的|好|嗯|可以|继续|不用|不需要|没了|好了)[.!?。！？\s]*$/i;
 const SLASH_COMMAND_RE = /^\/[a-z0-9_-]{1,64}\b/i;
+const QUESTION_CUE_RE =
+  /[?？]|\b(?:what|when|where|who|why|how|which|can|could|would|did|does|is|are)\b|^(?:请问|能否|可否|怎么|如何|什么时候|谁|什么|哪|是否)/i;
+const MEMORY_INTENT_RE = /记住|记下|remember|save|store|偏好|preference|规则|rule|事实|fact/i;
+const SPEAKER_TAG_RE = /[A-Za-z\u4e00-\u9fa5]{2,20}:\s/g;
+
+/**
+ * What `mode: "keyword"` looks for.
+ *
+ * Keyword capture only keeps a turn that says, in one of these shapes, that it
+ * is worth remembering. It is the conservative end of the switch openclaw
+ * exposes as `captureMode`; semantic mode keeps every turn the gates below let
+ * through and leaves the judgement to the extractor.
+ */
+export const MEMORY_TRIGGERS = [
+  /remember|preference|prefer|important|decision|decided|always|never/i,
+  /记住|偏好|喜欢|喜爱|崇拜|讨厌|害怕|重要|决定|总是|永远|优先|习惯|爱好|擅长|最爱|不喜欢/i,
+  /[\w.-]+@[\w.-]+\.\w+/,
+  /\+\d{10,}/,
+  /(?:我|my)\s*(?:是|叫|名字|name|住在|live|来自|from|生日|birthday|电话|phone|邮箱|email)/i,
+  /(?:我|i)\s*(?:喜欢|崇拜|讨厌|害怕|擅长|不会|爱|恨|想要|需要|希望|觉得|认为|相信)/i,
+  /(?:favorite|favourite|love|hate|enjoy|dislike|admire|idol|fan of)/i,
+];
 const METADATA_KEYS = [
   "session_id",
   "sessionid",
@@ -488,9 +510,13 @@ function stripInjectedDigestBlocks(text) {
  * its own; captured back unchanged, this turn's injection becomes next turn's
  * memory and the loop feeds on itself. Formatting the conversation did author
  * — newlines, code fences — survives.
+ *
+ * `preSanitize` runs first, for the envelope a single host wraps a turn in and
+ * no other host has ever seen: openclaw's Compactor rewrites a turn as
+ * "System: [ts] Compacted …" and only the host knows how to unwrap it.
  */
-export function sanitizeCapturedText(text) {
-  let value = String(text || "");
+export function sanitizeCapturedText(text, { preSanitize } = {}) {
+  let value = String(typeof preSanitize === "function" ? preSanitize(String(text || "")) : text || "");
   value = value
     .replace(/\u0000/g, "")
     .replace(/<openviking-context\b[^>]*>[\s\S]*?<\/openviking-context>/gi, " ")
@@ -523,6 +549,18 @@ function isPunctuationOnly(text) {
 }
 
 /**
+ * A turn that only asks something, with nothing in it to remember.
+ *
+ * A pasted transcript is full of question marks and is still worth keeping, so
+ * a long turn or one with two speaker tags is not a bare question.
+ */
+function isQuestionOnly(text) {
+  if (!QUESTION_CUE_RE.test(text) || MEMORY_INTENT_RE.test(text)) return false;
+  if (text.length > 280) return false;
+  return (text.match(SPEAKER_TAG_RE) || []).length < 2;
+}
+
+/**
  * Is capture on for this config?
  *
  * The switch has four spellings in the wild: a boolean `autoCapture`, opencode's
@@ -539,9 +577,19 @@ export function isCaptureEnabled(cfg = {}) {
   return true;
 }
 
+/**
+ * Is this turn worth sending to the extractor?
+ *
+ * The gates below are what every harness shares. The two rules a harness has
+ * historically disagreed on are flags rather than a fork of this function:
+ * `dropAck` (openclaw keeps the acknowledgements the others drop) and
+ * `dropQuestionOnly` (openclaw drops a bare question the others keep). `mode`
+ * chooses between keeping every turn that clears the gates and keeping only
+ * the ones MEMORY_TRIGGERS matches.
+ */
 export function shouldCaptureText(text, role, cfg = {}) {
   const maxLength = cfg.captureMaxLength || 24000;
-  const sanitized = sanitizeCapturedText(text);
+  const sanitized = sanitizeCapturedText(text, { preSanitize: cfg.preSanitize });
   if (!sanitized) return { shouldCapture: false, reason: "empty", text: "" };
 
   const capped = truncateCaptureText(sanitized, maxLength);
@@ -551,7 +599,7 @@ export function shouldCaptureText(text, role, cfg = {}) {
   if (!isToolSummary && role === "user" && SLASH_COMMAND_RE.test(compact)) {
     return { shouldCapture: false, reason: "slash_command", text: "" };
   }
-  if (!isToolSummary && ACK_RE.test(compact)) {
+  if (!isToolSummary && cfg.dropAck !== false && ACK_RE.test(compact)) {
     return { shouldCapture: false, reason: "ack", text: "" };
   }
   if (!isToolSummary && isPunctuationOnly(compact)) {
@@ -562,6 +610,15 @@ export function shouldCaptureText(text, role, cfg = {}) {
   }
   if (/^\[openviking-memory\]/i.test(compact)) {
     return { shouldCapture: false, reason: "plugin_status", text: "" };
+  }
+  if (!isToolSummary && cfg.dropQuestionOnly && isQuestionOnly(compact)) {
+    return { shouldCapture: false, reason: "question_only", text: "" };
+  }
+
+  if (cfg.mode === "keyword") {
+    const trigger = MEMORY_TRIGGERS.find((re) => re.test(compact));
+    if (!trigger) return { shouldCapture: false, reason: "no_trigger", text: "" };
+    return { shouldCapture: true, reason: "ok", text: capped, trigger };
   }
 
   return { shouldCapture: true, reason: "ok", text: capped };

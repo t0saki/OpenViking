@@ -1,127 +1,52 @@
 import type { CaptureMode } from "./client.js";
+import { sanitizeCapturedText, shouldCaptureText } from "./shared/capture-utils.mjs";
 
-export const MEMORY_TRIGGERS = [
-  /remember|preference|prefer|important|decision|decided|always|never/i,
-  /记住|偏好|喜欢|喜爱|崇拜|讨厌|害怕|重要|决定|总是|永远|优先|习惯|爱好|擅长|最爱|不喜欢/i,
-  /[\w.-]+@[\w.-]+\.\w+/,
-  /\+\d{10,}/,
-  /(?:我|my)\s*(?:是|叫|名字|name|住在|live|来自|from|生日|birthday|电话|phone|邮箱|email)/i,
-  /(?:我|i)\s*(?:喜欢|崇拜|讨厌|害怕|擅长|不会|爱|恨|想要|需要|希望|觉得|认为|相信)/i,
-  /(?:favorite|favourite|love|hate|enjoy|dislike|admire|idol|fan of)/i,
-];
-
-const CJK_CHAR_REGEX = /[\u3040-\u30ff\u3400-\u9fff\uf900-\ufaff\uac00-\ud7af]/;
-const RELEVANT_MEMORIES_BLOCK_RE = /<relevant-memories>[\s\S]*?<\/relevant-memories>/gi;
-const OPENVIKING_CONTEXT_BLOCK_RE = /<openviking-context\b[^>]*>[\s\S]*?<\/openviking-context>/gi;
 const CONVERSATION_METADATA_BLOCK_RE =
   /(?:^|\n)\s*(?:Conversation info|Conversation metadata|会话信息|对话信息)\s*(?:\([^)]+\))?\s*:\s*```[\s\S]*?```/gi;
 /** Strips "Sender (untrusted metadata): ```json ... ```" so capture sends clean text to OpenViking extract. */
 const SENDER_METADATA_BLOCK_RE = /Sender\s*\([^)]*\)\s*:\s*```[\s\S]*?```/gi;
-const FENCED_JSON_BLOCK_RE = /```json\s*([\s\S]*?)```/gi;
-const METADATA_JSON_KEY_RE =
-  /"(session|sessionid|sessionkey|conversationid|channel|sender|userid|agentid|timestamp|timezone)"\s*:/gi;
 const LEADING_TIMESTAMP_PREFIX_RE = /^\s*(?!\[\[)\[(?:(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*\s+)?(?:\d{4}[-/]\d{2}[-/]\d{2}|\d{2}[-/]\d{2}[-/]\d{2,4})(?:[T\s]\d{1,2}:\d{2}(?::\d{2})?(?:\.\d+)?(?:Z|[+-]\d{1,2}(?::\d{2})?)?(?:\s*[A-Z]{1,5}(?:[+-]\d{1,2})?)?)?\s*\]\s*/i;
 const COMPACTED_SYSTEM_MSG_RE = /^System:\s*\[.*?\]\s*Compacted\s*(.+)$/i;
-const COMMAND_TEXT_RE = /^\/[a-z0-9_-]{1,64}\b/i;
-const NON_CONTENT_TEXT_RE = /^[\p{P}\p{S}\s]+$/u;
 const SUBAGENT_CONTEXT_RE = /^\s*\[Subagent Context\]/i;
-const MEMORY_INTENT_RE = /记住|记下|remember|save|store|偏好|preference|规则|rule|事实|fact/i;
-const QUESTION_CUE_RE =
-  /[?？]|\b(?:what|when|where|who|why|how|which|can|could|would|did|does|is|are)\b|^(?:请问|能否|可否|怎么|如何|什么时候|谁|什么|哪|是否)/i;
-function resolveCaptureMinLength(text: string): number {
-  return CJK_CHAR_REGEX.test(text) ? 4 : 10;
-}
-
-function looksLikeMetadataJsonBlock(content: string): boolean {
-  const matchedKeys = new Set<string>();
-  const matches = content.matchAll(METADATA_JSON_KEY_RE);
-  for (const match of matches) {
-    const key = (match[1] ?? "").toLowerCase();
-    if (key) {
-      matchedKeys.add(key);
-    }
-  }
-  return matchedKeys.size >= 3;
-}
-
 const TOOL_PLACEHOLDER_RE = /^\s*\[tool(?::\s*|Use:\s*)[^\]]+\]\s*$/i;
 
-export function sanitizeUserTextForCapture(text: string): string {
-  // Drop legacy synthetic tool placeholders before they reach memory extraction.
+/** The reason string each shared verdict is reported as, for traces and diag lines. */
+const CAPTURE_REASON_ALIASES: Record<string, string> = {
+  slash_command: "command_text",
+  punctuation: "non_content_text",
+  too_short: "length_out_of_range",
+  question_only: "question_text",
+};
+
+/**
+ * Unwrap the envelopes only OpenClaw puts around a turn.
+ *
+ * The Compactor rewrites a turn as "System: [ts] Compacted ... [ts] <text>",
+ * the channel stamps a local time on every message, a subagent prefixes its
+ * own tag, and older builds left synthetic "[tool: name]" placeholders behind.
+ * Everything the shared sanitizer already knows about — injected recall
+ * blocks, metadata fences, NULs — is left to it.
+ */
+function unwrapOpenClawEnvelopes(text: string): string {
   if (TOOL_PLACEHOLDER_RE.test(text)) {
     return "";
   }
-  // 处理 Compactor 系统消息，提取实际用户输入
-  // 格式: "System: [时间] Compacted ... Context ... [时间] 实际内容"
-  if (COMPACTED_SYSTEM_MSG_RE.test(text)) {
-    const match = text.match(COMPACTED_SYSTEM_MSG_RE);
-    if (match) {
-      return match[1].replace(/\s+/g, " ").trim();
-    }
-    return "";
+  const compacted = text.match(COMPACTED_SYSTEM_MSG_RE);
+  if (compacted) {
+    return compacted[1].replace(/\s+/g, " ").trim();
   }
   return text
-    .replace(OPENVIKING_CONTEXT_BLOCK_RE, " ")
-    .replace(RELEVANT_MEMORIES_BLOCK_RE, " ")
     .replace(CONVERSATION_METADATA_BLOCK_RE, " ")
     .replace(SENDER_METADATA_BLOCK_RE, " ")
-    .replace(FENCED_JSON_BLOCK_RE, (full, inner) =>
-      looksLikeMetadataJsonBlock(String(inner ?? "")) ? " " : full,
-    )
     .replace(LEADING_TIMESTAMP_PREFIX_RE, "")
-    .replace(SUBAGENT_CONTEXT_RE, "")
-    .replace(/\u0000/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
+    .replace(SUBAGENT_CONTEXT_RE, "");
 }
 
-export function stripOpenVikingContextInjection(text: string): string {
-  return text
-    .replace(OPENVIKING_CONTEXT_BLOCK_RE, " ")
-    .replace(RELEVANT_MEMORIES_BLOCK_RE, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-export function looksLikeQuestionOnlyText(text: string): boolean {
-  if (!QUESTION_CUE_RE.test(text) || MEMORY_INTENT_RE.test(text)) {
-    return false;
-  }
-  // Multi-speaker transcripts often contain many "?" but should still be captured.
-  const speakerTags = text.match(/[A-Za-z\u4e00-\u9fa5]{2,20}:\s/g) ?? [];
-  if (speakerTags.length >= 2 || text.length > 280) {
-    return false;
-  }
-  return true;
-}
-
-function normalizeDedupeText(text: string): string {
-  return text.toLowerCase().replace(/\s+/g, " ").trim();
-}
-
-function normalizeCaptureDedupeText(text: string): string {
-  return normalizeDedupeText(text).replace(/[\p{P}\p{S}]+/gu, " ").replace(/\s+/g, " ").trim();
-}
-
-export function pickRecentUniqueTexts(texts: string[], limit: number): string[] {
-  if (limit <= 0 || texts.length === 0) {
-    return [];
-  }
-  const seen = new Set<string>();
-  const picked: string[] = [];
-  for (let i = texts.length - 1; i >= 0; i -= 1) {
-    const text = texts[i];
-    const key = normalizeCaptureDedupeText(text);
-    if (!key || seen.has(key)) {
-      continue;
-    }
-    seen.add(key);
-    picked.push(text);
-    if (picked.length >= limit) {
-      break;
-    }
-  }
-  return picked.reverse();
+export function sanitizeUserTextForCapture(text: string): string {
+  const sanitized = sanitizeCapturedText(text, { preSanitize: unwrapOpenClawEnvelopes });
+  // Recall prepends its block ahead of the message, so the channel timestamp
+  // only reaches the front of the text once that block is gone.
+  return sanitized.replace(LEADING_TIMESTAMP_PREFIX_RE, "").replace(/\s+/g, " ").trim();
 }
 
 export function getCaptureDecision(text: string, mode: CaptureMode, captureMaxLength: number): {
@@ -139,10 +64,8 @@ export function getCaptureDecision(text: string, mode: CaptureMode, captureMaxLe
       normalizedText: "",
     };
   }
-
-  const compactText = normalizedText.replace(/\s+/g, "");
-  const minLength = resolveCaptureMinLength(compactText);
-  if (compactText.length < minLength || normalizedText.length > captureMaxLength) {
+  // The shared classifier truncates an over-long turn; OpenClaw drops it.
+  if (normalizedText.length > captureMaxLength) {
     return {
       shouldCapture: false,
       reason: "length_out_of_range",
@@ -150,60 +73,39 @@ export function getCaptureDecision(text: string, mode: CaptureMode, captureMaxLe
     };
   }
 
-  if (COMMAND_TEXT_RE.test(normalizedText)) {
-    return {
-      shouldCapture: false,
-      reason: "command_text",
-      normalizedText,
-    };
-  }
-
-  if (NON_CONTENT_TEXT_RE.test(normalizedText)) {
-    return {
-      shouldCapture: false,
-      reason: "non_content_text",
-      normalizedText,
-    };
-  }
-  if (SUBAGENT_CONTEXT_RE.test(normalizedText)) {
-    return {
-      shouldCapture: false,
-      reason: "subagent_context",
-      normalizedText,
-    };
-  }
-  if (looksLikeQuestionOnlyText(normalizedText)) {
-    return {
-      shouldCapture: false,
-      reason: "question_text",
-      normalizedText,
-    };
-  }
-
-  if (mode === "keyword") {
-    for (const trigger of MEMORY_TRIGGERS) {
-      if (trigger.test(normalizedText)) {
-        return {
-          shouldCapture: true,
-          reason: hadSanitization
-            ? `matched_trigger_after_sanitize:${trigger.toString()}`
-            : `matched_trigger:${trigger.toString()}`,
-          normalizedText,
-        };
-      }
-    }
-    return {
-      shouldCapture: false,
-      reason: hadSanitization ? "no_trigger_matched_after_sanitize" : "no_trigger_matched",
-      normalizedText,
-    };
-  }
+  const decision = shouldCaptureText(normalizedText, "user", {
+    captureMaxLength,
+    mode,
+    // OpenClaw's own rules: unwrap its envelopes, keep acknowledgements, drop
+    // bare questions.
+    preSanitize: unwrapOpenClawEnvelopes,
+    dropAck: false,
+    dropQuestionOnly: true,
+  });
 
   return {
-    shouldCapture: true,
-    reason: hadSanitization ? "semantic_candidate_after_sanitize" : "semantic_candidate",
+    shouldCapture: decision.shouldCapture,
+    reason: captureReason(decision, mode, hadSanitization),
     normalizedText,
   };
+}
+
+function captureReason(
+  decision: { shouldCapture: boolean; reason: string; trigger?: RegExp },
+  mode: CaptureMode,
+  hadSanitization: boolean,
+): string {
+  const suffix = hadSanitization ? "_after_sanitize" : "";
+  if (decision.shouldCapture) {
+    if (mode === "keyword" && decision.trigger) {
+      return `matched_trigger${suffix}:${decision.trigger.toString()}`;
+    }
+    return `semantic_candidate${suffix}`;
+  }
+  if (decision.reason === "no_trigger") {
+    return `no_trigger_matched${suffix}`;
+  }
+  return CAPTURE_REASON_ALIASES[decision.reason] ?? decision.reason;
 }
 
 export function extractTextsFromUserMessages(messages: unknown[]): string[] {

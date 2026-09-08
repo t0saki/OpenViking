@@ -4,7 +4,6 @@ import type { RuntimeQueryConfigStore } from "./query-config.js";
 import {
   AUTO_RECALL_SOURCE_MARKER,
 } from "./auto-recall.js";
-import { getCaptureDecision } from "./text-utils.js";
 import { compileSessionPatterns, matchesSessionPattern } from "./shared/session-model.mjs";
 import type { RecallTraceEntry } from "./recall-trace.js";
 import { estimateAgentMessageTokens, estimateAgentMessagesTokens } from "./token-estimator.js";
