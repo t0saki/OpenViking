@@ -74,7 +74,7 @@ test("every shared module is reachable from some plugin", async () => {
   const claimed = new Set(targets.flatMap((target) => target.files));
   // cursor and trae vendor nothing: the installer assembles their runtime from
   // these entrypoints instead, so they claim through install-lib-closure.
-  for (const entry of ["agent-hook-runtime.mjs", "agent-uri-guard.mjs", "mcp-proxy-core.mjs"]) {
+  for (const entry of ["agent-hook-runtime.mjs", "uri-guard.mjs", "mcp-proxy-core.mjs"]) {
     claimed.add(entry);
   }
   const files = (await readdir(SHARED_DIR)).filter((file) => file.endsWith(".mjs")).sort();

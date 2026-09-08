@@ -1,5 +1,4 @@
 agent-hook-runtime.mjs
-agent-uri-guard.mjs
 async-writer.mjs
 batch-send.mjs
 capture-utils.mjs

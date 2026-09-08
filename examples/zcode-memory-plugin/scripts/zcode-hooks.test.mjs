@@ -81,7 +81,7 @@ test("uri guard returns empty for unmatched tool name", () => {
     tool_name: "Bash",
     tool_input: { command: "cat viking://user/test.md" },
   });
-  // Bash is not in the Read|Glob|Grep matcher — but evaluateAgentUriGuard
+  // Bash is not in the Read|Glob|Grep matcher — but evaluateUriGuard
   // may still detect viking:// in certain fields. The important assertion is
   // that the output shape is valid (either empty or correct deny).
   if (Object.keys(output).length > 0) {
