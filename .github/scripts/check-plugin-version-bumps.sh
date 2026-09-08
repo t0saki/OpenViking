@@ -36,7 +36,13 @@ PLUGINS=(
 # them through a vendored copy inside their directory: the config-driven hook
 # hosts have the runtime assembled at install time, and the packaged plugins
 # build their copies at pack time. So the library counts as a change to all.
-SHARED_LIB="examples/memory-plugin-shared/lib"
+# `lib/install/` is the exception: no plugin imports it and neither the sync nor
+# the assembled closure carries it, because it is the installer's own code. It
+# reaches a machine when install.sh runs again, not when a manifest version moves.
+SHARED_LIB=(
+  "examples/memory-plugin-shared/lib"
+  ":(exclude)examples/memory-plugin-shared/lib/install"
+)
 
 read_version() { # read_version <ref-or-empty> <path>
   local ref="$1" path="$2" json
@@ -58,11 +64,14 @@ process.stdin.on("end", () => {
 # A plugin that carries both a host manifest and an installer manifest has to
 # say the same version in both: the host installs by one and the installer
 # decides "nothing changed" by the other, so a mismatch means a plugin that
-# reports upgraded and behaves like it did not.
+# reports upgraded and behaves like it did not. Kimi Code's `kimi.plugin.json`
+# is a third such manifest — the one `/plugins install <path>` reads.
 PAIRED=(
   "examples/agent-hook-plugin/.claude-plugin/plugin.json:examples/agent-hook-plugin/hosts/cursor/openviking.integration.json"
   "examples/agent-hook-plugin/.claude-plugin/plugin.json:examples/agent-hook-plugin/hosts/trae/openviking.integration.json"
   "examples/agent-hook-plugin/.claude-plugin/plugin.json:examples/agent-hook-plugin/hosts/zcode/openviking.integration.json"
+  "examples/agent-hook-plugin/.claude-plugin/plugin.json:examples/agent-hook-plugin/hosts/kimicode/openviking.integration.json"
+  "examples/agent-hook-plugin/.claude-plugin/plugin.json:examples/agent-hook-plugin/hosts/kimicode/kimi.plugin.json"
 )
 
 failed=0
@@ -82,7 +91,7 @@ for entry in "${PLUGINS[@]}"; do
   dir="${entry%%:*}"
   manifest="${entry#*:}"
 
-  changed="$(git diff --name-only "$BASE_REF...HEAD" -- "$dir" "$SHARED_LIB" | grep -v '/node_modules/' || true)"
+  changed="$(git diff --name-only "$BASE_REF...HEAD" -- "$dir" "${SHARED_LIB[@]}" | grep -v '/node_modules/' || true)"
   [ -n "$changed" ] || continue
 
   # A plugin added in this branch has no baseline version to compare against.

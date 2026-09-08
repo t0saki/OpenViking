@@ -228,6 +228,7 @@ export const HARNESS_KEYS = {
   trae: "trae",
   traeCn: "trae_cn",
   zcode: "zcode",
+  kimicode: "kimicode",
   opencode: "opencode",
   dsh: "dsh",
   pi: "pi",

@@ -21,6 +21,8 @@ import {
   unknownOvcliKeys,
   WORKSPACE_PEER_HINT,
 } from "./lib/doctor-core.mjs";
+import { blockMarkers } from "./lib/install/toml-hooks.mjs";
+import { tomlHooksBlock } from "../agent-hook-plugin/scripts/ov-memory-doctor.mjs";
 
 const b64 = (s) => Buffer.from(s).toString("base64url");
 
@@ -253,6 +255,17 @@ test("checkWorkspace warns when the workspace asks for a newer client", () => {
   const warned = createReport();
   checkWorkspace(warned, { cwd: dir, env, clientVersion: "0.1.0" });
   assert.match(warned.render(), /asks for OpenViking plugin 9\.9\.9 and this one is 0\.1\.0/);
+});
+
+test("the agent-hook doctor reads back the fence the TOML installer writes", () => {
+  // The doctor cannot import the installer's module — it would drag lib/install
+  // into the runtime closure the installer assembles — so it spells the markers
+  // out. This is the equality that keeps the two spellings the same one.
+  const { begin, end } = blockMarkers("kimicode");
+  const owned = `${begin}\n[[hooks]]\nevent = "Stop"\n${end}`;
+  const file = `[[hooks]]\nevent = "Stop"\ncommand = "herdr"\n\n${owned}\n`;
+  assert.equal(tomlHooksBlock(file, "kimicode"), owned);
+  assert.equal(tomlHooksBlock(file, "zcode"), "");
 });
 
 test("no doctor wrapper redefines a name doctor-core already exports", () => {

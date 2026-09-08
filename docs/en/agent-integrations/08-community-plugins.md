@@ -47,6 +47,51 @@ After restarting ZCode, verify that:
 
 Implementation details and currently verified ZCode assumptions are documented in the plugin's [README](https://github.com/volcengine/OpenViking/tree/main/examples/agent-hook-plugin) and [DESIGN.md](https://github.com/volcengine/OpenViking/blob/main/examples/agent-hook-plugin/DESIGN.md).
 
+## Kimi Code CLI memory integration
+
+Source: [examples/agent-hook-plugin](https://github.com/volcengine/OpenViking/tree/main/examples/agent-hook-plugin)
+
+Kimi Code is served by the same plugin as Cursor, TRAE and ZCode — one adapter, not a directory of its own — but its host surface is different enough to be worth stating:
+
+- Hooks live in `~/.kimi-code/config.toml` as a `[[hooks]]` array, not a JSON tree. `KIMI_CODE_HOME` moves that root.
+- MCP lives in `~/.kimi-code/mcp.json`.
+- `UserPromptSubmit` injects **plain text**: a JSON envelope would be appended to the conversation for the user to read.
+- `SessionStart` only observes, so the profile is injected on the first prompt instead.
+- `SessionEnd`, `PreCompact` and `Interrupt` all exist. `Interrupt` fires instead of `Stop`, so it captures synchronously rather than in a detached worker.
+- Capture reads `session_index.jsonl` to find the session's `agents/main/wire.jsonl`, and deduplicates on the host's own `turnId`.
+
+### Install
+
+Prerequisites: Node.js 18+, a running OpenViking server, and Kimi Code CLI.
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/main/examples/memory-plugin-shared/install.sh) \
+  --harness kimicode
+```
+
+Use the TOS mirror where GitHub is unavailable:
+
+```bash
+bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/memory-plugin-shared/install.sh) \
+  --harness kimicode --dist tos
+```
+
+The installer detects `~/.kimi-code/` (or `KIMI_CODE_HOME`) or the `kimi` binary, installs the runtime under `~/.openviking/agent-integrations/kimicode/`, and merges its hooks into `~/.kimi-code/config.toml` inside a comment-delimited block, leaving any Herdr or Orca `[[hooks]]` entries alone.
+
+After restarting Kimi Code, verify that:
+
+- `~/.kimi-code/config.toml` holds one `# >>> openviking kimicode integration` block, and `~/.kimi-code/mcp.json` has `mcpServers.openviking`.
+- `OPENVIKING_DEBUG=1` produces diagnostics in `~/.openviking/logs/kimicode-hooks.log`.
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| Recalled memories appear as raw JSON in the conversation | An older build injected a JSON envelope | Re-run the installer; `UserPromptSubmit` must print plain text |
+| No profile at session start | Expected — `SessionStart` cannot inject on this host | The profile arrives with the first prompt of the session |
+| Hooks not firing | The OpenViking block was removed or points at a stale path | Re-run the installer and restart Kimi Code |
+| Duplicate captures | An older installation left a second block | Run `install.sh --harness kimicode --uninstall`, then reinstall |
+
+Kimi Code also reads a native plugin manifest, so `/plugins install ~/.openviking/agent-integrations/kimicode/hosts/kimicode` works against an installed copy. `install.sh --harness kimicode` is the supported path: it is idempotent and it is what the uninstall reclaims.
+
 ## AstrBot plugin
 
 [AstrBot](https://github.com/AstrBotDevs/AstrBot) is a multi-platform IM bot framework supporting QQ, Telegram, Discord, Lark, and 20+ other platforms.

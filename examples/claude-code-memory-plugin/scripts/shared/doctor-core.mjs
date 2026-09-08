@@ -1262,14 +1262,19 @@ const TIMEOUT_LABELS = { timeoutMs: "request", recallTimeoutMs: "recall", captur
  *
  * `hooksTemplate` names the template when it does not sit at the plugin root,
  * and an entry states its timeout either directly or one nesting level down.
+ * A template may key its entries by event or, like the TOML hosts', list them
+ * flat with the event on each entry.
  */
 export function reportTimeouts(report, cfg, { pluginRoot = "", hooksTemplate = "", launcherHint = "the harness", timeoutBudgets = {} } = {}) {
   const knobs = [...new Set(["timeoutMs", ...Object.values(timeoutBudgets)])];
   report.info(`timeouts ${knobs.map((knob) => `${cfg[knob]}ms ${TIMEOUT_LABELS[knob] || knob}`).join(", ")}; recall limit ${cfg.recallLimit}, threshold ${cfg.scoreThreshold}`);
 
   const hooks = tryJson(hooksTemplate || join(pluginRoot, "hooks", "hooks.json"))?.hooks || {};
+  const byEvent = Array.isArray(hooks)
+    ? new Map(hooks.map((entry) => [entry?.event, entry]))
+    : new Map(Object.entries(hooks).map(([event, entries]) => [event, entries?.[0]]));
   for (const [event, knob] of Object.entries(timeoutBudgets)) {
-    const entry = hooks[event]?.[0];
+    const entry = byEvent.get(event);
     const budget = Number(entry?.hooks?.[0]?.timeout ?? entry?.timeout) * 1000 || 0;
     if (!budget || !(cfg[knob] > budget)) continue;
     report.warn(`${TIMEOUT_LABELS[knob] || knob} timeout ${cfg[knob]}ms exceeds the ${event} hook budget ${budget}ms`,

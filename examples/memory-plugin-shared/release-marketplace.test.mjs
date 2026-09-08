@@ -19,43 +19,51 @@ function run(command, args, options = {}) {
   });
 }
 
+/** Stage the marketplace tree, zip it, and check it carries no dependencies. */
+function stageArchive(tmp) {
+  const stage = join(tmp, "memory-plugin-marketplace");
+  const staged = run("bash", [stageScript, stage]);
+  assert.equal(staged.status, 0, `${staged.stdout}\n${staged.stderr}`);
+
+  const bundled = readdirSync(stage, { recursive: true, encoding: "utf8" }).filter((entry) =>
+    entry.split(sep).includes("node_modules"),
+  );
+  assert.deepEqual(bundled.slice(0, 3), [], "marketplace archive carries development dependencies");
+
+  const zip = join(tmp, "memory-plugin-marketplace.zip");
+  const zipped = run("zip", ["-rq", zip, "memory-plugin-marketplace"], { cwd: tmp });
+  assert.equal(zipped.status, 0, `${zipped.stdout}\n${zipped.stderr}`);
+  return zip;
+}
+
+function installFromArchive(tmp, zip, harness) {
+  const home = join(tmp, "home");
+  mkdirSync(home, { recursive: true });
+  const installed = run("bash", [
+    installer,
+    "--harness", harness,
+    "--dist", "tos",
+    "--source", "archive",
+    "--lang", "en",
+    "--url", "http://127.0.0.1:1933",
+    "--api-key", "",
+    "--yes",
+  ], {
+    env: {
+      ...process.env,
+      HOME: home,
+      OPENVIKING_HOME: join(home, ".openviking"),
+      OPENVIKING_MARKETPLACE_ARCHIVE_URL: `file://${zip}`,
+    },
+  });
+  assert.equal(installed.status, 0, `${installed.stdout}\n${installed.stderr}`);
+  return home;
+}
+
 test("release marketplace archive supports a ZCode TOS install", () => {
   const tmp = mkdtempSync(join(tmpdir(), "openviking-zcode-release-"));
   try {
-    const stage = join(tmp, "memory-plugin-marketplace");
-    const staged = run("bash", [stageScript, stage]);
-    assert.equal(staged.status, 0, `${staged.stdout}\n${staged.stderr}`);
-
-    const bundled = readdirSync(stage, { recursive: true, encoding: "utf8" }).filter((entry) =>
-      entry.split(sep).includes("node_modules"),
-    );
-    assert.deepEqual(bundled.slice(0, 3), [], "marketplace archive carries development dependencies");
-
-    const zipped = run("zip", ["-rq", join(tmp, "memory-plugin-marketplace.zip"), "memory-plugin-marketplace"], {
-      cwd: tmp,
-    });
-    assert.equal(zipped.status, 0, `${zipped.stdout}\n${zipped.stderr}`);
-
-    const home = join(tmp, "home");
-    mkdirSync(home, { recursive: true });
-    const installed = run("bash", [
-      installer,
-      "--harness", "zcode",
-      "--dist", "tos",
-      "--source", "archive",
-      "--lang", "en",
-      "--url", "http://127.0.0.1:1933",
-      "--api-key", "",
-      "--yes",
-    ], {
-      env: {
-        ...process.env,
-        HOME: home,
-        OPENVIKING_HOME: join(home, ".openviking"),
-        OPENVIKING_MARKETPLACE_ARCHIVE_URL: `file://${join(tmp, "memory-plugin-marketplace.zip")}`,
-      },
-    });
-    assert.equal(installed.status, 0, `${installed.stdout}\n${installed.stderr}`);
+    const home = installFromArchive(tmp, stageArchive(tmp), "zcode");
 
     const integrationRoot = join(home, ".openviking", "agent-integrations", "zcode");
     assert.ok(existsSync(join(integrationRoot, "scripts", "hook.mjs")));
@@ -95,6 +103,50 @@ test("release marketplace archive supports a ZCode TOS install", () => {
       assert.ok(script, `${command} names no script`);
       assert.ok(existsSync(script), `${script} is missing after install`);
     }
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+// Kimi Code reaches the archive through the same plugin directory but reads a
+// configuration format of its own, so the parts a JSON host never exercises —
+// the TOML hook block, `mcp.json`, and the native `kimi.plugin.json` — have to
+// survive the round trip through the release archive.
+test("release marketplace archive supports a Kimi Code TOS install", () => {
+  const tmp = mkdtempSync(join(tmpdir(), "openviking-kimicode-release-"));
+  try {
+    const home = installFromArchive(tmp, stageArchive(tmp), "kimicode");
+
+    const integrationRoot = join(home, ".openviking", "agent-integrations", "kimicode");
+    assert.ok(existsSync(join(integrationRoot, "scripts", "hook.mjs")));
+    assert.ok(existsSync(join(integrationRoot, "hosts", "kimicode.mjs")));
+    assert.ok(existsSync(join(integrationRoot, "hosts", "kimicode-turns.mjs")));
+    assert.ok(existsSync(join(integrationRoot, "hosts", "kimicode-capture.mjs")));
+    assert.equal(existsSync(join(integrationRoot, "hosts", "zcode")), false);
+    // `/plugins install <path>` reads this manifest, and its commands are
+    // relative to the integration root, so it only works if the archive carried
+    // it here alongside the scripts it names.
+    const native = JSON.parse(readFileSync(join(integrationRoot, "hosts", "kimicode", "kimi.plugin.json"), "utf8"));
+    for (const entry of native.hooks) {
+      const script = /node (\S+\.mjs)/u.exec(entry.command)?.[1];
+      assert.ok(script, entry.command);
+      assert.ok(existsSync(resolve(integrationRoot, "hosts", "kimicode", script)), `${script} is missing after install`);
+    }
+    assert.ok(
+      existsSync(resolve(integrationRoot, "hosts", "kimicode", native.mcpServers.openviking.args[0])),
+      "the native manifest names an MCP proxy the archive did not carry",
+    );
+
+    const config = readFileSync(join(home, ".kimi-code", "config.toml"), "utf8");
+    assert.equal(config.split("# >>> openviking kimicode integration").length - 1, 1, config);
+    const commands = [...config.matchAll(/^command = "(.*openviking-memory)"$/gmu)].map((match) => match[1]);
+    assert.equal(commands.length, native.hooks.length, config);
+    for (const command of commands) {
+      const script = /'([^']*\.mjs)'/u.exec(command)?.[1];
+      assert.ok(script, `${command} names no script`);
+      assert.ok(existsSync(script), `${script} is missing after install`);
+    }
+    assert.ok(JSON.parse(readFileSync(join(home, ".kimi-code", "mcp.json"), "utf8")).mcpServers.openviking);
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }

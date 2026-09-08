@@ -3,9 +3,9 @@
 /**
  * Client-side diagnostics for the config-driven hook hosts.
  *
- * Cursor, TRAE, TRAE CN and ZCode are installed by writing into the host's own
- * configuration files rather than through a plugin marketplace, so what can go
- * wrong is different from Claude Code's and Codex's: the host config may have
+ * Cursor, TRAE, TRAE CN, ZCode and Kimi Code are installed by writing into the
+ * host's own configuration files rather than through a marketplace, so what can
+ * go wrong is different from Claude Code's and Codex's: the host config may have
  * lost the OpenViking entries, the assembled runtime beside the integration may
  * be missing or stale, or the client may simply never have been installed. The
  * configuration and connection sections are the ones every harness shares.
@@ -17,7 +17,7 @@
  * any check fails, 0 otherwise. Never prints a full api key.
  */
 
-import { readdirSync, realpathSync, statSync } from "node:fs";
+import { readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -44,13 +44,22 @@ import {
 const PLUGIN_ROOT = resolvePath(dirname(fileURLToPath(import.meta.url)), "..");
 const REQUIRED_PLUGIN_FILES = ["scripts/hook.mjs", "scripts/uri-guard.mjs", "servers/mcp-proxy.mjs", "hosts/index.mjs"];
 
+function kimiCodeHome() {
+  return process.env.KIMI_CODE_HOME || join(homedir(), ".kimi-code");
+}
+
 /**
  * Where each client keeps the two things the installer writes.
  *
  * ZCode reads both out of one config file; the rest keep hooks and MCP apart,
- * and TRAE's MCP path is the editor's platform-specific user directory.
+ * and TRAE's MCP path is the editor's platform-specific user directory. Kimi
+ * Code's hooks are TOML, which `hooksFormat` marks so the checks below read the
+ * installer's comment-fenced block instead of parsing the file.
+ *
+ * Every client hosts/index.mjs serves needs an entry: a client missing here
+ * resolves to another one's spec and the doctor reports on its files.
  */
-const CLIENTS = {
+export const CLIENTS = {
   cursor: {
     cliName: "cursor",
     launcherHint: "Cursor",
@@ -87,6 +96,14 @@ const CLIENTS = {
     mcp: () => join(homedir(), ".zcode", "cli", "config.json"),
     timeoutBudgets: { UserPromptSubmit: "recallTimeoutMs", Stop: "captureTimeoutMs" },
   },
+  kimicode: {
+    cliName: "kimi",
+    launcherHint: "Kimi Code",
+    hooksFormat: "toml",
+    hooks: () => join(kimiCodeHome(), "config.toml"),
+    mcp: () => join(kimiCodeHome(), "mcp.json"),
+    timeoutBudgets: { UserPromptSubmit: "recallTimeoutMs", Stop: "captureTimeoutMs" },
+  },
 };
 
 /** The client this copy serves: the argument, the install manifest, or cursor. */
@@ -101,6 +118,54 @@ const CLIENT = resolveClient(process.argv.slice(2));
 const SPEC = CLIENTS[CLIENT];
 // TRAE CN is served by the TRAE host directory.
 const HOST_DIR = CLIENT === "trae-cn" ? "trae" : CLIENT;
+
+/** The comment fence lib/install/toml-hooks.mjs writes around a client's entries. */
+export function tomlHooksBlock(text, clientId) {
+  const begin = `# >>> openviking ${clientId} integration`;
+  const end = `# <<< openviking ${clientId} integration`;
+  const start = text.indexOf(begin);
+  if (start < 0) return "";
+  const stop = text.indexOf(end, start);
+  return stop < 0 ? "" : text.slice(start, stop + end.length);
+}
+
+/**
+ * The hook entries the installer owns, however this client stores them.
+ *
+ * A TOML host's config is read rather than parsed: the installer only ever
+ * rewrites the fenced block, and the rest of the file belongs to the user and
+ * to whatever other tools append their own `[[hooks]]` to it.
+ */
+function inspectHooksFile(hooksPath) {
+  if (SPEC.hooksFormat !== "toml") {
+    const file = inspectJsonFile(hooksPath);
+    const text = file.ok ? JSON.stringify(file.data) : "";
+    return {
+      ...file,
+      text,
+      owned: text.includes("OPENVIKING_INTEGRATION_ID"),
+      events: file.ok ? Object.keys(file.data.hooks?.events || file.data.hooks || {}) : [],
+    };
+  }
+  const out = { exists: false, ok: false, error: "", data: null, text: "", owned: false, events: [] };
+  let raw;
+  try {
+    raw = readFileSync(hooksPath, "utf-8");
+  } catch (err) {
+    if (err?.code !== "ENOENT") {
+      out.exists = true;
+      out.error = `unreadable: ${err?.message || err}`;
+    }
+    return out;
+  }
+  const block = tomlHooksBlock(raw, CLIENT);
+  out.exists = true;
+  out.ok = true;
+  out.text = block;
+  out.owned = Boolean(block);
+  out.events = [...raw.matchAll(/^\s*event\s*=\s*"([^"]*)"/gmu)].map((match) => match[1]);
+  return out;
+}
 
 function hookStateDir() {
   const root = process.env.OPENVIKING_HOOK_STATE_DIR || join(homedir(), ".openviking", "hook-state");
@@ -132,19 +197,18 @@ function checkInstall(report) {
   }
 
   const hooksPath = SPEC.hooks();
-  const hooks = inspectJsonFile(hooksPath);
+  const hooks = inspectHooksFile(hooksPath);
   if (!hooks.exists) report.fail(`${homeShort(hooksPath)} not found`, `${SPEC.launcherHint} has no hook configuration on this machine`, `re-run the installer with --harness ${CLIENT}`);
-  else if (!hooks.ok) report.fail(`${homeShort(hooksPath)} cannot be parsed`, hooks.error, "fix the JSON; the installer refuses to overwrite a file it cannot read");
+  else if (!hooks.ok) report.fail(`${homeShort(hooksPath)} cannot be read`, hooks.error, "fix the file; the installer refuses to overwrite one it cannot read");
   else {
-    const text = JSON.stringify(hooks.data);
-    const events = Object.keys(hooks.data.hooks?.events || hooks.data.hooks || {});
-    if (!text.includes("OPENVIKING_INTEGRATION_ID")) report.fail(`${homeShort(hooksPath)} has no OpenViking hooks`, `events present: ${events.join(", ") || "(none)"}`, `re-run the installer with --harness ${CLIENT}`);
+    const { text, events } = hooks;
+    if (!hooks.owned) report.fail(`${homeShort(hooksPath)} has no OpenViking hooks`, `events present: ${events.join(", ") || "(none)"}`, `re-run the installer with --harness ${CLIENT}`);
     else {
       report.ok(`hooks in ${homeShort(hooksPath)}: ${events.join(", ")}`);
       if (!text.includes("scripts/hook.mjs")) report.warn("the installed hook commands do not name scripts/hook.mjs", "they were written by an older installer", "re-run the installer");
       if (CLIENT === "zcode" && hooks.data.hooks?.enabled !== true) report.fail("ZCode's hook runner is off", "config.json has hooks.enabled != true, so no hook fires", "re-run the installer, or set hooks.enabled = true");
     }
-    for (const command of String(text).match(/'([^']*\.mjs)'/gu) || []) {
+    for (const command of text.match(/'([^']*\.mjs)'/gu) || []) {
       const script = command.slice(1, -1);
       if (!existsPath(script)) report.fail("an installed hook names a script that is not on disk", script, "re-run the installer");
     }

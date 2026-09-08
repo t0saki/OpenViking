@@ -22,7 +22,13 @@ import {
 const EXAMPLES = join(ROOT, "examples");
 
 // Manifests a host reads by name to find everything else.
-const HOST_MANIFESTS = ["openviking.integration.json", ".mcp.json", "hooks.json", join("hooks", "hooks.json")];
+const HOST_MANIFESTS = [
+  "openviking.integration.json",
+  ".mcp.json",
+  "hooks.json",
+  join("hooks", "hooks.json"),
+  "kimi.plugin.json",
+];
 
 // Directories a host loads whole; what is inside them is named nowhere.
 const CONTENT_DIRS = ["skills", "rules", "commands"];

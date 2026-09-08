@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 import { HOSTS } from "../hosts/index.mjs";
+import { CLIENTS } from "../scripts/ov-memory-doctor.mjs";
 
 const pluginRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const hostsDir = join(pluginRoot, "hosts");
@@ -36,6 +37,13 @@ test("every adapter has a host template and every host template has an adapter",
   for (const client of Object.keys(HOSTS)) {
     assert.ok(declared.has(client), `${client} has no hosts/<dir>/${MANIFEST} declaring it`);
   }
+});
+
+test("the doctor's client table names exactly the clients this plugin serves", () => {
+  // A client the table misses does not fall through to nothing: it falls
+  // through to another client's spec, so the first thing a user runs when
+  // memory misbehaves checks another host's files and tells them to install it.
+  assert.deepEqual(Object.keys(CLIENTS).sort(), Object.keys(HOSTS).sort());
 });
 
 test("every adapter answers the four things the shared entry asks of it", () => {
