@@ -10,6 +10,8 @@ import {
   commitAgentSession,
   loadAgentHookConfig,
   makeAgentFetchJSON,
+  resolveNativeSessionId,
+  runHookStage,
 } from "./lib/agent-hook-runtime.mjs";
 
 function jsonResponse(status, value) {
@@ -269,4 +271,118 @@ test("an ovcli.conf plugin key reaches a thin harness when nothing else supplies
     }
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+/**
+ * Every Claude Code and Codex hook entry opens the same way, and the copies
+ * drifted: some re-read the config for the payload's directory, some gated
+ * against the hook process's own. `runHookStage` is that opening.
+ */
+async function stageRun({ raw = "{}", cfg = {}, input = {}, ...rest } = {}, run = () => undefined) {
+  const seen = { cwds: [], skips: [], skipStages: [], envelopes: [] };
+  const value = await runHookStage({
+    loadConfig: (cwd) => {
+      seen.cwds.push(cwd);
+      return { ...cfg, cwd };
+    },
+    input: { read: async () => raw, ...input },
+    envelope: (envelope) => seen.envelopes.push(envelope),
+    onSkip: (reason, stage) => { seen.skips.push(reason); seen.skipStages.push(stage); },
+    ...rest,
+  }, run);
+  return { seen, value };
+}
+
+test("the hook stage reloads the config for the payload's directory", async () => {
+  const stages = [];
+  const { seen, value } = await stageRun(
+    { raw: JSON.stringify({ session_id: "s1", cwd: "/w/one" }), cfg: { autoCapture: true } },
+    async (stage) => { stages.push(stage); return "captured 1 turn"; },
+  );
+
+  assert.equal(value, "captured 1 turn");
+  assert.deepEqual(seen.cwds, ["/w/one"]);
+  assert.equal(stages[0].cfg.cwd, "/w/one");
+  assert.equal(stages[0].sessionId, "s1");
+  assert.equal(stages[0].bypassed, false);
+  assert.deepEqual(seen.envelopes, ["captured 1 turn"], "the callback's value is the envelope");
+});
+
+test("a closed gate answers with an empty envelope and never runs the callback", async () => {
+  const payload = JSON.stringify({ session_id: "s1", cwd: "/w" });
+  const cases = [
+    ["bad_stdin", { raw: "{not json" }],
+    ["disabled", { raw: payload, gates: { enabled: (cfg) => cfg.autoRecall } }],
+    ["bypass", { raw: payload, cfg: { bypassSession: true } }],
+  ];
+  for (const [reason, options] of cases) {
+    let ran = false;
+    const { seen, value } = await stageRun(options, () => { ran = true; });
+
+    assert.equal(value, undefined);
+    assert.equal(ran, false, `${reason} must not reach the callback`);
+    assert.deepEqual(seen.skips, [reason]);
+    assert.deepEqual(seen.envelopes, [undefined]);
+    // Every skip hands back the same stage, so an entry that records one does
+    // not have to know which gate closed to read the payload off it.
+    assert.deepEqual(
+      Object.keys(seen.skipStages[0]).sort(),
+      ["bypassed", "cfg", "cwd", "emit", "input", "raw", "sessionId"],
+      `${reason} passes the stage`,
+    );
+  }
+});
+
+test("a tolerant reader carries on with an empty payload", async () => {
+  const { seen, value } = await stageRun(
+    { raw: "{not json", input: { tolerant: true } },
+    async ({ input }) => (Object.keys(input).length === 0 ? "empty" : "payload"),
+  );
+
+  assert.equal(value, "empty");
+  assert.deepEqual(seen.skips, []);
+});
+
+test("a bypassed session still reaches a callback that turned the gate off", async () => {
+  const stages = [];
+  const { seen } = await stageRun(
+    {
+      raw: JSON.stringify({ session_id: "s1", cwd: "/w" }),
+      cfg: { bypassSession: true },
+      gates: { bypass: () => false },
+    },
+    async (stage) => { stages.push(stage); },
+  );
+
+  assert.equal(stages[0].bypassed, true, "the verdict is still on the stage");
+  assert.deepEqual(seen.skips, []);
+});
+
+/**
+ * The thin harnesses spell the session id four ways, so the gate that reads it
+ * has to be given their resolver rather than switched off and rebuilt inside
+ * the callback.
+ */
+test("a host resolver decides which session the bypass gate is looking at", async () => {
+  const options = {
+    raw: JSON.stringify({ conversation_id: "scratch-123", cwd: "/w" }),
+    cfg: { bypassSessionPatterns: ["scratch-*"] },
+  };
+
+  const narrow = await stageRun(options, () => "ran");
+  assert.equal(narrow.value, "ran", "the default lookup never sees conversation_id");
+
+  const resolved = await stageRun({ ...options, sessionId: resolveNativeSessionId }, () => "ran");
+  assert.equal(resolved.value, undefined);
+  assert.deepEqual(resolved.seen.skips, ["bypass"]);
+  assert.equal(resolved.seen.skipStages[0].sessionId, "scratch-123");
+});
+
+test("the envelope is written once when the callback answers early", async () => {
+  const { seen } = await stageRun(
+    { raw: JSON.stringify({ session_id: "s1", cwd: "/w" }) },
+    async ({ emit }) => { emit("detached"); return "worker value"; },
+  );
+
+  assert.deepEqual(seen.envelopes, ["detached"]);
 });

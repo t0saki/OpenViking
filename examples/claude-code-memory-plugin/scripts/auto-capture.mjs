@@ -30,13 +30,13 @@ import {
   deriveOvSessionId,
   enqueuePendingDirectly,
   getSession,
-  isBypassed,
   isRetryableFailure,
   makeFetchJSON,
 } from "./lib/ov-session.mjs";
 import { maybeDetach, readHookStdin } from "./lib/async-writer.mjs";
 import { readJsonState, writeJsonState } from "./lib/state.mjs";
 import { getEffectivePeerId } from "./lib/workspace-peer.mjs";
+import { runHookStage } from "./shared/agent-hook-runtime.mjs";
 import { sendSessionMessages } from "./shared/batch-send.mjs";
 
 if (!isPluginEnabled()) {
@@ -44,9 +44,9 @@ if (!isPluginEnabled()) {
   process.exit(0);
 }
 
-let cfg = loadConfig();
+const baseCfg = loadConfig();
 const { log, logError } = createLogger("auto-capture");
-const fetchJSON = makeFetchJSON(cfg, "captureTimeoutMs");
+const fetchJSON = makeFetchJSON(baseCfg, "captureTimeoutMs");
 
 const STATE_DIR = join(tmpdir(), "openviking-cc-capture-state");
 
@@ -81,7 +81,7 @@ async function saveState(sessionId, state) {
   } catch { /* best effort */ }
 }
 
-async function reconcileKnownFailedCapture(sessionId, ovSessionId, state) {
+async function reconcileKnownFailedCapture(cfg, sessionId, ovSessionId, state) {
   if (
     state.capturedTurnCount <= 0
     || cfg.captureMode !== "semantic"
@@ -224,51 +224,16 @@ function isMissingSessionState(error) {
 // Main
 // ---------------------------------------------------------------------------
 
-async function main() {
-  if (!cfg.autoCapture) {
-    log("skip", { stage: "init", reason: "autoCapture disabled" });
-    approve();
-    return;
-  }
-
-  // Async write path: parent detaches and returns, worker continues below.
-  if (await maybeDetach(cfg, { approve })) return;
-
-  let input;
-  try {
-    input = JSON.parse(await readHookStdin());
-  } catch {
-    log("skip", { stage: "stdin_parse", reason: "invalid input" });
-    approve();
-    return;
-  }
-
+async function main({ cfg, input, cwd }) {
   const transcriptPath = input.transcript_path;
   const sessionId = input.session_id || "unknown";
-  const cwd = input.cwd;
-  // The workspace layer belongs to the session's directory, which only the
-  // payload knows; see loadConfig for why re-resolving this late is safe.
-  cfg = loadConfig(cwd);
-  if (!cfg.autoCapture) {
-    // The gate above ran against this process's directory, not the session's.
-    log("skip", { stage: "init", reason: "autoCapture disabled" });
-    approve();
-    return;
-  }
 
   const ovSessionId = sessionId !== "unknown" ? deriveOvSessionId(sessionId) : null;
   const effectivePeer = getEffectivePeerId(cfg, { sessionId, cwd });
   log("start", { sessionId, ovSessionId, transcriptPath, peerSource: effectivePeer.source });
 
-  if (isBypassed(cfg, { sessionId, cwd })) {
-    log("skip", { reason: "bypass_session_pattern" });
-    approve();
-    return;
-  }
-
   if (!transcriptPath || !ovSessionId) {
     log("skip", { stage: "input_check", reason: "no transcript_path or session_id" });
-    approve();
     return;
   }
 
@@ -277,13 +242,11 @@ async function main() {
     transcriptContent = await readFile(transcriptPath, "utf-8");
   } catch (err) {
     logError("transcript_read", err);
-    approve();
     return;
   }
 
   if (!transcriptContent.trim()) {
     log("skip", { stage: "transcript_read", reason: "empty transcript" });
-    approve();
     return;
   }
 
@@ -291,12 +254,11 @@ async function main() {
   const allTurns = extractCaptureTurns(messages, cfg);
   if (allTurns.length === 0) {
     log("skip", { stage: "transcript_parse", reason: "no user/assistant turns found" });
-    approve();
     return;
   }
 
   const state = await loadState(sessionId);
-  await reconcileKnownFailedCapture(sessionId, ovSessionId, state);
+  await reconcileKnownFailedCapture(cfg, sessionId, ovSessionId, state);
   const newTurns = allTurns.slice(state.capturedTurnCount);
   const captureTurns = cfg.captureAssistantTurns
     ? newTurns
@@ -311,7 +273,6 @@ async function main() {
 
   if (newTurns.length === 0) {
     log("skip", { stage: "incremental_check", reason: "no new turns" });
-    approve();
     return;
   }
 
@@ -321,7 +282,6 @@ async function main() {
       capturedTurnCount: allTurns.length,
     });
     log("state_update", { newCapturedTurnCount: allTurns.length, reason: "assistant_only_increment" });
-    approve();
     return;
   }
 
@@ -343,7 +303,6 @@ async function main() {
       ...state,
       capturedTurnCount: allTurns.length,
     });
-    approve();
     return;
   }
 
@@ -359,7 +318,6 @@ async function main() {
         ...state,
         capturedTurnCount: allTurns.length,
       });
-      approve();
       return;
     }
   }
@@ -385,7 +343,6 @@ async function main() {
     });
     if (result.failed > 0) {
       logError("pending_enqueue", "some turns failed to enqueue; state not advanced");
-      approve();
       return;
     }
     await saveState(sessionId, {
@@ -405,11 +362,9 @@ async function main() {
       ov_session_id: ovSessionId,
       cc_session_id: sessionId,
     });
-    approve(result.queued > 0 ? `queued ${result.queued} turns to pending queue` : undefined);
-    return;
+    return result.queued > 0 ? `queued ${result.queued} turns to pending queue` : undefined;
   } else {
     logError("health_check", `non-retryable status ${health.status || "unknown"}`);
-    approve();
     return;
   }
   log("push_turns", {
@@ -442,7 +397,6 @@ async function main() {
       ov_session_id: ovSessionId,
       cc_session_id: sessionId,
     });
-    approve();
     return;
   }
 
@@ -513,16 +467,33 @@ async function main() {
     writeJsonState("daily-stats.json", { date: today, archives });
   }
 
-  if (result.ok > 0) {
-    approve(
-      `captured ${result.ok} turns to ov session ${ovSessionId}` +
-      (committed
-        ? ` (committed${commitTraceId ? `; trace_id=${commitTraceId}` : ""})`
-        : ""),
-    );
-  } else {
-    approve();
-  }
+  if (result.ok === 0) return undefined;
+  return `captured ${result.ok} turns to ov session ${ovSessionId}`
+    + (committed
+      ? ` (committed${commitTraceId ? `; trace_id=${commitTraceId}` : ""})`
+      : "");
 }
 
-main().catch((err) => { logError("uncaught", err); approve(); });
+async function start() {
+  // Write-path hook: gated by autoCapture so that disabling capture also stops
+  // the transcript push. This runs against the hook's own directory, before the
+  // payload names the session's.
+  if (!baseCfg.autoCapture) {
+    log("skip", { stage: "init", reason: "disabled" });
+    approve();
+    return;
+  }
+
+  // Async write path: parent detaches and returns, worker continues below.
+  if (await maybeDetach(baseCfg, { approve })) return;
+
+  await runHookStage({
+    loadConfig,
+    input: { read: readHookStdin },
+    gates: { enabled: (cfg) => cfg.autoCapture },
+    envelope: approve,
+    onSkip: (reason) => log("skip", { stage: "init", reason }),
+  }, main);
+}
+
+start().catch((err) => { logError("uncaught", err); approve(); });

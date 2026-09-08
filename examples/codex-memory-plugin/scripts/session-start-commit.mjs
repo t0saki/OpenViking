@@ -58,9 +58,9 @@ import {
   saveState,
   withSessionLock,
 } from "./session-state.mjs";
+import { runHookStage } from "./shared/agent-hook-runtime.mjs";
 import { replayPending } from "./shared/pending-queue.mjs";
 import { buildProfileBlock } from "./shared/profile-inject.mjs";
-import { isBypassed } from "./shared/session-model.mjs";
 import { resolveEffectivePeerId } from "./shared/workspace-peer.mjs";
 
 let cfg = loadConfig();
@@ -299,32 +299,23 @@ function describeCommittedSessions(commits) {
     (traceIds.length ? ` (trace_ids=${traceIds.join(",")})` : "");
 }
 
-async function main() {
-  let input;
-  try {
-    const chunks = [];
-    for await (const chunk of process.stdin) chunks.push(chunk);
-    input = JSON.parse(Buffer.concat(chunks).toString());
-  } catch {
-    log("skip", { stage: "stdin_parse", reason: "invalid input" });
-    noop();
-    return;
-  }
-
+// A bypassed directory suppresses this session's own memory work — no peer
+// registration, no injection. The sweep and the pending replay still run: they
+// finish sessions recorded elsewhere, and this hook is the only place codex
+// runs either, so skipping them would strand that data for as long as the user
+// keeps working in a bypassed repository.
+runHookStage({
+  loadConfig,
+  gates: { bypass: () => false },
+  envelope: (response) => emitSessionStartOutput(response || {}),
+  onSkip: (reason) => log("skip", { stage: "init", reason }),
+}, async (stage) => {
+  const { input, cwd, bypassed } = stage;
+  cfg = stage.cfg;
   const source = input.source || "unknown";
   const newSessionId = input.session_id || "unknown";
-  const cwd = typeof input.cwd === "string" && input.cwd.trim() ? input.cwd : process.cwd();
-  // The workspace layer belongs to the session's directory, which only the
-  // payload knows; see loadConfig for why re-resolving this late is safe.
-  cfg = loadConfig(cwd);
   const effectivePeer = resolveEffectivePeerId({ cfg, cwd });
   activePeerId = effectivePeer.peerId;
-  // A bypassed directory suppresses this session's own memory work — no peer
-  // registration, no injection. The sweep and the pending replay below still
-  // run: they finish sessions recorded elsewhere, and this hook is the only
-  // place codex runs either, so skipping them would strand that data for as
-  // long as the user keeps working in a bypassed repository.
-  const bypassed = isBypassed(cfg, { sessionId: newSessionId, cwd });
   if (!bypassed && newSessionId !== "unknown") {
     const state = await loadState(newSessionId);
     await saveState({
@@ -353,21 +344,18 @@ async function main() {
     const health = await fetchJSON("/health");
     if (!health) {
       logError("health_check", "server unreachable; skipping profile + archive injection");
-      noop();
       return;
     }
     await replayPendingWrites();
     if (bypassed) {
       log("skip", { stage: "inject", reason: "bypass_session_pattern" });
-      noop();
       return;
     }
     const [profileContext, archiveContext] = await Promise.all([
       buildSessionProfileContext(),
       buildResumeArchiveContext(newSessionId),
     ]);
-    emitSessionStartOutput({ contexts: [profileContext, archiveContext] });
-    return;
+    return { contexts: [profileContext, archiveContext] };
   }
 
   // Other non-startup sources are hard no-ops. We don't sweep there, because
@@ -375,14 +363,12 @@ async function main() {
   // session boundary.
   if (source !== "startup" && source !== "clear") {
     log("skip", { stage: "source_check", reason: `source=${source} (only startup|clear act)` });
-    noop();
     return;
   }
 
   const health = await fetchJSON("/health");
   if (!health) {
     logError("health_check", "server unreachable; skipping profile injection + commit + sweep");
-    noop();
     return;
   }
 
@@ -506,14 +492,8 @@ async function main() {
     ovSessionIds,
   });
 
-  if (commits.length > 0) {
-    emitSessionStartOutput({
-      contexts: [profileContext],
-      systemMessage: describeCommittedSessions(commits),
-    });
-  } else {
-    emitSessionStartOutput({ contexts: [profileContext] });
-  }
-}
-
-main().catch((err) => { logError("uncaught", err); noop(); });
+  return {
+    contexts: [profileContext],
+    systemMessage: commits.length > 0 ? describeCommittedSessions(commits) : "",
+  };
+}).catch((err) => { logError("uncaught", err); noop(); });

@@ -29,22 +29,21 @@ import { createLogger } from "./debug-log.mjs";
 import {
   deriveOvSessionId,
   getSessionContext,
-  isBypassed,
   makeFetchJSON,
 } from "./lib/ov-session.mjs";
 import { replayPending } from "./lib/pending-queue.mjs";
 import { buildProfileBlock, estimateTokens } from "./lib/profile-inject.mjs";
 import { writeJsonState } from "./lib/state.mjs";
 import { getEffectivePeerId } from "./lib/workspace-peer.mjs";
+import { runHookStage } from "./shared/agent-hook-runtime.mjs";
 
 if (!isPluginEnabled()) {
   process.stdout.write(JSON.stringify({ decision: "approve" }) + "\n");
   process.exit(0);
 }
 
-let cfg = loadConfig();
 const { log, logError } = createLogger("session-start");
-const fetchJSON = makeFetchJSON(cfg);
+const fetchJSON = makeFetchJSON(loadConfig());
 
 function output(obj) {
   process.stdout.write(JSON.stringify(obj) + "\n");
@@ -87,28 +86,15 @@ function writeLastInject(content) {
   }
 }
 
-async function main() {
-  let input = {};
-  try {
-    const chunks = [];
-    for await (const chunk of process.stdin) chunks.push(chunk);
-    input = JSON.parse(Buffer.concat(chunks).toString() || "{}");
-  } catch { /* best effort */ }
-
+runHookStage({
+  loadConfig,
+  input: { tolerant: true },
+  envelope: approve,
+  onSkip: (reason) => log("skip", { reason }),
+}, async ({ cfg, input, cwd, sessionId }) => {
   const source = input.source || "startup";
-  const sessionId = input.session_id;
-  const cwd = input.cwd;
-  // The workspace layer belongs to the session's directory, which only the
-  // payload knows; see loadConfig for why re-resolving this late is safe.
-  cfg = loadConfig(cwd);
   const effectivePeer = getEffectivePeerId(cfg, { sessionId, cwd });
   log("start", { source, sessionId, peerSource: effectivePeer.source });
-
-  if (isBypassed(cfg, { sessionId, cwd })) {
-    log("skip", { reason: "bypass_session_pattern" });
-    approve();
-    return;
-  }
 
   const willInjectProfile = !cfg.noAutoInject;
   const willInjectArchive = (source === "resume" || source === "compact") && !!sessionId;
@@ -116,7 +102,6 @@ async function main() {
   const health = await fetchJSON("/health");
   if (!health.ok) {
     logError("health_check", "server unreachable");
-    approve();
     return;
   }
 
@@ -134,7 +119,6 @@ async function main() {
 
   if (!willInjectProfile && !willInjectArchive) {
     log("skip", { reason: "no_injection_planned", source, noAutoInject: cfg.noAutoInject });
-    approve();
     return;
   }
 
@@ -176,7 +160,6 @@ async function main() {
 
   if (sections.length === 0) {
     log("no_inject", { source, profile: !!profile, archive: !!archiveSection });
-    approve();
     return;
   }
 
@@ -206,7 +189,5 @@ async function main() {
     },
     archive: Boolean(archiveSection),
   });
-  approve(composed);
-}
-
-main().catch((err) => { logError("uncaught", err); approve(); });
+  return composed;
+}).catch((err) => { logError("uncaught", err); approve(); });

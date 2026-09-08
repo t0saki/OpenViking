@@ -11,10 +11,11 @@
 
 import { isPluginEnabled, loadConfig } from "./config.mjs";
 import { createLogger } from "./debug-log.mjs";
-import { deriveOvSessionId, isBypassed, makeFetchJSON } from "./lib/ov-session.mjs";
+import { deriveOvSessionId, makeFetchJSON } from "./lib/ov-session.mjs";
 import { writeJsonState } from "./lib/state.mjs";
 import { createHostCompressor } from "./lib/host-compressor.mjs";
 import { getEffectivePeerId } from "./lib/workspace-peer.mjs";
+import { runHookStage } from "./shared/agent-hook-runtime.mjs";
 import { buildRecallBlockDetailed } from "./shared/recall-core.mjs";
 
 if (!isPluginEnabled()) {
@@ -22,9 +23,9 @@ if (!isPluginEnabled()) {
   process.exit(0);
 }
 
-let cfg = loadConfig();
+const baseCfg = loadConfig();
 const { log, logError } = createLogger("auto-recall");
-const fetchJSON = makeFetchJSON(cfg);
+const fetchJSON = makeFetchJSON(baseCfg);
 
 function output(obj) {
   process.stdout.write(JSON.stringify(obj) + "\n");
@@ -38,7 +39,7 @@ function approve(msg) {
 
 const URI_RE = /viking:\/\/[^\s<>"')\]]+/g;
 
-async function recall(query, peer, sessionId) {
+async function recall(cfg, query, peer, sessionId) {
   const runCompressor = await createHostCompressor(cfg, log);
   return buildRecallBlockDetailed(fetchJSON, cfg, query, {
     actorPeerId: peer.peerId,
@@ -54,44 +55,28 @@ async function recall(query, peer, sessionId) {
 // Main
 // ---------------------------------------------------------------------------
 
-async function main() {
-  const t0 = Date.now();
-  // Snapshot state for the statusline. Always written, even on early-exit
-  // branches, so the indicator reflects the latest turn rather than stale
-  // data from the previous run.
-  const writeRecallState = (extra) => writeJsonState("last-recall.json", {
-    server_url: cfg.baseUrl,
+const t0 = Date.now();
+// Snapshot state for the statusline. Always written, even on early-exit
+// branches, so the indicator reflects the latest turn rather than stale
+// data from the previous run.
+function writeRecallState(extra) {
+  writeJsonState("last-recall.json", {
+    server_url: baseCfg.baseUrl,
     latency_ms: Date.now() - t0,
     ...extra,
   });
+}
 
-  let input;
-  try {
-    const chunks = [];
-    for await (const chunk of process.stdin) chunks.push(chunk);
-    input = JSON.parse(Buffer.concat(chunks).toString());
-  } catch {
-    log("skip", { reason: "invalid stdin" });
-    writeRecallState({ count: 0, reason: "bad_stdin" });
-    approve();
-    return;
-  }
-
+runHookStage({
+  loadConfig,
+  gates: { enabled: (cfg) => cfg.autoRecall },
+  envelope: approve,
+  onSkip: (reason, { sessionId }) => {
+    log("skip", { reason });
+    writeRecallState({ count: 0, reason, cc_session_id: sessionId });
+  },
+}, async ({ cfg, input, cwd, sessionId }) => {
   const userPrompt = (input.prompt || "").trim();
-  const sessionId = input.session_id;
-  const cwd = input.cwd;
-  // The workspace layer belongs to the session's directory, which only the
-  // payload knows; see loadConfig for why re-resolving this late is safe.
-  // Everything gated below — recall.enabled included — reads the reload.
-  cfg = loadConfig(cwd);
-
-  if (!cfg.autoRecall) {
-    log("skip", { reason: "autoRecall disabled" });
-    writeRecallState({ count: 0, reason: "disabled" });
-    approve();
-    return;
-  }
-
   const effectivePeer = getEffectivePeerId(cfg, { sessionId, cwd });
   log("start", {
     query: userPrompt.slice(0, 200),
@@ -106,17 +91,9 @@ async function main() {
     },
   });
 
-  if (isBypassed(cfg, { sessionId, cwd })) {
-    log("skip", { reason: "bypass_session_pattern" });
-    writeRecallState({ count: 0, reason: "bypass", cc_session_id: sessionId });
-    approve();
-    return;
-  }
-
   if (!userPrompt || userPrompt.length < cfg.minQueryLength) {
     log("skip", { reason: "query too short or empty" });
     writeRecallState({ count: 0, reason: "short_query", cc_session_id: sessionId });
-    approve();
     return;
   }
 
@@ -124,18 +101,16 @@ async function main() {
   if (!health.ok) {
     logError("health_check", "server unreachable");
     writeRecallState({ count: 0, reason: "offline", cc_session_id: sessionId });
-    approve();
     return;
   }
 
   // The OV session id is what unlocks server-side query expansion and the
   // cross-turn dedup ledger; it must match the id auto-capture writes to.
   const ovSessionId = sessionId && sessionId !== "unknown" ? deriveOvSessionId(sessionId) : "";
-  const recalled = await recall(userPrompt, effectivePeer, ovSessionId);
+  const recalled = await recall(cfg, userPrompt, effectivePeer, ovSessionId);
   if (!recalled.block) {
     log("skip", { reason: recalled.stage });
     writeRecallState({ count: 0, reason: recalled.stage, cc_session_id: sessionId });
-    approve();
     return;
   }
 
@@ -152,7 +127,5 @@ async function main() {
     cc_session_id: sessionId,
     reason: "ok",
   });
-  approve(recalled.block);
-}
-
-main().catch((err) => { logError("uncaught", err); approve(); });
+  return recalled.block;
+}).catch((err) => { logError("uncaught", err); approve(); });
