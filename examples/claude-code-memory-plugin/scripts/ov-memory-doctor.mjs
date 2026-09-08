@@ -17,6 +17,7 @@
  * Exit code 1 when any check fails, 0 otherwise. Never prints a full api key.
  */
 
+import { realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -228,7 +229,7 @@ function checkInstall(report, { cliOnPath }) {
   report.info("MCP wiring: `claude mcp list` shows the plugin server as plugin:openviking-memory:openviking (slow; run it when MCP tools are missing)");
 }
 
-function credentialSources(cliConf, ovConf) {
+export function credentialSources(cfg, cliConf, ovConf) {
   const env = process.env;
   const cliShort = homeShort(cliConf.path);
   const ovShort = homeShort(ovConf.path);
@@ -236,10 +237,21 @@ function credentialSources(cliConf, ovConf) {
   const ov = ovConf.ok ? ovConf.data : {};
   const cc = ov.claude_code || {};
   const server = ov.server || {};
-  const url = (env.OPENVIKING_URL || env.OPENVIKING_BASE_URL) ? "env" : cli.url ? cliShort : server.url ? ovShort : (server.host || server.port) ? `${ovShort} server.host/port` : "default (http://127.0.0.1:1933)";
-  const apiKey = env.OPENVIKING_BEARER_TOKEN ? "env OPENVIKING_BEARER_TOKEN" : env.OPENVIKING_API_KEY ? "env OPENVIKING_API_KEY" : cli.api_key ? cliShort : cc.apiKey ? `${ovShort} claude_code.apiKey` : server.root_api_key ? `${ovShort} server.root_api_key` : "(none)";
-  const account = env.OPENVIKING_ACCOUNT ? "env" : cli.account ? cliShort : cc.accountId ? `${ovShort} claude_code.accountId` : "(unset)";
-  const user = env.OPENVIKING_USER ? "env" : cli.user ? cliShort : cc.userId ? `${ovShort} claude_code.userId` : "(unset)";
+  // Pinned to ovcli.conf, the chain never looks at the environment. It still
+  // ends where this harness has always ended it, in ov.conf.
+  const cliMode = cfg.credentialSource === "ovcli";
+  const envUrl = env.OPENVIKING_URL || env.OPENVIKING_BASE_URL;
+  const url = (!cliMode && envUrl) ? "env" : cli.url ? cliShort : server.url ? ovShort : (server.host || server.port) ? `${ovShort} server.host/port` : "default (http://127.0.0.1:1933)";
+  // The `plugin` section ranks where the file it lives in ranks: under
+  // ovcli.conf's own `api_key`, over ov.conf.
+  const plugin = cli.plugin || {};
+  const pluginKey = plugin.claude_code?.apiKey ? `${cliShort} plugin.claude_code.apiKey` : plugin.apiKey ? `${cliShort} plugin.apiKey` : "";
+  const ovKey = cc.apiKey ? `${ovShort} claude_code.apiKey` : server.root_api_key ? `${ovShort} server.root_api_key` : "";
+  const apiKey = cliMode
+    ? (cli.api_key ? cliShort : pluginKey || ovKey || "(none — ovcli.conf mode ignores env)")
+    : env.OPENVIKING_BEARER_TOKEN ? "env OPENVIKING_BEARER_TOKEN" : env.OPENVIKING_API_KEY ? "env OPENVIKING_API_KEY" : cli.api_key ? cliShort : pluginKey || ovKey || "(none)";
+  const account = (!cliMode && env.OPENVIKING_ACCOUNT) ? "env" : cli.account ? cliShort : (!cliMode && cc.accountId) ? `${ovShort} claude_code.accountId` : "(unset)";
+  const user = (!cliMode && env.OPENVIKING_USER) ? "env" : cli.user ? cliShort : (!cliMode && cc.userId) ? `${ovShort} claude_code.userId` : "(unset)";
   return { url, apiKey, account, user };
 }
 
@@ -260,7 +272,7 @@ function checkConfig(report, cfg, host) {
   else report.fail(`plugin disabled — every hook exits immediately (${reason})`, "", envEnabled === false ? "unset OPENVIKING_MEMORY_ENABLED" : "create ~/.openviking/ovcli.conf with url + api_key, or set OPENVIKING_MEMORY_ENABLED=1 plus OPENVIKING_URL/OPENVIKING_API_KEY");
 
   // Resolved values + sources
-  const keyInfo = reportCredentials(report, cfg, credentialSources(cliConf, ovConf), { account: cfg.accountId, user: cfg.userId });
+  const keyInfo = reportCredentials(report, cfg, credentialSources(cfg, cliConf, ovConf), { account: cfg.accountId, user: cfg.userId });
   const peer = reportPeer(report, cfg);
   reportTimeouts(report, cfg, host);
 
@@ -361,7 +373,18 @@ const HOST = {
   resolveIdentity: (cfg) => ({ account: cfg.accountId, user: cfg.userId }),
 };
 
-runDoctor(HOST).catch((err) => {
-  console.error("ov-memory-doctor failed:", err?.stack || err?.message || err);
-  process.exit(2);
-});
+function isDirectRun() {
+  if (!process.argv[1]) return false;
+  try {
+    return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return resolvePath(process.argv[1]) === fileURLToPath(import.meta.url);
+  }
+}
+
+if (isDirectRun()) {
+  runDoctor(HOST).catch((err) => {
+    console.error("ov-memory-doctor failed:", err?.stack || err?.message || err);
+    process.exit(2);
+  });
+}

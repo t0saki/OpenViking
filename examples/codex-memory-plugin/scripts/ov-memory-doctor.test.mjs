@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { assessHooksFeature, parseFeaturesList } from "./ov-memory-doctor.mjs";
+import { assessHooksFeature, credentialSources, parseFeaturesList } from "./ov-memory-doctor.mjs";
 
 test("parseFeaturesList: parses standard codex features list output", () => {
   const sample = `
@@ -99,4 +99,32 @@ test("assessHooksFeature: unset in toml and CLI probe unavailable (fallback to i
   const resUndef = assessHooksFeature(undefined, null);
   assert.equal(resUndef.status, "info");
   assert.match(resUndef.message, /\[features\] hooks is not set/);
+});
+
+test("credentialSources: ovcli.conf mode reports the file the chain reads, not the environment", () => {
+  const cliPath = "/nowhere/.openviking/ovcli.conf";
+  const ovPath = "/nowhere/.openviking/ov.conf";
+  const saved = { key: process.env.OPENVIKING_API_KEY, account: process.env.OPENVIKING_ACCOUNT };
+  process.env.OPENVIKING_API_KEY = "sk-env";
+  process.env.OPENVIKING_ACCOUNT = "env-acct";
+  try {
+    const cliConf = (data) => ({ ok: true, path: cliPath, data });
+    const ovConf = { ok: true, path: ovPath, data: { server: { root_api_key: "sk-root" }, codex: { apiKey: "sk-section", accountId: "ov-acct" } } };
+    const pinned = { credentialSource: "ovcli" };
+
+    assert.equal(credentialSources(pinned, cliConf({ api_key: "sk-cli" }), ovConf).apiKey, cliPath);
+    // The pin stops at ov.conf's own section: root_api_key is out of reach.
+    assert.equal(credentialSources(pinned, cliConf({}), ovConf).apiKey, `${ovPath} codex.apiKey`);
+    assert.match(credentialSources(pinned, cliConf({}), { ok: true, path: ovPath, data: { server: { root_api_key: "sk-root" } } }).apiKey, /ovcli\.conf mode ignores env/);
+    assert.equal(credentialSources(pinned, cliConf({}), ovConf).account, "(unset)");
+
+    const auto = { credentialSource: "auto" };
+    assert.equal(credentialSources(auto, cliConf({}), ovConf).apiKey, "env OPENVIKING_API_KEY");
+    assert.equal(credentialSources(auto, cliConf({}), { ok: true, path: ovPath, data: { server: { root_api_key: "sk-root" } } }).apiKey, "env OPENVIKING_API_KEY");
+  } finally {
+    for (const [name, value] of [["OPENVIKING_API_KEY", saved.key], ["OPENVIKING_ACCOUNT", saved.account]]) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  }
 });

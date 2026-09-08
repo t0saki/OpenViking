@@ -86,26 +86,16 @@ for (const { name, file, pattern } of TIMEOUT_PASSTHROUGH) {
 }
 
 // The env var alone is not enough: buildContextSearchBody only emits
-// `query_expansion` when the harness also marks it as configured. The variable
-// itself is declared once in the schema, so what each harness still owns is
-// reporting whether the user asked for the knob at all.
-const QUERY_EXPANSION_OPT_OUT = [
-  join(ROOT, "examples", "opencode-plugin", "lib", "config.mjs"),
-  join(ROOT, "examples", "pi-coding-agent-extension", "config.ts"),
-  join(ROOT, "examples", "claude-code-memory-plugin", "scripts", "config.mjs"),
-  join(ROOT, "examples", "codex-memory-plugin", "scripts", "config.mjs"),
-  join(ROOT, "examples", "dsh-memory-plugin", "config.mjs"),
-  join(ROOT, "examples", "memory-plugin-shared", "lib", "agent-hook-runtime.mjs"),
-];
-
-test("the query-expansion opt-out is declared once and reported by every loader", async () => {
+// `query_expansion` when the harness also marks it as configured. Both halves
+// are declared once now — the knob in the schema, the flag in the one builder
+// every loader calls — and `plugin-config.test.mjs` checks each harness gets it.
+test("the query-expansion opt-out is declared once and reported for every harness", async () => {
   const { KNOB_BY_NAME } = await import("./lib/config-schema.mjs");
   const knob = KNOB_BY_NAME.get("recallQueryExpansion");
   assert.equal(knob.env, "OPENVIKING_RECALL_QUERY_EXPANSION");
   assert.deepEqual(knob.values, ["auto", "off"]);
+  assert.equal(knob.sendOnlyWhenConfigured, true);
 
-  for (const file of QUERY_EXPANSION_OPT_OUT) {
-    const source = await readFile(file, "utf-8");
-    assert.match(source, /recallQueryExpansionConfigured/, file);
-  }
+  const builder = join(ROOT, "examples", "memory-plugin-shared", "lib", "plugin-config.mjs");
+  assert.match(await readFile(builder, "utf-8"), /`\$\{knob\.name\}Configured`/);
 });

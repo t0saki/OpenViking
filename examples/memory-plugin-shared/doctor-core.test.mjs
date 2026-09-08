@@ -234,6 +234,26 @@ test("checkWorkspace tells a directory that is no workspace what to create", () 
   assert.match(marked.render(), /workspace {2}/);
 });
 
+// `min_client_version` warns and never blocks, so the only way it can be wrong
+// is by never being read: every loader used to leave the client version behind.
+test("checkWorkspace warns when the workspace asks for a newer client", () => {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "ov-doctor-minver-")));
+  const env = { HOME: "/nonexistent-home", OPENVIKING_STATE_DIR: join(dir, ".state") };
+  mkdirSync(join(dir, ".openviking"), { recursive: true });
+  writeFileSync(
+    join(dir, ".openviking", "config.json"),
+    '{"version":1,"min_client_version":"9.9.9","peer":{"id":"demo"}}',
+  );
+
+  const quiet = createReport();
+  checkWorkspace(quiet, { cwd: dir, env });
+  assert.ok(!quiet.render().includes("asks for OpenViking plugin"), "no version, no verdict");
+
+  const warned = createReport();
+  checkWorkspace(warned, { cwd: dir, env, clientVersion: "0.1.0" });
+  assert.match(warned.render(), /asks for OpenViking plugin 9\.9\.9 and this one is 0\.1\.0/);
+});
+
 test("no doctor wrapper redefines a name doctor-core already exports", () => {
   const read = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf-8");
   const exported = new Set(

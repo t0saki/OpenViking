@@ -761,7 +761,7 @@ export function gitignoreHidesWorkspaceConfig(root) {
  * provenance is how a user finds out which layer actually won, the way
  * `git config --show-origin --show-scope` does.
  */
-export function checkWorkspace(report, { cwd = process.cwd(), env = process.env } = {}) {
+export function checkWorkspace(report, { cwd = process.cwd(), env = process.env, clientVersion = "" } = {}) {
   report.section("Workspace");
 
   const { root, rootKind, git } = findWorkspaceRoot(cwd, env);
@@ -775,7 +775,7 @@ export function checkWorkspace(report, { cwd = process.cwd(), env = process.env 
   const foundBy = rootKind === "git" ? git.kind : `${TEAM_FILE}${git ? ` inside ${git.kind}` : ""}`;
   report.ok(`workspace  ${homeShort(root)}  ← ${foundBy}`);
 
-  const resolved = resolveWorkspaceSettings(cwd, env);
+  const resolved = resolveWorkspaceSettings(cwd, env, { clientVersion });
   summary.settings = resolved.settings;
   summary.provenance = resolved.provenance;
   const identity = resolveWorkspaceIdentity({ cwd, env });
@@ -1342,7 +1342,7 @@ export async function runDoctor(host) {
   host.checkInstall(report, envInfo);
   const cfg = host.loadConfig();
   const configInfo = host.checkConfig(report, cfg, host);
-  const workspace = checkWorkspace(report);
+  const workspace = checkWorkspace(report, { clientVersion: cfg.clientVersion });
   const identity = host.resolveIdentity(cfg);
   const connection = await checkConnection(report, cfg, { ...configInfo, ...identity }, opts, host);
   const serverHealth = await checkServerHealth(report, { baseUrl: cfg.baseUrl, ovConf: configInfo.ovConf, health: connection?.probes?.health, offline: opts.offline, timeoutMs: opts.timeoutMs });

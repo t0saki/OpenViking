@@ -55,6 +55,7 @@ jobs:
             examples/claude-code-memory-plugin/scripts/auto-recall.test.mjs \
             examples/claude-code-memory-plugin/scripts/config.test.mjs \
             examples/claude-code-memory-plugin/scripts/marketplace.test.mjs \
+            examples/claude-code-memory-plugin/scripts/ov-memory-doctor.test.mjs \
             examples/claude-code-memory-plugin/scripts/skill-experience.test.mjs \
             examples/claude-code-memory-plugin/scripts/uri-guard.test.mjs \
             examples/claude-code-memory-plugin/scripts/lib/pending-queue.test.mjs \
@@ -85,6 +86,7 @@ jobs:
             examples/memory-plugin-shared/workspace-identity.test.mjs \
             examples/memory-plugin-shared/workspace-config.test.mjs \
             examples/memory-plugin-shared/workspace-registry.test.mjs \
+            examples/memory-plugin-shared/plugin-config.test.mjs \
             examples/memory-plugin-shared/plugin-known-keys.test.mjs \
             examples/memory-plugin-shared/uri-guard.test.mjs \
             examples/memory-plugin-shared/capture-utils.test.mjs \

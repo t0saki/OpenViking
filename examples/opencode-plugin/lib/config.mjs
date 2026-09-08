@@ -1,8 +1,6 @@
 import path from "path"
 import { homedir } from "os"
-import { buildUserAgent, readManifestVersion, resolveAuthMode, resolveOpenVikingCredentials } from "./shared/credentials.mjs"
-import { resolveSettings } from "./shared/plugin-config.mjs"
-import { resolveEffectivePeerId, resolvePluginPeerId } from "./shared/workspace-peer.mjs"
+import { buildPluginConfig } from "./shared/plugin-config.mjs"
 
 /**
  * Configuration for the opencode plugin.
@@ -12,15 +10,11 @@ import { resolveEffectivePeerId, resolvePluginPeerId } from "./shared/workspace-
  * harness — `ovcli.conf`'s `plugin` section, overridden by `plugin.opencode`,
  * by the workspace file, and by the environment — so `ov config switch` moves
  * behaviour along with credentials instead of only half of it.
+ *
+ * What stays here is the three knobs this plugin's own code reads as sections
+ * rather than as flat keys.
  */
-const USER_AGENT = buildUserAgent(
-  "opencode",
-  readManifestVersion(new URL("../package.json", import.meta.url)),
-)
-
-function str(value, fallback = "") {
-  return typeof value === "string" && value.trim() ? value.trim() : fallback
-}
+const MANIFEST_URL = new URL("../package.json", import.meta.url)
 
 function expandHome(value) {
   if (!value || typeof value !== "string") return value
@@ -30,45 +24,21 @@ function expandHome(value) {
 }
 
 export function loadConfig(pluginRoot, projectDirectory) {
-  const creds = resolveOpenVikingCredentials(process.env, "opencode")
-  const { settings, configured, sources } = resolveSettings("opencode", {
-    cwd: projectDirectory || process.cwd(),
+  const config = buildPluginConfig("opencode", {
+    cwd: projectDirectory,
+    manifestUrl: MANIFEST_URL,
+    logFile: "opencode-plugin.log",
+    deriveEffectivePeer: true,
   })
 
-  const endpoint = str(creds.baseUrl, "http://127.0.0.1:1933").replace(/\/+$/, "")
-  const config = {
-    ...settings,
-    endpoint,
-    baseUrl: endpoint,
-    apiKey: creds.apiKey,
-    account: creds.account,
-    user: creds.user,
-    accountId: creds.account,
-    userId: creds.user,
-    ...resolveAuthMode({ settings, ovFile: creds.ovFile, account: creds.account, user: creds.user }),
-    peerId: resolvePluginPeerId({ settings, configured, sources, credentials: creds }),
-    mcpUrl: creds.mcpUrl,
-    credentialSource: creds.credentialSource,
-    credentialPath: creds.cliPath || creds.ovPath || "",
-    configPath: creds.cliPath || "",
-    userAgent: USER_AGENT,
-    harness: "opencode",
-
-    // Three knobs opencode's own code reads as sections rather than as flat
-    // keys: the MCP registration, the runtime data directory, and the repo
-    // context cache.
-    mcp: { enabled: settings.mcpEnabled },
-    runtime: { dataDir: settings.dataDir },
-    repoContext: { enabled: settings.repoContext, cacheTtlMs: settings.repoContextCacheTtlMs },
-
-    debugLogPath: settings.debugLogPath
-      || path.join(homedir(), ".openviking", "logs", "opencode-plugin.log"),
-    recallLimitConfigured: configured.has("recallLimit"),
-    recallQueryExpansionConfigured: configured.has("recallQueryExpansion"),
+  return {
+    ...config,
+    // The MCP registration, the runtime data directory, and the repo context
+    // cache.
+    mcp: { enabled: config.mcpEnabled },
+    runtime: { dataDir: config.dataDir },
+    repoContext: { enabled: config.repoContext, cacheTtlMs: config.repoContextCacheTtlMs },
   }
-
-  config.effectivePeer = resolveEffectivePeerId({ cfg: config, cwd: projectDirectory })
-  return config
 }
 
 export function resolveDataDir(pluginRoot, config) {

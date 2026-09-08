@@ -1,6 +1,5 @@
-import { resolveSettings } from "./shared/plugin-config.mjs";
-import { buildUserAgent, resolveAuthMode, resolveOpenVikingCredentials } from "./shared/credentials.mjs";
-import { resolveEffectivePeerId, resolvePluginPeerId } from "./shared/workspace-peer.mjs";
+import { buildPluginConfig } from "./shared/plugin-config.mjs";
+import { loadCredentialFiles } from "./shared/credentials.mjs";
 
 export const PLUGIN_VERSION = "0.4.0";
 
@@ -10,8 +9,6 @@ export const PLUGIN_VERSION = "0.4.0";
  * model-facing contract: changing it renames all of them.
  */
 export const MCP_SERVER_NAME = "openviking";
-
-const DEFAULT_ENDPOINT = "http://127.0.0.1:1933";
 
 /**
  * Resolve the plugin's configuration.
@@ -24,44 +21,24 @@ const DEFAULT_ENDPOINT = "http://127.0.0.1:1933";
  * the more specific answer and stays ahead of the credential chain.
  */
 export function resolveConfig(input = {}, env = process.env, cwd = process.cwd()) {
-  const credentials = resolveOpenVikingCredentials(env, "dsh");
   // ov.conf's `dsh` section is the legacy layer here as everywhere else, but
   // the cordis patch shares that slot; the host named this process's settings,
   // so it wins the overlap.
-  const ovSection = credentials.ovFile.dsh;
-  const legacy = { ...(ovSection && typeof ovSection === "object" ? ovSection : {}), ...input };
-  const { settings, configured, sources } = resolveSettings("dsh", { env, cwd, legacy });
-  // The host named this process's peer, so it stays ahead of every file; the
-  // rest of the order is the one every harness follows.
-  const explicitPeerId = resolvePluginPeerId({
-    settings,
-    configured,
-    sources,
-    credentials,
-    hostInput: input.peerId,
+  const ovSection = loadCredentialFiles(env).ovFile.dsh;
+  const config = buildPluginConfig("dsh", {
     env,
+    cwd,
+    legacy: { ...(ovSection && typeof ovSection === "object" ? ovSection : {}), ...input },
+    version: PLUGIN_VERSION,
+    hostInput: {
+      peerId: input.peerId,
+      account: input.account,
+      user: input.user,
+      apiKey: input.apiKey,
+      baseUrl: input.endpoint,
+    },
+    deriveEffectivePeer: true,
   });
-  const account = input.account || credentials.account;
-  const user = input.user || credentials.user;
-  const config = {
-    ...settings,
-    endpoint: String(input.endpoint || credentials.baseUrl || DEFAULT_ENDPOINT).replace(/\/+$/, ""),
-    apiKey: input.apiKey || credentials.apiKey,
-    account,
-    user,
-    ...resolveAuthMode({ settings, ovFile: credentials.ovFile, account, user }),
-    peerId: explicitPeerId,
-    explicitPeerId,
-    userAgent: buildUserAgent("dsh", PLUGIN_VERSION),
-    harness: "dsh",
-    // The name this plugin's client has always used for the request budget.
-    requestTimeoutMs: settings.timeoutMs,
-    recallLimitConfigured: configured.has("recallLimit"),
-    recallQueryExpansionConfigured: configured.has("recallQueryExpansion"),
-  };
 
-  const effectivePeer = resolveEffectivePeerId({ cfg: config, cwd });
-  config.peerId = effectivePeer.peerId;
-  config.legacyPeerId = effectivePeer.legacyPeerId;
-  return config;
+  return { ...config, peerId: config.effectivePeer.peerId };
 }

@@ -5,7 +5,7 @@ export function harnessKey(harness: string): string;
 export function loadPluginSettings(
   harness: string,
   env?: Record<string, string | undefined>,
-  options?: { cwd?: string; clientVersion?: string },
+  options?: { cwd?: string; clientVersion?: string; cliFile?: Record<string, any> | null },
 ): Record<string, any>;
 
 export function resolveSettings(
@@ -15,6 +15,7 @@ export function resolveSettings(
     cwd?: string;
     legacy?: Record<string, any>;
     clientVersion?: string;
+    cliFile?: Record<string, any> | null;
   },
 ): {
   settings: Record<string, any>;
@@ -22,6 +23,27 @@ export function resolveSettings(
   sources: Record<string, string>;
   plugin: Record<string, any>;
 };
+
+export function buildPluginConfig(
+  harness: string,
+  options?: {
+    cwd?: string;
+    env?: Record<string, string | undefined>;
+    legacy?: Record<string, any> | null;
+    manifestUrl?: string | URL;
+    version?: string;
+    hostInput?: {
+      peerId?: string;
+      account?: string;
+      user?: string;
+      apiKey?: string;
+      baseUrl?: string;
+    };
+    logFile?: string;
+    rootKeyFallback?: boolean;
+    deriveEffectivePeer?: boolean;
+  },
+): Record<string, any>;
 
 export function resolveWorkspaceSettings(
   cwd: string,

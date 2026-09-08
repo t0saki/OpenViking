@@ -31,8 +31,8 @@ and `OPENVIKING_PENDING_DIR` relocate individual pieces.
 | Field | Order |
 |---|---|
 | url | `OPENVIKING_URL` → `OPENVIKING_BASE_URL` → `ovcli.conf url` → `ov.conf server.url` → `http://{server.host\|127.0.0.1}:{server.port\|1933}` |
-| api_key | `OPENVIKING_BEARER_TOKEN` → `OPENVIKING_API_KEY` → `ovcli.conf api_key` → `ov.conf claude_code.apiKey` → `ov.conf server.root_api_key` |
-| account / user | `OPENVIKING_ACCOUNT` / `OPENVIKING_USER` → `ovcli.conf account/user` → `ov.conf claude_code.accountId/userId` |
+| api_key | `OPENVIKING_BEARER_TOKEN` → `OPENVIKING_API_KEY` → `ovcli.conf api_key` → `ovcli.conf plugin.claude_code.apiKey` → `ovcli.conf plugin.apiKey` → `ov.conf claude_code.apiKey` → `ov.conf server.root_api_key` |
+| account / user | `OPENVIKING_ACCOUNT` / `OPENVIKING_USER` → `ovcli.conf account/user` → `ovcli.conf plugin.claude_code.accountId/userId` → `ovcli.conf plugin.accountId/userId` → `ov.conf claude_code.accountId/userId` |
 | peer | `OPENVIKING_PEER_ID` → registry → `config.local.json` → `config.json` (`peer.id`) → `ovcli.conf plugin.claude_code.peerId` → `ovcli.conf plugin.peerId` → `ovcli.conf actor_peer_id/peer_id` → `ov.conf claude_code.peerId` → derived per `peer.source` unless `OPENVIKING_WORKSPACE_PEER=0` |
 | peer.source | `OPENVIKING_PEER_SOURCE` → registry → `config.local.json` → `config.json` → `ovcli.conf plugin.claude_code.peerSource` → `ovcli.conf plugin.peerSource` → `ov.conf claude_code.peerSource` → `git` |
 | auth mode | `ovcli.conf plugin.claude_code.authMode` → `ovcli.conf plugin.authMode` → `ov.conf claude_code.authMode` → `ov.conf server.auth_mode` → `trusted` when account/user are set, else `api_key` |

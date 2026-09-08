@@ -299,7 +299,7 @@ function tryJsonText(text) {
   }
 }
 
-function credentialSources(cfg, cliConf, ovConf) {
+export function credentialSources(cfg, cliConf, ovConf) {
   const env = process.env;
   const cliShort = homeShort(cliConf.path);
   const ovShort = homeShort(ovConf.path);
@@ -310,13 +310,16 @@ function credentialSources(cfg, cliConf, ovConf) {
   const cliMode = cfg.credentialSource === "ovcli";
   const envUrl = env.OPENVIKING_URL || env.OPENVIKING_BASE_URL;
   const url = (!cliMode && envUrl) ? "env" : cli.url ? cliShort : server.url ? ovShort : (server.host || server.port) ? `${ovShort} server.host/port` : "default (http://127.0.0.1:1933)";
-  // The `plugin` section is outside the credential chain, so a key set there is
-  // read last — after ov.conf, and in ovcli.conf mode too.
+  // The `plugin` section ranks where the file it lives in ranks: under
+  // ovcli.conf's own `api_key`, over ov.conf.
   const plugin = cli.plugin || {};
   const pluginKey = plugin.codex?.apiKey ? `${cliShort} plugin.codex.apiKey` : plugin.apiKey ? `${cliShort} plugin.apiKey` : "";
+  // The pin stops the chain at ovcli.conf and the ov.conf section under it;
+  // `server.root_api_key` is only ever reached without the pin.
+  const sectionKey = cx.apiKey ? `${ovShort} codex.apiKey` : "";
   const apiKey = cliMode
-    ? (cli.api_key ? cliShort : pluginKey || "(none — ovcli.conf mode ignores env and ov.conf)")
-    : env.OPENVIKING_BEARER_TOKEN ? "env OPENVIKING_BEARER_TOKEN" : env.OPENVIKING_API_KEY ? "env OPENVIKING_API_KEY" : cli.api_key ? cliShort : cx.apiKey ? `${ovShort} codex.apiKey` : server.root_api_key ? `${ovShort} server.root_api_key` : pluginKey || "(none)";
+    ? (cli.api_key ? cliShort : pluginKey || sectionKey || "(none — ovcli.conf mode ignores env)")
+    : env.OPENVIKING_BEARER_TOKEN ? "env OPENVIKING_BEARER_TOKEN" : env.OPENVIKING_API_KEY ? "env OPENVIKING_API_KEY" : cli.api_key ? cliShort : pluginKey || sectionKey || (server.root_api_key ? `${ovShort} server.root_api_key` : "(none)");
   const account = (!cliMode && env.OPENVIKING_ACCOUNT) ? "env" : (cli.account || cli.account_id) ? cliShort : (!cliMode && cx.accountId) ? `${ovShort} codex.accountId` : "(unset)";
   const user = (!cliMode && env.OPENVIKING_USER) ? "env" : (cli.user || cli.user_id) ? cliShort : (!cliMode && cx.userId) ? `${ovShort} codex.userId` : "(unset)";
   return { url, apiKey, account, user };

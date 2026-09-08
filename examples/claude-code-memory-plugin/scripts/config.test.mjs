@@ -64,7 +64,7 @@ test("an ovcli.conf api_key is reported as the credential source", () => {
   }, ({ ovPath, cliPath }) => {
     const cfg = loadConfig();
     assert.equal(cfg.apiKey, "sk-cli");
-    assert.equal(cfg.credentialSource, "ovcli");
+    assert.equal(cfg.apiKeySource, "ovcli");
     assert.equal(cfg.credentialPath, cliPath);
     // configPath stays "whichever file parsed" for backward compat.
     assert.equal(cfg.configPath, ovPath);
@@ -78,7 +78,7 @@ test("an ov.conf root_api_key is reported even when ovcli.conf exists", () => {
   }, ({ ovPath }) => {
     const cfg = loadConfig();
     assert.equal(cfg.apiKey, "sk-root");
-    assert.equal(cfg.credentialSource, "ov");
+    assert.equal(cfg.apiKeySource, "ov");
     assert.equal(cfg.credentialPath, ovPath);
   });
 });
@@ -90,7 +90,7 @@ test("an ov.conf claude_code.apiKey is reported as ov.conf", () => {
   }, ({ ovPath }) => {
     const cfg = loadConfig();
     assert.equal(cfg.apiKey, "sk-cc");
-    assert.equal(cfg.credentialSource, "ov");
+    assert.equal(cfg.apiKeySource, "ov");
     assert.equal(cfg.credentialPath, ovPath);
   });
 });
@@ -102,7 +102,7 @@ test("an ovcli.conf plugin.claude_code.apiKey is reported as ovcli.conf", () => 
   }, ({ cliPath }) => {
     const cfg = loadConfig();
     assert.equal(cfg.apiKey, "sk-plugin");
-    assert.equal(cfg.credentialSource, "ovcli");
+    assert.equal(cfg.apiKeySource, "ovcli");
     assert.equal(cfg.credentialPath, cliPath);
   });
 });
@@ -115,7 +115,7 @@ test("an env api_key wins and carries no path", () => {
   }, () => {
     const cfg = loadConfig();
     assert.equal(cfg.apiKey, "sk-env");
-    assert.equal(cfg.credentialSource, "env");
+    assert.equal(cfg.apiKeySource, "env");
     assert.equal(cfg.credentialPath, null);
   });
 });
@@ -160,7 +160,7 @@ test("no api_key anywhere reports no source", () => {
   }, () => {
     const cfg = loadConfig();
     assert.equal(cfg.apiKey, "");
-    assert.equal(cfg.credentialSource, "none");
+    assert.equal(cfg.apiKeySource, "none");
     assert.equal(cfg.credentialPath, null);
   });
 });

@@ -3,17 +3,16 @@ import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { buildUserAgent, resolveAuthMode, resolveOpenVikingCredentials } from "./credentials.mjs";
 import { createLogger } from "./debug-log.mjs";
 import { sendSessionMessages } from "./batch-send.mjs";
 import { createOvHttp } from "./ov-http.mjs";
 import { enqueue, replayPending } from "./pending-queue.mjs";
 import { buildProfileBlock } from "./profile-inject.mjs";
 import { buildRecallBlock, isRecallEnabled } from "./recall-core.mjs";
-import { resolveSettings } from "./plugin-config.mjs";
+import { buildPluginConfig } from "./plugin-config.mjs";
 import { isRetryableFailure } from "./retryable.mjs";
 import { deriveHarnessSessionId, isBypassed } from "./session-model.mjs";
-import { resolveEffectivePeerId, resolvePluginPeerId } from "./workspace-peer.mjs";
+import { resolveEffectivePeerId } from "./workspace-peer.mjs";
 
 const STATE_VERSION = 1;
 const STATE_DIR_MODE = 0o700;
@@ -35,8 +34,8 @@ export function stableHash(...values) {
  * These four used to read the environment and nothing else, so `ov config
  * switch` moved their credentials and left their behaviour behind, and an
  * `ovcli.conf` `plugin` entry named after them was inert. They resolve through
- * the same layers as every other harness now; only the log path, which is named
- * after the client, stays local.
+ * the same layers as every other harness now; only the client's own name for
+ * itself stays local.
  *
  * `cwd` selects the workspace layer. It defaults to this process's directory,
  * which is all a hook knows before the payload on stdin names the session's
@@ -45,28 +44,13 @@ export function stableHash(...values) {
  * cannot move under a logger or fetch helper already built from the first load.
  */
 export function loadAgentHookConfig(clientId, cwd = process.cwd()) {
-  const credentials = resolveOpenVikingCredentials(process.env, clientId);
-  const { settings, configured, sources } = resolveSettings(clientId, { env: process.env, cwd });
   return {
-    ...settings,
-    ...credentials,
-    ...resolveAuthMode({
-      settings,
-      ovFile: credentials.ovFile,
-      account: credentials.account,
-      user: credentials.user,
+    ...buildPluginConfig(clientId, {
+      cwd,
+      version: process.env.OPENVIKING_INTEGRATION_VERSION,
+      logFile: `${clientId}-hooks.log`,
     }),
-    // The credential chain has no view of ovcli.conf's `plugin` section, which
-    // is where a key set through `plugin.<harness>.apiKey` lives; spreading an
-    // empty one over it would make that key inert.
-    apiKey: credentials.apiKey || settings.apiKey,
-    peerId: resolvePluginPeerId({ settings, configured, sources, credentials }),
     clientId,
-    userAgent: buildUserAgent(clientId, process.env.OPENVIKING_INTEGRATION_VERSION),
-    recallLimitConfigured: configured.has("recallLimit"),
-    recallQueryExpansionConfigured: configured.has("recallQueryExpansion"),
-    debugLogPath: settings.debugLogPath
-      || join(homedir(), ".openviking", "logs", `${clientId}-hooks.log`),
   };
 }
 

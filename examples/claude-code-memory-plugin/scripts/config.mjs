@@ -1,17 +1,17 @@
 /**
  * Configuration for the Claude Code OpenViking memory plugin.
  *
- * Every knob is declared once in `shared/config-schema.mjs` and resolved by
- * `resolveSettings()`, which reads the layers in this order:
+ * Every knob is declared once in `shared/config-schema.mjs` and the whole
+ * configuration is assembled by `buildPluginConfig()`, which reads the layers
+ * in this order:
  *
  *   env (OPENVIKING_*) → workspace `.openviking/config*.json` and the machine
  *   registry → ovcli.conf `plugin.claude_code` → ovcli.conf `plugin` →
  *   ov.conf's `claude_code` section (legacy) → the schema's defaults
  *
- * What stays here is what only this harness knows: which file supplied the
- * credential, the log path named after the plugin, and the two knobs whose
- * fallback is derived from another knob. The peer runs the same chain as every
- * other harness, in `shared/workspace-peer.mjs`.
+ * What stays here is what only this harness knows: whether the plugin is
+ * enabled at all, the file `configPath` has always named, and the tri-state
+ * digest mode.
  *
  * Enable/disable:
  *   - OPENVIKING_MEMORY_ENABLED env var (0/false/no = off, 1/true/yes = on)
@@ -28,39 +28,11 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve as resolvePath } from "node:path";
 
-import {
-  buildUserAgent,
-  readManifestVersion,
-  resolveAuthMode,
-  resolveOpenVikingCredentials,
-} from "./shared/credentials.mjs";
-import { normalizeRewriteMode, resolveSettings } from "./shared/plugin-config.mjs";
-import { resolvePluginPeerId } from "./shared/workspace-peer.mjs";
+import { buildPluginConfig, normalizeRewriteMode } from "./shared/plugin-config.mjs";
 
 const DEFAULT_OV_CONF_PATH = join(homedir(), ".openviking", "ov.conf");
 const DEFAULT_OVCLI_CONF_PATH = join(homedir(), ".openviking", "ovcli.conf");
-const USER_AGENT = buildUserAgent(
-  "claude-code",
-  readManifestVersion(new URL("../.claude-plugin/plugin.json", import.meta.url)),
-);
-
-function num(val, fallback) {
-  if (typeof val === "number" && Number.isFinite(val)) return val;
-  if (typeof val === "string" && val.trim()) {
-    const n = Number(val);
-    if (Number.isFinite(n)) return n;
-  }
-  return fallback;
-}
-
-function str(val, fallback) {
-  if (typeof val === "string" && val.trim()) return val.trim();
-  return fallback;
-}
-
-function hasOwn(obj, key) {
-  return Object.prototype.hasOwnProperty.call(obj || {}, key);
-}
+const MANIFEST_URL = new URL("../.claude-plugin/plugin.json", import.meta.url);
 
 function envBool(name) {
   const v = process.env[name];
@@ -134,98 +106,19 @@ export function isPluginEnabled() {
  * load stay valid.
  */
 export function loadConfig(cwd = process.cwd()) {
-  const workspaceCwd = str(cwd, "") || process.cwd();
-  const ovConf = tryLoadJsonFile("OPENVIKING_CONFIG_FILE", DEFAULT_OV_CONF_PATH);
-  const cliConf = tryLoadJsonFile("OPENVIKING_CLI_CONFIG_FILE", DEFAULT_OVCLI_CONF_PATH);
-
-  const ovFile = ovConf?.file || {};
-  const cliFile = cliConf?.file || {};
-  const configPath = ovConf?.configPath || cliConf?.configPath || null;
-
-  const server = ovFile.server || {};
-  const { settings, configured, plugin, sources } = resolveSettings("claude-code", {
-    cwd: workspaceCwd,
-    legacy: ovFile.claude_code,
+  const config = buildPluginConfig("claude-code", {
+    cwd,
+    manifestUrl: MANIFEST_URL,
+    logFile: "cc-hooks.log",
+    rootKeyFallback: true,
   });
-  // The peer travels with the credentials, so `ov config switch` moves it here
-  // too. Only the peer is taken from this chain; the api key below is resolved
-  // separately.
-  const credentials = resolveOpenVikingCredentials(process.env, "claude_code");
-
-  // baseUrl: env → ovcli.url → ov.server.url → http://{host}:{port}
-  const envUrl = str(process.env.OPENVIKING_URL, null) || str(process.env.OPENVIKING_BASE_URL, null);
-  let baseUrl;
-  if (envUrl) {
-    baseUrl = envUrl.replace(/\/+$/, "");
-  } else if (cliFile.url) {
-    baseUrl = str(cliFile.url, "").replace(/\/+$/, "");
-  } else if (server.url) {
-    baseUrl = str(server.url, "").replace(/\/+$/, "");
-  } else {
-    const host = str(server.host, "127.0.0.1").replace("0.0.0.0", "127.0.0.1");
-    const port = Math.floor(num(server.port, 1933));
-    baseUrl = `http://${host}:${port}`;
-  }
-
-  // apiKey: env → ovcli.api_key → the plugin/ov.conf section → server.root_api_key
-  // Accepts OPENVIKING_BEARER_TOKEN or OPENVIKING_API_KEY (sent as Bearer either way).
-  const envApiKey = str(process.env.OPENVIKING_BEARER_TOKEN, null)
-    || str(process.env.OPENVIKING_API_KEY, null);
-  const apiKey = envApiKey
-    || str(cliFile.api_key, null)
-    || str(settings.apiKey, null)
-    || str(server.root_api_key, "");
-
-  // Which source actually supplied the api_key. `configPath` only reports the
-  // file that parsed, so debug logs and 401 hints pointed at the wrong file
-  // whenever both configs existed.
-  const ccApiKeyFromCli = hasOwn(plugin, "apiKey");
-  let credentialSource = "none";
-  let credentialPath = null;
-  if (envApiKey) {
-    credentialSource = "env";
-  } else if (str(cliFile.api_key, null)) {
-    credentialSource = "ovcli";
-    credentialPath = cliConf?.configPath || null;
-  } else if (str(settings.apiKey, null)) {
-    credentialSource = ccApiKeyFromCli ? "ovcli" : "ov";
-    credentialPath = (ccApiKeyFromCli ? cliConf?.configPath : ovConf?.configPath) || null;
-  } else if (str(server.root_api_key, null)) {
-    credentialSource = "ov";
-    credentialPath = ovConf?.configPath || null;
-  }
-
-  const accountId = str(process.env.OPENVIKING_ACCOUNT, null)
-    || str(cliFile.account, null)
-    || settings.accountId;
-  const userId = str(process.env.OPENVIKING_USER, null)
-    || str(cliFile.user, null)
-    || settings.userId;
-
-  const timeoutMs = settings.timeoutMs;
-  // A write gets a longer budget than a read, so the fallback is derived from
-  // the timeout rather than fixed.
-  const captureTimeoutMs = settings.captureTimeoutMs || Math.max(timeoutMs * 2, 30000);
 
   return {
-    ...settings,
-    configPath,
-    credentialSource,
-    credentialPath,
-    baseUrl,
-    apiKey,
-    accountId,
-    userId,
-    // The names the request builders read; `accountId`/`userId` are the knob
-    // spellings the doctor and the status line report.
-    account: accountId,
-    user: userId,
-    ...resolveAuthMode({ settings, ovFile, account: accountId, user: userId }),
-    peerId: resolvePluginPeerId({ settings, configured, sources, credentials }),
-    harness: "claude-code",
-    userAgent: USER_AGENT,
-    captureTimeoutMs,
-    debugLogPath: settings.debugLogPath || join(homedir(), ".openviking", "logs", "cc-hooks.log"),
+    ...config,
+    // `configPath` reports whichever file parsed, ov.conf first, and predates
+    // the pair of paths beside it.
+    configPath: config.ovPath || config.cliPath || null,
+    credentialPath: config.credentialPath || null,
 
     // Digest compression defaults to auto: prefer the local host CLI and fall
     // back to the server when it is unavailable. A failed digest still falls
@@ -236,15 +129,8 @@ export function loadConfig(cwd = process.cwd()) {
     recallRewrite: normalizeRewriteMode(
       process.env.OPENVIKING_RECALL_COMPRESS
         ?? process.env.OPENVIKING_RECALL_REWRITE
-        ?? settings.recallCompress,
+        ?? config.recallCompress,
       "auto",
     ),
-
-    // Several fields are sent to the server only when the user asked for them,
-    // so a default must not look like a choice.
-    recallLimitConfigured: configured.has("recallLimit"),
-    recallMaxTokensConfigured: configured.has("recallMaxTokens"),
-    recallQueryExpansionConfigured: configured.has("recallQueryExpansion"),
-    recallCompressMaxBulletsConfigured: configured.has("recallCompressMaxBullets"),
   };
 }

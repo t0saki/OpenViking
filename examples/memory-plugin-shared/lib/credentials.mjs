@@ -187,8 +187,14 @@ function deriveBaseUrl({ env, cliFile, ovFile, mode, useCli }) {
  * where it always did — after ovcli.conf, before `server.root_api_key` — but a
  * harness now reads its own section instead of every one of them reading
  * codex's. The default keeps codex, the only caller that never passes one.
+ *
+ * `plugin` carries the `apiKey`, `accountId` and `userId` ovcli.conf's `plugin`
+ * section named, which this module cannot read for itself: resolving that
+ * section needs the knob schema, and the portable bundles would then have to
+ * ship it. All three rank where the file they come from ranks — under
+ * ovcli.conf's own fields, over ov.conf.
  */
-export function resolveOpenVikingCredentials(env = process.env, harness = "codex") {
+export function resolveOpenVikingCredentials(env = process.env, harness = "codex", plugin = {}) {
   const files = loadCredentialFiles(env);
   const mode = sourceMode(env);
   const envHasCredentials = hasEnvCredentialFields(env);
@@ -199,29 +205,35 @@ export function resolveOpenVikingCredentials(env = process.env, harness = "codex
 
   const baseUrl = deriveBaseUrl({ env, ...files, mode, useCli });
 
+  const pluginApiKey = str(plugin?.apiKey, "");
   const apiKey = useCli
-    ? str(files.cliFile.api_key, "")
+    ? (str(files.cliFile.api_key, "") || pluginApiKey)
     : (
         str(env.OPENVIKING_BEARER_TOKEN, "") ||
         str(env.OPENVIKING_API_KEY, "") ||
         str(files.cliFile.api_key, "") ||
+        pluginApiKey ||
         str(cx.apiKey, "") ||
         str(server.root_api_key, "")
       );
 
+  const pluginAccount = str(plugin?.accountId, "");
   const account = useCli
-    ? str(files.cliFile.account, str(files.cliFile.account_id, ""))
+    ? (str(files.cliFile.account, str(files.cliFile.account_id, "")) || pluginAccount)
     : (
         str(env.OPENVIKING_ACCOUNT, "") ||
         str(files.cliFile.account, str(files.cliFile.account_id, "")) ||
+        pluginAccount ||
         str(cx.accountId, "")
       );
 
+  const pluginUser = str(plugin?.userId, "");
   const user = useCli
-    ? str(files.cliFile.user, str(files.cliFile.user_id, ""))
+    ? (str(files.cliFile.user, str(files.cliFile.user_id, "")) || pluginUser)
     : (
         str(env.OPENVIKING_USER, "") ||
         str(files.cliFile.user, str(files.cliFile.user_id, "")) ||
+        pluginUser ||
         str(cx.userId, "")
       );
 
@@ -236,19 +248,31 @@ export function resolveOpenVikingCredentials(env = process.env, harness = "codex
   const explicitMcpUrl = str(env.OPENVIKING_MCP_URL, "");
   const mcpUrl = (mode !== "cli" && explicitMcpUrl) ? explicitMcpUrl : `${baseUrl.replace(/\/+$/, "")}/mcp`;
 
-  // The file that actually supplied the api_key, following the same chain —
-  // empty when the key came from the environment or was never found.
+  // Which layer actually supplied the api_key, following the same chain, and
+  // the file behind it — empty when the key came from the environment or was
+  // never found. `apiKeySource` is what a doctor and a 401 hint report; the
+  // credential *source* beside it is the mode the chain ran in, not a file.
+  let apiKeySource = "none";
   let credentialPath = "";
   if (apiKey) {
-    if (useCli) credentialPath = files.cliPath;
-    else if (str(env.OPENVIKING_BEARER_TOKEN, str(env.OPENVIKING_API_KEY, ""))) credentialPath = "";
-    else if (str(files.cliFile.api_key, "")) credentialPath = files.cliPath;
-    else credentialPath = files.ovPath;
+    if (useCli) {
+      apiKeySource = "ovcli";
+      credentialPath = files.cliPath;
+    } else if (str(env.OPENVIKING_BEARER_TOKEN, str(env.OPENVIKING_API_KEY, ""))) {
+      apiKeySource = "env";
+    } else if (str(files.cliFile.api_key, "") || pluginApiKey) {
+      apiKeySource = "ovcli";
+      credentialPath = files.cliPath;
+    } else {
+      apiKeySource = "ov";
+      credentialPath = files.ovPath;
+    }
   }
 
   return {
     ...files,
     credentialSource: useCli ? "ovcli" : ((mode === "env" || envHasCredentials) ? "env" : "auto"),
+    apiKeySource,
     credentialPath,
     baseUrl,
     mcpUrl,

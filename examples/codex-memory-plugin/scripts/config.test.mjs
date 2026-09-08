@@ -186,7 +186,9 @@ test("ov.conf's codex section still supplies the patterns when no env var does",
   });
 });
 
-test("ovcli.conf plugin.codex.apiKey is the last-resort key, behind server.root_api_key", () => {
+// ovcli.conf is the client's own file, so a key set there outranks the server
+// config underneath it — the same order every other harness follows.
+test("ovcli.conf plugin.codex.apiKey outranks ov.conf, and ovcli.conf's own api_key outranks it", () => {
   withConfigs({
     cli: { plugin: { codex: { apiKey: "sk-plugin" } } },
   }, ({ otherDir }) => {
@@ -194,9 +196,16 @@ test("ovcli.conf plugin.codex.apiKey is the last-resort key, behind server.root_
   });
 
   withConfigs({
-    ov: { server: { root_api_key: "sk-root" } },
+    ov: { codex: { apiKey: "sk-codex" }, server: { root_api_key: "sk-root" } },
     cli: { plugin: { codex: { apiKey: "sk-plugin" } } },
   }, ({ otherDir }) => {
-    assert.equal(loadConfig(otherDir).apiKey, "sk-root", "the credential chain runs first");
+    assert.equal(loadConfig(otherDir).apiKey, "sk-plugin");
+  });
+
+  withConfigs({
+    ov: { server: { root_api_key: "sk-root" } },
+    cli: { api_key: "sk-cli", plugin: { codex: { apiKey: "sk-plugin" } } },
+  }, ({ otherDir }) => {
+    assert.equal(loadConfig(otherDir).apiKey, "sk-cli");
   });
 });

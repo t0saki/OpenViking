@@ -1,6 +1,4 @@
-import { buildUserAgent, resolveAuthMode, resolveOpenVikingCredentials } from "./shared/credentials.mjs";
-import { resolveSettings } from "./shared/plugin-config.mjs";
-import { resolveEffectivePeerId, resolvePluginPeerId } from "./shared/workspace-peer.mjs";
+import { buildPluginConfig } from "./shared/plugin-config.mjs";
 
 /** Hand-maintained: this extension ships no manifest to read a version from. */
 export const EXTENSION_VERSION = "0.3.0";
@@ -66,35 +64,20 @@ export interface OVConfig {
  * `ovcli.conf`'s `plugin` → defaults.
  */
 export function loadConfig(cwd: string = process.cwd()): OVConfig {
-  const creds = resolveOpenVikingCredentials(process.env, "pi");
-  const { settings, configured, sources } = resolveSettings("pi", { cwd });
+  const config = buildPluginConfig("pi", { cwd, version: EXTENSION_VERSION, deriveEffectivePeer: true });
 
-  const config = {
-    ...settings,
-    endpoint: creds.baseUrl,
-    apiKey: creds.apiKey,
-    account: creds.account,
-    user: creds.user,
-    ...resolveAuthMode({ settings, ovFile: creds.ovFile, account: creds.account, user: creds.user }),
-    peerId: resolvePluginPeerId({ settings, configured, sources, credentials: creds }),
-    userAgent: buildUserAgent("pi", EXTENSION_VERSION),
-    harness: "pi",
+  return {
+    ...config,
     // `bypassSessionPatterns` is the name the shared matcher reads and every
     // other harness spells; `bypassPatterns` was this extension's own and is
     // still accepted. Both hold the same list so either can be inspected.
-    bypassPatterns: settings.bypassSessionPatterns,
+    bypassPatterns: config.bypassSessionPatterns,
     // OPENVIKING_DEBUG_LOG is the shared spelling and lands in the schema;
     // OV_DEBUG_LOG is pi's older name, kept working so existing setups log.
-    debugLogPath: settings.debugLogPath || String(process.env.OV_DEBUG_LOG || "").trim(),
-    recallLimitConfigured: configured.has("recallLimit"),
-    recallQueryExpansionConfigured: configured.has("recallQueryExpansion"),
+    debugLogPath: config.debugLogPath || String(process.env.OV_DEBUG_LOG || "").trim(),
+    // The whole resolution, not just the id: `legacyPeerId` is what lets recall
+    // under `actor` scope still reach memories written before the git-derived
+    // peer replaced the path-derived one.
+    peerId: config.effectivePeer.peerId,
   } as OVConfig;
-
-  // The whole resolution, not just the id: `legacyPeerId` is what lets recall
-  // under `actor` scope still reach memories written before the git-derived
-  // peer replaced the path-derived one.
-  const effectivePeer = resolveEffectivePeerId({ cfg: config as any, cwd });
-  config.peerId = effectivePeer.peerId;
-  config.legacyPeerId = effectivePeer.legacyPeerId || "";
-  return config;
 }

@@ -6,13 +6,16 @@ import { fileURLToPath } from "node:url";
 
 import { HARNESS_KEYS, KNOBS, KNOB_BY_KEY, WORKSPACE_KNOB_MAP, resolveKnobs } from "./lib/config-schema.mjs";
 import { KNOWN_PLUGIN_KEYS, unknownPluginKeys } from "./lib/doctor-core.mjs";
+import { buildConfigForTest } from "./testing/support.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
-// Each loader reads its knobs off the object `resolveSettings` returns, so
-// every `settings.<key>` in these files is a key the schema has to declare —
-// and a key the doctor therefore has to accept inside `plugin`.
-const LOADERS = [
+// Every knob reaches a loader through the object `buildPluginConfig` returns,
+// and the modules below are the ones that still read knobs off the settings
+// they were resolved from: a `settings.<key>` here is a key the schema has to
+// declare, and a key the doctor therefore has to accept inside `plugin`.
+const KNOB_READERS = [
+  "examples/memory-plugin-shared/lib/plugin-config.mjs",
   "examples/claude-code-memory-plugin/scripts/config.mjs",
   "examples/codex-memory-plugin/scripts/config.mjs",
   "examples/opencode-plugin/lib/config.mjs",
@@ -22,13 +25,16 @@ const LOADERS = [
 ];
 
 test("every knob a loader reads is declared in the schema", async () => {
+  const built = buildConfigForTest("codex");
+  for (const knob of KNOBS) {
+    assert.ok(knob.name in built, `${knob.name} never reaches a loader`);
+  }
+
   const read = new Set();
-  for (const file of LOADERS) {
+  for (const file of KNOB_READERS) {
     const source = await readFile(join(ROOT, file), "utf-8");
     for (const match of source.matchAll(/\bsettings\.([a-zA-Z_][a-zA-Z0-9_]*)/g)) read.add(match[1]);
   }
-  assert.ok(read.size > 15, `expected to find the knobs, got ${read.size}`);
-
   const undeclared = [...read].filter((key) => !KNOB_BY_KEY.has(key)).sort();
   assert.deepEqual(undeclared, [], "a loader reads a key the schema never declares");
 });

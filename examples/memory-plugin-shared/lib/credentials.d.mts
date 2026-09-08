@@ -12,8 +12,10 @@ export function resolveAuthMode(input?: {
 export function resolveOpenVikingCredentials(
   env?: Record<string, string | undefined>,
   harness?: string,
+  plugin?: { apiKey?: string },
 ): {
   credentialSource: string;
+  apiKeySource: string;
   credentialPath: string;
   cliPath: string;
   cliPathCandidate: string;
