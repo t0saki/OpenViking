@@ -121,7 +121,7 @@ per-harness 章节（档案卡）只写差异；所有共享事实均在本章�
 | 模块 | 职责 | 消费方 |
 |---|---|---|
 | `recall-core.mjs` | 召回请求构造 + 三级降级 + 本地兜底排序注入 | 全部 JS 系 harness |
-| `agent-hook-runtime.mjs` | "瘦 hook"一体化运行时（配置经共享 schema 解析、session id 派生、跨进程锁、fetch、commit） | cursor / trae / trae-cn / zcode |
+| `agent-hook-runtime.mjs` | "瘦 hook"一体化运行时（配置经共享 schema 解析、session id 派生、跨进程锁、fetch、commit） | cc / codex / cursor / trae / trae-cn / zcode |
 | `mcp-proxy-core.mjs` | stdio↔streamable-HTTP MCP 代理内核 | 全部 MCP 型 + agent-plugins |
 | `pending-queue.mjs` | 磁盘离线队列 + 会话启动重放 | cc / codex / cursor / trae×2 / zcode / opencode / dsh / pi |
 | `batch-send.mjs` | 100 条/批写入 + 404/405 逐条降级 + 连续前缀入队 | cc / codex / opencode + agent-hook 系 |

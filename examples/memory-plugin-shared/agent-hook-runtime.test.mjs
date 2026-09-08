@@ -85,6 +85,49 @@ test("agent fetch and commit logging preserve response trace_id", async (t) => {
   });
 });
 
+/**
+ * Reporting a write no retry can fix used to be Claude Code's alone; the
+ * harnesses on this runtime inherited it along with the write path, so what
+ * they say and when they say it is pinned here rather than in one host.
+ */
+test("a failed write is parked when a retry can help and reported once when it cannot", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "ov-agent-hook-pending-"));
+  const savedPendingDir = process.env.OPENVIKING_PENDING_DIR;
+  const warnings = [];
+  try {
+    process.env.OPENVIKING_PENDING_DIR = join(dir, "pending");
+    const responses = [
+      jsonResponse(503, { status: "error", error: { code: "UNAVAILABLE", message: "restarting" } }),
+      jsonResponse(400, { status: "error", error: { code: "INVALID", message: "bad payload" } }),
+    ];
+    t.mock.method(globalThis, "fetch", async () => responses.shift());
+    t.mock.method(process.stderr, "write", (chunk) => {
+      warnings.push(String(chunk));
+      return true;
+    });
+    const { fetchJSON } = makeAgentFetchJSON({
+      baseUrl: "http://127.0.0.1:1933",
+      timeoutMs: 5000,
+    });
+
+    const retryable = await commitAgentSession(fetchJSON, "agent-pending-retryable");
+    assert.equal(retryable.pendingQueued, true, "a retryable failure is parked for replay");
+    assert.deepEqual(warnings, [], "a parked write is not something to warn about");
+
+    const fatal = await commitAgentSession(fetchJSON, "agent-pending-fatal");
+    assert.equal(fatal.pendingQueued, undefined);
+    assert.equal(fatal.pendingEnqueueFailed, undefined);
+    assert.deepEqual(warnings, [
+      "[ov] commitSession failed with non-retryable status 400;"
+        + " not enqueuing pending retry (bad payload)\n",
+    ]);
+  } finally {
+    if (savedPendingDir === undefined) delete process.env.OPENVIKING_PENDING_DIR;
+    else process.env.OPENVIKING_PENDING_DIR = savedPendingDir;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 // The thin harnesses composed on this runtime used to send whatever their
 // transcript parser produced. Every other harness runs the same filter, so it
 // belongs beside the runtime rather than reimplemented in each hook.

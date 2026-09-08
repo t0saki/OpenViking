@@ -13,8 +13,8 @@
 import { readFile } from "node:fs/promises";
 import { extractCaptureTurns, findLastHumanTurnIndex } from "./capture-utils.mjs";
 import { resolveOvSessionId, saveState } from "./session-state.mjs";
+import { makeAgentFetchJSON } from "./shared/agent-hook-runtime.mjs";
 import { sendSessionMessages } from "./shared/batch-send.mjs";
-import { createOvHttp } from "./shared/ov-http.mjs";
 
 /**
  * Build the `{ fetchJSONRes, fetchJSON }` pair used by every capture hook.
@@ -22,9 +22,11 @@ import { createOvHttp } from "./shared/ov-http.mjs";
  * loading state (which happens under the session lock).
  */
 export function makeFetchJSON(cfg, { getActorPeerId = () => "" } = {}) {
-  const fetchJSONRes = createOvHttp(cfg, {
+  const { fetchJSON: fetchJSONRes } = makeAgentFetchJSON(cfg, process.cwd(), {
     defaultTimeoutMs: cfg.captureTimeoutMs,
-    resolveActorPeerId: getActorPeerId,
+    getActorPeerId,
+    // A capture hook would rather retry a body it cannot parse than record the
+    // turn as sent.
     requireJsonBody: true,
   });
 

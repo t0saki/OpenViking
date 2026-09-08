@@ -120,7 +120,7 @@ Core modules at a glance (detailed further in the per-dimension sections):
 | Module | Responsibility | Consumers |
 |---|---|---|
 | `recall-core.mjs` | Handles recall request construction, three-tier degradation, and local fallback ranking/injection | All JS-based harnesses |
-| `agent-hook-runtime.mjs` | All-in-one "thin hook" runtime handling configuration resolution through the shared schema, session ID derivation, cross-process locking, fetching, and commits | cursor / trae / trae-cn / zcode |
+| `agent-hook-runtime.mjs` | All-in-one "thin hook" runtime handling configuration resolution through the shared schema, session ID derivation, cross-process locking, fetching, and commits | cc / codex / cursor / trae / trae-cn / zcode |
 | `mcp-proxy-core.mjs` | stdio ↔ streamable-HTTP MCP proxy core | All MCP-based integrations + agent-plugins |
 | `pending-queue.mjs` | On-disk offline queueing and replay at session start | cc / codex / cursor / trae×2 / zcode / opencode / dsh / pi |
 | `batch-send.mjs` | Executes writes in batches of 100, handles per-message degradation on 404/405 errors, and queues the leading contiguous prefix | cc / codex / opencode + the agent-hook family |

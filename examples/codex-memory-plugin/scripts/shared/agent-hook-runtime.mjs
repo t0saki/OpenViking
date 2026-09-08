@@ -1,3 +1,4 @@
+// GENERATED FROM examples/memory-plugin-shared/lib. DO NOT EDIT.
 import { createHash } from "node:crypto";
 import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
