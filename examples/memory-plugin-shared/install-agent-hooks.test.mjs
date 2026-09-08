@@ -1,12 +1,26 @@
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 
-const installer = join(dirname(fileURLToPath(import.meta.url)), "install.sh");
+// `--source dev` installs out of the checkout the installer sits in, and the
+// rest of the suite reads that tree while these installs run, so the installs
+// here get a copy of their own. The `.git` marker is a file, the way a linked
+// worktree keeps it: enough for the installer to recognise a checkout, not
+// enough for it to re-run the marketplace tests, which read repo-root files
+// this copy does not carry.
+const checkout = mkdtempSync(join(tmpdir(), "openviking-checkout-"));
+process.on("exit", () => rmSync(checkout, { recursive: true, force: true }));
+cpSync(resolve(dirname(fileURLToPath(import.meta.url)), ".."), join(checkout, "examples"), {
+  recursive: true,
+  filter: (source) => basename(source) !== "node_modules",
+});
+writeFileSync(join(checkout, ".git"), "gitdir: .\n");
+
+const installer = join(checkout, "examples", "memory-plugin-shared", "install.sh");
 const installedNode = spawnSync("bash", ["-c", "command -v node"], { encoding: "utf8" }).stdout.trim();
 
 /** Every `command` string a hooks configuration holds, at any depth. */
@@ -28,7 +42,7 @@ function writeJson(file, value) {
 
 function runInstaller(home, args, extraEnv = {}) {
   return spawnSync("bash", [installer, ...args], {
-    cwd: resolve(dirname(installer), "..", ".."),
+    cwd: checkout,
     env: {
       ...process.env,
       HOME: home,
