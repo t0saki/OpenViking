@@ -32,6 +32,7 @@ import {
   normalizeContextEntry,
   postRecall,
 } from "./shared/recall-core.mjs";
+import { createOvHttp } from "./shared/ov-http.mjs";
 import { compressRecallContext } from "./shared/recall-compress-core.mjs";
 import { isBypassed } from "./shared/session-model.mjs";
 import { resolveEffectivePeerId } from "./shared/workspace-peer.mjs";
@@ -95,32 +96,16 @@ recallDeadline = setTimeout(() => {
 }, cfg.recallTimeoutMs);
 recallDeadline.unref?.();
 
-async function fetchJSON(path, init = {}, options = {}) {
-  const controller = new AbortController();
-  const timer = setTimeout(
-    () => controller.abort(),
-    Math.max(1000, Number(options.timeoutMs) || cfg.timeoutMs),
-  );
-  try {
-    const headers = { "Content-Type": "application/json" };
-    if (cfg.apiKey) headers["Authorization"] = `Bearer ${cfg.apiKey}`;
-    if (cfg.sendIdentityHeaders && cfg.account) headers["X-OpenViking-Account"] = cfg.account;
-    if (cfg.sendIdentityHeaders && cfg.user) headers["X-OpenViking-User"] = cfg.user;
-    if (effectivePeer.peerId) headers["X-OpenViking-Actor-Peer"] = effectivePeer.peerId;
-    if (cfg.userAgent) headers["User-Agent"] = cfg.userAgent;
-    const res = await fetch(`${cfg.baseUrl}${path}`, { ...init, headers, signal: controller.signal });
-    const body = await res.json().catch(() => null);
-    if (!body) return { ok: false, status: res.status };
-    if (!res.ok || body.status === "error") {
-      return { ok: false, status: res.status, error: body.error || body };
-    }
-    return { ok: true, result: body.result ?? body };
-  } catch {
-    return { ok: false, status: 0 };
-  } finally {
-    clearTimeout(timer);
-  }
+// Rebuilt after the hook reloads config for the payload's directory.
+function makeFetchJSON() {
+  return createOvHttp(cfg, {
+    defaultTimeoutMs: cfg.timeoutMs,
+    resolveActorPeerId: () => effectivePeer.peerId,
+    requireJsonBody: true,
+  });
 }
+
+let fetchJSON = makeFetchJSON();
 
 // ---------------------------------------------------------------------------
 // Ranking
@@ -567,6 +552,7 @@ async function main() {
   const cwd = typeof input.cwd === "string" && input.cwd.trim() ? input.cwd : process.cwd();
   cfg = loadConfig(cwd);
   effectivePeer = resolveEffectivePeerId({ cfg, cwd });
+  fetchJSON = makeFetchJSON();
 
   if (isBypassed(cfg, { sessionId: input.session_id, cwd })) {
     log("skip", { stage: "init", reason: "bypass_session_pattern" });

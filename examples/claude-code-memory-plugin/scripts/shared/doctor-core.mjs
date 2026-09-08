@@ -19,6 +19,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { HARNESS_CONFIG_KEYS, HARNESS_KEYS, pluginConfigKeys } from "./config-schema.mjs";
+import { buildOvHeaders } from "./ov-http.mjs";
 import { resolveWorkspaceSettings } from "./plugin-config.mjs";
 import { peerScopeMemoPath } from "./recall-core.mjs";
 import { CONFIG_DIR_NAME, LOCAL_FILE, TEAM_FILE, workspaceConfigPaths } from "./workspace-config.mjs";
@@ -484,14 +485,10 @@ export async function httpProbe({ url, method = "GET", headers = {}, body, timeo
   return out;
 }
 
+// A connection record carries no `sendIdentityHeaders`: the doctor asks with
+// the identity and reports whatever the server echoes back.
 function authHeaders(conn, { identity = true } = {}) {
-  const headers = { "Content-Type": "application/json" };
-  if (conn.apiKey) headers["Authorization"] = `Bearer ${conn.apiKey}`;
-  if (identity && conn.account) headers["X-OpenViking-Account"] = conn.account;
-  if (identity && conn.user) headers["X-OpenViking-User"] = conn.user;
-  if (conn.peerId) headers["X-OpenViking-Actor-Peer"] = conn.peerId;
-  if (conn.userAgent) headers["User-Agent"] = conn.userAgent;
-  return headers;
+  return buildOvHeaders(conn, { actorPeerId: conn.peerId, identityHeaders: identity });
 }
 
 export function serverErrorMessage(probe) {

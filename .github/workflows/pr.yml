@@ -89,6 +89,7 @@ jobs:
             examples/memory-plugin-shared/capture-utils.test.mjs \
             examples/memory-plugin-shared/wire-headers.test.mjs \
             examples/memory-plugin-shared/ov-http.test.mjs \
+            examples/memory-plugin-shared/one-header-builder.test.mjs \
             examples/dsh-memory-plugin/*.test.mjs \
             examples/opencode-plugin/tests/*.test.mjs \
             examples/opencode-plugin/servers/mcp-proxy.test.mjs \

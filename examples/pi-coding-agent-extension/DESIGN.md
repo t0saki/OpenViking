@@ -47,7 +47,7 @@ Two older spellings are kept alive because setups depend on them: `bypassPattern
 
 ### client.ts
 
-One `fetchJSON(path, init, timeoutMs)` wraps `fetch` behind an `AbortController` and normalizes OpenViking's `{ status, result, error }` envelope into `{ ok, result, status, error, traceId }`. Nothing throws: callers branch on `ok`, and a transport failure arrives as `status: 0`. The trace id is lifted out of whichever place the server put it so that failures can be correlated in the server's own logs.
+The transport is built once in the constructor by `createOvHttp` from `shared/ov-http.mjs`, and `fetchJSON(path, init, timeoutMs)` is the thin call into it. Nothing throws: callers branch on `ok` over the same `{ ok, result, status, error, traceId }` envelope every harness reads, and a transport failure arrives as `status: 0`. The trace id is lifted out of whichever place the server put it so that failures can be correlated in the server's own logs.
 
 Headers are built per request: `Authorization: Bearer` when a key is configured, `X-OpenViking-Actor-Peer` for peer scoping, the shared `User-Agent`, and `X-OpenViking-Account` / `X-OpenViking-User` only when `sendIdentityHeaders` says the deployment is in trusted mode. Timeouts follow the class of call — 5s for health and session metadata, 10s for reads and message writes, 30s for commit and resource ingestion.
 
