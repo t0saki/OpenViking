@@ -9,6 +9,7 @@ export interface Knob {
   env?: string;
   aliases?: string[];
   workspace?: string;
+  sendOnlyWhenConfigured?: boolean;
   capability: string;
 }
 

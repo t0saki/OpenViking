@@ -28,6 +28,10 @@
  *   aliases     older spellings, honoured forever; the doctor names them
  *   workspace   dotted key in `.openviking/config.json`
  *   capability  which capability owns it, for the switches in recall/capture
+ *   sendOnlyWhenConfigured
+ *               the request omits this field unless a layer actually set it,
+ *               so the server's own default stands. Loaders project the flag
+ *               as `<name>Configured` and `recall-core` reads it from there.
  */
 
 export const CAPABILITIES = ["connection", "peer", "recall", "capture", "session", "debug"];
@@ -73,7 +77,7 @@ export const KNOBS = [
     workspace: "recall.enabled",
     capability: "recall",
   },
-  { name: "recallLimit", type: "int", default: 10, min: 1, max: 50, env: "OPENVIKING_RECALL_LIMIT", workspace: "recall.max_items", capability: "recall" },
+  { name: "recallLimit", type: "int", default: 10, min: 1, max: 50, env: "OPENVIKING_RECALL_LIMIT", workspace: "recall.max_items", sendOnlyWhenConfigured: true, capability: "recall" },
   { name: "scoreThreshold", type: "number", default: 0.35, min: 0, max: 1, env: "OPENVIKING_SCORE_THRESHOLD", aliases: ["recallScoreThreshold"], workspace: "recall.score_threshold", capability: "recall" },
   { name: "minQueryLength", type: "int", default: 3, min: 1, max: 64, env: "OPENVIKING_MIN_QUERY_LENGTH", aliases: ["recallMinQueryLength"], capability: "recall" },
   { name: "recallTokenBudget", type: "int", default: 2000, min: 200, max: 50000, env: "OPENVIKING_RECALL_TOKEN_BUDGET", aliases: ["recallBudget"], capability: "recall" },
@@ -81,8 +85,8 @@ export const KNOBS = [
   { name: "recallPreferAbstract", type: "bool", default: true, env: "OPENVIKING_RECALL_PREFER_ABSTRACT", capability: "recall" },
   { name: "recallPeerScope", type: "enum", values: ["all", "actor"], default: "all", env: "OPENVIKING_RECALL_PEER_SCOPE", workspace: "recall.peer_scope", capability: "recall" },
   { name: "recallDedupTurns", type: "int", default: 5, min: 0, max: 20, env: "OPENVIKING_RECALL_DEDUP_TURNS", workspace: "recall.dedup_turns", capability: "recall" },
-  { name: "recallMaxTokens", type: "int", default: 1600, min: 64, max: 200000, env: "OPENVIKING_RECALL_MAX_TOKENS", capability: "recall" },
-  { name: "recallQueryExpansion", type: "enum", values: ["auto", "off"], default: "auto", env: "OPENVIKING_RECALL_QUERY_EXPANSION", capability: "recall" },
+  { name: "recallMaxTokens", type: "int", default: 1600, min: 64, max: 200000, env: "OPENVIKING_RECALL_MAX_TOKENS", sendOnlyWhenConfigured: true, capability: "recall" },
+  { name: "recallQueryExpansion", type: "enum", values: ["auto", "off"], default: "auto", env: "OPENVIKING_RECALL_QUERY_EXPANSION", sendOnlyWhenConfigured: true, capability: "recall" },
   { name: "recallTimeoutMs", type: "int", default: 120000, min: 1000, max: 600000, env: "OPENVIKING_RECALL_TIMEOUT_MS", capability: "recall" },
   // 0 keeps the built-in default, which outlasts the server's rewrite fuse.
   { name: "recallContextTimeoutMs", type: "int", default: 0, min: 0, max: 600000, env: "OPENVIKING_RECALL_CONTEXT_TIMEOUT_MS", capability: "recall" },
@@ -105,7 +109,7 @@ export const KNOBS = [
   { name: "recallCompressDetectTtlMs", type: "int", default: 604800000, min: 0, capability: "recall", env: "OPENVIKING_RECALL_COMPRESS_DETECT_TTL_MS" },
   { name: "recallCompressMinInputChars", type: "int", default: 1500, min: 0, max: 100000, env: "OPENVIKING_RECALL_COMPRESS_MIN_INPUT_CHARS", capability: "recall" },
   { name: "recallCompressMaxInputChars", type: "int", default: 18000, min: 1000, max: 200000, env: "OPENVIKING_RECALL_COMPRESS_MAX_INPUT_CHARS", capability: "recall" },
-  { name: "recallCompressMaxBullets", type: "int", default: 6, min: 1, max: 50, env: "OPENVIKING_RECALL_COMPRESS_MAX_BULLETS", capability: "recall" },
+  { name: "recallCompressMaxBullets", type: "int", default: 6, min: 1, max: 50, env: "OPENVIKING_RECALL_COMPRESS_MAX_BULLETS", sendOnlyWhenConfigured: true, capability: "recall" },
 
   // ── capture ───────────────────────────────────────────────────────────
   // `syncTurns` is dsh and pi's spelling of the same switch. It stays an alias

@@ -38,6 +38,24 @@ test("the doctor's known-knob list is the schema's own key list", () => {
   assert.deepEqual([...KNOWN_PLUGIN_KEYS].sort(), [...declared].sort());
 });
 
+// Marking a knob `sendOnlyWhenConfigured` is a wire-protocol decision: the
+// request omits the field so the server's default stands. The set therefore has
+// to match the fields `recall-core` actually gates, in both directions.
+test("exactly the knobs recall-core gates are marked send-only-when-configured", async () => {
+  const marked = KNOBS.filter((knob) => knob.sendOnlyWhenConfigured).map((knob) => knob.name);
+  assert.deepEqual(marked.sort(), [
+    "recallCompressMaxBullets",
+    "recallLimit",
+    "recallMaxTokens",
+    "recallQueryExpansion",
+  ]);
+
+  const source = await readFile(join(ROOT, "examples/memory-plugin-shared/lib/recall-core.mjs"), "utf-8");
+  const gated = new Set();
+  for (const match of source.matchAll(/\bcfg\.([a-zA-Z0-9_]+)Configured\b/g)) gated.add(match[1]);
+  assert.deepEqual([...gated].sort(), marked.sort());
+});
+
 test("the schema is internally consistent", () => {
   const names = new Set();
   const envVars = new Map();
