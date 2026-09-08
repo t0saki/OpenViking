@@ -1,29 +1,44 @@
-name: OpenCode Plugin Release
+name: Plugin npm Release
+
+# Publishes the memory plugins that ship as npm packages. One push filter covers
+# every package in the matrix, so a change to one of them also starts the other
+# legs; those legs stop at the already-published check instead of republishing.
 
 on:
   push:
     branches: [main]
     paths:
+      - "examples/dsh-memory-plugin/**"
       - "examples/opencode-plugin/**"
       - "examples/memory-plugin-shared/lib/**"
-      - ".github/workflows/opencode-plugin-release.yml"
+      - ".github/workflows/plugin-npm-release.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
   id-token: write
 
-concurrency:
-  group: opencode-plugin-release
-  cancel-in-progress: false
-
 jobs:
   publish:
-    name: Publish @openviking/opencode-plugin
+    name: Publish ${{ matrix.package }}
     runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - package: "@openviking/dsh-memory-plugin"
+            directory: examples/dsh-memory-plugin
+            install: npm ci
+          - package: "@openviking/opencode-plugin"
+            directory: examples/opencode-plugin
+            # No lockfile in this package, so npm ci cannot run here.
+            install: npm install
+    concurrency:
+      group: plugin-npm-release-${{ matrix.directory }}
+      cancel-in-progress: false
     defaults:
       run:
-        working-directory: examples/opencode-plugin
+        working-directory: ${{ matrix.directory }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -35,7 +50,7 @@ jobs:
           registry-url: "https://registry.npmjs.org"
 
       - name: Install dependencies
-        run: npm install
+        run: ${{ matrix.install }}
 
       - name: Validate package
         run: |
@@ -45,10 +60,12 @@ jobs:
 
       - name: Resolve package version
         id: package
+        env:
+          EXPECTED_NAME: ${{ matrix.package }}
         run: |
           node -e "
             const pkg = require('./package.json')
-            if (pkg.name !== '@openviking/opencode-plugin') {
+            if (pkg.name !== process.env.EXPECTED_NAME) {
               throw new Error('Unexpected package name: ' + pkg.name)
             }
             console.log('name=' + pkg.name)
