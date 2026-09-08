@@ -438,10 +438,80 @@ test("combined hook-host install preserves unrelated hooks and is idempotent", (
   }
 });
 
+// Kimi Code is the one hook host whose config is TOML the installer cannot
+// reserialize: its entries live in a comment-delimited block, so the round trip
+// has to give every other tool's `[[hooks]]` table back unchanged.
+test("kimicode fences its hooks off from the rest of config.toml", () => {
+  const home = mkdtempSync(join(tmpdir(), "openviking-kimicode-hooks-"));
+  try {
+    const kimiHome = join(home, ".kimi-code");
+    const configPath = join(kimiHome, "config.toml");
+    const mcpPath = join(kimiHome, "mcp.json");
+    const seeded = [
+      'model = "kimi-k2"',
+      "",
+      "[[hooks]]",
+      'event = "Stop"',
+      'command = "herdr sync"',
+      "timeout = 15",
+      "",
+      "[[hooks]]",
+      'event = "SessionStart"',
+      'command = "orca notify"',
+      "",
+    ].join("\n");
+    mkdirSync(kimiHome, { recursive: true });
+    writeFileSync(configPath, seeded);
+    writeJson(mcpPath, { mcpServers: { "third-party": { url: "http://127.0.0.1:3000/mcp" } } });
+
+    runInstall(home, "kimicode");
+    runInstall(home, "kimicode");
+
+    const installed = readFileSync(configPath, "utf8");
+    assert.equal(installed.split("# >>> openviking kimicode integration").length - 1, 1, installed);
+    assert.ok(installed.startsWith(seeded.replace(/\n+$/u, "")), installed);
+    assert.match(installed, /command = "herdr sync"/u);
+    assert.match(installed, /command = "orca notify"/u);
+    const commands = [...installed.matchAll(/^command = "(.*openviking-memory)"$/gmu)].map((m) => m[1]);
+    assert.equal(commands.length, 7, installed);
+    for (const command of commands) {
+      const script = /'([^']*\.mjs)'/u.exec(command)?.[1];
+      assert.ok(script, command);
+      assert.ok(existsSync(script), `${script} is missing after install`);
+      assert.ok(command.includes("OPENVIKING_HOOK_SOURCE='kimicode'"), command);
+    }
+    const servers = JSON.parse(readFileSync(mcpPath, "utf8")).mcpServers;
+    assert.equal(servers.openviking.env.OPENVIKING_HOOK_SOURCE, "kimicode");
+    assert.ok(servers["third-party"]);
+
+    // SessionStart observes only on this host: a clean exit and no stdout.
+    const hook = join(home, ".openviking", "agent-integrations", "kimicode", "scripts", "hook.mjs");
+    const smoke = spawnSync(process.execPath, [hook, "session-start", "kimicode"], {
+      env: { ...process.env, HOME: home, OPENVIKING_MEMORY_ENABLED: "0" },
+      input: JSON.stringify({ session_id: "kc-1", hook_event_name: "SessionStart", cwd: home }),
+      encoding: "utf8",
+    });
+    assert.equal(smoke.status, 0, smoke.stderr);
+    assert.equal(smoke.stdout, "");
+
+    runUninstall(home, "kimicode");
+    assert.equal(readFileSync(configPath, "utf8"), seeded.replace(/\n+$/u, "\n"));
+    assert.equal(existsSync(`${configPath}.bak`), false);
+    assert.equal(existsSync(`${mcpPath}.bak`), false);
+    const serversAfter = JSON.parse(readFileSync(mcpPath, "utf8")).mcpServers;
+    assert.equal(Boolean(serversAfter.openviking), false);
+    assert.ok(serversAfter["third-party"]);
+    assert.equal(existsSync(join(home, ".openviking", "agent-integrations", "kimicode")), false);
+    assert.equal(existsSync(join(home, ".openviking", "agent-integrations", "memory-plugin-shared")), false);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 // Installing the thin harnesses together lets one client's verification pass
 // against a directory another client happened to create, so each is installed
 // into a HOME of its own.
-for (const client of ["cursor", "trae", "trae-cn", "zcode"]) {
+for (const client of ["cursor", "trae", "trae-cn", "zcode", "kimicode"]) {
   test(`${client} installs and verifies on its own`, () => {
     const home = mkdtempSync(join(tmpdir(), `openviking-solo-${client}-`));
     try {

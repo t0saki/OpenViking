@@ -10,6 +10,9 @@
  * drifted — the uninstall side learned to reclaim the URI-guard entries and the
  * install side never did, so a rename left a stale guard hook behind.
  *
+ * kimicode keeps its hooks in TOML and gets its own merge next door, but its
+ * rendered commands, its MCP server and its installed manifest come from here.
+ *
  * Installer-only: nothing under lib/ imports it, so it stays out of the runtime
  * closure sync.mjs vendors into the plugins.
  */
@@ -45,9 +48,9 @@ export function readJson(file) {
   return parsed;
 }
 
-function atomicWrite(file, value, { backup = true } = {}) {
+/** Replace a file's text in one rename, keeping a copy of what it held. */
+export function atomicWriteText(file, next, { backup = true } = {}) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  const next = JSON.stringify(value, null, 2) + "\n";
   let previous = "";
   try { previous = fs.readFileSync(file, "utf8"); } catch {}
   if (previous === next) return;
@@ -55,6 +58,10 @@ function atomicWrite(file, value, { backup = true } = {}) {
   const tmp = `${file}.${process.pid}.tmp`;
   fs.writeFileSync(tmp, next, { mode: 0o600 });
   fs.renameSync(tmp, file);
+}
+
+function atomicWrite(file, value, options) {
+  atomicWriteText(file, JSON.stringify(value, null, 2) + "\n", options);
 }
 
 function shellArg(value) {
@@ -102,22 +109,29 @@ function isKnownLegacyOpenVikingServer(value) {
   }
 }
 
-/** Render the host's hook and MCP templates into the user's own config files. */
-export function writeHostJsonConfigs({ kind, hooksPath, mcpPath, root, clientId, nodeBin, sourceMode }) {
+/**
+ * The host directory's package manifest, the env every entry carries, and the
+ * renderer that turns one `hooks.json` command template into a shell command.
+ *
+ * `ownsHook` recognises an installed entry by the env prefix and the trailing
+ * marker this renderer adds, so a host whose config is not JSON reaches for the
+ * same renderer rather than writing a second spelling of the same command.
+ */
+export function readHostIntegration({ root, kind, clientId, nodeBin }) {
   // One plugin serves every config-driven host; `kind` names the host directory
   // this client's configuration templates live in.
   const hostDir = path.join(root, "hosts", kind);
-  const packageManifest = readJson(path.join(hostDir, "openviking.integration.json"));
-  if (packageManifest.id !== "openviking-memory" || !Array.isArray(packageManifest.clients)
-    || !packageManifest.clients.includes(clientId)) {
+  const manifest = readJson(path.join(hostDir, "openviking.integration.json"));
+  if (manifest.id !== "openviking-memory" || !Array.isArray(manifest.clients)
+    || !manifest.clients.includes(clientId)) {
     throw new Error(`Invalid OpenViking integration manifest for ${clientId}`);
   }
-  const integrationEnv = {
-    OPENVIKING_INTEGRATION_ID: packageManifest.id,
-    OPENVIKING_INTEGRATION_VERSION: packageManifest.version,
+  const env = {
+    OPENVIKING_INTEGRATION_ID: manifest.id,
+    OPENVIKING_INTEGRATION_VERSION: manifest.version,
     OPENVIKING_HOOK_SOURCE: clientId,
   };
-  const envPrefix = Object.entries(integrationEnv)
+  const envPrefix = Object.entries(env)
     .map(([key, value]) => `${key}=${shellArg(value)}`)
     .join(" ");
 
@@ -128,6 +142,72 @@ export function writeHostJsonConfigs({ kind, hooksPath, mcpPath, root, clientId,
     const rendered = `${shellArg(nodeBin)} ${shellArg(path.join(root, match[1]))}${args}`;
     return `${envPrefix} ${rendered} # openviking-memory`;
   }
+
+  return { hostDir, manifest, env, envPrefix, renderHookCommand };
+}
+
+/** Upsert this installer's MCP server into a host's `mcpServers` map. */
+export function writeHostMcpServer({ hostDir, mcpPath, root, clientId, nodeBin, env }) {
+  const mcpTemplate = readJson(path.join(hostDir, ".mcp.json"));
+  const templateServer = mcpTemplate.mcpServers?.openviking;
+  if (!templateServer || typeof templateServer !== "object" || Array.isArray(templateServer)) {
+    throw new Error(`Invalid ${clientId} MCP template`);
+  }
+  const mcp = readJson(mcpPath);
+  mcp.mcpServers = mcp.mcpServers && typeof mcp.mcpServers === "object" && !Array.isArray(mcp.mcpServers)
+    ? mcp.mcpServers : {};
+  // Migrate only the exact OpenViking endpoints published by the earlier manual
+  // guides. A coincidentally named third-party server must remain untouched.
+  if (isKnownLegacyOpenVikingServer(mcp.mcpServers["ov-mcp-server"])) {
+    delete mcp.mcpServers["ov-mcp-server"];
+  }
+  mcp.mcpServers.openviking = {
+    ...templateServer,
+    command: nodeBin,
+    args: [path.join(root, "servers", "mcp-proxy.mjs")],
+    env: { ...(templateServer.env || {}), ...env },
+  };
+  atomicWrite(mcpPath, mcp);
+}
+
+/** Record this machine's installation, preserving the first-install timestamp. */
+export function writeInstalledManifest({ root, manifest, clientId, sourceMode, hooksPath, mcpPath }) {
+  const installedManifestPath = path.join(root, "integration.json");
+  const previousManifest = readJson(installedManifestPath);
+  const now = new Date().toISOString();
+  const unchangedInstall = previousManifest.version === manifest.version
+    && previousManifest.source === sourceMode
+    && previousManifest.hooksConfig === hooksPath
+    && previousManifest.mcpConfig === mcpPath;
+  atomicWrite(installedManifestPath, {
+    schemaVersion: 1,
+    id: manifest.id,
+    version: manifest.version,
+    client: clientId,
+    installMode: "managed-native",
+    source: sourceMode,
+    capabilities: manifest.capabilities,
+    hooksConfig: hooksPath,
+    mcpConfig: mcpPath,
+    installedAt: previousManifest.installedAt || now,
+    updatedAt: unchangedInstall ? previousManifest.updatedAt || previousManifest.installedAt || now : now,
+  });
+}
+
+/** Drop this installer's MCP server, leaving one somebody else wrote alone. */
+export function removeHostMcpServer(mcpPath) {
+  const mcp = mcpPath && fs.existsSync(mcpPath) ? readJson(mcpPath) : null;
+  if (!mcp?.mcpServers?.openviking) return;
+  const text = JSON.stringify(mcp.mcpServers.openviking);
+  if (!text.includes("agent-integrations") || !text.includes("mcp-proxy.mjs")) return;
+  delete mcp.mcpServers.openviking;
+  atomicWrite(mcpPath, mcp, { backup: false });
+}
+
+/** Render the host's hook and MCP templates into the user's own config files. */
+export function writeHostJsonConfigs({ kind, hooksPath, mcpPath, root, clientId, nodeBin, sourceMode }) {
+  const { hostDir, manifest, env, renderHookCommand } =
+    readHostIntegration({ root, kind, clientId, nodeBin });
 
   function renderHookValue(value) {
     if (Array.isArray(value)) return value.map(renderHookValue);
@@ -164,47 +244,8 @@ export function writeHostJsonConfigs({ kind, hooksPath, mcpPath, root, clientId,
   }
   atomicWrite(hooksPath, hooksConfig);
 
-  const mcpTemplate = readJson(path.join(hostDir, ".mcp.json"));
-  const templateServer = mcpTemplate.mcpServers?.openviking;
-  if (!templateServer || typeof templateServer !== "object" || Array.isArray(templateServer)) {
-    throw new Error(`Invalid ${clientId} MCP template`);
-  }
-  const mcp = readJson(mcpPath);
-  mcp.mcpServers = mcp.mcpServers && typeof mcp.mcpServers === "object" && !Array.isArray(mcp.mcpServers)
-    ? mcp.mcpServers : {};
-  // Migrate only the exact OpenViking endpoints published by the earlier manual
-  // guides. A coincidentally named third-party server must remain untouched.
-  if (isKnownLegacyOpenVikingServer(mcp.mcpServers["ov-mcp-server"])) {
-    delete mcp.mcpServers["ov-mcp-server"];
-  }
-  mcp.mcpServers.openviking = {
-    ...templateServer,
-    command: nodeBin,
-    args: [path.join(root, "servers", "mcp-proxy.mjs")],
-    env: { ...(templateServer.env || {}), ...integrationEnv },
-  };
-  atomicWrite(mcpPath, mcp);
-
-  const installedManifestPath = path.join(root, "integration.json");
-  const previousManifest = readJson(installedManifestPath);
-  const now = new Date().toISOString();
-  const unchangedInstall = previousManifest.version === packageManifest.version
-    && previousManifest.source === sourceMode
-    && previousManifest.hooksConfig === hooksPath
-    && previousManifest.mcpConfig === mcpPath;
-  atomicWrite(installedManifestPath, {
-    schemaVersion: 1,
-    id: packageManifest.id,
-    version: packageManifest.version,
-    client: clientId,
-    installMode: "managed-native",
-    source: sourceMode,
-    capabilities: packageManifest.capabilities,
-    hooksConfig: hooksPath,
-    mcpConfig: mcpPath,
-    installedAt: previousManifest.installedAt || now,
-    updatedAt: unchangedInstall ? previousManifest.updatedAt || previousManifest.installedAt || now : now,
-  });
+  writeHostMcpServer({ hostDir, mcpPath, root, clientId, nodeBin, env });
+  writeInstalledManifest({ root, manifest, clientId, sourceMode, hooksPath, mcpPath });
 }
 
 /**
@@ -217,7 +258,6 @@ export function writeHostJsonConfigs({ kind, hooksPath, mcpPath, root, clientId,
  */
 export function removeHostJsonConfigs({ hooksPath, mcpPath }) {
   const hooks = fs.existsSync(hooksPath) ? readJson(hooksPath) : null;
-  const mcp = mcpPath && fs.existsSync(mcpPath) ? readJson(mcpPath) : null;
   if (hooks?.hooks && typeof hooks.hooks === "object") {
     for (const event of Object.keys(hooks.hooks)) {
       if (!Array.isArray(hooks.hooks[event])) continue;
@@ -226,13 +266,7 @@ export function removeHostJsonConfigs({ hooksPath, mcpPath }) {
     }
     atomicWrite(hooksPath, hooks, { backup: false });
   }
-  if (mcp?.mcpServers?.openviking) {
-    const text = JSON.stringify(mcp.mcpServers.openviking);
-    if (text.includes("agent-integrations") && text.includes("mcp-proxy.mjs")) {
-      delete mcp.mcpServers.openviking;
-      atomicWrite(mcpPath, mcp, { backup: false });
-    }
-  }
+  removeHostMcpServer(mcpPath);
   for (const file of [hooksPath, mcpPath]) {
     if (file) fs.rmSync(`${file}.bak`, { force: true });
   }
