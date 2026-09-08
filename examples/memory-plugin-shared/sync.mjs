@@ -198,6 +198,11 @@ export async function sharedClosure(seeds) {
   return [...generated].sort();
 }
 
+// The installer reads this file instead of computing the closure itself: it
+// runs against a marketplace archive, a flat layout where this generator finds
+// no plugin sources and would silently resolve an empty list.
+export const MANIFEST_PATH = join(SHARED_DIR, "MANIFEST");
+
 /** The closure the installer has to assemble for the harnesses that vendor nothing. */
 export async function assembledClosure() {
   const seeds = new Set();
@@ -257,6 +262,12 @@ async function copySharedFile(file, targetDir, typed) {
   }
 }
 
+async function writeManifest(files) {
+  const staging = `${MANIFEST_PATH}.${process.pid}.tmp`;
+  await writeFile(staging, files.map((file) => `${file}\n`).join(""), "utf-8");
+  await rename(staging, MANIFEST_PATH);
+}
+
 async function copySkill(skill, targetDir) {
   const sourceDir = join(SKILLS_DIR, skill);
   for (const file of (await readdir(sourceDir)).sort()) {
@@ -291,7 +302,11 @@ async function main() {
     }
   }
 
-  for (const file of await assembledClosure()) claimed.add(file);
+  const assembled = await assembledClosure();
+  await writeManifest(assembled);
+  process.stdout.write(`wrote ${relative(ROOT, MANIFEST_PATH)}\n`);
+  for (const file of assembled) claimed.add(file);
+
   const unclaimed = (await readdir(SHARED_DIR))
     .filter((file) => file.endsWith(".mjs") && !claimed.has(file))
     .sort();

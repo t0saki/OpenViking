@@ -2003,26 +2003,28 @@ copy_agent_integration() { # copy_agent_integration <source-subdir> <dest-name>
 # Assemble a self-contained installation by adding the canonical shared runtime
 # at install time instead of committing generated copies for every client.
 assemble_agent_integration() { # assemble_agent_integration <source-subdir> <dest-name>
-  local source_subdir="$1" dest_name="$2" root shared shared_dest file
+  local source_subdir="$1" dest_name="$2" root shared shared_dest manifest file
   root="$(copy_agent_integration "$source_subdir" "$dest_name")" || return 1
   shared="$(plugin_dir_on_disk memory-plugin-shared)" || {
     err "$(t 'Shared agent runtime not found.' '未找到共享 Agent 运行时。')"
     return 1
   }
   shared_dest="$OV_HOME/agent-integrations/memory-plugin-shared/lib"
+  # The closure of what cursor, trae and zcode import, written by sync.mjs and
+  # shipped beside the modules. Regenerating it here is not an option: the
+  # generator finds no plugin sources in a flat marketplace archive.
+  manifest="$shared/lib/MANIFEST"
+  [ -s "$manifest" ] || {
+    err "$(t 'Shared runtime manifest is missing or empty:' '共享运行时清单缺失或为空：') $manifest"
+    return 1
+  }
   rm -rf "$shared_dest.tmp"
   mkdir -p "$shared_dest.tmp"
-  # The closure of what cursor, trae and zcode import; install-lib-closure.test.mjs
-  # derives it from those imports and fails when this list drifts.
-  for file in \
-    agent-hook-runtime.mjs agent-uri-guard.mjs async-writer.mjs batch-send.mjs \
-    capture-utils.mjs config-schema.mjs credentials.mjs debug-log.mjs \
-    mcp-proxy-config.mjs mcp-proxy-core.mjs pending-queue.mjs plugin-config.mjs \
-    profile-inject.mjs recall-compress-core.mjs recall-core.mjs retryable.mjs \
-    session-model.mjs uri-guard.mjs workspace-config.mjs workspace-identity.mjs \
-    workspace-peer.mjs workspace-registry.mjs; do
-    cp "$shared/lib/$file" "$shared_dest.tmp/$file"
-  done
+  while read -r file || [ -n "$file" ]; do
+    [ -n "$file" ] || continue
+    cp "$shared/lib/$file" "$shared_dest.tmp/$file" || return 1
+  done < "$manifest"
+  cp "$manifest" "$shared_dest.tmp/MANIFEST"
   rm -rf "$shared_dest"
   mkdir -p "$(dirname "$shared_dest")"
   mv "$shared_dest.tmp" "$shared_dest"
