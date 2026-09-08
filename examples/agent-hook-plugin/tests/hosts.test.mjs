@@ -5,6 +5,8 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 import { HOSTS } from "../hosts/index.mjs";
+import { buildKimicodeCapturePlan, kimicodeTurnDedupKey } from "../hosts/kimicode-capture.mjs";
+import { buildZcodeCapturePlan, zcodeTurnDedupKey } from "../hosts/zcode-capture.mjs";
 import { CLIENTS } from "../scripts/ov-memory-doctor.mjs";
 
 const pluginRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -44,6 +46,18 @@ test("the doctor's client table names exactly the clients this plugin serves", (
   // through to another client's spec, so the first thing a user runs when
   // memory misbehaves checks another host's files and tells them to install it.
   assert.deepEqual(Object.keys(CLIENTS).sort(), Object.keys(HOSTS).sort());
+});
+
+test("the hosts with a turn-id transcript share one capture plan", () => {
+  // ZCode and Kimi Code differ only in the cleaner their pending-prompt match
+  // uses. Forking the plan again would let the dedup key, the acknowledged
+  // cursor and the truncation rules drift apart one host at a time.
+  assert.equal(zcodeTurnDedupKey, kimicodeTurnDedupKey);
+  const turns = [
+    { role: "user", content: "question", turnId: "turn-001" },
+    { role: "assistant", content: "answer", turnId: "turn-001" },
+  ];
+  assert.deepEqual(buildZcodeCapturePlan(turns, {}), buildKimicodeCapturePlan(turns, {}));
 });
 
 test("every adapter answers the four things the shared entry asks of it", () => {
