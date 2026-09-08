@@ -41,13 +41,13 @@ const LOADERS = {
   dsh: {
     harness: "dsh",
     load: (cwd) => loadDsh({}, process.env, cwd),
-    options: { version: "0.4.0", deriveEffectivePeer: true },
+    options: { version: "0.5.0", deriveEffectivePeer: true },
     owns: ["peerId"],
   },
   pi: {
     harness: "pi",
     load: (cwd) => loadPi(cwd),
-    options: { version: "0.3.0", deriveEffectivePeer: true },
+    options: { version: "0.4.0", deriveEffectivePeer: true },
     owns: ["peerId"],
   },
   cursor: { harness: "cursor", load: (cwd) => loadAgentHookConfig("cursor", cwd), options: { logFile: "cursor-hooks.log" }, owns: [] },
