@@ -61,6 +61,35 @@ test("initialization queues capture only when the failure is retryable", async (
   }
 });
 
+test("existing OpenViking sessions are reusable on DSH resume", async () => {
+  const pendingDir = await mkdtemp(join(tmpdir(), "dsh-memory-resume-"));
+  tempDirs.push(pendingDir);
+  process.env.OPENVIKING_PENDING_DIR = pendingDir;
+
+  const runtime = new OpenVikingRuntime({
+    async healthResult() {
+      return { ok: true };
+    },
+    async ensureSessionResult() {
+      return {
+        ok: false,
+        status: 409,
+        error: { code: "ALREADY_EXISTS", message: "session exists" },
+      };
+    },
+    async fetchJSON() {
+      return { ok: false, status: 503, error: { code: "UNAVAILABLE" } };
+    },
+  }, config(), { debug() {} });
+
+  const state = await runtime.initialize({
+    session: { id: "resume", header: { cwd: "/workspace" } },
+  });
+
+  assert.equal(state.ready, true);
+  assert.equal(state.initializationRetryable, false);
+});
+
 test("a retryable threshold commit failure is queued", async () => {
   const pendingDir = await mkdtemp(join(tmpdir(), "dsh-memory-commit-"));
   tempDirs.push(pendingDir);
