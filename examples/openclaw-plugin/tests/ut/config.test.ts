@@ -1,9 +1,23 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { memoryOpenVikingConfigSchema } from "../../config.js";
 
+/** Points the shared credential layer at nothing, so these assertions read the plugin's own defaults. */
+function withoutSharedCredentialFiles(): void {
+  process.env.OPENVIKING_CLI_CONFIG_FILE = join(tmpdir(), "openviking-absent-ovcli.conf");
+  process.env.OPENVIKING_CONFIG_FILE = join(tmpdir(), "openviking-absent-ov.conf");
+}
+
 describe("memoryOpenVikingConfigSchema.parse()", () => {
   const originalEnv = { ...process.env };
+
+  beforeEach(() => {
+    withoutSharedCredentialFiles();
+  });
 
   afterEach(() => {
     process.env = { ...originalEnv };
@@ -449,6 +463,10 @@ describe("memoryOpenVikingConfigSchema.parse() — apiKey SecretRef (#3522)", ()
   const originalEnv = { ...process.env };
   let tmpDir: string | undefined;
 
+  beforeEach(() => {
+    withoutSharedCredentialFiles();
+  });
+
   afterEach(async () => {
     process.env = { ...originalEnv };
     vi.restoreAllMocks();
@@ -530,5 +548,74 @@ describe("memoryOpenVikingConfigSchema.parse() — apiKey SecretRef (#3522)", ()
     // Completely missing → env fallback kicks in.
     const cfg2 = memoryOpenVikingConfigSchema.parse({});
     expect(cfg2.apiKey).toBe("fallback-key");
+  });
+});
+
+describe("memoryOpenVikingConfigSchema.parse() — shared credential files", () => {
+  const originalEnv = { ...process.env };
+  let credentialDir = "";
+
+  beforeEach(() => {
+    credentialDir = mkdtempSync(join(tmpdir(), "openviking-openclaw-credentials-"));
+    writeFileSync(
+      join(credentialDir, "ovcli.conf"),
+      JSON.stringify({
+        url: "https://ovcli.example.com",
+        api_key: "ovcli-key",
+        account: "ovcli-account",
+        user: "ovcli-user",
+      }),
+    );
+    process.env.OPENVIKING_CLI_CONFIG_FILE = join(credentialDir, "ovcli.conf");
+    process.env.OPENVIKING_CONFIG_FILE = join(credentialDir, "absent-ov.conf");
+  });
+
+  afterEach(() => {
+    process.env = { ...originalEnv };
+    rmSync(credentialDir, { recursive: true, force: true });
+  });
+
+  it("takes baseUrl, apiKey, accountId and userId from ovcli.conf when openclaw.json has none", () => {
+    const cfg = memoryOpenVikingConfigSchema.parse({});
+    expect(cfg.baseUrl).toBe("https://ovcli.example.com");
+    expect(cfg.apiKey).toBe("ovcli-key");
+    expect(cfg.accountId).toBe("ovcli-account");
+    expect(cfg.userId).toBe("ovcli-user");
+  });
+
+  it("keeps openclaw.json above ovcli.conf", () => {
+    const cfg = memoryOpenVikingConfigSchema.parse({
+      baseUrl: "https://plugin.example.com",
+      apiKey: "plugin-key",
+      accountId: "plugin-account",
+      userId: "plugin-user",
+    });
+    expect(cfg.baseUrl).toBe("https://plugin.example.com");
+    expect(cfg.apiKey).toBe("plugin-key");
+    expect(cfg.accountId).toBe("plugin-account");
+    expect(cfg.userId).toBe("plugin-user");
+  });
+
+  it("keeps the OPENVIKING_* env spellings above ovcli.conf", () => {
+    process.env.OPENVIKING_BASE_URL = "https://env.example.com";
+    process.env.OPENVIKING_API_KEY = "env-key";
+    process.env.OPENVIKING_ACCOUNT_ID = "env-account";
+    process.env.OPENVIKING_USER_ID = "env-user";
+
+    const cfg = memoryOpenVikingConfigSchema.parse({});
+    expect(cfg.baseUrl).toBe("https://env.example.com");
+    expect(cfg.apiKey).toBe("env-key");
+    expect(cfg.accountId).toBe("env-account");
+    expect(cfg.userId).toBe("env-user");
+  });
+
+  it("pins the credential chain to ovcli.conf on OPENVIKING_CREDENTIAL_SOURCE=cli", () => {
+    process.env.OPENVIKING_CREDENTIAL_SOURCE = "cli";
+    process.env.OPENVIKING_API_KEY = "env-key";
+
+    const cfg = memoryOpenVikingConfigSchema.parse({});
+    expect(cfg.apiKey).toBe("ovcli-key");
+    expect(cfg.baseUrl).toBe("https://ovcli.example.com");
+    expect(cfg.accountId).toBe("ovcli-account");
   });
 });

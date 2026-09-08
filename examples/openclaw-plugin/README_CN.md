@@ -185,6 +185,12 @@ OpenViking 会把受管的 `peers/` 容器作为用户 namespace 的一部分初
 - 新安装默认 `peer_role=none`
 - `accountId` / `userId` 仅在部署需要显式身份 header 时作为高级选项使用，例如 root key 或 trusted server 流程
 
+### 凭据来自哪里
+
+`openclaw.json` 是最上层，其次是 `OPENVIKING_*` 环境变量，仍为空的字段回退到各 OpenViking 插件共用的凭据文件：先 `~/.openviking/ovcli.conf`，再 `ov.conf` 的 `openclaw` 段与 `server.root_api_key`。已经执行过 `ov login` 的机器因此不必在插件配置里再写 `baseUrl`、`apiKey`、`accountId`、`userId`。
+
+`OPENVIKING_CREDENTIAL_SOURCE=cli` 把这条共享链钉在 `ovcli.conf` 上，即使设置了 `OPENVIKING_API_KEY`，key 也取自该文件，与其他 harness 一致。
+
 ### User namespace
 
 插件通过 `viking://user/...` 写入和检索 user-scoped memory；OpenViking 会根据请求里的租户身份和 actor peer context 解析这个别名。legacy agent URI namespace 已由 OpenViking 废弃，插件不再使用。
@@ -346,7 +352,7 @@ Recall trace 默认关闭。可通过插件配置 `traceRecall`、`traceRecallPe
 
 插件仅以远程模式运行，作为纯 HTTP 客户端：
 
-- `baseUrl` 和可选 `apiKey` 由插件配置提供
+- `baseUrl` 和可选 `apiKey` 由插件配置、`OPENVIKING_*` 环境变量或共享的 `~/.openviking` 凭据文件提供
 - 不会启动或管理本地子进程
 - session context、memory search/read、commit、archive expand 这些行为保持不变
 

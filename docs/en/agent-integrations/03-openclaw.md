@@ -128,6 +128,8 @@ openclaw config set plugins.entries.openviking.config.baseUrl http://your-server
 openclaw config set plugins.entries.openviking.config.apiKey your-api-key
 ```
 
+`baseUrl` and `apiKey` (and the advanced `accountId` / `userId`) may be left out entirely: what the plugin config and the `OPENVIKING_*` environment variables leave empty falls back to the shared credential files — `~/.openviking/ovcli.conf` first, then the `openclaw` block of `ov.conf` and `server.root_api_key` — so a machine that already ran `ov login` is configured. `OPENVIKING_CREDENTIAL_SOURCE=cli` pins that chain to `ovcli.conf`, as on every other harness.
+
 </details>
 
 ## Uninstall

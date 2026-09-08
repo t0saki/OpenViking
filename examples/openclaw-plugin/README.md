@@ -157,6 +157,12 @@ In this setup:
 - new installs default to `peer_role=none`
 - `accountId` / `userId` are advanced options only when the deployment needs explicit identity headers, such as root-key or trusted-server flows
 
+### Where credentials come from
+
+`openclaw.json` is the top layer, the `OPENVIKING_*` environment variables come next, and whatever is still empty falls back to the credential files every OpenViking plugin shares: `~/.openviking/ovcli.conf` first, then the `openclaw` block of `ov.conf` and `server.root_api_key`. A machine that already ran `ov login` therefore needs no `baseUrl`, `apiKey`, `accountId` or `userId` in the plugin config at all.
+
+`OPENVIKING_CREDENTIAL_SOURCE=cli` pins the shared chain to `ovcli.conf`, so the key comes from that file even while `OPENVIKING_API_KEY` is set, exactly as on the other harnesses.
+
 ### User namespace
 
 The plugin writes and searches user-scoped memory through `viking://user/...`; OpenViking resolves that alias from the request tenant and actor-peer context. Deprecated agent URI paths are not used by the plugin.
@@ -294,7 +300,7 @@ For HTTP safety, the plugin never sends a direct local filesystem path to the Op
 
 The plugin operates exclusively in remote mode as a pure HTTP client:
 
-- `baseUrl` and optional `apiKey` come from plugin config
+- `baseUrl` and optional `apiKey` come from plugin config, the `OPENVIKING_*` environment variables, or the shared `~/.openviking` credential files
 - no local subprocess is started or managed
 - session context, memory search/read, commit, and archive expansion behavior stays the same
 

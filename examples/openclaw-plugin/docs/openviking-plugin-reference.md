@@ -71,6 +71,8 @@ $OPENCLAW_STATE_DIR/openclaw.json
 | `userId` | string | 空 | `OPENVIKING_USER_ID` | 高级租户路由字段；请求时写入 `X-OpenViking-User`。Root key 或 trusted 部署通常需要。 |
 | `timeoutMs` | number | `15000` | — | OpenViking HTTP 请求超时，最低会 clamp 到 `1000`。 |
 
+`baseUrl` / `apiKey` / `accountId` / `userId` 在插件配置和上表环境变量都为空时，回退到各 OpenViking 插件共用的凭据文件：先 `~/.openviking/ovcli.conf`，再 `ov.conf` 的 `openclaw` 段与 `server.root_api_key`。执行过 `ov login` 的机器不必在 `openclaw.json` 里重复这些字段；`OPENVIKING_CREDENTIAL_SOURCE=cli` 会把这条共享链钉在 `ovcli.conf` 上，即使设置了 `OPENVIKING_API_KEY` 也从该文件取 key。
+
 ### 3.2 Peer 身份与数据面路由
 
 | 参数 | 类型 | 默认值 | 环境变量 | 说明 |

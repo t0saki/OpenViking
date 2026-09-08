@@ -810,6 +810,8 @@ openclaw config get plugins.slots.contextEngine
 | `OPENVIKING_PEER_ROLE` | `peer_role` | 安装脚本/setup 写入的记忆归属（`none` / `assistant` / `sender`；兼容旧值 `person`） |
 | `OPENVIKING_PEER_PREFIX` | `peer_prefix` | 安装脚本/setup 写入的 assistant peer 前缀 |
 | `OPENVIKING_RECALL_RESOURCES` | `recallResources` | 是否把 resources 纳入自动召回和默认 memory_recall |
+| `OPENVIKING_CREDENTIAL_SOURCE` | 共享凭据链 | 设为 `cli` 时，`baseUrl` / `apiKey` / `accountId` / `userId` 的兜底只认 `ovcli.conf`；默认 `auto`。别名 `OPENVIKING_CREDENTIALS_SOURCE` |
+| `OPENVIKING_CLI_CONFIG_FILE` | 共享凭据链 | 指定 `ovcli.conf` 路径，默认 `~/.openviking/ovcli.conf` |
 | `OPENVIKING_LOG_ROUTING` | `logFindRequests` | 打开检索/路由日志 |
 | `OPENVIKING_DEBUG` | `logFindRequests` | 同时作为调试总开关，当前也会打开 routing/find 日志 |
 
@@ -903,7 +905,8 @@ export OPENVIKING_RECALL_RESOURCES=1
 1. **显式工具参数优先**：例如 `memory_recall(limit=3, scoreThreshold=0.4, targetUri=...)`、`/ov-search --limit 20 --uri ...` 会优先覆盖默认配置：`index.ts:1046`、`index.ts:1050`、`index.ts:1054`、`index.ts:824`、`index.ts:408`
 2. **插件配置文件其次**：`plugins.entries.openviking.config.*`
 3. **环境变量补默认值**：只对少数支持 env 的项生效，如 `OPENVIKING_BASE_URL`、`OPENVIKING_API_KEY`、`OPENVIKING_RECALL_RESOURCES`：`config.ts:139`、`config.ts:202`、`config.ts:284`
-4. **代码默认值兜底**：例如 `recallLimit=6`、`recallScoreThreshold=0.15`、`recallMaxInjectedChars=4000`：`config.ts:63`、`config.ts:64`、`config.ts:67`
+4. **共享凭据文件兜底**：`baseUrl` / `apiKey` / `accountId` / `userId` 仍为空时，回退到各 OpenViking 插件共用的 `~/.openviking/ovcli.conf`，再到 `ov.conf` 的 `openclaw` 段与 `server.root_api_key`；只覆盖这四个连接字段，行为类配置不受影响
+5. **代码默认值兜底**：例如 `recallLimit=6`、`recallScoreThreshold=0.15`、`recallMaxInjectedChars=4000`：`config.ts:63`、`config.ts:64`、`config.ts:67`
 
 ### 9.5 搜索相关配置的排查建议
 

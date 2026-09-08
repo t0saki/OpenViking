@@ -128,6 +128,8 @@ openclaw config set plugins.entries.openviking.config.baseUrl http://your-server
 openclaw config set plugins.entries.openviking.config.apiKey your-api-key
 ```
 
+`baseUrl`、`apiKey`（以及高级选项 `accountId` / `userId`）也可以完全不写：插件配置与 `OPENVIKING_*` 环境变量都为空的字段，会回退到共享凭据文件——先 `~/.openviking/ovcli.conf`，再 `ov.conf` 的 `openclaw` 段与 `server.root_api_key`，所以执行过 `ov login` 的机器已经配置好了。`OPENVIKING_CREDENTIAL_SOURCE=cli` 会把这条链钉在 `ovcli.conf` 上，与其他 harness 一致。
+
 </details>
 
 ## 卸载

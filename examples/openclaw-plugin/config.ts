@@ -2,6 +2,7 @@ import { homedir } from "node:os";
 import { readFileSync } from "node:fs";
 
 import { getEnv } from "./runtime-utils.js";
+import { resolveOpenVikingCredentials } from "./shared/credentials.mjs";
 
 /**
  * Subset of OpenClaw's standard `SecretRef` shape supported by the OpenViking
@@ -496,12 +497,57 @@ function assertAllowedKeys(value: Record<string, unknown>, allowed: string[], la
   throw new Error(`${label} has unknown keys: ${unknown.join(", ")}`);
 }
 
-function resolveDefaultBaseUrl(): string {
+/**
+ * The `~/.openviking` credential files every OpenViking plugin shares, read as
+ * the layer under `openclaw.json`: a machine that already ran `ov login` gets a
+ * working plugin without repeating the server, the key and the tenant in the
+ * OpenClaw config. `resolveOpenVikingCredentials` owns the chain inside that
+ * layer (`ovcli.conf`, then ov.conf's `openclaw` block, then `root_api_key`)
+ * along with `OPENVIKING_CREDENTIAL_SOURCE` pinning.
+ */
+type OpenVikingFallbackCredentials = {
+  baseUrl: string;
+  apiKey: string;
+  account: string;
+  user: string;
+};
+
+const EMPTY_FALLBACK_CREDENTIALS: OpenVikingFallbackCredentials = {
+  baseUrl: "",
+  apiKey: "",
+  account: "",
+  user: "",
+};
+
+/** Reads the credential files at most once per parse, and only when something is missing. */
+function createFallbackCredentialsReader(): () => OpenVikingFallbackCredentials {
+  let cached: OpenVikingFallbackCredentials | null = null;
+  return () => {
+    if (!cached) {
+      try {
+        const resolved = resolveOpenVikingCredentials(process.env, "openclaw");
+        cached = {
+          baseUrl: resolved.baseUrl,
+          apiKey: resolved.apiKey,
+          account: resolved.account,
+          user: resolved.user,
+        };
+      } catch {
+        // A broken shared config must not take the plugin down with it: the
+        // OpenClaw config alone is still a complete configuration.
+        cached = EMPTY_FALLBACK_CREDENTIALS;
+      }
+    }
+    return cached;
+  };
+}
+
+function resolveDefaultBaseUrl(fallback: () => OpenVikingFallbackCredentials): string {
   const fromEnv = getEnv("OPENVIKING_BASE_URL") || getEnv("OPENVIKING_URL");
   if (fromEnv) {
     return fromEnv;
   }
-  return DEFAULT_BASE_URL;
+  return fallback().baseUrl || DEFAULT_BASE_URL;
 }
 
 export const memoryOpenVikingConfigSchema = {
@@ -577,16 +623,20 @@ export const memoryOpenVikingConfigSchema = {
     const mode = "remote" as const;
     const peerRole = resolvePeerRole(cfg.peer_role);
     const peerPrefix = resolvePeerPrefix(cfg.peer_prefix);
-    const rawBaseUrl = typeof cfg.baseUrl === "string" ? cfg.baseUrl : resolveDefaultBaseUrl();
+    const fallbackCredentials = createFallbackCredentialsReader();
+    const rawBaseUrl =
+      typeof cfg.baseUrl === "string" ? cfg.baseUrl : resolveDefaultBaseUrl(fallbackCredentials);
     const resolvedBaseUrl = resolveEnvVars(rawBaseUrl).replace(/\/+$/, "");
-    // Support plain string, SecretRef object, and OPENVIKING_API_KEY fallback.
+    // Support plain string, SecretRef object, and the shared credential files.
     // A user writing a SecretRef has explicitly opted out of the bare env
     // interpolation path, so the fallback kicks in only when nothing is
-    // configured at all (matches existing behaviour).
+    // configured at all (matches existing behaviour). The shared layer is what
+    // reads OPENVIKING_API_KEY, so pinning it with OPENVIKING_CREDENTIAL_SOURCE
+    // works here exactly as it does on the other harnesses.
     const rawApiKey: string | OpenVikingSecretRef | undefined =
       cfg.apiKey !== undefined && cfg.apiKey !== null
         ? (cfg.apiKey as string | OpenVikingSecretRef)
-        : getEnv("OPENVIKING_API_KEY") || undefined;
+        : fallbackCredentials().apiKey || undefined;
     const captureMode = cfg.captureMode;
     if (
       typeof captureMode !== "undefined" &&
@@ -599,11 +649,11 @@ export const memoryOpenVikingConfigSchema = {
     const accountId =
       typeof cfg.accountId === "string" && cfg.accountId.trim()
         ? cfg.accountId.trim()
-        : (getEnv("OPENVIKING_ACCOUNT_ID")?.trim() || "");
+        : (getEnv("OPENVIKING_ACCOUNT_ID")?.trim() || fallbackCredentials().account);
     const userId =
       typeof cfg.userId === "string" && cfg.userId.trim()
         ? cfg.userId.trim()
-        : (getEnv("OPENVIKING_USER_ID")?.trim() || "");
+        : (getEnv("OPENVIKING_USER_ID")?.trim() || fallbackCredentials().user);
 
     const recallMaxInjectedChars = Math.max(
       100,
