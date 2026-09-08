@@ -58,8 +58,13 @@ test("release marketplace archive supports a ZCode TOS install", () => {
     assert.equal(installed.status, 0, `${installed.stdout}\n${installed.stderr}`);
 
     const integrationRoot = join(home, ".openviking", "agent-integrations", "zcode");
-    assert.ok(existsSync(join(integrationRoot, "scripts", "zcode-hook.mjs")));
-    assert.ok(existsSync(join(integrationRoot, "scripts", "zcode-capture.mjs")));
+    assert.ok(existsSync(join(integrationRoot, "scripts", "hook.mjs")));
+    assert.ok(existsSync(join(integrationRoot, "hosts", "zcode.mjs")));
+    assert.ok(existsSync(join(integrationRoot, "hosts", "zcode-capture.mjs")));
+    // An installation is for one client: the other hosts' configuration
+    // directories are not copied with it.
+    assert.equal(existsSync(join(integrationRoot, "hosts", "zcode", "hooks.json")), true);
+    assert.equal(existsSync(join(integrationRoot, "hosts", "cursor")), false);
     // ZCode imports the runtime the installer assembles beside it, the way
     // cursor and trae do, rather than a copy committed into its own tree.
     const sharedRoot = join(home, ".openviking", "agent-integrations", "memory-plugin-shared", "lib");
@@ -105,6 +110,9 @@ test("staging rejects an archive missing a generated shared copy", () => {
     const stage = join(tmp, "memory-plugin-marketplace");
     const staged = run("bash", [stageScript, stage]);
     assert.equal(staged.status, 0, `${staged.stdout}\n${staged.stderr}`);
+    const stagedDirs = readdirSync(stage, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name);
 
     const generated = [
       join("opencode-plugin", "lib", "shared", "plugin-config.mjs"),
@@ -115,7 +123,7 @@ test("staging rejects an archive missing a generated shared copy", () => {
     }
 
     rmSync(join(stage, generated[0]));
-    const rechecked = run("node", [archiveCheck, stage]);
+    const rechecked = run("node", [archiveCheck, stage, ...stagedDirs]);
     assert.equal(rechecked.status, 1, `${rechecked.stdout}\n${rechecked.stderr}`);
     assert.match(rechecked.stderr, /opencode-plugin\/lib\/shared\/plugin-config\.mjs/);
   } finally {

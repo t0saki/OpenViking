@@ -60,12 +60,12 @@ jobs:
             examples/claude-code-memory-plugin/scripts/uri-guard.test.mjs \
             examples/claude-code-memory-plugin/scripts/lib/pending-queue.test.mjs \
             examples/claude-code-memory-plugin/scripts/lib/recall-core-timeout.test.mjs \
-            examples/cursor-memory-plugin/scripts/cursor-plugin.test.mjs \
-            examples/trae-memory-hooks/scripts/trae-hooks.test.mjs \
-            examples/zcode-memory-plugin/scripts/zcode-async.test.mjs \
-            examples/zcode-memory-plugin/scripts/zcode-capture.test.mjs \
-            examples/zcode-memory-plugin/scripts/zcode-hooks.test.mjs \
-            examples/zcode-memory-plugin/scripts/zcode-turns.test.mjs \
+            examples/agent-hook-plugin/tests/cursor.test.mjs \
+            examples/agent-hook-plugin/tests/trae.test.mjs \
+            examples/agent-hook-plugin/tests/zcode.test.mjs \
+            examples/agent-hook-plugin/tests/zcode-async.test.mjs \
+            examples/agent-hook-plugin/tests/zcode-capture.test.mjs \
+            examples/agent-hook-plugin/tests/zcode-turns.test.mjs \
             examples/memory-plugin-shared/agent-hook-runtime.test.mjs \
             examples/memory-plugin-shared/batch-send.test.mjs \
             examples/memory-plugin-shared/doctor-core.test.mjs \

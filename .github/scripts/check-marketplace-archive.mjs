@@ -22,7 +22,7 @@ import {
 const EXAMPLES = join(ROOT, "examples");
 
 // Manifests a host reads by name to find everything else.
-const HOST_MANIFESTS = ["openviking.integration.json", ".mcp.json", join("hooks", "hooks.json")];
+const HOST_MANIFESTS = ["openviking.integration.json", ".mcp.json", "hooks.json", join("hooks", "hooks.json")];
 
 // Directories a host loads whole; what is inside them is named nowhere.
 const CONTENT_DIRS = ["skills", "rules", "commands"];
@@ -101,23 +101,37 @@ async function importClosure(entries) {
   return reached;
 }
 
+/**
+ * Where one plugin's host manifests sit: its own root, plus a directory per host
+ * for a plugin that serves several of them.
+ */
+async function manifestRoots(root) {
+  const roots = [root];
+  for (const entry of await readdir(join(root, "hosts"), { withFileTypes: true }).catch(() => [])) {
+    if (entry.isDirectory()) roots.push(join(root, "hosts", entry.name));
+  }
+  return roots;
+}
+
 /** The manifests, entrypoints and content one staged plugin directory owes. */
 async function pluginRequirements(root) {
   const required = new Set();
   const entrypoints = new Set();
 
   for (const entry of await readdir(root, { withFileTypes: true }).catch(() => [])) {
-    // `.cursor-plugin/`, `.claude-plugin/`, `.codex-plugin/`, `.zcode-plugin/`:
-    // the host's own manifest directory, always small and always shipped whole.
+    // `.claude-plugin/`, `.codex-plugin/`: the host's own manifest directory,
+    // always small and always shipped whole.
     if (entry.isDirectory() && entry.name.startsWith(".")) {
       for (const file of await filesUnder(join(root, entry.name))) required.add(file);
     }
   }
-  for (const manifest of HOST_MANIFESTS) {
-    if (await isFile(join(root, manifest))) required.add(join(root, manifest));
-  }
-  for (const dir of CONTENT_DIRS) {
-    for (const file of await filesUnder(join(root, dir))) required.add(file);
+  for (const host of await manifestRoots(root)) {
+    for (const manifest of HOST_MANIFESTS) {
+      if (await isFile(join(host, manifest))) required.add(join(host, manifest));
+    }
+    for (const dir of CONTENT_DIRS) {
+      for (const file of await filesUnder(join(host, dir))) required.add(file);
+    }
   }
 
   for (const file of [...required]) {
@@ -142,7 +156,7 @@ async function pluginRequirements(root) {
 export async function requiredArchiveFiles(stagedNames) {
   const staged = new Set(stagedNames);
   const required = new Set();
-  // cursor, trae and zcode import the shared runtime across the plugin
+  // The config-driven hook hosts import the shared runtime across the plugin
   // boundary; anything outside the staged tree is not this archive's.
   const addIfStaged = (path) => {
     const name = relative(EXAMPLES, path);
@@ -178,13 +192,12 @@ export async function requiredArchiveFiles(stagedNames) {
   return [...required].sort();
 }
 
-async function main(stage) {
-  const staged = (await readdir(stage, { withFileTypes: true }))
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => entry.name);
-
+async function main(stage, expected) {
   const missing = [];
-  for (const file of await requiredArchiveFiles(staged)) {
+  for (const name of expected) {
+    if (!(await isDirectory(join(stage, name)))) missing.push(`${name}/`);
+  }
+  for (const file of await requiredArchiveFiles(expected)) {
     if (!(await isFile(join(stage, file)))) missing.push(file);
   }
   if (missing.length) {
@@ -194,12 +207,15 @@ async function main(stage) {
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
-  const stage = process.argv[2];
-  if (!stage) {
-    process.stderr.write("usage: check-marketplace-archive.mjs <stage-dir>\n");
+  const [stage, ...expected] = process.argv.slice(2);
+  // The expected directories are the caller's list, not the stage's own: a name
+  // dropped from it would otherwise leave both this check and the staging script
+  // agreeing that whatever happens to be there is complete.
+  if (!stage || !expected.length) {
+    process.stderr.write("usage: check-marketplace-archive.mjs <stage-dir> <plugin-dir>...\n");
     process.exit(2);
   }
-  main(stage).catch((err) => {
+  main(stage, expected).catch((err) => {
     process.stderr.write(`${err?.stack || err}\n`);
     process.exit(1);
   });

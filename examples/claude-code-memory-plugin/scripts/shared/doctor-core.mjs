@@ -1194,14 +1194,18 @@ const TIMEOUT_LABELS = { timeoutMs: "request", recallTimeoutMs: "recall", captur
  * event to the knob that governs the request inside it, so each harness names
  * the knob its own recall and capture paths actually read — a request that
  * outlives its hook is killed by the host before it can answer.
+ *
+ * `hooksTemplate` names the template when it does not sit at the plugin root,
+ * and an entry states its timeout either directly or one nesting level down.
  */
-export function reportTimeouts(report, cfg, { pluginRoot = "", launcherHint = "the harness", timeoutBudgets = {} } = {}) {
+export function reportTimeouts(report, cfg, { pluginRoot = "", hooksTemplate = "", launcherHint = "the harness", timeoutBudgets = {} } = {}) {
   const knobs = [...new Set(["timeoutMs", ...Object.values(timeoutBudgets)])];
   report.info(`timeouts ${knobs.map((knob) => `${cfg[knob]}ms ${TIMEOUT_LABELS[knob] || knob}`).join(", ")}; recall limit ${cfg.recallLimit}, threshold ${cfg.scoreThreshold}`);
 
-  const hooks = tryJson(join(pluginRoot, "hooks", "hooks.json"))?.hooks || {};
+  const hooks = tryJson(hooksTemplate || join(pluginRoot, "hooks", "hooks.json"))?.hooks || {};
   for (const [event, knob] of Object.entries(timeoutBudgets)) {
-    const budget = Number(hooks[event]?.[0]?.hooks?.[0]?.timeout) * 1000 || 0;
+    const entry = hooks[event]?.[0];
+    const budget = Number(entry?.hooks?.[0]?.timeout ?? entry?.timeout) * 1000 || 0;
     if (!budget || !(cfg[knob] > budget)) continue;
     report.warn(`${TIMEOUT_LABELS[knob] || knob} timeout ${cfg[knob]}ms exceeds the ${event} hook budget ${budget}ms`,
       `${launcherHint} kills the hook before the request can finish`,

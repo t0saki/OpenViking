@@ -22,9 +22,8 @@ const OV = join(homedir(), ".openviking", "ov.conf");
 // Every stdio MCP entrypoint in the tree, discovered rather than listed so a
 // new harness cannot ship a proxy that skips the shared shaping. The count is
 // pinned because a renamed directory would otherwise empty the loop and turn
-// the assertions below into a no-op. Stage 6b's thin-harness merge lowers it
-// to 6.
-const MCP_PROXY_COUNT = 8;
+// the assertions below into a no-op.
+const MCP_PROXY_COUNT = 6;
 
 const MCP_PROXIES = [
   ...readdirSync(join(ROOT, "examples"), { withFileTypes: true })

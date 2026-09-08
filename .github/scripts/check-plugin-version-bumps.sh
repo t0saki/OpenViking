@@ -24,17 +24,15 @@ cd "$ROOT"
 PLUGINS=(
   "examples/claude-code-memory-plugin:examples/claude-code-memory-plugin/.claude-plugin/plugin.json"
   "examples/codex-memory-plugin:examples/codex-memory-plugin/.codex-plugin/plugin.json"
-  "examples/zcode-memory-plugin:examples/zcode-memory-plugin/.zcode-plugin/plugin.json"
-  "examples/cursor-memory-plugin:examples/cursor-memory-plugin/.cursor-plugin/plugin.json"
-  "examples/trae-memory-hooks:examples/trae-memory-hooks/openviking.integration.json"
+  "examples/agent-hook-plugin:examples/agent-hook-plugin/.claude-plugin/plugin.json"
   "examples/opencode-plugin:examples/opencode-plugin/package.json"
   "examples/dsh-memory-plugin:examples/dsh-memory-plugin/package.json"
 )
 
 # A change to the shared library reaches every plugin, and it no longer reaches
-# them through a vendored copy inside their directory: cursor, trae and zcode
-# have the runtime assembled at install time, and the packaged plugins build
-# their copies at pack time. So the library counts as a change to all of them.
+# them through a vendored copy inside their directory: the config-driven hook
+# hosts have the runtime assembled at install time, and the packaged plugins
+# build their copies at pack time. So the library counts as a change to all.
 SHARED_LIB="examples/memory-plugin-shared/lib"
 
 read_version() { # read_version <ref-or-empty> <path>
@@ -59,8 +57,9 @@ process.stdin.on("end", () => {
 # decides "nothing changed" by the other, so a mismatch means a plugin that
 # reports upgraded and behaves like it did not.
 PAIRED=(
-  "examples/cursor-memory-plugin/.cursor-plugin/plugin.json:examples/cursor-memory-plugin/openviking.integration.json"
-  "examples/zcode-memory-plugin/.zcode-plugin/plugin.json:examples/zcode-memory-plugin/openviking.integration.json"
+  "examples/agent-hook-plugin/.claude-plugin/plugin.json:examples/agent-hook-plugin/hosts/cursor/openviking.integration.json"
+  "examples/agent-hook-plugin/.claude-plugin/plugin.json:examples/agent-hook-plugin/hosts/trae/openviking.integration.json"
+  "examples/agent-hook-plugin/.claude-plugin/plugin.json:examples/agent-hook-plugin/hosts/zcode/openviking.integration.json"
 )
 
 failed=0

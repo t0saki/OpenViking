@@ -1892,10 +1892,12 @@ install_codex_tos_git() {
 # Cursor / TRAE lifecycle hooks
 # ---------------------------------------------------------------------------
 
-copy_agent_integration() { # copy_agent_integration <source-subdir> <dest-name>
-  local source_subdir="$1" dest_name="$2" source dest tmp
-  source="$(plugin_dir_on_disk "$source_subdir")" || {
-    err "$(t 'Agent integration sources not found:' '未找到 Agent 接入源码：') $source_subdir"
+AGENT_HOOK_HOSTS="cursor trae zcode"
+
+copy_agent_integration() { # copy_agent_integration <host> <dest-name>
+  local host="$1" dest_name="$2" source dest tmp other
+  source="$(plugin_dir_on_disk agent-hook-plugin)" || {
+    err "$(t 'Agent integration sources not found:' '未找到 Agent 接入源码：') agent-hook-plugin"
     return 1
   }
   dest="$OV_HOME/agent-integrations/$dest_name"
@@ -1903,6 +1905,11 @@ copy_agent_integration() { # copy_agent_integration <source-subdir> <dest-name>
   rm -rf "$tmp"
   mkdir -p "$tmp"
   (cd "$source" && tar --exclude node_modules --exclude .git -cf - .) | (cd "$tmp" && tar -xf -)
+  # One plugin serves every config-driven host; an installation is for one
+  # client, so the other hosts' configuration directories do not travel with it.
+  for other in $AGENT_HOOK_HOSTS; do
+    [ "$other" = "$host" ] || rm -rf "$tmp/hosts/$other"
+  done
   # Preserve the first-install timestamp across managed upgrades. The package
   # descriptor is copied from source; integration.json records this machine's
   # installation and must survive replacing the runtime directory.
@@ -1916,9 +1923,9 @@ copy_agent_integration() { # copy_agent_integration <source-subdir> <dest-name>
 # Cursor, TRAE and ZCode keep only their client-specific adapters in the repository.
 # Assemble a self-contained installation by adding the canonical shared runtime
 # at install time instead of committing generated copies for every client.
-assemble_agent_integration() { # assemble_agent_integration <source-subdir> <dest-name>
-  local source_subdir="$1" dest_name="$2" root shared shared_dest manifest file
-  root="$(copy_agent_integration "$source_subdir" "$dest_name")" || return 1
+assemble_agent_integration() { # assemble_agent_integration <host> <dest-name>
+  local host="$1" dest_name="$2" root shared shared_dest manifest file
+  root="$(copy_agent_integration "$host" "$dest_name")" || return 1
   shared="$(plugin_dir_on_disk memory-plugin-shared)" || {
     err "$(t 'Shared agent runtime not found.' '未找到共享 Agent 运行时。')"
     return 1
@@ -1984,10 +1991,8 @@ function shellArg(value) {
 function isOpenVikingHook(value) {
   const text = JSON.stringify(value || {});
   return text.includes("OPENVIKING_INTEGRATION_ID") || (text.includes("openviking") && [
+    "hook.mjs",
     "hook-entry.mjs",
-    "cursor-hook.mjs",
-    "trae-hook.mjs",
-    "zcode-hook.mjs",
     "session-start.mjs",
     "auto-recall.mjs",
     "auto-capture.mjs",
@@ -1999,7 +2004,10 @@ function isOpenVikingHook(value) {
   ].some((name) => text.includes(name)));
 }
 
-const packageManifest = readJson(path.join(root, "openviking.integration.json"));
+// One plugin serves every config-driven host; `kind` names the host directory
+// this client's configuration templates live in.
+const hostDir = path.join(root, "hosts", kind);
+const packageManifest = readJson(path.join(hostDir, "openviking.integration.json"));
 if (packageManifest.id !== "openviking-memory" || !Array.isArray(packageManifest.clients)
   || !packageManifest.clients.includes(clientId)) {
   throw new Error(`Invalid OpenViking integration manifest for ${clientId}`);
@@ -2030,7 +2038,7 @@ function renderHookValue(value) {
   ]));
 }
 
-const hookTemplate = readJson(path.join(root, "hooks", "hooks.json"));
+const hookTemplate = readJson(path.join(hostDir, "hooks.json"));
 if (!hookTemplate.hooks || typeof hookTemplate.hooks !== "object" || Array.isArray(hookTemplate.hooks)) {
   throw new Error(`Invalid ${clientId} hooks template`);
 }
@@ -2056,7 +2064,7 @@ if (kind === "cursor") {
 }
 atomicWrite(hooksPath, hooksConfig);
 
-const mcpTemplate = readJson(path.join(root, ".mcp.json"));
+const mcpTemplate = readJson(path.join(hostDir, ".mcp.json"));
 const templateServer = mcpTemplate.mcpServers?.openviking;
 if (!templateServer || typeof templateServer !== "object" || Array.isArray(templateServer)) {
   throw new Error(`Invalid ${clientId} MCP template`);
@@ -2193,10 +2201,8 @@ function write(file, value) {
 function ownsHook(value) {
   const text = JSON.stringify(value || {});
   return text.includes("openviking") && [
+    "hook.mjs",
     "hook-entry.mjs",
-    "cursor-hook.mjs",
-    "trae-hook.mjs",
-    "zcode-hook.mjs",
     "session-start.mjs",
     "auto-recall.mjs",
     "auto-capture.mjs",
@@ -2338,15 +2344,15 @@ trae_mcp_path() { # trae_mcp_path <client-id>
 install_cursor() {
   heading "$(t '4. Cursor integration' '4. Cursor 集成')"
   local root hooks_path mcp_path skill_tmp legacy_plugins
-  root="$(assemble_agent_integration cursor-memory-plugin cursor)" || return 1
+  root="$(assemble_agent_integration cursor cursor)" || return 1
   hooks_path="$HOME/.cursor/hooks.json"
   mcp_path="$(cursor_mcp_path)"
   agent_write_json_configs cursor "$hooks_path" "$mcp_path" "$root" cursor "$NODE_BIN"
   mkdir -p "$HOME/.cursor/rules" "$HOME/.cursor/skills"
-  cp "$root/rules/openviking-memory.mdc" "$HOME/.cursor/rules/openviking-memory.mdc"
+  cp "$root/hosts/cursor/rules/openviking-memory.mdc" "$HOME/.cursor/rules/openviking-memory.mdc"
   skill_tmp="$HOME/.cursor/skills/openviking-memory.tmp"
   rm -rf "$skill_tmp"
-  cp -R "$root/skills/openviking-memory" "$skill_tmp"
+  cp -R "$root/hosts/cursor/skills/openviking-memory" "$skill_tmp"
   rm -rf "$HOME/.cursor/skills/openviking-memory"
   mv "$skill_tmp" "$HOME/.cursor/skills/openviking-memory"
   info "$(t 'Cursor hooks installed:' 'Cursor hooks 已安装：') $hooks_path"
@@ -2440,7 +2446,7 @@ ZCODE_MERGE_NODE
 install_zcode() {
   heading "$(t 'ZCode integration' 'ZCode 集成')"
   local root hooks_path mcp_path config_path
-  root="$(assemble_agent_integration zcode-memory-plugin zcode)" || return 1
+  root="$(assemble_agent_integration zcode zcode)" || return 1
   hooks_path="$HOME/.zcode/hooks.json"
   mcp_path="$(zcode_mcp_path)"
   config_path="$HOME/.zcode/cli/config.json"
@@ -2456,7 +2462,7 @@ install_zcode() {
 
 install_trae_variant() { # install_trae_variant <trae|trae-cn>
   local client_id="$1" root hooks_path mcp_path
-  root="$(assemble_agent_integration trae-memory-hooks "$client_id")" || return 1
+  root="$(assemble_agent_integration trae "$client_id")" || return 1
   hooks_path="$HOME/.$client_id/hooks.json"
   mcp_path="$(trae_mcp_path "$client_id")"
   agent_write_json_configs trae "$hooks_path" "$mcp_path" "$root" "$client_id" "$NODE_BIN"
@@ -2972,24 +2978,24 @@ $CODEX_BINS
 EOF
   fi
   if contains_harness cursor; then
-    if grep -q 'lib/hook-entry.mjs' "$HOME/.cursor/hooks.json" 2>/dev/null \
+    if grep -q 'scripts/hook.mjs' "$HOME/.cursor/hooks.json" 2>/dev/null \
       && grep -q 'scripts/uri-guard.mjs' "$HOME/.cursor/hooks.json" 2>/dev/null \
       && grep -q 'OPENVIKING_INTEGRATION_ID' "$HOME/.cursor/hooks.json" 2>/dev/null \
       && grep -q 'mcp-proxy.mjs' "$HOME/.cursor/mcp.json" 2>/dev/null \
-      && [ -f "$OV_HOME/agent-integrations/cursor/scripts/cursor-hook.mjs" ] \
+      && [ -f "$OV_HOME/agent-integrations/cursor/scripts/hook.mjs" ] \
       && [ -f "$OV_HOME/agent-integrations/cursor/scripts/uri-guard.mjs" ] \
       && [ -f "$OV_HOME/agent-integrations/memory-plugin-shared/lib/uri-guard.mjs" ] \
-      && [ -f "$OV_HOME/agent-integrations/memory-plugin-shared/lib/hook-entry.mjs" ] \
-      && [ -f "$OV_HOME/agent-integrations/cursor/.cursor-plugin/plugin.json" ] \
+      && [ -f "$OV_HOME/agent-integrations/memory-plugin-shared/lib/agent-hook-runtime.mjs" ] \
+      && [ -f "$OV_HOME/agent-integrations/cursor/.claude-plugin/plugin.json" ] \
       && [ -f "$OV_HOME/agent-integrations/cursor/integration.json" ] \
       && [ -f "$HOME/.cursor/rules/openviking-memory.mdc" ] \
       && [ -f "$HOME/.cursor/skills/openviking-memory/SKILL.md" ]; then
-      "$NODE_BIN" --check "$OV_HOME/agent-integrations/cursor/scripts/cursor-hook.mjs" \
+      "$NODE_BIN" --check "$OV_HOME/agent-integrations/cursor/scripts/hook.mjs" \
         || { ok=0; agent_fatal=1; }
       "$NODE_BIN" --check "$OV_HOME/agent-integrations/cursor/scripts/uri-guard.mjs" \
         || { ok=0; agent_fatal=1; }
       if printf '%s' '{}' | env HOME="$HOME" OPENVIKING_MEMORY_ENABLED=0 \
-        "$NODE_BIN" "$OV_HOME/agent-integrations/memory-plugin-shared/lib/hook-entry.mjs" sessionStart cursor >/dev/null; then
+        "$NODE_BIN" "$OV_HOME/agent-integrations/cursor/scripts/hook.mjs" sessionStart cursor >/dev/null; then
         info "cursor: $(t 'installed Hook runtime passed its smoke test' '已安装的 Hook 运行时通过 smoke test')"
       else
         warn "cursor: $(t 'installed Hook runtime failed its smoke test' '已安装的 Hook 运行时 smoke test 失败')"
@@ -3004,20 +3010,20 @@ EOF
   if contains_harness trae; then
     local trae_mcp
     trae_mcp="$(trae_mcp_path trae)"
-    if grep -q 'lib/hook-entry.mjs' "$HOME/.trae/hooks.json" 2>/dev/null \
+    if grep -q 'scripts/hook.mjs' "$HOME/.trae/hooks.json" 2>/dev/null \
       && grep -q 'scripts/uri-guard.mjs' "$HOME/.trae/hooks.json" 2>/dev/null \
       && grep -q 'OPENVIKING_INTEGRATION_ID' "$HOME/.trae/hooks.json" 2>/dev/null \
       && grep -q 'mcp-proxy.mjs' "$trae_mcp" 2>/dev/null \
-      && [ -f "$OV_HOME/agent-integrations/trae/scripts/trae-hook.mjs" ] \
+      && [ -f "$OV_HOME/agent-integrations/trae/scripts/hook.mjs" ] \
       && [ -f "$OV_HOME/agent-integrations/trae/scripts/uri-guard.mjs" ] \
       && [ -f "$OV_HOME/agent-integrations/trae/integration.json" ] \
-      && [ -f "$OV_HOME/agent-integrations/memory-plugin-shared/lib/hook-entry.mjs" ]; then
-      "$NODE_BIN" --check "$OV_HOME/agent-integrations/trae/scripts/trae-hook.mjs" \
+      && [ -f "$OV_HOME/agent-integrations/memory-plugin-shared/lib/agent-hook-runtime.mjs" ]; then
+      "$NODE_BIN" --check "$OV_HOME/agent-integrations/trae/scripts/hook.mjs" \
         || { ok=0; agent_fatal=1; }
       "$NODE_BIN" --check "$OV_HOME/agent-integrations/trae/scripts/uri-guard.mjs" \
         || { ok=0; agent_fatal=1; }
       if ! printf '%s' '{}' | env HOME="$HOME" OPENVIKING_MEMORY_ENABLED=0 \
-        "$NODE_BIN" "$OV_HOME/agent-integrations/memory-plugin-shared/lib/hook-entry.mjs" session-start trae >/dev/null; then
+        "$NODE_BIN" "$OV_HOME/agent-integrations/trae/scripts/hook.mjs" session-start trae >/dev/null; then
         warn "trae: $(t 'installed Hook runtime failed its smoke test' '已安装的 Hook 运行时 smoke test 失败')"
         ok=0; agent_fatal=1
       fi
@@ -3030,20 +3036,20 @@ EOF
   if contains_harness trae-cn; then
     local trae_cn_mcp
     trae_cn_mcp="$(trae_mcp_path trae-cn)"
-    if grep -q 'lib/hook-entry.mjs' "$HOME/.trae-cn/hooks.json" 2>/dev/null \
+    if grep -q 'scripts/hook.mjs' "$HOME/.trae-cn/hooks.json" 2>/dev/null \
       && grep -q 'scripts/uri-guard.mjs' "$HOME/.trae-cn/hooks.json" 2>/dev/null \
       && grep -q 'OPENVIKING_INTEGRATION_ID' "$HOME/.trae-cn/hooks.json" 2>/dev/null \
       && grep -q 'mcp-proxy.mjs' "$trae_cn_mcp" 2>/dev/null \
-      && [ -f "$OV_HOME/agent-integrations/trae-cn/scripts/trae-hook.mjs" ] \
+      && [ -f "$OV_HOME/agent-integrations/trae-cn/scripts/hook.mjs" ] \
       && [ -f "$OV_HOME/agent-integrations/trae-cn/scripts/uri-guard.mjs" ] \
       && [ -f "$OV_HOME/agent-integrations/trae-cn/integration.json" ] \
-      && [ -f "$OV_HOME/agent-integrations/memory-plugin-shared/lib/hook-entry.mjs" ]; then
-      "$NODE_BIN" --check "$OV_HOME/agent-integrations/trae-cn/scripts/trae-hook.mjs" \
+      && [ -f "$OV_HOME/agent-integrations/memory-plugin-shared/lib/agent-hook-runtime.mjs" ]; then
+      "$NODE_BIN" --check "$OV_HOME/agent-integrations/trae-cn/scripts/hook.mjs" \
         || { ok=0; agent_fatal=1; }
       "$NODE_BIN" --check "$OV_HOME/agent-integrations/trae-cn/scripts/uri-guard.mjs" \
         || { ok=0; agent_fatal=1; }
       if ! printf '%s' '{}' | env HOME="$HOME" OPENVIKING_MEMORY_ENABLED=0 \
-        "$NODE_BIN" "$OV_HOME/agent-integrations/memory-plugin-shared/lib/hook-entry.mjs" session-start trae-cn >/dev/null; then
+        "$NODE_BIN" "$OV_HOME/agent-integrations/trae-cn/scripts/hook.mjs" session-start trae-cn >/dev/null; then
         warn "trae-cn: $(t 'installed Hook runtime failed its smoke test' '已安装的 Hook 运行时 smoke test 失败')"
         ok=0; agent_fatal=1
       fi
@@ -3085,20 +3091,20 @@ EOF
   fi
   if contains_harness zcode; then
     local zcode_config="$HOME/.zcode/cli/config.json"
-    if grep -q 'lib/hook-entry.mjs' "$zcode_config" 2>/dev/null \
+    if grep -q 'scripts/hook.mjs' "$zcode_config" 2>/dev/null \
       && grep -q 'scripts/uri-guard.mjs' "$zcode_config" 2>/dev/null \
       && grep -q 'OPENVIKING_INTEGRATION_ID' "$zcode_config" 2>/dev/null \
       && grep -q 'mcp-proxy.mjs' "$zcode_config" 2>/dev/null \
-      && [ -f "$OV_HOME/agent-integrations/zcode/scripts/zcode-hook.mjs" ] \
+      && [ -f "$OV_HOME/agent-integrations/zcode/scripts/hook.mjs" ] \
       && [ -f "$OV_HOME/agent-integrations/zcode/scripts/uri-guard.mjs" ] \
       && [ -f "$OV_HOME/agent-integrations/zcode/integration.json" ] \
-      && [ -f "$OV_HOME/agent-integrations/memory-plugin-shared/lib/hook-entry.mjs" ]; then
-      "$NODE_BIN" --check "$OV_HOME/agent-integrations/zcode/scripts/zcode-hook.mjs" \
+      && [ -f "$OV_HOME/agent-integrations/memory-plugin-shared/lib/agent-hook-runtime.mjs" ]; then
+      "$NODE_BIN" --check "$OV_HOME/agent-integrations/zcode/scripts/hook.mjs" \
         || { ok=0; agent_fatal=1; }
       "$NODE_BIN" --check "$OV_HOME/agent-integrations/zcode/scripts/uri-guard.mjs" \
         || { ok=0; agent_fatal=1; }
       if ! printf '%s' '{}' | env HOME="$HOME" OPENVIKING_MEMORY_ENABLED=0 \
-        "$NODE_BIN" "$OV_HOME/agent-integrations/memory-plugin-shared/lib/hook-entry.mjs" session-start zcode >/dev/null; then
+        "$NODE_BIN" "$OV_HOME/agent-integrations/zcode/scripts/hook.mjs" session-start zcode >/dev/null; then
         warn "zcode: $(t 'installed Hook runtime failed its smoke test' '已安装的 Hook 运行时 smoke test 失败')"
         ok=0; agent_fatal=1
       fi

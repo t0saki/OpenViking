@@ -111,7 +111,7 @@ per-harness 章节（档案卡）只写差异；所有共享事实均在本章�
 
 ## 2.2 memory-plugin-shared 共享层
 
-`examples/memory-plugin-shared/lib/` 下共 25 个 `.mjs` 模块，是 JS 系 harness 的唯一事实源。两种消费形态：
+`examples/memory-plugin-shared/lib/` 下共 24 个 `.mjs` 模块，是 JS 系 harness 的唯一事实源。两种消费形态：
 
 1. **Vendoring（复制）**：由 `sync.mjs` 分发到 7 个目标，每个文件首行加 `// GENERATED FROM ... DO NOT EDIT.`（因此 vendored 副本行号 = lib 源行号 + 1，交叉读行号引用时要换算）。分发清单没有手写列表：每个目标拿的是它自己代码 import 的传递闭包，因此跟的是 import 图而不是 harness。claude-code 24 个，codex 23 个，opencode 21 个，dsh 与 pi 各 19 个，openclaw 2 个（其余能力由它自己的 TypeScript 覆盖），agent-plugins 因为没有 hook 只有 5 个——credentials、debug-log、ov-http 与两个 mcp-proxy-*。副本什么时候生成取决于插件怎么分发：claude-code、codex、agent-plugins 由宿主直接指向本仓库的目录安装，所以副本提交进 git，并由 main 上的推送重新生成；opencode、dsh、openclaw 以 npm 包发布，pi 由安装脚本打包，这四个在打包时生成、git 里一份不留。
 2. **相对路径直接 import（不复制）**：cursor / trae / trae-cn / zcode 直接 `import "../../memory-plugin-shared/lib/..."`；安装器把包与这些 hook 传递 import 到的 23 个共享模块一起复制到 `~/.openviking/agent-integrations/{<client>,memory-plugin-shared}/`，使相对层级成立。这份安装集合对 import 闭合，一直闭合到这些 hook 运行时用来解析配置的 workspace 配置层。运行期这个共享目录被这几个 harness 共用，任一重装都会整体覆盖。
@@ -524,7 +524,7 @@ MCP `write` / REST `content/write` 的三道 guard（`content_write.py`）：可
 ## cursor
 
 - **集成文档**：[Cursor 记忆集成](./12-cursor.md)
-- **形态**：配置驱动（写 `~/.cursor/hooks.json`+`mcp.json`）+ MCP 代理 + always-on rule + skill。7 hook：sessionStart(30s) / beforeSubmitPrompt(20s) / beforeReadFile(5s) / beforeShellExecution(5s) / stop(30s) / preCompact(30s) / sessionEnd(30s)。相对 import 共享 lib（不 vendoring）。版本 0.2.0。
+- **形态**：配置驱动（写 `~/.cursor/hooks.json`+`mcp.json`）+ MCP 代理 + always-on rule + skill。7 hook：sessionStart(30s) / beforeSubmitPrompt(20s) / beforeReadFile(5s) / beforeShellExecution(5s) / stop(30s) / preCompact(30s) / sessionEnd(30s)。相对 import 共享 lib（不 vendoring）。版本 0.3.0。
 - **能力亮点**：beforeReadFile/beforeShellExecution 双 uri-guard（不受插件开关控制）；rule + skill 随装。
 - **行为要点**：session id 为 `cu-<conversation_id>`；stop 每 8 条消息 commit（`commitTurnThreshold=8`，消息条数计数，keep 0）；`sessionEnd` 仅 window_close 触发，且此时宿主已销毁 shell-exec host，实践中不执行（[§3.3.3](#_3-3-3-关闭方式-×-harness-终局矩阵)）——结束在 <8 条消息水位的会话，尾部依赖后续同会话消息触发归档（[§3.3.3](#_3-3-3-关闭方式-×-harness-终局矩阵)）；服务端不可达时，每轮等满 15s 召回超时。
 - **配置**：env + ovcli.conf `plugin.cursor` + workspace 文件（[§3.1.4](#_3-1-4-配置体系分层)）。
@@ -533,7 +533,7 @@ MCP `write` / REST `content/write` 的三道 guard（`content_write.py`）：可
 ## trae / trae-cn（IDE 版）
 
 - **集成文档**：[TRAE 记忆集成](./13-trae.md)
-- **形态**：配置驱动（`~/.trae{,-cn}/hooks.json` + 平台相关 mcp.json）+ MCP 代理。4 hook：SessionStart(30s) / UserPromptSubmit(20s) / PreToolUse:Read\|Glob\|Grep\|Bash\|RunCommand(5s) / Stop(30s)。相对 import 共享 lib。MCP server 名为 `openviking`。版本 0.2.0。
+- **形态**：配置驱动（`~/.trae{,-cn}/hooks.json` + 平台相关 mcp.json）+ MCP 代理。4 hook：SessionStart(30s) / UserPromptSubmit(20s) / PreToolUse:Read\|Glob\|Grep\|Bash\|RunCommand(5s) / Stop(30s)。相对 import 共享 lib。MCP server 名为 `openviking`。版本 0.3.0。
 - **能力亮点**：行为最简单直接的一档——每个有内容的 Stop 都 commit（keep 0），关闭场景下最大待归档量只有最后一轮 in-flight（[§3.3.3](#_3-3-3-关闭方式-×-harness-终局矩阵)）。
 - **行为要点**：trae 与 trae-cn 的差异是 session id 前缀 `tr-` / `trcn-` 与安装路径——同一份记忆在两个客户端落到两组不同 session，跨客户端共享靠服务端抽取后的记忆空间而非 session 复用；无 PreCompact/statusline/skill/subagent 处理。
 - **配置**：env + ovcli.conf `plugin.trae` / `plugin.trae_cn` + workspace 文件。
@@ -542,7 +542,7 @@ MCP `write` / REST `content/write` 的三道 guard（`content_write.py`）：可
 ## zcode
 
 - **集成文档**：[社区插件 → ZCode](./08-community-plugins.md)
-- **形态**：配置驱动（合并进 `~/.zcode/cli/config.json`，强制 `hooks.enabled=true`）+ MCP 代理。4 hook：SessionStart(30s) / UserPromptSubmit(20s) / PreToolUse:Read\|Glob\|Grep(5s) / Stop(30s)。自身不 vendoring 任何共享模块：安装器按 cursor / trae 同样的方式为它拼装共享运行时。版本 0.2.0。
+- **形态**：配置驱动（合并进 `~/.zcode/cli/config.json`，强制 `hooks.enabled=true`）+ MCP 代理。4 hook：SessionStart(30s) / UserPromptSubmit(20s) / PreToolUse:Read\|Glob\|Grep(5s) / Stop(30s)。自身不 vendoring 任何共享模块：安装器按 cursor / trae 同样的方式为它拼装共享运行时。版本 0.3.0。
 - **能力亮点**：以 rollout 文件 `~/.zcode/cli/rollout/model-io-<sid>.jsonl` 为增量真相源（`lastTurnId` 差集补齐漏掉的 Stop）；Stop 默认 detach（Ctrl+C 不丢写入）。
 - **行为要点**：每 Stop commit（keep 0）；捕获路径仅剥离三类注入块（不做额外文本清洗，[§3.2.6](#_3-2-6-注入回流防护)）；首次捕获会一次性读取整个 rollout（长会话首装时单次推送量大）。
 - **配置**：env + ovcli.conf `plugin.zcode` + workspace 文件；`OPENVIKING_WRITE_PATH_ASYNC` 对 zcode 生效。

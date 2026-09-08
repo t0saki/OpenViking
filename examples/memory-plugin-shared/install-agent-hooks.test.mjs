@@ -279,7 +279,7 @@ test("combined Cursor and TRAE install preserves unrelated hooks and is idempote
     runInstall(home);
 
     const cursor = JSON.parse(readFileSync(cursorHooks, "utf8"));
-    assert.equal(cursor.hooks.stop.filter((entry) => entry.command.includes("hook-entry.mjs")).length, 1);
+    assert.equal(cursor.hooks.stop.filter((entry) => entry.command.includes("scripts/hook.mjs")).length, 1);
     assert.ok(cursor.hooks.stop.some((entry) => entry.command === "third-party stop"));
     assert.ok(cursor.hooks.stop.some((entry) => entry.command.includes(installedNode)));
     assert.ok(cursor.hooks.stop.some((entry) => entry.command.includes("OPENVIKING_INTEGRATION_ID='openviking-memory'")));
@@ -290,7 +290,7 @@ test("combined Cursor and TRAE install preserves unrelated hooks and is idempote
 
     for (const [file, label] of [[traeHooks, "trae"], [traeCnHooks, "trae-cn"]]) {
       const config = JSON.parse(readFileSync(file, "utf8"));
-      assert.equal(config.hooks.Stop.filter((entry) => JSON.stringify(entry).includes("hook-entry.mjs")).length, 1, label);
+      assert.equal(config.hooks.Stop.filter((entry) => JSON.stringify(entry).includes("scripts/hook.mjs")).length, 1, label);
       assert.ok(config.hooks.Stop.some((entry) => JSON.stringify(entry).includes(`third-party ${label}`)), label);
       assert.equal(config.hooks.Stop.some((entry) => JSON.stringify(entry).includes("trae-auto-capture.mjs")), false, label);
       assert.ok(config.hooks.Stop.some((entry) => JSON.stringify(entry).includes(`OPENVIKING_HOOK_SOURCE='${label}'`)), label);
@@ -341,7 +341,7 @@ test("combined Cursor and TRAE install preserves unrelated hooks and is idempote
       }
     }
     for (const [client, event] of [["cursor", "sessionStart"], ["trae", "session-start"], ["trae-cn", "session-start"]]) {
-      const hook = join(home, ".openviking", "agent-integrations", "memory-plugin-shared", "lib", "hook-entry.mjs");
+      const hook = join(home, ".openviking", "agent-integrations", client, "scripts", "hook.mjs");
       const smoke = spawnSync(process.execPath, [hook, event, client], {
         env: { ...process.env, HOME: home, OPENVIKING_MEMORY_ENABLED: "0" },
         input: "{}",
@@ -362,7 +362,7 @@ test("combined Cursor and TRAE install preserves unrelated hooks and is idempote
       const input = client === "cursor"
         ? { file_path: "viking://resources/project/file.md" }
         : { tool_name: "Read", tool_input: { file_path: "viking://resources/project/file.md" } };
-      const guarded = spawnSync(process.execPath, [guard], {
+      const guarded = spawnSync(process.execPath, [guard, client], {
         env: { ...process.env, HOME: home },
         input: JSON.stringify(input),
         encoding: "utf8",
@@ -383,7 +383,7 @@ test("combined Cursor and TRAE install preserves unrelated hooks and is idempote
 
     runUninstall(home);
     assert.ok(JSON.parse(readFileSync(cursorHooks, "utf8")).hooks.stop.some((entry) => entry.command === "third-party stop"));
-    assert.equal(JSON.parse(readFileSync(cursorHooks, "utf8")).hooks.stop.some((entry) => entry.command.includes("hook-entry.mjs")), false);
+    assert.equal(JSON.parse(readFileSync(cursorHooks, "utf8")).hooks.stop.some((entry) => entry.command.includes("scripts/hook.mjs")), false);
     const cursorServersAfterUninstall = JSON.parse(readFileSync(cursorMcpPath, "utf8")).mcpServers;
     assert.ok(cursorServersAfterUninstall["ov-mcp-server"]);
     assert.ok(cursorServersAfterUninstall["third-party"]);
@@ -398,6 +398,30 @@ test("combined Cursor and TRAE install preserves unrelated hooks and is idempote
     rmSync(home, { recursive: true, force: true });
   }
 });
+
+// Installing the thin harnesses together lets one client's verification pass
+// against a directory another client happened to create, so each is installed
+// into a HOME of its own.
+for (const client of ["cursor", "trae", "trae-cn", "zcode"]) {
+  test(`${client} installs and verifies on its own`, () => {
+    const home = mkdtempSync(join(tmpdir(), `openviking-solo-${client}-`));
+    try {
+      const result = runInstaller(home, [
+        "--harness", client,
+        "--source", "dev",
+        "--lang", "en",
+        "--url", "http://127.0.0.1:1933",
+        "--api-key", "",
+        "--yes",
+      ]);
+      assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+      assert.doesNotMatch(result.stdout, new RegExp(`^!!\\s+${client}:`, "mu"), result.stdout);
+      assert.ok(existsSync(join(home, ".openviking", "agent-integrations", client, "scripts", "hook.mjs")));
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+}
 
 test("malformed existing agent JSON fails without overwriting user configuration", () => {
   const home = mkdtempSync(join(tmpdir(), "openviking-agent-invalid-json-"));

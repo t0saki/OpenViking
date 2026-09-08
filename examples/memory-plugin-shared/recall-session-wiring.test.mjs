@@ -14,8 +14,8 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 // wiring so a harness cannot silently fall back to stateless recall again.
 const CALL_SITES = [
   {
-    name: "ZCode hook forwards its derived session id",
-    file: join(ROOT, "examples", "zcode-memory-plugin", "scripts", "zcode-hook.mjs"),
+    name: "the thin-harness hook forwards its derived session id",
+    file: join(ROOT, "examples", "agent-hook-plugin", "scripts", "hook.mjs"),
     pattern: /recallForPrompt\([^)]*\{[^}]*\bsessionId\b/s,
   },
   {

@@ -70,14 +70,8 @@ export const TARGETS = [
 // canonical runtime to `$OV_HOME/agent-integrations/memory-plugin-shared/lib`
 // and they import it by the relative path that resolves both there and here.
 export const ASSEMBLED_ROOTS = [
-  join(ROOT, "examples", "cursor-memory-plugin"),
-  join(ROOT, "examples", "trae-memory-hooks"),
-  join(ROOT, "examples", "zcode-memory-plugin"),
+  join(ROOT, "examples", "agent-hook-plugin"),
 ];
-
-// Their hooks.json names this module instead of importing it, so it is the one
-// file the closure cannot reach from the harnesses' own sources.
-export const ASSEMBLED_ENTRIES = ["hook-entry.mjs"];
 
 export const GENERATED_HEADER = "// GENERATED FROM examples/memory-plugin-shared/lib. DO NOT EDIT.\n";
 
@@ -92,7 +86,7 @@ export const SKILL_TARGETS = [
     dirs: [
       join(ROOT, "examples", "codex-memory-plugin", "skills"),
       join(ROOT, "examples", "claude-code-memory-plugin", "skills"),
-      join(ROOT, "examples", "cursor-memory-plugin", "skills"),
+      join(ROOT, "examples", "agent-hook-plugin", "hosts", "cursor", "skills"),
       join(ROOT, "examples", "dsh-memory-plugin", "skills"),
     ],
   },
@@ -209,7 +203,7 @@ export const MANIFEST_PATH = join(SHARED_DIR, "MANIFEST");
 
 /** The closure the installer has to assemble for the harnesses that vendor nothing. */
 export async function assembledClosure() {
-  const seeds = new Set(ASSEMBLED_ENTRIES);
+  const seeds = new Set();
   for (const root of ASSEMBLED_ROOTS) {
     const { seeds: found, missing } = await directSharedImports({ root, dir: SHARED_DIR });
     if (missing.length) {

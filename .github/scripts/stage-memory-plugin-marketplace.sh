@@ -19,9 +19,7 @@ DIRS=(
   .agents
   claude-code-memory-plugin
   codex-memory-plugin
-  cursor-memory-plugin
-  trae-memory-hooks
-  zcode-memory-plugin
+  agent-hook-plugin
   opencode-plugin
   pi-coding-agent-extension
   memory-plugin-shared
@@ -44,4 +42,4 @@ for dir in "${DIRS[@]}"; do
   }
 done
 
-node "${ROOT}/.github/scripts/check-marketplace-archive.mjs" "${STAGE}"
+node "${ROOT}/.github/scripts/check-marketplace-archive.mjs" "${STAGE}" "${DIRS[@]}"

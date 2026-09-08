@@ -55,7 +55,7 @@ bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/memory-plugin-shar
 - [claude-code-memory-plugin](../examples/claude-code-memory-plugin/) (Claude Code)
 - [codex-memory-plugin](../examples/codex-memory-plugin/) (Codex)
 - [opencode-plugin](../examples/opencode-plugin/) (OpenCode)
-- [cursor-memory-plugin](../examples/cursor-memory-plugin/), [trae-memory-hooks](../examples/trae-memory-hooks/), [zcode-memory-plugin](../examples/zcode-memory-plugin/), ...
+- [agent-hook-plugin](../examples/agent-hook-plugin/) (Cursor, TRAE, TRAE CN, ZCode), ...
 
 Use this Agent Plugins package for harnesses with no hooks, or when you want one package that loads across many clients.
 
