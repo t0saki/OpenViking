@@ -79,7 +79,11 @@ Credential source: env vars win by default — when any `OPENVIKING_*` credentia
 | `OPENVIKING_CODEX_IDLE_TTL_MS` | `1800000` | SessionStart idle-TTL sweep threshold |
 | `OPENVIKING_CODEX_LOCK_WAIT_MS` | `120000` (SessionEnd), `40000` (PreCompact) | How long a capture hook waits for the per-session state lock |
 | `OPENVIKING_CODEX_COMMITTED_TTL_MS` | `2592000000` | How long a committed session's transcript cursor is kept before its state file is retired |
+| `OPENVIKING_RECALL_QUERY_FILTERS` | `""` | CSV of sed-style regex rules applied to the prompt before it becomes a query ([grammar and examples](https://github.com/volcengine/OpenViking/blob/main/examples/codex-memory-plugin/README.md#input-filters)) |
+| `OPENVIKING_CAPTURE_FILTERS` | `""` | CSV of sed-style regex rules applied to every captured turn (same grammar) |
 | `OPENVIKING_DEBUG` | `false` | Write logs to `~/.openviking/logs/codex-hooks.log` |
+
+Both filter knobs also live in `ovcli.conf`, as a JSON array under `plugin.codex.recallQueryFilters` for this harness or `plugin.recallQueryFilters` for every harness. Prefer that form: the environment variables are comma-separated lists, so a rule containing a literal comma — a bounded `{10,}` quantifier, say — can only be written in the array.
 
 If recall latency matters most, see [Low-latency recall](./01-overview.md#low-latency-recall) for the environment-variable and `ovcli.conf` settings that disable query expansion and Codex's local result compression.
 

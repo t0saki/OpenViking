@@ -87,10 +87,12 @@ Configuration priority: Environment variables > `ovcli.conf` > `ov.conf` > Built
 | `OPENVIKING_AUTO_CAPTURE` | `true` | Auto-capture after each turn |
 | `OPENVIKING_BYPASS_SESSION` | `false` | Skip all hooks for this session |
 | `OPENVIKING_BYPASS_SESSION_PATTERNS` | `""` | CSV glob patterns to auto-bypass |
-| `OPENVIKING_RECALL_QUERY_FILTERS` | `""` | CSV of sed-style regex rules applied to the prompt before it becomes a query |
-| `OPENVIKING_CAPTURE_FILTERS` | `""` | CSV of sed-style regex rules applied to every captured turn |
+| `OPENVIKING_RECALL_QUERY_FILTERS` | `""` | CSV of sed-style regex rules applied to the prompt before it becomes a query ([grammar and examples](https://github.com/volcengine/OpenViking/blob/main/examples/claude-code-memory-plugin/README.md#input-filters)) |
+| `OPENVIKING_CAPTURE_FILTERS` | `""` | CSV of sed-style regex rules applied to every captured turn (same grammar) |
 | `OPENVIKING_MEMORY_ENABLED` | (auto) | Force on/off |
 | `OPENVIKING_DEBUG` | `false` | Write logs to `~/.openviking/logs/cc-hooks.log` |
+
+Both filter knobs also live in `ovcli.conf`, as a JSON array under `plugin.claude_code.recallQueryFilters` for this harness or `plugin.recallQueryFilters` for every harness. Prefer that form: the environment variables are comma-separated lists, so a rule containing a literal comma — a bounded `{10,}` quantifier, say — can only be written in the array.
 
 If recall latency matters most, see [Low-latency recall](./01-overview.md#low-latency-recall) for the environment-variable and `ovcli.conf` settings that disable query expansion and result compression.
 
