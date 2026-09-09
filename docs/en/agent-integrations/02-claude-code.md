@@ -87,6 +87,8 @@ Configuration priority: Environment variables > `ovcli.conf` > `ov.conf` > Built
 | `OPENVIKING_AUTO_CAPTURE` | `true` | Auto-capture after each turn |
 | `OPENVIKING_BYPASS_SESSION` | `false` | Skip all hooks for this session |
 | `OPENVIKING_BYPASS_SESSION_PATTERNS` | `""` | CSV glob patterns to auto-bypass |
+| `OPENVIKING_RECALL_QUERY_FILTERS` | `""` | CSV of sed-style regex rules applied to the prompt before it becomes a query |
+| `OPENVIKING_CAPTURE_FILTERS` | `""` | CSV of sed-style regex rules applied to every captured turn |
 | `OPENVIKING_MEMORY_ENABLED` | (auto) | Force on/off |
 | `OPENVIKING_DEBUG` | `false` | Write logs to `~/.openviking/logs/cc-hooks.log` |
 

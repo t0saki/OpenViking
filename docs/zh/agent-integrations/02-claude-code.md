@@ -87,6 +87,8 @@ bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/memory-plugin-shar
 | `OPENVIKING_AUTO_CAPTURE` | `true` | 每轮对话结束后自动捕获新记忆 |
 | `OPENVIKING_BYPASS_SESSION` | `false` | 禁用当前会话的所有 Hook |
 | `OPENVIKING_BYPASS_SESSION_PATTERNS` | `""` | 通过 CSV 格式的 glob 模式匹配并自动跳过特定会话 |
+| `OPENVIKING_RECALL_QUERY_FILTERS` | `""` | CSV 格式的 sed 风格正则规则，在 prompt 变成检索 query 前生效 |
+| `OPENVIKING_CAPTURE_FILTERS` | `""` | CSV 格式的 sed 风格正则规则，作用于每个被捕获的回合 |
 | `OPENVIKING_MEMORY_ENABLED` | (auto) | 强制开启或关闭插件 |
 | `OPENVIKING_DEBUG` | `false` | 将调试日志输出至 `~/.openviking/logs/cc-hooks.log` |
 
