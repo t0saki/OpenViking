@@ -83,7 +83,7 @@ Credential source: env vars win by default — when any `OPENVIKING_*` credentia
 | `OPENVIKING_CAPTURE_FILTERS` | `""` | CSV of sed-style regex rules applied to every captured turn (same grammar) |
 | `OPENVIKING_DEBUG` | `false` | Write logs to `~/.openviking/logs/codex-hooks.log` |
 
-Both filter knobs also live in `ovcli.conf`, as a JSON array under `plugin.codex.recallQueryFilters` for this harness or `plugin.recallQueryFilters` for every harness. Prefer that form: the environment variables are comma-separated lists, so a rule containing a literal comma — a bounded `{10,}` quantifier, say — can only be written in the array.
+Most of these knobs can also live in `ovcli.conf` under `plugin` — see [Plugin Settings](../configuration/02-client.md#plugin-settings). The two filter knobs are better written there, as JSON arrays, because the environment form is split on commas.
 
 If recall latency matters most, see [Low-latency recall](./01-overview.md#low-latency-recall) for the environment-variable and `ovcli.conf` settings that disable query expansion and Codex's local result compression.
 

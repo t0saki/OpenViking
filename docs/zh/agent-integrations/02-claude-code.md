@@ -92,7 +92,7 @@ bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/memory-plugin-shar
 | `OPENVIKING_MEMORY_ENABLED` | (auto) | 强制开启或关闭插件 |
 | `OPENVIKING_DEBUG` | `false` | 将调试日志输出至 `~/.openviking/logs/cc-hooks.log` |
 
-两个过滤器 knob 同样可以写在 `ovcli.conf` 里，值是 JSON 数组：`plugin.claude_code.recallQueryFilters` 只对这个 harness 生效，`plugin.recallQueryFilters` 对所有 harness 生效。建议优先用这种写法——环境变量是按逗号切分的列表，所以规则里带字面逗号（比如带下界的 `{10,}`）只能写进数组。
+这些旋钮大多也可以写在 `ovcli.conf` 的 `plugin` 段下——见[插件配置](../configuration/02-client.md#插件配置)。两个过滤器 knob 尤其建议写在那里，用 JSON 数组，因为环境变量形式会按逗号切分。
 
 如果更看重召回响应速度，请参阅[低延迟召回](./01-overview.md#低延迟召回)，其中说明了如何通过环境变量或 `ovcli.conf` 关闭查询扩展与结果压缩。
 
