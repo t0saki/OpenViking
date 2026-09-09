@@ -180,6 +180,7 @@ Upgrading from the path-derived peer needs no action: memories written under the
 | `OPENVIKING_RECALL_COMPRESS_MAX_BULLETS` | `6`        | Digest bullet ceiling                                                     |
 | `OPENVIKING_SCORE_THRESHOLD`           | `0.35`       | Min relevance score (0–1)                                                |
 | `OPENVIKING_MIN_QUERY_LENGTH`          | `3`          | Skip recall for very short queries                                       |
+| `OPENVIKING_RECALL_QUERY_FILTERS`      | `""`         | CSV of regex rules applied to the prompt before it becomes a search query — see [Input filters](#input-filters) |
 
 Recall defaults to the broad mode: global memory, the current workspace, and other workspace memories can all be recalled, with other workspaces penalized and rendered later. Set `OPENVIKING_RECALL_PEER_SCOPE=actor` for the isolation mode, which only sees global memory plus the current workspace. In deployments where one bot serves multiple real people, such as zouk, vikingbot, or AstrBot, use the isolation mode with an explicit actor peer so one person's memories are not recalled into another person's session.
 | `OPENVIKING_LOG_RANKING_DETAILS`       | `false`      | Per-candidate scoring logs (verbose)                                     |
@@ -195,6 +196,7 @@ Recall defaults to the broad mode: global memory, the current workspace, and oth
 | `OPENVIKING_CAPTURE_TOOL_MAX_CHARS`    | `1000000`    | Guard cap on one tool part's `tool_output`; oversized output is externalized server-side |
 | `OPENVIKING_COMMIT_TOKEN_THRESHOLD`    | `20000`      | Pending-token threshold for client-driven commit                         |
 | `OPENVIKING_RESUME_CONTEXT_BUDGET`     | `32000`      | Token budget when fetching archive overview on session resume            |
+| `OPENVIKING_CAPTURE_FILTERS`           | `""`         | CSV of regex rules applied to every captured turn — see [Input filters](#input-filters) |
 
 #### Lifecycle / behavior / misc
 
@@ -242,6 +244,55 @@ OPENVIKING_BYPASS_SESSION=1 claude
 ```
 
 When bypass is active, every hook approves immediately without contacting OpenViking.
+
+### Input filters
+
+Two knobs put an ordered list of regex rules in front of the text the plugin sends:
+
+- `recallQueryFilters` / `OPENVIKING_RECALL_QUERY_FILTERS` — the prompt, before it becomes a search query.
+- `captureFilters` / `OPENVIKING_CAPTURE_FILTERS` — every turn on the write path (`Stop`, `PreCompact`, `SessionEnd`, `SubagentStop`), before it is stored.
+
+Rules are sed-style strings applied in order to one piece of text:
+
+| Form | Meaning |
+|------|---------|
+| `s<d>pattern<d>replacement<d>[flags]` | substitute; `$1`, `$&`, `$$` work in the replacement |
+| `d<d>pattern<d>[flags]` | drop the text when the pattern matches |
+| `k<d>pattern<d>[flags]` | keep the text only when the pattern matches (chain them for AND) |
+| `user:` / `assistant:` prefix | apply the rule to that role only |
+
+`<d>` is any punctuation delimiter — `/`, `|`, `#`, `:` — and `\` escapes it inside the pattern. Flags are `i`, `m`, `s`, `u` and `g` (`g` replaces every match; it is ignored on `d`/`k`). At most 32 rules, each pattern at most 512 characters.
+
+| Rule | Effect |
+|------|--------|
+| `s/^\s*(ultrathink\|think harder?)\s+//i` | strip a thinking-keyword prefix from the query |
+| `d\|^\s*[/!]\|` | skip recall for slash commands and `!` bash-mode prompts (a `\|` delimiter keeps the `/` unescaped) |
+| `k/^\?ov\b/` then `s/^\?ov\s*//` | opt-in recall: only prompts starting with `?ov`, with the trigger stripped |
+| `s/\b(sk\|ghp\|xoxb)_[A-Za-z0-9_-]+/[redacted]/g` | redact tokens before they are stored |
+| `user:d/^\s*\/(clear\|compact)\b/` | never store those command turns, user role only |
+| `s/^(请\|麻烦)(你\|帮我)?//` | strip a Chinese politeness prefix |
+
+In `ovcli.conf` the rules are a JSON array, so backslashes are doubled:
+
+```json
+{
+  "plugin": {
+    "claude_code": {
+      "recallQueryFilters": ["s/^\\s*ultrathink\\s+//i", "d|^\\s*[/!]|"],
+      "captureFilters": ["s/\\b(sk|ghp)_[A-Za-z0-9_-]{10,}/[redacted]/g"]
+    }
+  }
+}
+```
+
+Notes worth knowing before you write a rule:
+
+- **The env vars are comma-separated lists**, split before parsing. A literal comma in a pattern can be written `\x2c` — but that is not quantifier syntax, so a bounded `{10,}` has to come from the `ovcli.conf` array. A comma in an `s` replacement cannot be expressed via env at all.
+- **Order matters and drops win.** Rules run top to bottom; the first `d` that matches (or `k` that does not) ends the decision. Text that a substitution empties is not a drop — an emptied query is simply too short to recall on.
+- **Filters run early**: before `OPENVIKING_MIN_QUERY_LENGTH` on the recall side, and before the built-in ack / slash-command / signal heuristics on the capture side, so a prefix stripped down to `ok` is discarded as an ack.
+- **A capture rule filters what is sent, not what is stored.** Turns already written to OpenViking are untouched, and anything sitting in the pending queue was filtered by the rules in effect when it was enqueued. Adding a `d`/`k` rule mid-session also shortens the turn list the cursor counts, which reads as a transcript rewrite and replays from the last user turn — the same thing toggling `OPENVIKING_CAPTURE_ASSISTANT_TURNS` does.
+- **A bad rule is skipped, never fatal.** `ov-memory-doctor` prints the active rules and warns with the exact parse or RegExp error for the ones it could not compile. A catastrophically backtracking pattern is still your own foot: it shows up as `slow` in the debug log and, at worst, as a hook timeout.
+- The `u` flag rejects escapes that are legal without it (`\-`, `\_`, a lone `{`, `[\w-.]`); leave it off unless the pattern needs Unicode property escapes.
 
 ### Plugin settings in `ovcli.conf`
 
