@@ -378,7 +378,7 @@ export function filterCaptureParts(parts, role, cfg = {}) {
     kept.push(text === part.text ? part : { ...part, text });
   }
 
-  const blank = { parts: kept, dropped: false, ruleIndex: -1, op: "", slow: false };
+  const blank = { parts: kept, dropped: false };
   const compiled = compileInputFilters(cfg?.captureFilters);
   if (!compiled.rules.length || kept.length === 0) return blank;
 
@@ -388,17 +388,8 @@ export function filterCaptureParts(parts, role, cfg = {}) {
   const verdict = applyInputFilters(textParts.map((part) => part.text).join("\n\n"), compiled.rules, {
     role,
   });
-  if (verdict.dropped) {
-    return {
-      parts: [],
-      dropped: true,
-      ruleIndex: verdict.ruleIndex,
-      op: verdict.op,
-      slow: verdict.slow,
-    };
-  }
+  if (verdict.dropped) return { parts: [], dropped: true };
 
-  let slow = verdict.slow;
   const out = [];
   for (const part of kept) {
     if (part.type !== "text") {
@@ -406,11 +397,10 @@ export function filterCaptureParts(parts, role, cfg = {}) {
       continue;
     }
     const shaped = applyInputFilters(part.text, compiled.rules, { role, substituteOnly: true });
-    slow = slow || shaped.slow;
     if (!shaped.text) continue;
     out.push(shaped.text === part.text ? part : { ...part, text: shaped.text });
   }
-  return { parts: out, dropped: out.length === 0, ruleIndex: -1, op: "", slow };
+  return { parts: out, dropped: out.length === 0 };
 }
 
 export function extractCaptureTurns(rolloutEntries, cfg = {}) {
@@ -436,7 +426,7 @@ export function extractCaptureTurns(rolloutEntries, cfg = {}) {
     // text path only runs the filters for the `content` fallback. That also
     // keeps `turn.text` faithful for callers that scan it for trigger words.
     const decision = shouldCaptureText(rawText, role, cfg, { filters: shaped.parts.length === 0 });
-    if (!decision.shouldCapture && (decision.reason === "filtered" || shaped.parts.length === 0)) continue;
+    if (!decision.shouldCapture && shaped.parts.length === 0) continue;
     const text = decision.shouldCapture ? decision.text : "";
     turns.push({ role, text, parts: shaped.parts });
   }

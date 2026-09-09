@@ -130,22 +130,6 @@ test("a substitute rule rewrites the query the server is asked for", async () =>
   }
 });
 
-test("a query stripped to nothing is short_query, not an empty search", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ov-cc-recall-filter-empty-"));
-  try {
-    await withRecordedServer(async (baseUrl, seen) => {
-      await runAutoRecall(
-        { session_id: "filter-empty", prompt: "ultrathink", cwd: root },
-        hookEnv(root, baseUrl, { OPENVIKING_RECALL_QUERY_FILTERS: "s/^ultrathink$//" }),
-      );
-      assert.deepEqual(seen, []);
-    });
-    assert.equal((await lastRecall(root)).reason, "short_query");
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
 test("an unparsable rule is skipped and the turn proceeds", async () => {
   const root = await mkdtemp(join(tmpdir(), "ov-cc-recall-filter-bad-"));
   try {

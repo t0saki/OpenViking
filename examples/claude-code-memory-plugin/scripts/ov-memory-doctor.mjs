@@ -413,7 +413,6 @@ function checkConfig(report, cfg) {
   for (const filters of describeInputFilters(cfg)) {
     if (!filters.total) continue;
     report.info(`${filters.label}  ${filters.summary}`);
-    for (const w of filters.warnings) report.info(`${filters.key}[${w.index}]: ${w.message}`, w.source);
     for (const e of filters.errors) {
       const where = `${filters.env} or ovcli.conf plugin.claude_code.${filters.key}`;
       report.warn(

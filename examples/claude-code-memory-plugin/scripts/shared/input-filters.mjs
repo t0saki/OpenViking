@@ -8,17 +8,13 @@
  *   k/^\?ov\b/               keep the text only when the pattern matches
  *   user:d/^\s*\/clear\b/    apply to one role only
  *
- * Nothing here throws. A malformed rule becomes an entry in `errors` and is
- * skipped, so a bad config can never take a hook down.
+ * A malformed rule becomes an entry in `errors` and is skipped rather than
+ * throwing, so a typo in a config file cannot take a hook down.
  */
 
 const OPS = new Set(["s", "d", "k"]);
 const SCOPES = ["user", "assistant"];
 const ALLOWED_FLAGS = "imsug";
-const DEFAULT_MAX_RULES = 32;
-const DEFAULT_MAX_PATTERN_LENGTH = 512;
-const SLOW_MS = 50;
-const CACHE_LIMIT = 8;
 
 export const INPUT_FILTER_KNOBS = [
   {
@@ -33,12 +29,10 @@ export const INPUT_FILTER_KNOBS = [
   },
 ];
 
-const cache = new Map();
-
 /**
  * Read one delimited field. `\` always consumes the next character, and only
  * `\<delim>` is un-escaped, so `\d` / `\b` / `\x2c` reach RegExp verbatim.
- * Returns the index of the closing delimiter, or -1 when the field is unterminated.
+ * Returns the index of the closing delimiter, or -1 when it is missing.
  */
 function scanField(source, start, delim) {
   let out = "";
@@ -63,8 +57,7 @@ function scanField(source, start, delim) {
   return { value: out, end: -1 };
 }
 
-export function parseInputFilterRule(source, options = {}) {
-  const maxPatternLength = options.maxPatternLength ?? DEFAULT_MAX_PATTERN_LENGTH;
+export function parseInputFilterRule(source) {
   if (typeof source !== "string") {
     return { source: String(source ?? ""), error: "rule must be a string" };
   }
@@ -121,12 +114,6 @@ export function parseInputFilterRule(source, options = {}) {
   }
 
   if (!pattern) return { source: raw, error: "pattern is empty" };
-  if (pattern.length > maxPatternLength) {
-    return {
-      source: raw,
-      error: `pattern is too long (${pattern.length} characters, limit ${maxPatternLength})`,
-    };
-  }
 
   const flags = new Set();
   for (const flag of flagsRaw) {
@@ -136,19 +123,16 @@ export function parseInputFilterRule(source, options = {}) {
     if (flags.has(flag)) return { source: raw, error: `duplicate flag "${flag}"` };
     flags.add(flag);
   }
-
-  let warning;
-  if (op !== "s" && flags.has("g")) {
-    flags.delete("g");
-    warning = `flag "g" has no effect on ${op} rules and is ignored`;
-  }
+  // d/k decide with .test(), which advances lastIndex on a global regex and
+  // would then alternate between calls. `g` means nothing there, so drop it.
+  if (op !== "s") flags.delete("g");
 
   let re;
   try {
     re = new RegExp(pattern, [...flags].join(""));
   } catch (err) {
     // V8 already says "Invalid regular expression: <pattern>: <why>"; keep that
-    // detail without stuttering the prefix the doctor keys off.
+    // detail without stuttering the prefix the doctors key off.
     const message = err?.message || String(err);
     return {
       source: raw,
@@ -158,122 +142,59 @@ export function parseInputFilterRule(source, options = {}) {
     };
   }
 
-  const parsed = { op, scope, re, replacement, source: raw };
-  if (warning) parsed.warning = warning;
-  return parsed;
+  return { op, scope, re, replacement, source: raw };
 }
 
-export function compileInputFilters(rules, options = {}) {
-  const maxRules = options.maxRules ?? DEFAULT_MAX_RULES;
-  const maxPatternLength = options.maxPatternLength ?? DEFAULT_MAX_PATTERN_LENGTH;
-  const list = Array.isArray(rules) ? rules : [];
-
-  let key = null;
-  try {
-    key = JSON.stringify([list, maxRules, maxPatternLength]);
-  } catch {
-    key = null;
-  }
-  if (key !== null && cache.has(key)) return cache.get(key);
-
+export function compileInputFilters(rules) {
   const compiled = [];
   const errors = [];
-  const warnings = [];
-  list.slice(0, maxRules).forEach((entry, index) => {
+  const list = Array.isArray(rules) ? rules : [];
+  list.forEach((entry, index) => {
     if (typeof entry !== "string") {
       errors.push({ index, source: String(entry ?? ""), message: "rule must be a string" });
       return;
     }
     if (!entry.trim()) return;
-    const parsed = parseInputFilterRule(entry, { maxPatternLength });
-    if (parsed.error) {
-      errors.push({ index, source: parsed.source, message: parsed.error });
-      return;
-    }
-    if (parsed.warning) {
-      warnings.push({ index, source: parsed.source, message: parsed.warning });
-    }
-    compiled.push({ ...parsed, index });
+    const parsed = parseInputFilterRule(entry);
+    if (parsed.error) errors.push({ index, source: parsed.source, message: parsed.error });
+    else compiled.push({ ...parsed, index });
   });
-  if (list.length > maxRules) {
-    errors.push({
-      index: maxRules,
-      source: String(list[maxRules] ?? ""),
-      message: `too many rules: ${list.length} configured, only the first ${maxRules} are applied`,
-    });
-  }
-
-  const result = { rules: compiled, errors, warnings, count: list.length };
-  if (key !== null) {
-    if (cache.size >= CACHE_LIMIT) cache.delete(cache.keys().next().value);
-    cache.set(key, result);
-  }
-  return result;
+  return { rules: compiled, errors };
 }
 
 /**
- * Run compiled rules over `text`. Never throws.
+ * Run compiled rules over `text`.
  *
  * `substituteOnly` skips the d/k operations, so a caller that already took one
  * drop decision for a turn can rewrite its individual pieces without taking a
  * second, possibly contradictory one.
- *
- * The time budget is advisory: every rule always runs, and a slow pass is
- * reported via `slow` / `elapsedMs` rather than silently skipping the rule that
- * may well be the redaction the operator cares about.
  */
-export function applyInputFilters(text, compiled, options = {}) {
-  const { role = "", substituteOnly = false, now = Date.now } = options;
+export function applyInputFilters(text, compiled, { role = "", substituteOnly = false } = {}) {
   const original = typeof text === "string" ? text : String(text ?? "");
-  const list = Array.isArray(compiled) ? compiled : [];
-  const started = now();
-
   let current = original;
-  let dropped = false;
-  let ruleIndex = -1;
-  let op = "";
-  let error = "";
-  try {
-    for (const rule of list) {
-      if (rule.scope && rule.scope !== role) continue;
-      if (rule.op === "s") {
-        current = current.replace(rule.re, rule.replacement);
-        continue;
-      }
-      if (substituteOnly) continue;
-      const matched = rule.re.test(current);
-      if ((rule.op === "d" && matched) || (rule.op === "k" && !matched)) {
-        dropped = true;
-        ruleIndex = rule.index;
-        op = rule.op;
-        break;
-      }
+  for (const rule of Array.isArray(compiled) ? compiled : []) {
+    if (rule.scope && rule.scope !== role) continue;
+    if (rule.op === "s") {
+      current = current.replace(rule.re, rule.replacement);
+      continue;
     }
-  } catch (err) {
-    error = err?.message || String(err);
-    current = original;
-    dropped = false;
-    ruleIndex = -1;
-    op = "";
+    if (substituteOnly) continue;
+    const matched = rule.re.test(current);
+    if ((rule.op === "d" && matched) || (rule.op === "k" && !matched)) {
+      return { text: "", changed: false, dropped: true, ruleIndex: rule.index, op: rule.op };
+    }
   }
-
-  const finalText = dropped ? "" : current.trim();
-  const elapsedMs = Math.max(0, now() - started);
+  const finalText = current.trim();
   return {
     text: finalText,
-    changed: !dropped && finalText !== original,
-    dropped,
-    ruleIndex,
-    op,
-    elapsedMs,
-    slow: elapsedMs > SLOW_MS,
-    error,
+    changed: finalText !== original,
+    dropped: false,
+    ruleIndex: -1,
+    op: "",
   };
 }
 
-/**
- * Doctor-facing summary of both filter knobs on a resolved plugin config.
- */
+/** Doctor-facing summary of both filter knobs on a resolved plugin config. */
 export function describeInputFilters(cfg = {}) {
   return INPUT_FILTER_KNOBS.map(({ key, env, label }) => {
     const configured = Array.isArray(cfg?.[key]) ? cfg[key] : [];
@@ -291,14 +212,8 @@ export function describeInputFilters(cfg = {}) {
       label,
       total: configured.length,
       active,
-      ops,
       summary: `${active} rule${active === 1 ? "" : "s"}${bits.length ? ` (${bits.join(", ")})` : ""}`,
       errors: compiled.errors,
-      warnings: compiled.warnings,
     };
   });
-}
-
-export function resetInputFilterCache() {
-  cache.clear();
 }

@@ -396,14 +396,7 @@ async function main() {
       approve();
       return;
     }
-    if (verdict.changed || verdict.slow) {
-      log("query_filter", {
-        rawLength: userPrompt.length,
-        length: verdict.text.length,
-        slow: verdict.slow,
-        elapsedMs: verdict.elapsedMs,
-      });
-    }
+    if (verdict.changed) log("query_filter", { rawLength: userPrompt.length, length: verdict.text.length });
     userPrompt = verdict.text;
   }
   if (queryFilters.errors.length) log("query_filter_errors", queryFilters.errors);

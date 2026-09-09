@@ -261,7 +261,7 @@ Rules are sed-style strings applied in order to one piece of text:
 | `k<d>pattern<d>[flags]` | keep the text only when the pattern matches (chain them for AND) |
 | `user:` / `assistant:` prefix | apply the rule to that role only |
 
-`<d>` is any punctuation delimiter — `/`, `|`, `#`, `:` — and `\` escapes it inside the pattern. Flags are `i`, `m`, `s`, `u` and `g` (`g` replaces every match; it is ignored on `d`/`k`). At most 32 rules, each pattern at most 512 characters.
+`<d>` is any punctuation delimiter — `/`, `|`, `#`, `:` — and `\` escapes it inside the pattern. Flags are `i`, `m`, `s`, `u` and `g` (`g` replaces every match; it means nothing on `d`/`k` and is dropped there).
 
 | Rule | Effect |
 |------|--------|
@@ -285,14 +285,10 @@ In `ovcli.conf` the rules are a JSON array, so backslashes are doubled:
 }
 ```
 
-Notes worth knowing before you write a rule:
-
-- **The env vars are comma-separated lists**, split before parsing. A literal comma in a pattern can be written `\x2c` — but that is not quantifier syntax, so a bounded `{10,}` has to come from the `ovcli.conf` array. A comma in an `s` replacement cannot be expressed via env at all.
-- **Order matters and drops win.** Rules run top to bottom; the first `d` that matches (or `k` that does not) ends the decision. Text that a substitution empties is not a drop — an emptied query is simply too short to recall on.
-- **Filters run early**: before `OPENVIKING_MIN_QUERY_LENGTH` on the recall side, and before the built-in ack / slash-command / signal heuristics on the capture side, so a prefix stripped down to `ok` is discarded as an ack.
-- **A capture rule filters what is sent, not what is stored.** Turns already written to OpenViking are untouched, and anything sitting in the pending queue was filtered by the rules in effect when it was enqueued. Adding a `d`/`k` rule mid-session also shortens the turn list the cursor counts, which reads as a transcript rewrite and replays from the last user turn — the same thing toggling `OPENVIKING_CAPTURE_ASSISTANT_TURNS` does.
-- **A bad rule is skipped, never fatal.** `ov-memory-doctor` prints the active rules and warns with the exact parse or RegExp error for the ones it could not compile. A catastrophically backtracking pattern is still your own foot: it shows up as `slow` in the debug log and, at worst, as a hook timeout.
-- The `u` flag rejects escapes that are legal without it (`\-`, `\_`, a lone `{`, `[\w-.]`); leave it off unless the pattern needs Unicode property escapes.
+- **The env vars are comma-separated lists**, split before parsing, so a rule that needs a literal comma — a bounded `{10,}`, say — belongs in the array above. (`\x2c` covers a literal comma elsewhere in a pattern, but it is not quantifier syntax.)
+- **Order matters and drops win.** The first `d` that matches, or `k` that does not, ends the decision. Filters run before `OPENVIKING_MIN_QUERY_LENGTH` and before the built-in ack / slash-command heuristics, so a prefix stripped down to `ok` is discarded as an ack. Text a substitution empties is not a drop — an emptied query is simply too short to recall on.
+- **Filters shape what is sent, not what is stored.** Adding a `d`/`k` rule mid-session also shortens the turn list the capture cursor counts, which reads as a transcript rewrite and replays from the last user turn — the same thing toggling `OPENVIKING_CAPTURE_ASSISTANT_TURNS` does.
+- **A bad rule is skipped, never fatal.** `ov-memory-doctor` lists the active rules and reports the exact parse or RegExp error for the ones it could not compile.
 
 ### Plugin settings in `ovcli.conf`
 

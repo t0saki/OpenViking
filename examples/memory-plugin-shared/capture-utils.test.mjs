@@ -101,7 +101,6 @@ test("filterCaptureParts takes one drop verdict on the aggregate, tool parts inc
     cfg,
   )
   assert.equal(shaped.dropped, true)
-  assert.equal(shaped.op, "d")
   assert.deepEqual(shaped.parts, [])
 
   // The aggregate is what a keep-only rule sees, so a match anywhere keeps the turn.

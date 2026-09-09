@@ -5,7 +5,6 @@ import {
   compileInputFilters,
   describeInputFilters,
   parseInputFilterRule,
-  resetInputFilterCache,
 } from "./lib/input-filters.mjs"
 
 function compile(rules) {
@@ -65,14 +64,12 @@ test("drop and keep rules take optional trailing delimiter and flags", () => {
   assert.equal(parseInputFilterRule("d/foo/i").re.flags, "i")
 })
 
-test("g is dropped from d/k rules with a warning so .test() stays stateless", () => {
-  const parsed = parseInputFilterRule("d/foo/g")
-  assert.equal(parsed.re.flags, "")
-  assert.match(parsed.warning, /^flag "g" has no effect/)
-  const compiled = compileInputFilters(["d/foo/g"])
-  assert.deepEqual(compiled.errors, [])
-  assert.equal(compiled.warnings.length, 1)
-  assert.equal(compiled.warnings[0].index, 0)
+test("g is stripped from d/k rules so .test() stays stateless", () => {
+  const rules = compile(["d/foo/g"])
+  assert.equal(rules[0].re.flags, "")
+  // With `g` kept, .test() would advance lastIndex and alternate between calls.
+  assert.equal(applyInputFilters("foo", rules).dropped, true)
+  assert.equal(applyInputFilters("foo", rules).dropped, true)
 })
 
 test("recognises the role scope prefixes", () => {
@@ -101,19 +98,6 @@ test("reports every malformed rule instead of throwing", () => {
     assert.match(parseInputFilterRule(rule).error || "", expected, `for rule ${JSON.stringify(rule)}`)
   }
   assert.match(parseInputFilterRule(42).error, /rule must be a string/)
-})
-
-test("caps rule count and pattern length, reporting what was skipped", () => {
-  const many = Array.from({ length: 40 }, (_, i) => `s/a${i}/b/`)
-  const compiled = compileInputFilters(many)
-  assert.equal(compiled.rules.length, 32)
-  assert.equal(compiled.count, 40)
-  assert.equal(compiled.errors.length, 1)
-  assert.match(compiled.errors[0].message, /too many rules: 40 configured/)
-
-  const long = compileInputFilters([`s/${"a".repeat(513)}/b/`])
-  assert.equal(long.rules.length, 0)
-  assert.match(long.errors[0].message, /pattern is too long/)
 })
 
 test("non-array and non-string entries never throw", () => {
@@ -177,25 +161,6 @@ test("substituteOnly rewrites but never drops", () => {
   const verdict = applyInputFilters("drop me: secret secret", rules, { substituteOnly: true })
   assert.equal(verdict.dropped, false)
   assert.equal(verdict.text, "drop me: [redacted] [redacted]")
-})
-
-test("elapsed time is measured and reported, never used to skip a rule", () => {
-  let clock = 0
-  const ticks = [0, 120]
-  const now = () => ticks[clock++] ?? 120
-  const verdict = applyInputFilters("aaa", compile(["s/a/b/g"]), { now })
-  assert.equal(verdict.text, "bbb")
-  assert.equal(verdict.elapsedMs, 120)
-  assert.equal(verdict.slow, true)
-})
-
-test("compilation is memoised per rule list and resettable", () => {
-  resetInputFilterCache()
-  const first = compileInputFilters(["s/a/b/"])
-  assert.equal(compileInputFilters(["s/a/b/"]), first)
-  assert.notEqual(compileInputFilters(["s/a/c/"]), first)
-  resetInputFilterCache()
-  assert.notEqual(compileInputFilters(["s/a/b/"]), first)
 })
 
 test("describeInputFilters summarises both knobs for the doctors", () => {
