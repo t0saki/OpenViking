@@ -11,10 +11,14 @@
  * newest user message.
  *
  * Do not load this together with the openviking extension — they would both
- * register `viking_*` tools and both sync the same OV session, so this one
- * disables itself when it finds the other already registered.
+ * register `viking_*` tools and both sync the same OV session. As a backstop
+ * this one stands down as soon as it sees a `viking_search` registered from
+ * another extension's directory, which is re-checked on every event boundary
+ * because that extension registers its tools only after a network round trip.
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { createLogger } from "./shared/debug-log.mjs";
 import { loadConfigFromModuleUrl, type OVConfig } from "./config.js";
 import { OVClient } from "./client.js";
@@ -52,7 +56,7 @@ Start a new window when:
 - a phase of the work is finished and its details no longer matter for what comes next;
 - the user switches to an unrelated topic or a different area of the code;
 - the user comes back after a long idle gap with something new;
-- the status line or get_context_remaining shows the window filling up — around 70% is the moment to act, and do not push past 85%, because after that the harness compacts the conversation for you and your notes are never written.
+- the status line or get_context_remaining says the window is filling up — act when their advice line asks you to, and never ignore a [context-reminder]. If you wait until the window overflows, the harness compacts the conversation for you and your notes are never written.
 
 Do not start a new window:
 - in the middle of an edit sequence you have not verified;
@@ -60,6 +64,8 @@ Do not start a new window:
 - to get away from a problem you have not solved — the new window carries the same problem with less information.
 
 Write the notes before you call new_context: the goal, the decisions and why you made them, what is finished, what is in flight, exact file paths and identifiers, and the next steps. Write them for someone who has not seen this conversation, because that is exactly what your next window is. Call new_context alone — tool results from the same batch are discarded together with the old window.
+
+If new_context answers with "Context window NOT reset", nothing was archived and nothing was removed from your context: read the reason it gives, keep working in the current window, and do not call it again until that reason is gone.
 
 In a new window, read the <openviking-context source="context-window"> block first: it carries the Working Memory, your notes and the request that is still pending. Use history for anything it does not cover, and never ask the user to repeat something an archived window already holds.
 </context-window-management>`;
@@ -100,18 +106,74 @@ export default async function (pi: ExtensionAPI) {
   let lastTransformed: any[] | undefined;
   const reserveTokens = readPiReserveTokens(process.cwd());
 
+  /** This extension's own directory, to tell our tools from a peer's. */
+  const ownDir = dirname(fileURLToPath(import.meta.url));
+
   /**
-   * True when another OpenViking extension already owns the tool surface.
-   * Checked before this extension registers anything, so the loser of the race
-   * adds no duplicate tools and no second writer to the same OV session.
+   * True when a *different* extension owns `viking_search`.
+   *
+   * A one-shot probe at startup cannot work: the other extension registers its
+   * tools only after an awaited health check, so at the moment our own start()
+   * begins the tool is provably not there yet. So the probe compares the
+   * registering extension's `sourceInfo.path` with ours and is re-run on every
+   * event boundary — pi's tool registry is keyed by name, so once the peer
+   * registers, `viking_search` carries its path and not ours.
    */
-  const otherExtensionActive = (): boolean => {
+  const peerOwnsToolSurface = (): boolean => {
     try {
       const tools = (pi as any).getAllTools?.();
-      return Array.isArray(tools) && tools.some((tool: any) => tool?.name === COEXISTENCE_PROBE_TOOL);
+      if (!Array.isArray(tools)) return false;
+      for (const tool of tools) {
+        if (tool?.name !== COEXISTENCE_PROBE_TOOL) continue;
+        const path = String(tool?.sourceInfo?.path ?? tool?.sourceInfo?.baseDir ?? "");
+        // No sourceInfo (an older pi, or a synthetic tool): fall back to "any
+        // viking_search we did not register ourselves is a peer's".
+        if (!path) return !toolsRegistered;
+        if (path !== ownDir && !path.startsWith(ownDir + "/")) return true;
+      }
+      return false;
     } catch {
       return false;
     }
+  };
+
+  let peerWarned = false;
+
+  /**
+   * Stand down when the other OpenViking extension turns up. Two writers on one
+   * OV session double every captured message and race on the archive boundary.
+   *
+   * Only safe while nothing irreversible has happened: once a window is open,
+   * the model's context depends on our cut, and dropping it would hand back a
+   * conversation we already told the model was archived. In that case the
+   * conflict is reported and this extension keeps going.
+   */
+  const standDownIfPeerActive = (ctx: any): boolean => {
+    if (bypassed) return true;
+    if (!peerOwnsToolSurface()) return false;
+    if (windows.armed || windows.state.windowIndex > 1 || sync.syncedCount > 0) {
+      if (!peerWarned) {
+        peerWarned = true;
+        ctx?.ui?.notify?.(
+          "OpenViking: another OpenViking extension is active and both are writing this session — disable one",
+          "warning",
+        );
+        logger.log("coexistence", { standDown: false, reason: "window already open" });
+      }
+      return false;
+    }
+    bypassed = true;
+    started = true;
+    connected = false;
+    if (!peerWarned) {
+      peerWarned = true;
+      ctx?.ui?.notify?.(
+        "OpenViking experimental extension disabled: another OpenViking extension is already active",
+        "warning",
+      );
+    }
+    logger.log("coexistence", { standDown: true });
+    return true;
   };
 
   // ================================================================
@@ -123,17 +185,9 @@ export default async function (pi: ExtensionAPI) {
     if (startPromise) return startPromise;
 
     startPromise = (async () => {
-      // Coexistence guard, before any registration: two OpenViking extensions
-      // would duplicate every viking_* tool and race on the same OV session.
-      if (!toolsRegistered && otherExtensionActive()) {
-        bypassed = true;
-        started = true;
-        ctx.ui?.notify?.(
-          "OpenViking experimental extension disabled: another OpenViking extension is already active",
-          "warning",
-        );
-        return;
-      }
+      // Coexistence guard, before any registration. It runs again on every
+      // event boundary because the peer registers its tools asynchronously.
+      if (standDownIfPeerActive(ctx)) return;
 
       // Bypass check
       const cwd = process.cwd();
@@ -209,7 +263,9 @@ export default async function (pi: ExtensionAPI) {
   pi.on("before_agent_start", async (event, ctx) => {
     // session_start doesn't fire for pi -c continuations.
     await start(ctx);
-    if (bypassed) return;
+    // Re-checked here because the peer extension registers its tools from its
+    // own awaited start(), which may only have finished after ours began.
+    if (standDownIfPeerActive(ctx) || bypassed) return;
 
     // Queue recall for the context hook. Pi renders the user message before
     // that hook, so recall latency does not delay the message appearing.
@@ -265,12 +321,21 @@ export default async function (pi: ExtensionAPI) {
     lastTransformed = transformed;
     if (!connected) return { messages: transformed };
 
-    // Keep recall synchronous with the provider request so the current prompt
-    // still receives current-query memory, without blocking user-message UI.
-    await recall.searchPending();
-    const messages = recall.injectRecall(transformed);
-    lastTransformed = messages;
-    return { messages };
+    // Everything after the cut is wrapped: pi keeps the *untransformed* list
+    // when a context handler throws (runner.js emits the error and moves on),
+    // so an exception in recall would undo the window cut and hand the model an
+    // archived window back together with the tool result that archived it.
+    try {
+      // Keep recall synchronous with the provider request so the current prompt
+      // still receives current-query memory, without blocking user-message UI.
+      await recall.searchPending();
+      const messages = recall.injectRecall(transformed);
+      lastTransformed = messages;
+      return { messages };
+    } catch (error) {
+      logger.logError("recall", error);
+      return { messages: transformed };
+    }
   });
 
   // --- tool_call ---
@@ -282,7 +347,7 @@ export default async function (pi: ExtensionAPI) {
 
   // --- turn_end ---
   pi.on("turn_end", async (event, ctx) => {
-    if (bypassed) return;
+    if (standDownIfPeerActive(ctx) || bypassed) return;
 
     if (connected && config.syncTurns) {
       const branch = ctx.sessionManager.getBranch();
@@ -291,16 +356,24 @@ export default async function (pi: ExtensionAPI) {
     }
 
     // Re-arm the reminders only for an assistant response that belongs to the
-    // *current* window. The turn a reset happens in ends here too, and its
-    // assistant message is the pre-reset one: pi still reports the whole
-    // session as used (the virtual cut never touches its message state), so
-    // clearing the guard now would fire a "you are at 95%, call new_context"
-    // reminder one line after the window opened — and burn the level for the
-    // rest of the window. An undated message counts as current, the same
-    // direction the core takes: pi stamps every real message.
-    const turnAssistantAt = Number((event as any).message?.timestamp);
+    // *current* window and actually produced usage. The turn a reset happens in
+    // ends here too, and its assistant message is the pre-reset one: pi still
+    // reports the whole session as used (the virtual cut never touches its
+    // message state), so clearing the guard now would fire a "you are at 95%,
+    // call new_context" reminder one line after the window opened — and burn
+    // the level for the rest of the window. An undated message counts as
+    // current, the same direction the core takes: pi stamps every real message.
+    //
+    // A provider error or an Esc ends the turn with a message pi stamps *now*
+    // but whose usage it refuses to trust (getContextUsage skips assistants
+    // with stopReason "error"/"aborted"), so such a turn must not re-arm
+    // either: the reported number would still be the closed window's.
+    const turnMessage = (event as any).message;
+    const stopReason = String(turnMessage?.stopReason ?? "");
+    const turnAssistantAt = Number(turnMessage?.timestamp);
     const lastResetAt = Number(windows.state.lastResetAt) || 0;
-    if (!Number.isFinite(turnAssistantAt) || turnAssistantAt >= lastResetAt) {
+    const usableResponse = stopReason !== "aborted" && stopReason !== "error";
+    if (usableResponse && (!Number.isFinite(turnAssistantAt) || turnAssistantAt >= lastResetAt)) {
       windows.observeAssistantResponse();
     }
 
@@ -341,7 +414,13 @@ export default async function (pi: ExtensionAPI) {
 
   // --- session_before_compact ---
   pi.on("session_before_compact", async (event, ctx) => {
-    if (bypassed || !connected) return;
+    if (bypassed) return;
+    // Called even with OpenViking down: the core's recent-reset guard needs no
+    // network, and it is what stops a stale usage estimate right after a reset
+    // from compacting a window that just opened. The core refuses to commit on
+    // its own when `io.connected()` is false, so an offline pi still falls back
+    // to its own summarizer.
+    //
     // Takes over pi's compaction: archive to OpenViking and hand pi our window
     // header as the summary. Returns undefined on any failure, which leaves
     // pi's own summarizer in charge.

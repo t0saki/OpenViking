@@ -43,6 +43,15 @@ const HEADER_INTRO =
 
 const TRUNCATION_MARKER = "\n...(truncated)";
 
+/**
+ * Handoff notes for a window pi compacted before the model called
+ * `new_context`. The model wrote none for this boundary, and reusing the notes
+ * of the previous one would archive them as if it had.
+ */
+const AUTO_COMPACT_NOTES =
+  "(none — the harness compacted this window before new_context was called, " +
+  "so no handoff notes were written for it)";
+
 const FAIL_CLOSED_TAIL =
   "Nothing changed; keep working; the harness will compact for you if the window fills up.";
 
@@ -213,9 +222,20 @@ function mergeHeaderIntoUser(msg, headerText) {
  * A pressure reminder is about the window that just ended, so it must never
  * survive into the new one: leaving it in front would tell a brand new window
  * that it is already 87% full and push the model straight into a second reset.
+ *
+ * The `context` hook runs on pi's *AgentMessage* list, before `convertToLlm`
+ * rewrites custom messages to `user` (agent-loop.js: transformContext →
+ * convertToLlm), so what a reminder actually looks like here is
+ * `{role:"custom", customType:"ov-context-reminder"}`. Both shapes are matched:
+ * the custom one is what pi emits, the user one is what a converted copy looks
+ * like.
  */
+function isReminderCarrier(msg) {
+  return !!msg && (msg.role === "user" || msg.role === "custom");
+}
+
 function isStaleReminder(msg) {
-  if (!msg || msg.role !== "user") return false;
+  if (!isReminderCarrier(msg)) return false;
   if (messageCustomType(msg) === REMINDER_CUSTOM_TYPE) return true;
   return flattenContent(msg).trimStart().startsWith(REMINDER_MARKER);
 }
@@ -258,6 +278,22 @@ function normalizeSteps(value) {
 function normalizeNames(value) {
   if (!Array.isArray(value)) return [];
   return value.map((name) => String(name || "").trim()).filter(Boolean);
+}
+
+/** How many `{windowId, archiveId}` pairs the persisted entry carries. */
+const ARCHIVE_HISTORY_LIMIT = 100;
+
+function normalizeArchives(value) {
+  if (!Array.isArray(value)) return [];
+  const out = [];
+  for (const row of value) {
+    if (!row || typeof row !== "object" || Array.isArray(row)) continue;
+    const windowId = String(row.windowId || "").trim();
+    const archiveId = String(row.archiveId || "").trim();
+    if (!windowId || !archiveId) continue;
+    out.push({ windowId, archiveId, archiveUri: String(row.archiveUri || "").trim() });
+  }
+  return out.slice(-ARCHIVE_HISTORY_LIMIT);
 }
 
 function truncateWithMarker(text, budget) {
@@ -370,9 +406,14 @@ export function buildWindowHeader(opts = {}) {
     );
     const previousOverview = truncateWithMarker(opts.previousOverview, cfg.overviewBudget);
     if (previousOverview) {
-      lines.push(
-        `<working-memory status="pending" archive="${archiveId}" stale="true">${previousOverview}</working-memory>`,
-      );
+      // This block is the Working Memory of an *earlier* window, never of the
+      // archive named one line above — tagging it with `archiveId` would
+      // present a summary as belonging to the archive that has none.
+      const staleArchive = String(opts.previousArchiveId || "").trim();
+      const attrs = ['status="stale"'];
+      if (staleArchive) attrs.push(`archive="${staleArchive}"`);
+      attrs.push('describes="an earlier window, not the archive above"');
+      lines.push(`<working-memory ${attrs.join(" ")}>${previousOverview}</working-memory>`);
     }
   }
 
@@ -386,12 +427,23 @@ export function buildWindowHeader(opts = {}) {
     );
   }
 
+  const undelivered = Math.max(0, Math.floor(Number(opts.undeliveredCount) || 0));
+  if (undelivered > 0) {
+    lines.push(
+      "",
+      `${undelivered} message${undelivered === 1 ? "" : "s"} of this session ${undelivered === 1 ? "was" : "were"} ` +
+        "rejected by OpenViking and are missing from the archive, so history cannot show them.",
+    );
+  }
+
   const previousLabel = previousWindowId || windowId;
   lines.push(
     "",
     'To recover anything not covered above: history {"action":"list_windows"} / ' +
       `{"action":"list_items","window":"${previousLabel}"} / ` +
-      `{"action":"read_item","item":"${previousLabel}:14"} / ` +
+      // A literal index would usually be out of range; list_items is what hands
+      // out the real ones.
+      `{"action":"read_item","item":"${previousLabel}:<index from list_items>"} / ` +
       '{"action":"search_contents","query":"..."}.',
     "Continue from the notes above. If the pending request is not finished, resume it now.",
     "</context_window>",
@@ -483,10 +535,16 @@ export function buildStatusLine(opts = {}) {
 
   const lines = [parts.join(" · ")];
 
-  const idleGapMs = Number(opts.idleGapMs);
+  // The NOTE is about the gap the user just came back from, which is
+  // `sinceLastUserMs` — the status line is built in `before_agent_start`, where
+  // the newest genuine user message is still the *previous* prompt.
+  // `idleGapMs` (the gap before that message) is only a fallback for a caller
+  // that has nothing else; it is what `get_context_remaining` reports on its
+  // own line.
+  const gapMs = Number.isFinite(since) && since > 0 ? since : Number(opts.idleGapMs);
   const idleGapMinutes = Math.max(0, Math.floor(Number(opts.idleGapMinutes) || 0));
-  if (idleGapMinutes > 0 && Number.isFinite(idleGapMs) && idleGapMs > idleGapMinutes * 60000) {
-    const minutes = Math.round(idleGapMs / 60000);
+  if (idleGapMinutes > 0 && Number.isFinite(gapMs) && gapMs > idleGapMinutes * 60000) {
+    const minutes = Math.round(gapMs / 60000);
     lines.push(
       `NOTE: ${minutes} minutes passed since the previous user message. ` +
         "If this request starts unrelated work, consider new_context before you begin.",
@@ -678,6 +736,10 @@ export class ContextWindowCore {
       connected: io.connected || (() => true),
       sessionId: io.sessionId || (() => null),
       pendingCount: io.pendingCount || (() => 0),
+      /** Messages the server rejected for good; they are missing from the archive. */
+      droppedCount: io.droppedCount || (() => 0),
+      /** trace_id of the last commit response, for a refusal the model can report. */
+      commitTraceId: io.commitTraceId || (() => ""),
     };
 
     // Persisted state (plan §10).
@@ -694,6 +756,18 @@ export class ContextWindowCore {
     this.archiveId = "";
     this.archiveUri = "";
     this.taskId = "";
+    /**
+     * Every archive this session produced, oldest first:
+     * `{windowId, archiveId, archiveUri}`. `history` resolves window ids
+     * through this map instead of numbering the server's archive list
+     * positionally — a window that closed without producing an archive (an
+     * external compaction) would otherwise shift every id by one.
+     */
+    this.archives = [];
+    /** Archive of the window before the current one, for the stale WM block. */
+    this.previousArchiveId = "";
+    /** Messages OpenViking rejected for good; they are missing from the archive. */
+    this.undeliveredCount = 0;
     this.overviewReady = false;
     this.overviewUnavailable = false;
     this.overviewAttempts = 0;
@@ -764,6 +838,10 @@ export class ContextWindowCore {
       archiveId: this.archiveId,
       archiveUri: this.archiveUri,
       taskId: this.taskId,
+      // Bounded: only the tail matters and the entry has to stay small.
+      archives: this.archives.slice(-ARCHIVE_HISTORY_LIMIT).map((a) => ({ ...a })),
+      previousArchiveId: this.previousArchiveId,
+      undeliveredCount: this.undeliveredCount,
       overviewReady: this.overviewReady,
       overviewUnavailable: this.overviewUnavailable,
       overviewAttempts: this.overviewAttempts,
@@ -804,6 +882,9 @@ export class ContextWindowCore {
       this.archiveId = typeof data.archiveId === "string" ? data.archiveId : "";
       this.archiveUri = typeof data.archiveUri === "string" ? data.archiveUri : "";
       this.taskId = typeof data.taskId === "string" ? data.taskId : "";
+      this.archives = normalizeArchives(data.archives);
+      this.previousArchiveId = typeof data.previousArchiveId === "string" ? data.previousArchiveId : "";
+      this.undeliveredCount = Math.max(0, Math.floor(Number(data.undeliveredCount) || 0));
       this.overviewReady = data.overviewReady === true;
       this.overviewUnavailable = data.overviewUnavailable === true;
       this.overviewAttempts = Math.max(0, Math.floor(Number(data.overviewAttempts) || 0));
@@ -972,7 +1053,9 @@ export class ContextWindowCore {
       return {
         ok: false,
         kind: "noop",
-        text: "A context window reset is already in progress.",
+        text:
+          "Context window NOT reset: a reset is already in progress. " +
+          "Nothing changed; keep working and do not call new_context again.",
         details: { stage: "busy" },
       };
     }
@@ -981,6 +1064,8 @@ export class ContextWindowCore {
     const deadline = startedAt + this.config.resetDeadlineMs;
     /** Set to `{archiveUri, archiveId, taskId}` once the archive exists. */
     let committed = null;
+    /** True once the handoff note is in the live session and may need retracting. */
+    let handoffPosted = false;
     this.resetting = true;
     try {
       if (!toolCallId) {
@@ -1027,10 +1112,12 @@ export class ContextWindowCore {
         return this.refuse(`the archive barrier did not clear — ${detail}`, { stage: "flush", pending });
       }
 
-      // Everything from here on is either cheap or irreversible, so both the
-      // abort and the deadline are checked *before* the handoff note is
-      // written: a refusal after it would leave a "[Context Window Handoff]"
-      // message in the live OpenViking session for a window that never closed.
+      // Both the abort and the deadline are checked *before* the handoff note
+      // is written, because a refusal after it leaves a
+      // "[Context Window Handoff]" message in the live OpenViking session for a
+      // window that never closed. The paths that can still refuse after the
+      // write retract it (`refuseAfterHandoff`), which is a repair, not a
+      // rollback: OpenViking has no delete for a session message.
       if (signal?.aborted) return this.cancelled("aborted-before-handoff");
       if (this.io.now() >= deadline) {
         return this.refuse(
@@ -1051,8 +1138,14 @@ export class ContextWindowCore {
       if (!posted) {
         return this.refuse("the handoff note could not be written to OpenViking", { stage: "handoff" });
       }
+      // From here on the live OpenViking session already carries a
+      // "[Context Window Handoff]" message for a window that has not closed
+      // yet, so every refusal below has to retract it first — otherwise the
+      // next archive would contain two handoffs and the Working Memory prompt
+      // would read a window boundary that never happened.
+      handoffPosted = true;
 
-      if (signal?.aborted) return this.cancelled("aborted-before-commit");
+      if (signal?.aborted) return await this.cancelledAfterHandoff("aborted-before-commit");
 
       let commit;
       try {
@@ -1065,17 +1158,24 @@ export class ContextWindowCore {
         // before it syncs and flushes again.
         this.lastCommitError = { at: this.safeNow(), message: String(err?.message || err) };
         this.log(`context-window: commit transport error; the archive may or may not exist (${this.lastCommitError.message})`);
-        return this.refuse(
+        return await this.refuseAfterHandoff(
           "the archive commit failed in transport; the archive may or may not exist, so nothing was cut",
           { stage: "commit-transport", error: this.lastCommitError.message },
         );
       }
       if (!commit || typeof commit !== "object") {
-        return this.refuse("OpenViking refused the archive commit", { stage: "commit" });
+        return await this.refuseAfterHandoff("OpenViking refused the archive commit", {
+          stage: "commit",
+          traceId: this.safeCommitTraceId(),
+        });
       }
       const status = String(commit.status || "");
-      if (status === "skipped" || (!commit.archive_uri && status !== "accepted")) {
+      // No `archive_uri` means there is no archive to point the model at, and
+      // waiting for the Working Memory of an empty URI would burn the whole
+      // deadline — so it refuses even when the status says `accepted`.
+      if (status === "skipped" || !commit.archive_uri) {
         if (status === "skipped") {
+          await this.retractHandoff();
           return {
             ok: false,
             kind: "noop",
@@ -1085,10 +1185,10 @@ export class ContextWindowCore {
             details: { stage: "commit", status, reason: commit.reason || "" },
           };
         }
-        return this.refuse("OpenViking refused the archive commit", {
+        return await this.refuseAfterHandoff("OpenViking refused the archive commit", {
           stage: "commit",
           status,
-          traceId: commit.trace_id || "",
+          traceId: commit.trace_id || this.safeCommitTraceId(),
         });
       }
 
@@ -1128,6 +1228,9 @@ export class ContextWindowCore {
       this.notes = notes;
       this.nextSteps = nextSteps;
       this.pendingRequest = lastUserTextFromBranch(branch);
+      this.previousArchiveId = this.archiveId;
+      this.recordArchive(previousWindowId, archiveId, archiveUri);
+      this.undeliveredCount = this.safeDroppedCount();
       this.archiveId = archiveId;
       this.archiveUri = archiveUri;
       this.taskId = taskId;
@@ -1193,6 +1296,7 @@ export class ContextWindowCore {
         });
         if (recovered) return recovered;
       }
+      if (handoffPosted && !committed) await this.retractHandoff();
       return this.refuse(`the reset failed unexpectedly (${err?.message || err})`, { stage: "error" });
     } finally {
       this.resetting = false;
@@ -1220,6 +1324,9 @@ export class ContextWindowCore {
       } catch {
         this.pendingRequest = "";
       }
+      this.previousArchiveId = this.archiveId;
+      this.recordArchive(previousWindowId, committed.archiveId, committed.archiveUri);
+      this.undeliveredCount = this.safeDroppedCount();
       this.archiveId = committed.archiveId;
       this.archiveUri = committed.archiveUri;
       this.taskId = committed.taskId;
@@ -1289,9 +1396,40 @@ export class ContextWindowCore {
     return {
       ok: false,
       kind: "noop",
-      text: "Context window reset was cancelled before anything was archived; nothing changed.",
+      // Every non-success text starts with the same marker so the model has one
+      // string to key off: "Context window NOT reset".
+      text:
+        "Context window NOT reset: the reset was cancelled before anything was archived. " +
+        "Nothing changed; keep working.",
       details: { stage },
     };
+  }
+
+  /**
+   * Retract the handoff note that is already in the live OpenViking session.
+   * Best effort and never fatal: it is a second message, not a deletion, and
+   * the Working Memory prompt reads it as "that boundary did not happen".
+   */
+  async retractHandoff() {
+    try {
+      await this.io.postHandoff(
+        `${HANDOFF_MARKER} RETRACTED — the reset of ${this.windowId} failed, this window is still open. ` +
+          "Ignore the handoff note above; it does not mark a window boundary.",
+      );
+    } catch {
+      // The refusal itself is what matters; a failed retraction only leaves the
+      // orphan note behind.
+    }
+  }
+
+  async refuseAfterHandoff(cause, details = {}) {
+    await this.retractHandoff();
+    return this.refuse(cause, details);
+  }
+
+  async cancelledAfterHandoff(stage) {
+    await this.retractHandoff();
+    return this.cancelled(stage);
   }
 
   refuse(cause, details = {}) {
@@ -1312,6 +1450,14 @@ export class ContextWindowCore {
     let attempts = 0;
     let state = "pending";
     let overview = "";
+    /**
+     * Polls left after the archive task reached a terminal state without a
+     * Working Memory; -1 while the task is still running. A commit whose phase 2
+     * finishes with an empty summary never writes `.overview.md` at all
+     * (session.py skips the write), and the task ends as `completed` — without
+     * this the wait would burn the entire deadline on every single reset.
+     */
+    let graceLeft = -1;
 
     while (true) {
       if (signal?.aborted) {
@@ -1332,17 +1478,29 @@ export class ContextWindowCore {
         break;
       }
 
-      if (taskId && attempts % 5 === 0) {
+      if (taskId && graceLeft < 0 && (attempts === 2 || attempts % 5 === 0)) {
         let task = null;
         try {
           task = await this.io.getTask(taskId);
         } catch {
           task = null;
         }
-        if (task && String(task.status || "") === "failed") {
+        const status = task ? String(task.status || "") : "";
+        if (status === "failed" || status === "cancelled") {
           state = "unavailable";
           break;
         }
+        if (status === "completed") {
+          // Phase 2 is over. Either the write is a moment behind this read, or
+          // there is no Working Memory to wait for at all.
+          graceLeft = 2;
+        }
+      } else if (graceLeft > 0) {
+        graceLeft -= 1;
+      } else if (graceLeft === 0) {
+        state = "unavailable";
+        this.log(`context-window: ${archiveId} finished without a Working Memory`);
+        break;
       }
 
       const remaining = deadline - this.io.now();
@@ -1375,9 +1533,24 @@ export class ContextWindowCore {
       overview: this.overviewText,
       overviewState,
       previousOverview: this.previousOverview,
+      previousArchiveId: this.previousArchiveId,
+      undeliveredCount: this.undeliveredCount,
       siblingToolNames: this.siblingToolNames,
       config: this.config,
     });
+  }
+
+  /** Remember which window a fresh archive belongs to (plan §10, carry-over 2). */
+  recordArchive(windowId, archiveId, archiveUri) {
+    const id = String(archiveId || "").trim();
+    if (!id) return;
+    const row = { windowId: String(windowId || this.windowId), archiveId: id, archiveUri: String(archiveUri || "") };
+    const existing = this.archives.findIndex((a) => a.archiveId === id);
+    if (existing >= 0) this.archives[existing] = row;
+    else this.archives.push(row);
+    if (this.archives.length > ARCHIVE_HISTORY_LIMIT) {
+      this.archives = this.archives.slice(-ARCHIVE_HISTORY_LIMIT);
+    }
   }
 
   /**
@@ -1501,6 +1674,12 @@ export class ContextWindowCore {
       sinceLastUserMs,
       idleGapMs,
       archiveId: this.archiveId,
+      // The real number of archives this session produced. Deriving it from the
+      // window index would over-count: a window closed by an external
+      // compaction advances the index without producing one.
+      archiveCount: this.archives.length,
+      archives: this.archives.map((a) => ({ ...a })),
+      undeliveredCount: this.undeliveredCount,
       overviewReady: this.overviewReady,
       windowAgeMs: this.openedAt > 0 ? Math.max(0, nowMs - this.openedAt) : null,
       softPercent: limits.softPercent,
@@ -1555,19 +1734,24 @@ export class ContextWindowCore {
 
       const previousWindowId = this.windowId;
       const reason = "automatic: pi compaction threshold";
+      // Not `this.notes`: those were written for the window that *opened* here,
+      // and repeating them would present them as this window's handoff.
       const posted = await this.io.postHandoff(
         buildHandoffMessage({
           windowId: previousWindowId,
           nextWindowId: `w${this.windowIndex + 1}`,
           reason,
-          notes: this.notes || "(none)",
-          nextSteps: this.nextSteps,
+          notes: AUTO_COMPACT_NOTES,
+          nextSteps: [],
         }),
       );
       if (!posted) return undefined;
 
       const commit = await this.io.commit({ keepRecentCount: 0 });
-      if (!commit || typeof commit !== "object" || !commit.archive_uri) return undefined;
+      if (!commit || typeof commit !== "object" || !commit.archive_uri) {
+        await this.retractHandoff();
+        return undefined;
+      }
 
       const archiveUri = String(commit.archive_uri || "");
       const archiveId = basename(archiveUri);
@@ -1589,8 +1773,14 @@ export class ContextWindowCore {
       this.anchorToolCallId = null;
       this.openedAt = this.io.now();
       this.reason = reason;
+      // The notes belonged to the window that just closed, so they are not this
+      // window's handoff; the header would otherwise label them as such.
+      this.notes = "";
       this.nextSteps = [];
       this.pendingRequest = lastUserTextFromBranch(entries);
+      this.previousArchiveId = this.archiveId;
+      this.recordArchive(previousWindowId, archiveId, archiveUri);
+      this.undeliveredCount = this.safeDroppedCount();
       this.archiveId = archiveId;
       this.archiveUri = archiveUri;
       this.taskId = taskId;
@@ -1660,7 +1850,15 @@ export class ContextWindowCore {
     return COMPACTION_SENTINEL;
   }
 
-  /** pi (or another extension) compacted without us: drop the virtual cut. */
+  /**
+   * pi (or another extension) compacted without us: drop the virtual cut.
+   *
+   * The window index still advances — the model's context really did change,
+   * and the reminders have to re-arm for what is effectively a new window — but
+   * no archive is produced, so this window id never appears in `this.archives`
+   * and `history` never lists it. That is why window ids are resolved through
+   * the recorded map rather than by numbering the server's archive list.
+   */
   absorbExternalCompaction(reason = "external compaction") {
     this.anchorToolCallId = null;
     this.windowIndex += 1;
@@ -1692,6 +1890,24 @@ export class ContextWindowCore {
       return Number.isFinite(value) ? value : Date.now();
     } catch {
       return Date.now();
+    }
+  }
+
+  safeDroppedCount() {
+    try {
+      const value = Number(this.io.droppedCount());
+      return Number.isFinite(value) ? Math.max(0, Math.floor(value)) : this.undeliveredCount;
+    } catch {
+      return this.undeliveredCount;
+    }
+  }
+
+  safeCommitTraceId() {
+    try {
+      const value = this.io.commitTraceId();
+      return value ? String(value) : "";
+    } catch {
+      return "";
     }
   }
 

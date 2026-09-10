@@ -21,7 +21,13 @@ export function registerTools(pi: any, client: OVClient, sync?: SyncManager): vo
     ],
     parameters: Type.Object({
       query: Type.String({ description: "Search query" }),
-      scope: Type.Optional(Type.String({ description: "Viking URI prefix to scope search (e.g., 'viking://~/memories/')" })),
+      scope: Type.Optional(Type.String({
+        // The server rejects the `viking://~` home alias with "Invalid scope '~'",
+        // so the examples name the two forms it does accept.
+        description:
+          "Viking URI prefix to scope search, e.g. 'viking://user/<space>/memories/' " +
+          "or 'viking://session/<session id>/'",
+      })),
       limit: Type.Optional(Type.Number({ description: "Max results (default: 10)" })),
     }),
     async execute(
@@ -147,7 +153,13 @@ export function registerTools(pi: any, client: OVClient, sync?: SyncManager): vo
       }
 
       return {
-        content: [{ type: "text", text: stored ? `Remembered in OpenViking: "${params.content}" (${category})` : `Queued for OpenViking: "${params.content}" (${category})` }],
+        content: [{
+          type: "text",
+          text: stored
+            ? `Remembered in OpenViking: "${params.content}" (${category})`
+            : `Not stored: OpenViking did not accept the message and nothing was queued. ` +
+              `Repeat "${params.content}" in your next handoff notes if it matters.`,
+        }],
         details: { stored, category, tagged },
       };
     },
@@ -198,7 +210,6 @@ export function registerTools(pi: any, client: OVClient, sync?: SyncManager): vo
     promptSnippet: "Ingest a URL into OpenViking for indexed retrieval",
     parameters: Type.Object({
       url: Type.String({ description: "URL to ingest (HTTP only, no file paths)" }),
-      reason: Type.Optional(Type.String({ description: "Why this resource is relevant (improves indexing)" })),
     }),
     async execute(
       _id: string, params: any, _signal: AbortSignal,
@@ -255,31 +266,52 @@ function firstLine(raw: string): string {
   return line ? line.trim() : "";
 }
 
-/** Archives oldest first, so index 0 is w1 — the numbering the model sees. */
+/** Archives oldest first, so index 0 is the oldest window of the session. */
 function orderedArchives(archives: OVArchiveEntry[]): OVArchiveEntry[] {
   return [...archives].reverse();
 }
 
-function windowIdFor(index: number): string {
-  return `w${index + 1}`;
+/**
+ * Window id per archive.
+ *
+ * The core records `{windowId, archiveId}` for every archive it writes, so a
+ * window that closed *without* producing one (an external compaction advances
+ * the index but writes nothing) cannot shift every later id. Positional
+ * numbering is only the fallback for an archive the core does not know — one
+ * written before the persisted state existed, or by another process.
+ */
+function windowIdsFor(
+  ordered: OVArchiveEntry[],
+  recorded: Array<{ windowId: string; archiveId: string }>,
+): string[] {
+  const known = new Map<string, string>();
+  for (const row of Array.isArray(recorded) ? recorded : []) {
+    if (row?.archiveId && row?.windowId) known.set(String(row.archiveId), String(row.windowId));
+  }
+  return ordered.map((entry, i) => known.get(entry.archiveId) ?? `w${i + 1}`);
 }
 
 /**
- * `"w2"`, `"2"` or `"archive_002"` → the archive it names. Window numbering is
- * positional (w1 is the oldest archive), archive ids are the server's.
+ * `"w2"`, `"2"` or `"archive_002"` → the archive it names, resolved through the
+ * recorded window ids.
  */
-function resolveArchive(spec: string, ordered: OVArchiveEntry[]): { entry: OVArchiveEntry; windowId: string } | null {
+function resolveArchive(
+  spec: string,
+  ordered: OVArchiveEntry[],
+  windowIds: string[],
+): { entry: OVArchiveEntry; windowId: string } | null {
   const raw = String(spec ?? "").trim();
   if (!raw) return null;
   const byWindow = /^w(\d+)$/i.exec(raw) || /^(\d+)$/.exec(raw);
   if (byWindow) {
-    const idx = Number(byWindow[1]) - 1;
-    if (idx >= 0 && idx < ordered.length) return { entry: ordered[idx], windowId: windowIdFor(idx) };
-    return null;
+    const wanted = `w${Number(byWindow[1])}`;
+    const idx = windowIds.indexOf(wanted);
+    if (idx < 0) return null;
+    return { entry: ordered[idx], windowId: windowIds[idx] };
   }
   const idx = ordered.findIndex((a) => a.archiveId === raw);
   if (idx < 0) return null;
-  return { entry: ordered[idx], windowId: windowIdFor(idx) };
+  return { entry: ordered[idx], windowId: windowIds[idx] };
 }
 
 /** `"w2:14"` or a bare `"14"` when `window` carries the archive. */
@@ -329,13 +361,20 @@ function renderStatusReport(snap: any): string {
   lines.push(
     `gap before that message: ${snap.idleGapMs === null ? "unknown" : formatDuration(snap.idleGapMs)}`,
   );
-  const archives = Math.max(0, Number(String(snap.windowId).slice(1)) - 1);
+  // The recorded archives, not `windowId - 1`: a window closed by an external
+  // compaction advances the index without producing an archive.
+  const archives = Math.max(0, Number(snap.archiveCount) || 0);
   lines.push(
     `archives: ${archives}` +
       (snap.archiveId
         ? ` (latest ${snap.archiveId}, Working Memory ${snap.overviewReady ? "ready" : "not ready"})`
         : ""),
   );
+  if (Number(snap.undeliveredCount) > 0) {
+    lines.push(
+      `missing from the archives: ${snap.undeliveredCount} message(s) OpenViking rejected; history cannot show them`,
+    );
+  }
   lines.push(`accuracy: ${snap.estimated ? "estimated" : "exact"}`);
   lines.push(`advice: ${snap.advice}`);
   return lines.join("\n");
@@ -361,11 +400,13 @@ export function registerContextWindowTools(
       "The conversation so far is archived to OpenViking (which generates a Working Memory of it) and " +
       "your next window starts with that Working Memory, your handoff notes and the user's last request. " +
       "Call it alone — tool results from the same batch are discarded with the old window — and read the " +
-      '<openviking-context source="context-window"> block that follows instead of this result, which is ' +
-      "replaced by the new window.",
+      '<openviking-context source="context-window"> block that follows. If instead this result says ' +
+      '"Context window NOT reset", nothing was archived and nothing was removed from your context: read ' +
+      "the reason, keep working in the current window, and do not call new_context again until that reason is gone.",
     promptSnippet: "Archive this context window to OpenViking and continue in a fresh one",
     promptGuidelines: [
-      "Call new_context when a phase of the work is finished and its details are no longer needed, when the user switches to an unrelated topic or code area, when they come back after a long idle gap with something new, or when the context status line shows the window is getting full (around 70%).",
+      "Call new_context when a phase of the work is finished and its details are no longer needed, when the user switches to an unrelated topic or code area, when they come back after a long idle gap with something new, or when the context status line or a [context-reminder] says the window is filling up.",
+      'A result starting with "Context window NOT reset" means nothing changed: no archive was written and your context is intact. Keep working; do not retry the call until the stated cause is gone.',
       "Write the handoff notes before you call it: goal, decisions and why, what is done, what is in flight, exact paths and identifiers, and the next steps. Write them for someone who has not seen this conversation.",
       "Do not call new_context in the middle of an unverified edit sequence, right after a previous reset, or to avoid a problem you have not solved.",
       "Call it alone, not alongside other tool calls: the results of the others are discarded together with the old window.",
@@ -416,8 +457,9 @@ export function registerContextWindowTools(
     description:
       "Read the context windows of this session that were already archived to OpenViking. " +
       "list_windows lists them, list_items lists the messages of one window, read_item reads one message " +
-      "in full, and search_contents greps every archive. Window ids are the ones in the window header " +
-      '(w1 is the oldest); item ids look like "w2:14".',
+      "in full, and search_contents greps every archive. Window ids are the ones in the window header, " +
+      "oldest first; the numbering can have gaps, because a window that ended without being archived is " +
+      'not listed here. Item ids look like "w2:14" and come from list_items.',
     promptSnippet: "Read messages and tool output from earlier, already archived context windows",
     promptGuidelines: [
       "Use history when the window header or your notes do not cover a detail from an earlier window; start from search_contents or list_items rather than reading whole windows back in.",
@@ -440,45 +482,62 @@ export function registerContextWindowTools(
       if (!sid) return text(NO_SESSION);
 
       const archives = await client.listSessionArchives(sid);
+      if (archives === null) {
+        return text(
+          "OpenViking did not answer the archive listing, so the archived windows are unreadable right now. " +
+            "This is not the same as an empty history — do not conclude that nothing was archived, and do not " +
+            "ask the user to repeat what an archived window holds. Try again later or work from the window header.",
+          { error: "listing-failed" },
+        );
+      }
       const ordered = orderedArchives(archives);
-      // The archive list is what the wN numbering is derived from, so the open
-      // window always sits one past it — even if the local window counter is
-      // behind (a restored state that never saw an older archive).
-      const currentWindowId = windowIdFor(
-        Math.max(Number(String(windows.windowId).slice(1)) - 1 || 0, ordered.length),
-      );
+      const windowIds = windowIdsFor(ordered, windows.archives ?? []);
+      // The window the model is in right now: its own counter, which also
+      // covers windows that closed without producing an archive.
+      const currentWindowId = windows.windowId;
 
       switch (params?.action) {
         case "list_windows": {
           const lines = ordered.map((entry, i) => {
             const when = entry.modTime || "unknown time";
             const abstract = firstLine(entry.abstract) || "(Working Memory not ready)";
-            return `${windowIdFor(i)}  ${entry.archiveId}  ${when}  ${clip(abstract, 200)}`;
+            return `${windowIds[i]}  ${entry.archiveId}  ${when}  ${clip(abstract, 200)}`;
           });
           lines.push(`${currentWindowId}  (current)  this window is still open and not archived`);
+          // With nothing archived the only id in the list is the open window,
+          // which `list_items` cannot read — pointing at it would just buy a
+          // refusal and suggest the current window is readable through history.
+          const trailer =
+            windowIds.length > 0
+              ? `Read one with history {"action":"list_items","window":"${windowIds[0]}"}.`
+              : "Nothing is archived yet: everything this session has said is still in front of you, " +
+                "and the current window becomes readable here only after new_context archives it.";
           return text(
             [
               `${ordered.length} archived window${ordered.length === 1 ? "" : "s"} in this session:`,
               ...lines,
               "",
-              'Read one with history {"action":"list_items","window":"w1"}.',
+              trailer,
             ].join("\n"),
-            { archives: ordered, currentWindowId },
+            { archives: ordered, windowIds, currentWindowId },
           );
         }
 
         case "list_items": {
-          const target = resolveArchive(params?.window, ordered);
+          const target = resolveArchive(params?.window, ordered, windowIds);
           if (!target) {
             return text(
               `No archived window named "${String(params?.window ?? "")}". ` +
-                `Known: ${ordered.map((e, i) => windowIdFor(i)).join(", ") || "none"} (${currentWindowId} is current).`,
+                `Known: ${windowIds.join(", ") || "none"} (${currentWindowId} is current and not archived yet).`,
             );
           }
           const items = await client.readArchiveMessages(target.entry.uri);
           if (!items) {
             return text(
-              `${target.windowId} (${target.entry.archiveId}) is still being archived; its messages are not readable yet. Try again in a moment.`,
+              `${target.windowId} (${target.entry.archiveId}): its messages could not be read from OpenViking right now ` +
+                `(the archive itself is readable as soon as it is committed, so this is a transport, permission or ` +
+                `routing failure rather than a wait). Try {"action":"search_contents"} instead, or continue from the ` +
+                `window header; do not repeat this call more than once.`,
             );
           }
           const offsetRaw = Number(params?.offset);
@@ -507,12 +566,20 @@ export function registerContextWindowTools(
         case "read_item": {
           const ref = parseItemRef(params?.item, params?.window);
           if (!ref) return text('Provide an item id, e.g. {"action":"read_item","item":"w2:14"}.');
-          const target = resolveArchive(ref.windowSpec, ordered);
-          if (!target) return text(`No archived window named "${ref.windowSpec}".`);
+          const target = resolveArchive(ref.windowSpec, ordered, windowIds);
+          if (!target) {
+            return text(
+              `No archived window named "${ref.windowSpec}". ` +
+                `Known: ${windowIds.join(", ") || "none"} (${currentWindowId} is current and not archived yet).`,
+            );
+          }
           const items = await client.readArchiveMessages(target.entry.uri);
           if (!items) {
             return text(
-              `${target.windowId} (${target.entry.archiveId}) is still being archived; its messages are not readable yet. Try again in a moment.`,
+              `${target.windowId} (${target.entry.archiveId}): its messages could not be read from OpenViking right now ` +
+                `(the archive itself is readable as soon as it is committed, so this is a transport, permission or ` +
+                `routing failure rather than a wait). Try {"action":"search_contents"} instead, or continue from the ` +
+                `window header; do not repeat this call more than once.`,
             );
           }
           const msg = items[ref.index];
@@ -549,7 +616,7 @@ export function registerContextWindowTools(
           if (matches.length === 0) {
             return text(`No match for "${query}" in the ${ordered.length} archived window(s) of this session.`);
           }
-          const windowOf = new Map(ordered.map((e, i) => [e.archiveId, windowIdFor(i)]));
+          const windowOf = new Map(ordered.map((e, i) => [e.archiveId, windowIds[i]]));
           const shown = matches.slice(0, 20);
           const groups = new Map<string, string[]>();
           for (const m of shown) {

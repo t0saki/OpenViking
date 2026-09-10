@@ -137,6 +137,8 @@ export function createContextWindowManager(opts: {
 
       getWatermark: () => sync.syncedCount,
       pendingCount: () => pendingCache,
+      droppedCount: () => sync.droppedCount,
+      commitTraceId: () => sync.commitTraceId,
       now: () => Date.now(),
       sleep: (ms: number, signal?: AbortSignal | null) => abortableSleep(ms, signal),
       log: (message: string) => {

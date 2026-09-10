@@ -34,9 +34,13 @@ pi install /abs/path/to/examples/pi-experimental-context-management
 tools and both sync the same OpenViking session, so loading them together
 duplicates every tool and gives one session two writers. Set
 `"enabled": false` in `~/.pi/agent/extensions/openviking/config.json`, or drop
-it from `settings.json`'s `packages`. As a backstop, this extension probes
-`pi.getAllTools()` for `viking_search` at startup and disables itself with a
-warning if the other one already registered it.
+it from `settings.json`'s `packages`. As a backstop, this extension looks for a
+`viking_search` registered from a directory other than its own — at startup and
+again on every event boundary, because the other extension registers its tools
+only after an awaited health check — and stands down with a warning when it
+finds one. Once a window is open the stand-down is skipped (dropping the cut
+would hand the model back a conversation it was told is archived); it warns
+instead.
 
 Credentials resolve exactly as upstream: `OPENVIKING_*` environment variables →
 `~/.openviking/ovcli.conf` → `ov.conf`. No new config file.
@@ -44,7 +48,9 @@ Credentials resolve exactly as upstream: `OPENVIKING_*` environment variables �
 ## Quick config
 
 `config.json` keeps the upstream fields (minus `captureMode` — capture here is
-always faithful) and adds one nested `contextWindow` block:
+always faithful — and minus `commitTokenThreshold` / `resumeContextBudget`,
+which nothing in this fork reads any more) and adds one nested `contextWindow`
+block:
 
 ```json
 {
@@ -83,7 +89,7 @@ The full table, with ranges and clamping rules, is in
 | `viking_browse` | `action`, `uri?` | `list` or `stat` the store like a filesystem |
 | `viking_remember` | `content`, `category?` | Store a fact in the session for memory extraction |
 | `viking_forget` | `uri?`, `query?` | Delete a memory by URI or strongest match |
-| `viking_add_resource` | `url`, `reason?` | Ingest an HTTP URL into OpenViking |
+| `viking_add_resource` | `url` | Ingest an HTTP URL into OpenViking |
 
 `viking_archive_expand` is gone — it read `viking://session/{id}`, a namespace
 the server does not serve, and `history` replaces it.
@@ -106,7 +112,10 @@ the server does not serve, and `history` replaces it.
   skips any message that already carries an `<openviking-context` block — which
   is also what keeps it away from the frozen window header.
 - **`sync.flushForTakeover()` is now `sync.flushBarrier({budgetMs})`**, so a
-  reset can cap how long it waits for the pending queue to drain.
+  reset can cap how long it waits for the pending queue to drain. The sync
+  manager also counts messages OpenViking rejected for good; a window opened
+  while that count is non-zero says so in its header, because those messages are
+  missing from the archive that `history` reads.
 
 ## Layout
 
@@ -125,7 +134,7 @@ the server does not serve, and `history` replaces it.
 | `lib/uri-guard-adapter.mjs` | Blocks builtin file tools on `viking://` URIs |
 | `lib/pi-settings.mjs` | Reads pi's `compaction.reserveTokens` |
 | `shared/` | Generated from `examples/memory-plugin-shared/lib` — do not edit |
-| `scripts/` | Manual e2e gates (`e2e-live.mjs`, `e2e-window.mjs`) and the setup wizard |
+| `scripts/` | The manual e2e gate (`e2e-window.mjs` with the `e2e-window.sh` wrapper), the `e2e-probe.ts` payload recorder and the setup wizard |
 
 ## Tests
 

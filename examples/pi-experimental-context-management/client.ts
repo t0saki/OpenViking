@@ -399,9 +399,15 @@ export class OVClient {
       try {
         obj = JSON.parse(line);
       } catch {
-        continue; // a truncated or non-JSON line must not lose the rest
+        obj = null; // a truncated or non-JSON line must not lose the rest
       }
-      if (!obj || typeof obj !== "object" || Array.isArray(obj)) continue;
+      if (!obj || typeof obj !== "object" || Array.isArray(obj)) {
+        // A placeholder rather than a skip: `search_contents` turns a grep hit's
+        // line number into an item index, so dropping a line silently would
+        // shift every pointer after it by one.
+        out.push({ id: "", role: "unreadable", text: "(unreadable archive line)", parts: [], created_at: "" });
+        continue;
+      }
       const parts = Array.isArray(obj.parts) ? obj.parts : [];
       out.push({
         id: obj.id == null ? "" : String(obj.id),
@@ -417,14 +423,21 @@ export class OVClient {
   /**
    * Archive directories of a session, newest first.
    * `GET /fs/ls?uri=<root>/history&sort_by=name&sort_order=desc`.
+   *
+   * Returns `null` when the listing request itself failed (401/403/5xx/timeout)
+   * and `[]` only when the session genuinely has no archives. The two must stay
+   * distinguishable: `history` tells the model to trust an empty history and
+   * not ask the user, which would be exactly wrong for an unreachable server.
    */
-  async listSessionArchives(sessionId: string): Promise<OVArchiveEntry[]> {
+  async listSessionArchives(sessionId: string): Promise<OVArchiveEntry[] | null> {
     const root = await this.sessionRootUri(sessionId);
     const res = await this.fetchJSON<any[]>(
       `/api/v1/fs/ls?uri=${encodeURIComponent(`${root}/history`)}&sort_by=name&sort_order=desc`,
       undefined, 10000,
     );
-    if (!res.ok || !Array.isArray(res.result)) return [];
+    // A missing history directory is an empty history, not a failure.
+    if (!res.ok) return isNotFound(res) ? [] : null;
+    if (!Array.isArray(res.result)) return null;
 
     const rows: OVArchiveEntry[] = [];
     for (const e of res.result) {
@@ -693,6 +706,17 @@ function uriBasename(uri: string): string {
 }
 
 const ARCHIVE_ID_RE = /^archive_\d+$/;
+
+/**
+ * "The path is not there" as opposed to "the request failed". A session that
+ * never committed has no `history` directory, which is an empty archive list,
+ * not an unreachable server.
+ */
+function isNotFound(res: { status?: number; error?: any }): boolean {
+  if (res.status === 404) return true;
+  const code = String(res.error?.code ?? res.error?.message ?? "");
+  return /NOT_?FOUND/i.test(code);
+}
 
 function stripTrailingSlash(uri: string): string {
   return uri.replace(/\/+$/, "");

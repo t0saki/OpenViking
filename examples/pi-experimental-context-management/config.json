@@ -7,8 +7,6 @@
   "scoreThreshold": 0.35,
   "minQueryLength": 3,
   "profileTokenBudget": 10000,
-  "resumeContextBudget": 32000,
-  "commitTokenThreshold": 20000,
   "commitKeepRecentCount": 10,
   "captureToolResults": true,
   "captureMaxLength": 24000,
@@ -27,6 +25,7 @@
     "hardPercent": 85,
     "idleGapMinutes": 30,
     "statusEveryTurn": true,
-    "historyItemMaxChars": 8000
+    "historyItemMaxChars": 8000,
+    "recentResetGuardMs": 60000
   }
 }

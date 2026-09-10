@@ -39,6 +39,16 @@ export class SyncManager {
   private logger: ReturnType<typeof createLogger>;
   private ovSessionId: string | null = null;
   private syncedEntryCount = 0;
+  /**
+   * Messages this session lost for good: non-retryable (4xx) rejections and
+   * queue entries whose retry budget ran out. They are counted as accepted so
+   * the watermark can advance past them, which is what lets the flush barrier
+   * clear — so the count has to survive separately, or a window would be cut
+   * while claiming an archive that is missing those messages.
+   */
+  private droppedForever = 0;
+  /** trace_id of the last commit response, failure included. */
+  private lastCommitTrace = "";
 
   constructor(client: OVClient, config: OVConfig) {
     this.client = client;
@@ -51,6 +61,9 @@ export class SyncManager {
 
   get sessionId(): string | null { return this.ovSessionId; }
   get syncedCount(): number { return this.syncedEntryCount; }
+  /** Messages OpenViking will never receive; they are missing from the archive. */
+  get droppedCount(): number { return this.droppedForever; }
+  get commitTraceId(): string { return this.lastCommitTrace; }
 
   restoreWatermark(n: number): void {
     const next = Math.max(0, Math.floor(Number(n) || 0));
@@ -156,7 +169,9 @@ export class SyncManager {
       // Undelivered entries stay queued with one more retry; incrementRetry
       // drops them once the retry budget is exhausted.
       for (const { filename, entry } of claimed.slice(delivered)) {
-        await incrementRetry(filename, entry);
+        // false: the retry budget is spent and the entry was deleted, so that
+        // message never reaches OpenViking.
+        if ((await incrementRetry(filename, entry)) === false) this.droppedForever += 1;
       }
       this.logger.log("drain", {
         session: sid,
@@ -219,6 +234,7 @@ export class SyncManager {
     // so the watermark still advances past them; otherwise the next turn would
     // re-extract and re-send the payloads that were already delivered.
     const dropped = res.retryable ? 0 : res.failed;
+    if (dropped > 0) this.droppedForever += dropped;
     return { accepted: res.sent + res.queued + dropped, delivered: res.sent };
   }
 
@@ -229,6 +245,7 @@ export class SyncManager {
       opts.keepRecentCount,
     );
     const result = response.result;
+    this.lastCommitTrace = response.traceId || "";
     if (!result) {
       this.logger.log("commit", {
         session: this.ovSessionId,
@@ -244,6 +261,7 @@ export class SyncManager {
       }
       return null;
     }
+    this.lastCommitTrace = result.trace_id || response.traceId || "";
     this.logger.log("commit", {
       session: this.ovSessionId,
       ok: true,

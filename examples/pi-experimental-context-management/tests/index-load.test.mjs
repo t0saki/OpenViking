@@ -37,7 +37,7 @@ function findJiti() {
 const JITI_PATH = findJiti();
 
 /** The pi surface index.ts touches, and nothing more. */
-function fakePi(calls) {
+function fakePi(calls, options = {}) {
   return {
     on(event, handler) {
       calls.events.push(event);
@@ -46,8 +46,8 @@ function fakePi(calls) {
     registerTool(tool) { calls.tools.push(tool?.name); calls.toolDefs.set(tool?.name, tool); },
     registerCommand(name, def) { calls.commands.push(name); calls.commandDefs.set(name, def); },
     appendEntry(customType, data) { calls.entries.push({ customType, data }); },
-    getAllTools() { return []; },
-    sendMessage(message, options) { calls.sent.push({ message, options }); },
+    getAllTools() { return options.getAllTools ? options.getAllTools() : []; },
+    sendMessage(message, options2) { calls.sent.push({ message, options: options2 }); },
   };
 }
 
@@ -69,7 +69,7 @@ function fakeCtx(overrides = {}) {
 }
 
 /** Load index.ts and run it against a fake pi, with OV pointed at a dead port. */
-async function loadExtension() {
+async function loadExtension(options = {}) {
   const { createJiti } = await import(JITI_PATH);
   const jiti = createJiti(import.meta.url, { interopDefault: true });
   const mod = await jiti.import(join(EXTENSION_DIR, "index.ts"), { default: true });
@@ -85,7 +85,7 @@ async function loadExtension() {
     entries: [],
     sent: [],
   };
-  await mod(fakePi(calls));
+  await mod(fakePi(calls, options));
   return calls;
 }
 
@@ -211,7 +211,7 @@ const ARCHIVED_MESSAGES = [
   .join("\n");
 
 /** The handful of OpenViking routes one reset (and `history`) walks through. */
-function startFakeOv(t) {
+function startFakeOv(t, options = {}) {
   const seen = [];
   const greps = [];
   const server = createServer(async (req, res) => {
@@ -235,6 +235,9 @@ function startFakeOv(t) {
       return send({ result: { uri: ROOT } });
     }
     if (url.pathname === "/api/v1/fs/ls") {
+      // The gateway blocks this route on some deployments (403 ApiBlocked).
+      if (options.blockLs) return send({ error: { code: "ApiBlocked", message: "blocked" } }, 403);
+      if (options.emptyLs) return send({ result: [] });
       return send({
         result: [{ uri: ARCHIVE, isDir: true, modTime: "2026-09-10T01:00:00Z", abstract: "# Working Memory\nphase one" }],
       });
@@ -584,4 +587,298 @@ test("the fork ships no takeover module", () => {
   for (const file of ["takeover.ts", "lib/takeover-core.mjs", "shared/recall-ledger.mjs"]) {
     assert.equal(existsSync(join(EXTENSION_DIR, file)), false, `${file} should not exist`);
   }
+});
+
+// ---------------------------------------------------------------------------
+// Coexistence with the non-experimental extension, and the signals that must
+// not fire off a stale usage reading.
+// ---------------------------------------------------------------------------
+
+/** A `viking_search` some other extension registered. */
+const PEER_TOOL = { name: "viking_search", sourceInfo: { path: "/somewhere/else/openviking" } };
+
+test("a peer that registers viking_search later still makes this extension stand down", { skip: !JITI_PATH }, async (t) => {
+  withDeadServer(t);
+  // The other extension registers only after its own awaited health check, so
+  // at the moment start() begins the probe sees nothing.
+  let peerLoaded = false;
+  const calls = await loadExtension({ getAllTools: () => (peerLoaded ? [PEER_TOOL] : []) });
+
+  const notified = [];
+  await calls.handlers.get("before_agent_start")(
+    { type: "before_agent_start", prompt: "hello", systemPrompt: "BASE" },
+    fakeCtx({ notified }),
+  );
+  assert.ok(calls.tools.includes("viking_search"), "the early probe found nothing, so we registered");
+
+  peerLoaded = true;
+  const result = await calls.handlers.get("before_agent_start")(
+    { type: "before_agent_start", prompt: "again", systemPrompt: "BASE" },
+    fakeCtx({ notified }),
+  );
+  assert.equal(result, undefined, "the second writer stands down instead of syncing the same session");
+  assert.ok(
+    notified.some(([message]) => /another OpenViking extension is already active/.test(message)),
+    JSON.stringify(notified),
+  );
+
+  // And it stays down: no cut, no sync, no reminders.
+  const messages = [{ role: "user", content: "hi", timestamp: 1 }];
+  assert.equal(await calls.handlers.get("context")({ type: "context", messages }, fakeCtx()), undefined);
+});
+
+test("our own viking_search is not mistaken for a peer's", { skip: !JITI_PATH }, async (t) => {
+  withDeadServer(t);
+  const calls = await loadExtension({
+    getAllTools: () => [{ name: "viking_search", sourceInfo: { path: EXTENSION_DIR } }],
+  });
+  const result = await calls.handlers.get("before_agent_start")(
+    { type: "before_agent_start", prompt: "hello", systemPrompt: "BASE" },
+    fakeCtx(),
+  );
+  assert.ok(result?.systemPrompt, "the extension keeps working");
+  assert.ok(calls.tools.includes("new_context"));
+});
+
+test("a turn that ended in a provider error does not re-arm the reminders", { skip: !JITI_PATH }, async (t) => {
+  const { port } = await startFakeOv(t);
+  withFakeServer(t, port);
+  const calls = await loadExtension();
+
+  const branch = [
+    { type: "message", id: "e1", message: { role: "user", content: "start", timestamp: 1 } },
+    {
+      type: "message",
+      id: "e2",
+      message: {
+        role: "assistant",
+        content: [{ type: "toolCall", id: "call-1", name: "new_context", arguments: {} }],
+        timestamp: 2,
+      },
+    },
+  ];
+  // pi reports the untransformed session, so this is the *closed* window's size.
+  const ctx = fakeCtx({ branch, usage: { tokens: 250000, contextWindow: 262144, percent: 95 } });
+  await calls.handlers.get("before_agent_start")(
+    { type: "before_agent_start", prompt: "start", systemPrompt: "BASE" },
+    ctx,
+  );
+  await calls.toolDefs.get("new_context").execute(
+    "call-1", { reason: "phase one done", notes: "codename ZEPHYR-9942" }, undefined, () => {}, ctx,
+  );
+
+  // A provider error (or Esc) ends the turn with a freshly stamped assistant
+  // message pi refuses to read usage from. Re-arming on it would fire the hard
+  // reminder into a window that holds nothing but the header.
+  for (const stopReason of ["error", "aborted"]) {
+    await calls.handlers.get("turn_end")(
+      {
+        type: "turn_end",
+        turnIndex: 1,
+        message: { role: "assistant", content: "", stopReason, timestamp: Date.now() + 5000 },
+        toolResults: [],
+      },
+      ctx,
+    );
+  }
+  assert.deepEqual(calls.sent, [], "no reminder off a response pi does not trust");
+
+  // A real response in the new window re-arms as before.
+  await calls.handlers.get("turn_end")(
+    {
+      type: "turn_end",
+      turnIndex: 2,
+      message: { role: "assistant", content: "working", stopReason: "stop", timestamp: Date.now() + 6000 },
+      toolResults: [],
+    },
+    ctx,
+  );
+  assert.equal(calls.sent.length, 1);
+  assert.equal(calls.sent[0].message.customType, "ov-context-reminder");
+});
+
+test("a recall failure costs the recall block, never the window cut", { skip: !JITI_PATH }, async (t) => {
+  const { port } = await startFakeOv(t);
+  withFakeServer(t, port);
+  const calls = await loadExtension();
+
+  const branch = [
+    { type: "message", id: "e1", message: { role: "user", content: "start PAD1", timestamp: 1 } },
+    {
+      type: "message",
+      id: "e2",
+      message: {
+        role: "assistant",
+        content: [{ type: "toolCall", id: "call-1", name: "new_context", arguments: {} }],
+        timestamp: 2,
+      },
+    },
+  ];
+  const ctx = fakeCtx({ branch });
+  await calls.handlers.get("before_agent_start")(
+    { type: "before_agent_start", prompt: "start PAD1", systemPrompt: "BASE" },
+    ctx,
+  );
+  await calls.toolDefs.get("new_context").execute(
+    "call-1", { reason: "done", notes: "codename ZEPHYR-9942" }, undefined, () => {}, ctx,
+  );
+
+  // pi keeps the untransformed list when a context handler throws, so a recall
+  // exception must not be allowed to escape: it would hand the model the
+  // archived window back together with the tool result that archived it.
+  const messages = [
+    { role: "user", content: "start PAD1", timestamp: 1 },
+    {
+      role: "assistant",
+      content: [{ type: "toolCall", id: "call-1", name: "new_context", arguments: {} }],
+      timestamp: 2,
+    },
+    { role: "toolResult", toolCallId: "call-1", toolName: "new_context", content: "ok", timestamp: 3 },
+    // A message shape injectRecall would trip over.
+    { role: "user", content: null, timestamp: 4 },
+    null,
+  ];
+  const cut = await calls.handlers.get("context")({ type: "context", messages }, ctx);
+  assert.ok(Array.isArray(cut.messages));
+  assert.ok(String(cut.messages[0].content).includes("ZEPHYR-9942"));
+  assert.ok(cut.messages.length < messages.length, "the archived window stays cut");
+  assert.equal(
+    cut.messages.some((m) => m?.role === "toolResult" || m?.role === "assistant"),
+    false,
+    "the reset's own call and result are gone",
+  );
+  assert.equal(JSON.stringify(cut.messages).includes("recalled memory"), false, "recall failed, the cut did not");
+});
+
+test("history says so when OpenViking cannot answer the archive listing", { skip: !JITI_PATH }, async (t) => {
+  const { port } = await startFakeOv(t, { blockLs: true });
+  withFakeServer(t, port);
+  const calls = await loadExtension();
+  const ctx = fakeCtx();
+  await calls.handlers.get("before_agent_start")(
+    { type: "before_agent_start", prompt: "hi", systemPrompt: "BASE" },
+    ctx,
+  );
+
+  const out = await calls.toolDefs
+    .get("history")
+    .execute("h", { action: "list_windows" }, undefined, () => {}, ctx);
+  const body = out.content[0].text;
+  assert.match(body, /did not answer the archive listing/);
+  assert.equal(/0 archived windows/.test(body), false, "an unreadable history is not an empty one");
+});
+
+test("an empty history does not point list_items at the open window", { skip: !JITI_PATH }, async (t) => {
+  const { port } = await startFakeOv(t, { emptyLs: true });
+  withFakeServer(t, port);
+  const calls = await loadExtension();
+  const ctx = fakeCtx();
+  await calls.handlers.get("before_agent_start")(
+    { type: "before_agent_start", prompt: "hi", systemPrompt: "BASE" },
+    ctx,
+  );
+
+  const body = (await calls.toolDefs
+    .get("history")
+    .execute("h", { action: "list_windows" }, undefined, () => {}, ctx)).content[0].text;
+  assert.match(body, /^0 archived windows in this session:$/m);
+  assert.match(body, /^w1 {2}\(current\)/m);
+  // The only id in the list is the open window, and list_items refuses it — a
+  // pointer at it would buy a refused call and imply history can read it.
+  assert.equal(
+    /\{"action":"list_items","window":"w1"\}/.test(body),
+    false,
+    "no pointer at the window that is not archived",
+  );
+  assert.match(body, /Nothing is archived yet/);
+});
+
+test("session_before_compact runs offline so the recent-reset guard still applies", { skip: !JITI_PATH }, async (t) => {
+  const { port } = await startFakeOv(t);
+  withFakeServer(t, port);
+  const calls = await loadExtension();
+
+  const branch = [
+    { type: "message", id: "e1", message: { role: "user", content: "start", timestamp: 1 } },
+    {
+      type: "message",
+      id: "e2",
+      message: {
+        role: "assistant",
+        content: [{ type: "toolCall", id: "call-1", name: "new_context", arguments: {} }],
+        timestamp: 2,
+      },
+    },
+  ];
+  const ctx = fakeCtx({ branch });
+  await calls.handlers.get("before_agent_start")(
+    { type: "before_agent_start", prompt: "start", systemPrompt: "BASE" },
+    ctx,
+  );
+  await calls.toolDefs.get("new_context").execute(
+    "call-1", { reason: "done", notes: "codename ZEPHYR-9942" }, undefined, () => {}, ctx,
+  );
+
+  // A provider hiccup right after the reset makes pi estimate from the
+  // untransformed list and try to compact a window that just opened. The guard
+  // needs no network, so it has to run even with the server gone.
+  const compact = await calls.handlers.get("session_before_compact")(
+    { type: "session_before_compact", preparation: { firstKeptEntryId: "e1", tokensBefore: 10 }, branchEntries: branch },
+    ctx,
+  );
+  assert.ok(compact?.compaction, "the freshly opened window is handed back as the summary");
+  assert.equal(compact.compaction.details.reason, "recent-reset-guard");
+  assert.ok(compact.compaction.summary.includes("ZEPHYR-9942"));
+});
+
+test("window ids survive a compaction that produced no archive", { skip: !JITI_PATH }, async (t) => {
+  const { port } = await startFakeOv(t);
+  withFakeServer(t, port);
+  const calls = await loadExtension();
+
+  const branch = [
+    { type: "message", id: "e1", message: { role: "user", content: "start", timestamp: 1 } },
+    {
+      type: "message",
+      id: "e2",
+      message: {
+        role: "assistant",
+        content: [{ type: "toolCall", id: "call-1", name: "new_context", arguments: {} }],
+        timestamp: 2,
+      },
+    },
+  ];
+  const ctx = fakeCtx({ branch });
+  await calls.handlers.get("before_agent_start")(
+    { type: "before_agent_start", prompt: "start", systemPrompt: "BASE" },
+    ctx,
+  );
+  await calls.toolDefs.get("new_context").execute(
+    "call-1", { reason: "done", notes: "codename ZEPHYR-9942" }, undefined, () => {}, ctx,
+  );
+  // w2 closes without an archive: pi compacted on its own.
+  await calls.handlers.get("session_compact")(
+    { type: "session_compact", fromExtension: false, compactionEntry: {}, reason: "threshold" },
+    ctx,
+  );
+
+  const windows = (await calls.toolDefs
+    .get("history")
+    .execute("h", { action: "list_windows" }, undefined, () => {}, ctx)).content[0].text;
+  // archive_001 keeps the id of the window it closed, and the open window is w3
+  // — numbering the server's list positionally would call the open one w2 and
+  // point every recovery hint at a window history cannot resolve.
+  assert.match(windows, /^w1 {2}archive_001 {2}/m);
+  assert.match(windows, /^w3 {2}\(current\)/m);
+  assert.match(
+    (await calls.toolDefs.get("history").execute("h", { action: "list_items", window: "w1" }, undefined, () => {}, ctx))
+      .content[0].text,
+    /^w1 \(archive_001\), 2 items:/m,
+  );
+
+  const remaining = (await calls.toolDefs
+    .get("get_context_remaining")
+    .execute("g", {}, undefined, () => {}, ctx)).content[0].text;
+  assert.match(remaining, /^window: w3/m);
+  assert.match(remaining, /^archives: 1 \(latest archive_001/m, "one archive, not two windows worth");
 });

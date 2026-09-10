@@ -61,7 +61,7 @@ already closed.
 | History backend (`alpha/history/v2`) | The OpenViking session message stream, archived per window to `<session root>/history/archive_NNN/messages.jsonl` | Written by `POST /sessions/{id}/commit` |
 | Notes backend (`alpha/notes/v2`) | The `notes` parameter of `new_context` | No separate notes tool in v1 (see limitations) |
 | `thread_hint` in the window block | The server-written Working Memory (`.overview.md`) plus the model's own handoff notes | Working Memory has 7 sections: Session Title, Current State, Task & Goals, Key Facts & Decisions, Files & Context, Errors & Corrections, Open Issues |
-| `history.list_windows` | `history {"action":"list_windows"}` → `GET /fs/ls?uri=<root>/history` | Window ids `w1…wN` are assigned from the archive list, oldest first |
+| `history.list_windows` | `history {"action":"list_windows"}` → `GET /fs/ls?uri=<root>/history` | Window ids come from the core's own `{windowId, archiveId}` ledger, so a window that closed without producing an archive cannot shift them |
 | `history.list_items` / `read_item` | `history {"action":"list_items"}` / `{"action":"read_item"}` → `GET /content/read?uri=<archive>/messages.jsonl` | Item ids are the 0-based line index inside that archive: `w2:14` |
 | `history.search_contents` | `history {"action":"search_contents"}` → `POST /search/grep` over `<root>/history` | Case-insensitive; hits in `messages.jsonl` are turned into `read_item` pointers |
 | `functions.new_context` (no parameters) | `new_context` **with** `reason`, `notes`, `next_steps?` | The parameters replace the missing notes backend |
@@ -109,16 +109,28 @@ the whole pipeline blocks inside the tool call, bounded by one deadline
    "the assistant that continues", so it folds the note into Current State /
    Open Issues — the reason ends up in the summary without any server change.
 5. **`sync.commit({queueOnFailure:false, keepRecentCount:0})`.**
-   `status: "skipped"` (nothing to archive) leaves the window untouched;
-   anything else without an `archive_uri` refuses.
+   `status: "skipped"` (nothing to archive) leaves the window untouched, and so
+   does any reply without an `archive_uri` — including one that says
+   `accepted`, because there would be no archive id to name and the wait below
+   would poll an empty URI until the deadline. A refusal carries the commit's
+   `trace_id` when the server sent one, the transport's otherwise.
+   Every refusal from here on first posts a one-line
+   `[Context Window Handoff] … RETRACTED` message, because the handoff note is
+   already in the live session and would otherwise be archived as a window
+   boundary that never happened. (OpenViking has no delete for a session
+   message, so this is a repair, not a rollback.)
 6. **Point of no return.** Once the commit returns an `archive_uri` the
    OpenViking session is empty, so every path below must open a window.
    `archiveId = basename(archive_uri)`; the core polls
    `GET /content/read?uri=<archive_uri>/.overview.md` every
    `archivePollMs` until the deadline (404 while commit phase 2 runs, 200 with
-   the Working Memory as the body), checking `GET /tasks/{task_id}` every 5th
-   attempt so a `failed` task ends the wait early. Timeout, task failure and
-   `signal.aborted` all still open the window, with a degraded header.
+   the Working Memory as the body), checking `GET /tasks/{task_id}` on the
+   second attempt and then every fifth. A `failed` or `cancelled` task ends the
+   wait immediately; a `completed` one gets three more polls and then ends it
+   too, because a commit whose summary came out empty never writes
+   `.overview.md` at all and would otherwise burn the whole deadline on every
+   reset. Timeout, task failure and `signal.aborted` all still open the window,
+   with a degraded header.
 7. **Open the window**: freeze `headerText`, `windowIndex += 1`, record
    `anchorToolCallId`, `archiveId`, `overviewReady`, the sibling tool names and
    the current sync watermark, then `pi.appendEntry("ov-context-window", state)`
@@ -163,7 +175,7 @@ Start a new window when:
 - a phase of the work is finished and its details no longer matter for what comes next;
 - the user switches to an unrelated topic or a different area of the code;
 - the user comes back after a long idle gap with something new;
-- the status line or get_context_remaining shows the window filling up — around 70% is the moment to act, and do not push past 85%, because after that the harness compacts the conversation for you and your notes are never written.
+- the status line or get_context_remaining says the window is filling up — act when their advice line asks you to, and never ignore a [context-reminder]. If you wait until the window overflows, the harness compacts the conversation for you and your notes are never written.
 
 Do not start a new window:
 - in the middle of an edit sequence you have not verified;
@@ -171,6 +183,8 @@ Do not start a new window:
 - to get away from a problem you have not solved — the new window carries the same problem with less information.
 
 Write the notes before you call new_context: the goal, the decisions and why you made them, what is finished, what is in flight, exact file paths and identifiers, and the next steps. Write them for someone who has not seen this conversation, because that is exactly what your next window is. Call new_context alone — tool results from the same batch are discarded together with the old window.
+
+If new_context answers with "Context window NOT reset", nothing was archived and nothing was removed from your context: read the reason it gives, keep working in the current window, and do not call it again until that reason is gone.
 
 In a new window, read the <openviking-context source="context-window"> block first: it carries the Working Memory, your notes and the request that is still pending. Use history for anything it does not cover, and never ask the user to repeat something an archived window already holds.
 </context-window-management>
@@ -183,7 +197,11 @@ OpenViking tools: viking_search, viking_read, viking_browse, viking_remember, vi
 ```
 
 Unlike Codex, the model is *not* asked to hide this machinery from the user —
-the demo is meant to be visible.
+the demo is meant to be visible. No percentage is written into the guidance on
+purpose: both thresholds are clamped at runtime under pi's own auto-compaction
+line (§6), so a hardcoded "70%" would be a lie on a small-window model, where
+the reminders fire at 49%. The status line, the reminders and
+`get_context_remaining` carry the numbers that actually apply.
 
 ### 4.2 Status line (one per user prompt, `customType: "ov-context-status"`)
 
@@ -202,6 +220,11 @@ After an idle gap longer than `idleGapMinutes` a second line is appended:
 ```text
 NOTE: 47 minutes passed since the previous user message. If this request starts unrelated work, consider new_context before you begin.
 ```
+
+The gap it reports is `sinceLastUserMs` — the time since the newest genuine user
+message in the list the previous `context` hook produced, i.e. the gap the user
+just came back from. (`get_context_remaining` reports the gap *before* that
+message separately; it is not what gates this NOTE.)
 
 It is emitted from `before_agent_start`, so it appears **once per user prompt**,
 not once per sampling: it does not update while a tool loop runs.
@@ -266,7 +289,7 @@ Working Memory of the archived window, generated by OpenViking:
 
 2 other tool results were discarded with the same batch; re-run them if needed. Tools: bash, read.
 
-To recover anything not covered above: history {"action":"list_windows"} / {"action":"list_items","window":"w2"} / {"action":"read_item","item":"w2:14"} / {"action":"search_contents","query":"..."}.
+To recover anything not covered above: history {"action":"list_windows"} / {"action":"list_items","window":"w2"} / {"action":"read_item","item":"w2:<index from list_items>"} / {"action":"search_contents","query":"..."}.
 Continue from the notes above. If the pending request is not finished, resume it now.
 </context_window>
 </openviking-context>
@@ -280,17 +303,28 @@ results were discarded with the same batch (singular wording: `1 other tool
 result was discarded …`). Notes, pending request and Working Memory are
 truncated to their token budgets and then get a `\n...(truncated)` marker.
 
+One more line appears only when the sync manager lost messages for good (a
+non-retryable rejection, or a queue entry whose retries ran out): `N messages of
+this session were rejected by OpenViking and are missing from the archive, so
+history cannot show them.` The barrier cannot catch those — they are counted as
+accepted so the watermark can move past them — so the header names them instead
+of letting `history` quietly under-report the window.
+
 ### 4.6 Window header — Working Memory still pending
 
 The Working Memory paragraph is replaced by:
 
 ```text
-Working Memory for archive_001 is not ready yet: OpenViking is still summarizing it. Rely on your handoff notes above and use history to read the archived messages directly.
-<working-memory status="pending" archive="archive_001" stale="true">OLD WORKING MEMORY</working-memory>
+Working Memory for archive_002 is not ready yet: OpenViking is still summarizing it. Rely on your handoff notes above and use history to read the archived messages directly.
+<working-memory status="stale" archive="archive_001" describes="an earlier window, not the archive above">OLD WORKING MEMORY</working-memory>
 ```
 
-The stale block only appears when a previous window's Working Memory exists —
-on the first reset of a session there is none, and no empty block is written.
+The stale block carries the archive it actually describes — the *previous* one —
+never the archive named in the line above it, which is precisely the one that has
+no Working Memory yet. When the previous archive id is unknown (a restore that
+predates it) the `archive` attribute is left out rather than guessed. The block
+only appears when a previous window's Working Memory exists — on the first reset
+of a session there is none, and no empty block is written.
 
 ### 4.7 Window header — Working Memory unavailable
 
@@ -298,7 +332,8 @@ on the first reset of a session there is none, and no empty block is written.
 Working Memory for archive_001 is unavailable: OpenViking could not summarize it. Rely on your handoff notes above and use history to read the archived messages directly.
 ```
 
-Reached when the archive task reports `failed`, or when
+Reached when the archive task reports `failed` or `cancelled`, when it reports
+`completed` without ever writing `.overview.md`, or when
 `overviewRefreshMaxAttempts` non-blocking retries are exhausted.
 
 ## 5. Tool reference
@@ -312,8 +347,14 @@ Description (verbatim from `tools.ts`):
 > generates a Working Memory of it) and your next window starts with that
 > Working Memory, your handoff notes and the user's last request. Call it alone
 > — tool results from the same batch are discarded with the old window — and
-> read the `<openviking-context source="context-window">` block that follows
-> instead of this result, which is replaced by the new window.
+> read the `<openviking-context source="context-window">` block that follows. If
+> instead this result says "Context window NOT reset", nothing was archived and
+> nothing was removed from your context: read the reason, keep working in the
+> current window, and do not call new_context again until that reason is gone.
+
+Every non-success text starts with the same marker, `Context window NOT reset`,
+so the rule is checkable: the refusals, the cancellation and the "a reset is
+already in progress" answer all open on it.
 
 | Parameter | Type | Required | Meaning |
 | --- | --- | --- | --- |
@@ -339,12 +380,20 @@ Progress while waiting for the archive is reported through `onUpdate` as
 
 `list_windows` lists archives newest-id-last with their directory abstract
 (`(Working Memory not ready)` until commit phase 2 finishes) and appends the
-open window as `(current)`. `list_items` renders one line per message,
+open window as `(current)`. When the listing request itself fails (403, 5xx,
+timeout) the tool says the archives are unreadable instead of reporting zero
+archived windows — the model is told elsewhere to trust an empty history and not
+ask the user, which would be exactly wrong for an unreachable server. An archive
+whose `messages.jsonl` cannot be read is reported the same way: as a read
+failure with a pointer at `search_contents`, not as "still being archived"
+(phase 1 writes that file synchronously, so waiting never helps). `list_items` renders one line per message,
 `[id: w2:14]  role  timestamp  first 200 chars`. `read_item` returns one
 message clipped to `contextWindow.historyItemMaxChars`. `search_contents` greps
 every archive case-insensitively, shows at most 20 matches grouped by window,
 and turns each `messages.jsonl` hit into a `read_item` pointer (line number − 1
-is the item index, because the file holds one message per line).
+is the item index, because the file holds one message per line — a line the
+client cannot parse keeps its slot as an `(unreadable archive line)` placeholder
+rather than shifting every pointer after it).
 
 One tool with an `action` enum rather than four tools: pi's tool namespace is
 flat, so four `history_*` tools would cost four slots in every request.
@@ -371,9 +420,12 @@ advice: no action needed
 next stopping point`, `save your notes and call new_context now`.
 
 The six `viking_*` tools (`viking_search`, `viking_read`, `viking_browse`,
-`viking_remember`, `viking_forget`, `viking_add_resource`) are unchanged from
-the non-experimental extension. `viking_archive_expand` is gone — `history`
-replaces it.
+`viking_remember`, `viking_forget`, `viking_add_resource`) come from the
+non-experimental extension, with two corrections: `viking_add_resource` lost its
+`reason` parameter (it was never sent anywhere), and a `viking_remember` whose
+write fails now says the fact was *not* stored instead of claiming it was queued
+— this extension has no queue on that path. `viking_archive_expand` is gone —
+`history` replaces it.
 
 ## 6. Configuration (`contextWindow` block)
 
@@ -390,6 +442,7 @@ replaces it.
 | `idleGapMinutes` | 30 | 0–1440 | Idle gap after which the status line adds its NOTE line |
 | `statusEveryTurn` | true | boolean | Emit the status line after every user prompt |
 | `historyItemMaxChars` | 8000 | 500–100000 | Per-item cap for `history read_item` |
+| `recentResetGuardMs` | 60000 | 0–600000 | How long after a reset `session_before_compact` returns the current header instead of archiving again |
 
 Every number is rounded and clamped on load; an out-of-range value is pulled to
 the nearest bound and a non-numeric one falls back to the default. Unknown keys
@@ -430,6 +483,9 @@ sessions.
   "archiveId": "archive_002",
   "archiveUri": "viking://user/<uid>/sessions/pi-…/history/archive_002",
   "taskId": "…",
+  "archives": [{ "windowId": "w1", "archiveId": "archive_001", "archiveUri": "viking://…/archive_001" }],
+  "previousArchiveId": "archive_001",
+  "undeliveredCount": 0,
   "overviewReady": true,
   "overviewUnavailable": false,
   "overviewAttempts": 0,
@@ -440,6 +496,12 @@ sessions.
   "lastResetBy": "agent"
 }
 ```
+
+`archives` is the `{windowId, archiveId}` ledger `history` resolves window ids
+through, appended on every successful commit (agent reset and pi-compaction
+fallback alike) and capped at the last 100 entries. `previousArchiveId` is what
+the stale Working Memory block is tagged with, and `undeliveredCount` is how
+many messages OpenViking rejected for good.
 
 `lastResetBy` is `agent`, `pi-compaction` or `external`. In-memory only, never
 persisted: the `resetting` mutex, `remindersSent`, `awaitingFirstObservation`,
@@ -459,14 +521,20 @@ byte for byte in the next process.
 | Deadline exhausted before the handoff note | no | `… the reset deadline was exhausted while syncing this window to OpenViking. …` |
 | Handoff note rejected | no | `… the handoff note could not be written to OpenViking. …` |
 | Commit threw in transport | no | `… the archive commit failed in transport; the archive may or may not exist, so nothing was cut. …` — remembered, so the next attempt re-checks connectivity first |
-| Commit refused (no `archive_uri`) | no | `… OpenViking refused the archive commit (trace …). …` |
+| Commit refused, or accepted without an `archive_uri` | no | `… OpenViking refused the archive commit (trace …). …` — the handoff note is retracted |
 | Commit `skipped` / `no_messages` | no | `Context window NOT reset: OpenViking had nothing to archive for this window. Keep working; call new_context again once there is something worth archiving.` |
-| Aborted before the commit (Esc) | no | `Context window reset was cancelled before anything was archived; nothing changed.` |
-| Another reset already running | no | `A context window reset is already in progress.` |
+| Aborted before the commit (Esc) | no | `Context window NOT reset: the reset was cancelled before anything was archived. Nothing changed; keep working.` — the handoff note is retracted if it was already written |
+| Another reset already running | no | `Context window NOT reset: a reset is already in progress. …` |
 | Commit succeeded, Working Memory slow / aborted / deadline hit | **yes** | Window opens with the `status="pending"` header variant |
 | Commit succeeded, archive task `failed` or retries exhausted | **yes** | Window opens with the `unavailable` header variant |
 | Commit succeeded, something after it threw | **yes** | Window opens through the recovery path with a `pending` header and an explicit error in the tool result |
 | Anchor no longer in the branch at transform time | n/a | Messages pass through untouched; the boundary is released and logged once |
+
+Every refusal that happens after the handoff note was written posts a
+`[Context Window Handoff] … RETRACTED` line, so the next archive does not carry
+a boundary that never happened. A failed retraction is not fatal: the orphan
+note stays, and the Working Memory of the next window may read one window
+boundary too many.
 
 The rule behind the table: **fail closed before the commit, fail open after
 it.** Before the commit nothing was archived, so keeping the context is the
@@ -500,9 +568,13 @@ If the model never resets and pi's own threshold hits first,
    current header as the summary **without committing again** — this catches a
    provider hiccup that made pi estimate from the untransformed list.
 2. Otherwise: `syncBranch(branchEntries)` → `flushBarrier` → post a handoff note
-   with `reason = "automatic: pi compaction threshold"` and the last notes the
-   model wrote → `commit({keepRecentCount: 0})` → wait for `.overview.md` under
-   the same deadline. Return `{compaction: {summary: headerText,
+   with `reason = "automatic: pi compaction threshold"` and, in place of notes,
+   an explicit "no handoff notes were written for this window" line → `commit({keepRecentCount: 0})` →
+   wait for `.overview.md` under the same deadline. The model's previous notes
+   are *not* reused: they were written for the window that opened here, and both
+   the archive and the new header would present them as this boundary's handoff.
+   `notes` is cleared with `nextSteps`, which is also what keeps the reminders'
+   "your notes are never written" honest. Return `{compaction: {summary: headerText,
    firstKeptEntryId, tokensBefore, details: {source: "openviking", reason:
    "pi-compaction"}}}`.
 3. `firstKeptEntryId` is picked so pi can never resurrect messages the header
@@ -519,8 +591,12 @@ If the model never resets and pi's own threshold hits first,
    stops the guard in step 1 from reusing a header that no longer describes
    what is in context.
 
-`session_before_compact` is skipped entirely while the extension is bypassed or
-OpenViking is not connected, so an offline pi falls back to its own summarizer.
+`session_before_compact` is skipped only while the extension is bypassed. With
+OpenViking unreachable the handler still runs, because step 1 needs no network
+and is what stops a stale usage estimate from compacting a window that opened a
+moment ago; the core then refuses to commit on its own (`io.connected()` is
+false) and returns `undefined`, so an offline pi falls back to its own
+summarizer.
 
 ## 11. Known limitations
 
@@ -549,16 +625,31 @@ OpenViking is not connected, so an offline pi falls back to its own summarizer.
 - **Sibling tool results are lost.** Calling `new_context` alongside other tools
   discards their results (the header says so and names them), so they must be
   re-run if they mattered.
-- **Windows are per-session.** Window ids are derived from the archives of this
-  OpenViking session; a restored state belonging to another session is dropped.
+- **Windows are per-session.** Window ids belong to this OpenViking session; a
+  restored state belonging to another session is dropped. They come from the
+  core's own `{windowId, archiveId}` ledger, so a window closed by a compaction
+  that produced no archive keeps its number without appearing in `history` —
+  `list_windows` can therefore show gaps (`w1`, `w3`, `w4 (current)`), and an
+  archive the ledger does not know (written before the state existed) falls back
+  to positional numbering.
+- **The first prompt of a restored window gets no recall block.** When the cut
+  leaves a user message at the head of the window, the frozen header is merged
+  into it, and `injectRecall`'s `<openviking-context` guard then treats the whole
+  message as already injected. This is visible on `pi -c` right after a reset:
+  that one prompt is answered without recall, and the next user message gets it
+  again. The header itself carries the Working Memory, so nothing is lost that
+  the window does not already have.
 
 ## 12. Manual demo
 
 1. Disable the non-experimental extension first — they both register `viking_*`
    and both write the same OpenViking session. Set `"enabled": false` in
    `~/.pi/agent/extensions/openviking/config.json`, or drop it from
-   `settings.json`'s `packages`. (If you forget, this extension notices
-   `viking_search` in `pi.getAllTools()` and disables itself with a warning.)
+   `settings.json`'s `packages`. (If you forget, this extension notices a
+   `viking_search` registered from another directory — on startup and again on
+   every event boundary, since the other one registers late — and stands down
+   with a warning, unless a window is already open, in which case it warns and
+   keeps going rather than handing the model back an archived conversation.)
 2. `pi install /abs/path/to/examples/pi-experimental-context-management`
 3. Start `pi` and talk about topic A for a few turns. Watch the footer segment
    (`OV ✓ · w1 · 12% · a— · pi-…`) and the `[context-status]` line under each
@@ -594,7 +685,7 @@ is a manual gate, not part of CI.
 | `E2E_LLM_API` | no | pi provider api type, e.g. `openai-completions` |
 | `PI_BIN` | no | Path to the pi binary; defaults to `which pi` |
 | `E2E_KEEP_TMP` | no | `1` keeps the temporary workspace on success |
-| `E2E_WINDOW_FAILCLOSED` | no | `1` runs the fail-closed variant: point `OPENVIKING_URL` at a closed port and assert that nothing was cut |
+| `E2E_WINDOW_FAILCLOSED` | no | `1` runs only the fail-closed scenario, `both` runs it after the main one. The script points pi at a dead port itself; `OPENVIKING_URL` / `OPENVIKING_API_KEY` stay required because the gate also checks the OpenViking side |
 
 **Never write an API key into a file.** Pass both keys through the environment
 of the run only:

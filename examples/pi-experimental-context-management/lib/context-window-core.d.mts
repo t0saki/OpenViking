@@ -73,6 +73,10 @@ export function buildWindowHeader(opts: {
   overview?: string;
   overviewState?: OverviewState;
   previousOverview?: string;
+  /** Archive the stale Working Memory block actually belongs to. */
+  previousArchiveId?: string;
+  /** Messages OpenViking rejected for good; named in the header when > 0. */
+  undeliveredCount?: number;
   siblingToolNames?: string[];
   config?: Partial<WindowConfig> & Record<string, any>;
 }): string;
@@ -84,6 +88,10 @@ export function buildStatusLine(opts: {
   contextWindow?: number;
   estimated?: boolean;
   sinceLastUserMs?: number | null;
+  /**
+   * Gap the user just came back from. This is what gates the idle NOTE;
+   * `idleGapMs` is only a fallback for a caller that has nothing else.
+   */
   idleGapMs?: number | null;
   idleGapMinutes?: number;
 }): string;
@@ -117,6 +125,12 @@ export function lastUserTimestamps(messages: WindowMessage[]): number[];
 export function lastUserTextFromBranch(branch: any[]): string;
 export function siblingToolNamesFromBranch(branch: any[], anchorToolCallId: string): string[];
 
+export interface ArchiveRef {
+  windowId: string;
+  archiveId: string;
+  archiveUri: string;
+}
+
 export interface WindowPersistedState {
   version: number;
   ovSessionId: string | null;
@@ -131,6 +145,12 @@ export interface WindowPersistedState {
   archiveId: string;
   archiveUri: string;
   taskId: string;
+  /** Every archive of this session, oldest first (bounded to the last 100). */
+  archives: ArchiveRef[];
+  /** Archive of the window before the current one. */
+  previousArchiveId: string;
+  /** Messages OpenViking rejected for good; they are missing from the archive. */
+  undeliveredCount: number;
   overviewReady: boolean;
   /** The archive will never get a Working Memory (task failed / budget spent). */
   overviewUnavailable: boolean;
@@ -167,6 +187,10 @@ export interface ContextWindowIo {
   connected?: () => boolean;
   sessionId?: () => string | null;
   pendingCount?: () => number;
+  /** Messages this session lost for good (non-retryable rejections, dropped queue entries). */
+  droppedCount?: () => number;
+  /** trace_id of the last commit response, reported in a commit refusal. */
+  commitTraceId?: () => string;
 }
 
 /**
@@ -196,6 +220,10 @@ export interface StatusSnapshot {
   sinceLastUserMs: number | null;
   idleGapMs: number | null;
   archiveId: string;
+  /** Archives this session produced (not derived from the window index). */
+  archiveCount: number;
+  archives: ArchiveRef[];
+  undeliveredCount: number;
   overviewReady: boolean;
   windowAgeMs: number | null;
   /** Effective thresholds for this snapshot (clamped when reserveTokens is known). */
@@ -230,6 +258,8 @@ export class ContextWindowCore {
   };
   /** True while a restore is still waiting for the OpenViking session id. */
   pendingSessionCheck: boolean;
+  /** Archives of this session, oldest first, with the window each belongs to. */
+  archives: ArchiveRef[];
   lastCommitError: CommitTransportError | null;
   persistedState(): WindowPersistedState;
   restore(entries: any[]): this["state"];
@@ -263,6 +293,10 @@ export class ContextWindowCore {
   }): Promise<ResetOutcome>;
   refreshPendingOverview(): Promise<boolean>;
   markOverviewUnavailable(): void;
+  /** Remember which window an archive belongs to. Idempotent per archive id. */
+  recordArchive(windowId: string, archiveId: string, archiveUri?: string): void;
+  /** Post a one-line retraction for a handoff note whose reset then failed. */
+  retractHandoff(): Promise<void>;
   rebuildHeader(opts: { overviewState?: OverviewState; previousWindowId?: string }): string;
   /** Reported usage when it is trustworthy, the local estimate otherwise. */
   usedTokens(usage?: { tokens?: number | null } | null): { used: number; estimated: boolean };

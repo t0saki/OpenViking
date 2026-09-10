@@ -20,6 +20,7 @@ const CONTEXT_WINDOW_DEFAULTS = {
   idleGapMinutes: 30,
   statusEveryTurn: true,
   historyItemMaxChars: 8000,
+  recentResetGuardMs: 60000,
 };
 
 async function withConfigFile(body, fn, env = {}, cliConfig = null) {
@@ -105,23 +106,21 @@ test("loadConfig lets config.json turn tool-result capture off", async () => {
 });
 
 test("loadConfigFromModuleUrl decodes Unicode paths", async () => {
-  await withConfigFile({ commitTokenThreshold: 2000 }, (_cfg, dir) => {
+  await withConfigFile({ commitKeepRecentCount: 3 }, (_cfg, dir) => {
     const moduleUrl = pathToFileURL(join(dir, "index.ts")).href;
     const cfg = loadConfigFromModuleUrl(moduleUrl);
-    assert.equal(cfg.commitTokenThreshold, 2000);
+    assert.equal(cfg.commitKeepRecentCount, 3);
   });
 });
 
 test("loadConfig clamps invalid values", async () => {
   await withConfigFile({
-    commitTokenThreshold: -1,
     commitKeepRecentCount: -5,
     captureMaxLength: 1,
     captureToolMaxChars: 10,
     recallLimit: 999,
     scoreThreshold: 5,
   }, (cfg) => {
-    assert.equal(cfg.commitTokenThreshold, 1000);
     assert.equal(cfg.commitKeepRecentCount, 0);
     assert.equal(cfg.captureMaxLength, 200);
     assert.equal(cfg.captureToolMaxChars, 200);
@@ -237,8 +236,11 @@ test("the shipped config.json parses and restates the defaults exactly", async (
     assert.equal(cfg.captureToolResults, true);
     assert.equal(cfg.captureMaxLength, 24000);
     assert.equal(cfg.captureToolMaxChars, 1000000);
-    assert.equal(cfg.commitTokenThreshold, 20000);
     assert.equal(cfg.commitKeepRecentCount, 10);
+    // Nothing in this fork reads them any more: `new_context` and the pi
+    // compaction fallback are the only writers of archive boundaries.
+    assert.equal("commitTokenThreshold" in shipped, false);
+    assert.equal("resumeContextBudget" in shipped, false);
     // config.json must not name recallLimit or recallQueryExpansion: both
     // carry a "…Configured" flag that recall reads as "the user chose this".
     assert.equal(cfg.recallLimitConfigured, false);
@@ -309,6 +311,7 @@ const CONTEXT_WINDOW_BOUNDS = [
   { key: "hardPercent", min: 10, max: 99, withLow: { softPercent: 10 } },
   { key: "idleGapMinutes", min: 0, max: 1440 },
   { key: "historyItemMaxChars", min: 500, max: 100000 },
+  { key: "recentResetGuardMs", min: 0, max: 600000 },
 ];
 
 for (const { key, min, max, withLow, withHigh } of CONTEXT_WINDOW_BOUNDS) {

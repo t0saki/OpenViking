@@ -183,7 +183,7 @@ test("readArchiveOverview returns null when fetch itself blows up", async () => 
 
 // ---------- readArchiveMessages ----------
 
-test("readArchiveMessages parses JSONL and skips a malformed line", async () => {
+test("readArchiveMessages parses JSONL and keeps a malformed line as a placeholder", async () => {
   const lines = [
     JSON.stringify({ id: "m1", role: "user", parts: [{ type: "text", text: "hello" }], created_at: "2026-09-10T06:00:00Z" }),
     "{ this is not json",
@@ -202,7 +202,10 @@ test("readArchiveMessages parses JSONL and skips a malformed line", async () => 
   stubFetch(() => ({ status: "ok", result: lines }));
 
   const msgs = await makeClient().readArchiveMessages(ARCHIVE);
-  assert.equal(msgs.length, 3);
+  // Four, not three: `search_contents` turns a grep hit's line number into an
+  // item index, so an unreadable line keeps its slot instead of shifting every
+  // pointer after it by one. (Empty lines carry no content and are skipped.)
+  assert.equal(msgs.length, 4);
   assert.ok(calls[0].url.includes(encodeURIComponent(`${ARCHIVE}/messages.jsonl`)));
 
   assert.deepEqual(msgs[0], {
@@ -212,10 +215,13 @@ test("readArchiveMessages parses JSONL and skips a malformed line", async () => 
     parts: [{ type: "text", text: "hello" }],
     created_at: "2026-09-10T06:00:00Z",
   });
-  assert.equal(msgs[1].text, "running it\n[tool bash] exit 0");
-  assert.equal(msgs[1].parts.length, 2);
-  assert.equal(msgs[2].text, "plain content");
-  assert.equal(msgs[2].created_at, "");
+  assert.deepEqual(msgs[1], {
+    id: "", role: "unreadable", text: "(unreadable archive line)", parts: [], created_at: "",
+  });
+  assert.equal(msgs[2].text, "running it\n[tool bash] exit 0");
+  assert.equal(msgs[2].parts.length, 2);
+  assert.equal(msgs[3].text, "plain content");
+  assert.equal(msgs[3].created_at, "");
 });
 
 test("readArchiveMessages returns null when the file is unreadable", async () => {
@@ -308,12 +314,14 @@ test("readArchiveMessages tolerates a non-array parts field and a JSON scalar li
   stubFetch(() => ({ status: "ok", result: lines }));
 
   const msgs = await makeClient().readArchiveMessages(ARCHIVE);
-  assert.equal(msgs.length, 2);
+  // The three lines that are not JSON objects keep their slots as placeholders.
+  assert.equal(msgs.length, 5);
   assert.deepEqual(msgs[0], {
     id: "m1", role: "user", text: "fallback text", parts: [], created_at: "",
   });
-  assert.equal(msgs[1].id, "", "a missing id becomes an empty string, never 'undefined'");
-  assert.equal(msgs[1].text, "kept");
+  for (const i of [1, 2, 3]) assert.equal(msgs[i].role, "unreadable");
+  assert.equal(msgs[4].id, "", "a missing id becomes an empty string, never 'undefined'");
+  assert.equal(msgs[4].text, "kept");
 });
 
 test("readArchiveMessages returns [] for an archive that is present but empty", async () => {
@@ -375,9 +383,21 @@ test("listSessionArchives uses the legacy root when the session lookup fails", a
   assert.ok(!calls[1].url.includes("~"));
 });
 
-test("listSessionArchives returns [] on failure", async () => {
+test("listSessionArchives tells an empty history apart from an unreadable one", async () => {
+  // A session that never committed has no `history` directory: an empty list.
   stubFetch((url) => (url.includes("/api/v1/sessions/") ? sessionOk : notFound));
   assert.deepEqual(await makeClient().listSessionArchives(SID), []);
+
+  // A blocked or broken listing is null — `history` must not report it to the
+  // model as "this session has no archived windows".
+  for (const failure of [
+    { httpStatus: 403, body: { status: "error", error: { code: "ApiBlocked", message: "blocked" } } },
+    { httpStatus: 500, body: { status: "error", error: { message: "boom" } } },
+    { status: "ok", result: { not: "an array" } },
+  ]) {
+    stubFetch((url) => (url.includes("/api/v1/sessions/") ? sessionOk : failure));
+    assert.equal(await makeClient().listSessionArchives(SID), null);
+  }
 });
 
 // ---------- grepSessionArchives ----------

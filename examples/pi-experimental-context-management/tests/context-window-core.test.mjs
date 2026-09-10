@@ -375,7 +375,9 @@ test("buildWindowHeader renders the ready variant with every section", () => {
   assert.ok(header.includes('<working-memory archive="archive_002"># Working Memory'));
   assert.ok(header.includes('history {"action":"list_windows"}'));
   assert.ok(header.includes('{"action":"list_items","window":"w2"}'));
-  assert.ok(header.includes('{"action":"read_item","item":"w2:14"}'));
+  // A placeholder, not a literal index: the archive rarely has 15 items and the
+  // model would call read_item with an out-of-range id.
+  assert.ok(header.includes('{"action":"read_item","item":"w2:<index from list_items>"}'));
   assert.ok(header.includes('{"action":"search_contents","query":"..."}'));
   assert.ok(header.endsWith("</context_window>\n</openviking-context>"));
   assert.ok(!header.includes("discarded with the same batch"));
@@ -422,11 +424,51 @@ test("buildWindowHeader pending variant attaches the previous overview as stale"
     windowId: "w3",
     previousWindowId: "w2",
     archiveId: "archive_002",
+    previousArchiveId: "archive_001",
     overviewState: "pending",
     previousOverview: "older working memory",
   });
-  assert.ok(header.includes('<working-memory status="pending" archive="archive_002" stale="true">older working memory</working-memory>'));
-  assert.ok(header.includes("is not ready yet"));
+  // The block carries the archive it actually describes — never the one the
+  // line above declares to have no Working Memory yet.
+  assert.ok(
+    header.includes(
+      '<working-memory status="stale" archive="archive_001" describes="an earlier window, not the archive above">' +
+        "older working memory</working-memory>",
+    ),
+  );
+  assert.ok(header.includes("Working Memory for archive_002 is not ready yet"));
+});
+
+test("buildWindowHeader drops the archive attribute of a stale block whose archive is unknown", () => {
+  const header = buildWindowHeader({
+    windowId: "w3",
+    previousWindowId: "w2",
+    archiveId: "archive_002",
+    overviewState: "pending",
+    previousOverview: "older working memory",
+  });
+  assert.ok(header.includes('<working-memory status="stale" describes='));
+  assert.equal(header.includes('archive="archive_002" describes'), false);
+});
+
+test("buildWindowHeader names messages OpenViking rejected for good", () => {
+  const header = buildWindowHeader({
+    windowId: "w2",
+    previousWindowId: "w1",
+    archiveId: "archive_001",
+    overviewState: "ready",
+    overview: "wm",
+    undeliveredCount: 3,
+  });
+  assert.match(header, /3 messages of this session were rejected by OpenViking and are missing from the archive/);
+  const clean = buildWindowHeader({
+    windowId: "w2",
+    previousWindowId: "w1",
+    archiveId: "archive_001",
+    overviewState: "ready",
+    overview: "wm",
+  });
+  assert.equal(clean.includes("missing from the archive"), false);
 });
 
 test("buildWindowHeader unavailable variant is a short note with no element", () => {
@@ -477,11 +519,13 @@ test("buildStatusLine renders the one-line status and the idle note", () => {
     turnsInWindow: 6,
     usedTokens: 38000,
     contextWindow: 262000,
-    sinceLastUserMs: 47 * 60_000,
-    idleGapMs: 5 * 60_000,
+    sinceLastUserMs: 5 * 60_000,
+    idleGapMs: 47 * 60_000,
     idleGapMinutes: 30,
   });
-  assert.equal(line, "[context-status] window w2 · 6 turns · ~38k/262k tokens (15%) · 47m since your previous message");
+  // The NOTE is about the gap the user just came back from, not about the gap
+  // between the two messages before it — so a long `idleGapMs` alone is not it.
+  assert.equal(line, "[context-status] window w2 · 6 turns · ~38k/262k tokens (15%) · 5m since your previous message");
 
   const idle = buildStatusLine({
     windowId: "w2",
@@ -490,7 +534,7 @@ test("buildStatusLine renders the one-line status and the idle note", () => {
     contextWindow: 262000,
     estimated: true,
     sinceLastUserMs: 47 * 60_000,
-    idleGapMs: 47 * 60_000,
+    idleGapMs: 5 * 60_000,
     idleGapMinutes: 30,
   });
   const lines = idle.split("\n");
@@ -498,6 +542,10 @@ test("buildStatusLine renders the one-line status and the idle note", () => {
   assert.ok(lines[0].includes("(0%, estimated)"));
   assert.ok(lines[1].startsWith("NOTE: 47 minutes passed since the previous user message."));
   assert.ok(lines[1].includes("consider new_context before you begin"));
+
+  // With no `sinceLastUserMs` at all the caller's gap is the only signal left.
+  const fallback = buildStatusLine({ windowId: "w2", turnsInWindow: 1, idleGapMs: 99 * 60_000, idleGapMinutes: 30 });
+  assert.equal(fallback.split("\n").length, 2, "idleGapMs is the fallback when nothing else is known");
 
   const noIdle = buildStatusLine({ windowId: "w1", turnsInWindow: 1, idleGapMs: 99 * 60_000, idleGapMinutes: 0 });
   assert.equal(noIdle.split("\n").length, 1, "idleGapMinutes 0 disables the note");
@@ -708,7 +756,9 @@ test("requestReset stops early and marks the window unavailable when the task fa
   const out = await openWindow(core, io);
   assert.equal(out.ok, true);
   assert.equal(out.details.overviewState, "unavailable");
-  assert.equal(out.details.attempts, 5);
+  // The task is first checked on the second attempt, so a failed one ends the
+  // wait there instead of on the fifth.
+  assert.equal(out.details.attempts, 2);
   assert.ok(core.headerText.includes("is unavailable"));
 });
 
@@ -758,7 +808,7 @@ test("a second concurrent requestReset is a no-op and commits only once", async 
   const first = openWindow(core, io);
   const second = await openWindow(core, io, { toolCallId: "call-2" });
   assert.equal(second.kind, "noop");
-  assert.equal(second.text, "A context window reset is already in progress.");
+  assert.match(second.text, /^Context window NOT reset: a reset is already in progress\./);
   release();
   const out = await first;
   assert.equal(out.ok, true);
@@ -1401,7 +1451,18 @@ test("two resets in one session archive twice and leave only the newest window v
 });
 
 test("a second reset carries the previous Working Memory as a stale block while the new one is pending", async () => {
+  const secondUri = "viking://user/u1/sessions/pi-abc/history/archive_003";
+  // The io methods are bound at construction, so the second archive id has to
+  // come from a field the closure reads, not from a later reassignment.
   const io = makeIo();
+  io.commit = async (opts = {}) => {
+    io.calls.push(`commit:${opts.keepRecentCount}`);
+    return {
+      status: "accepted",
+      task_id: "task-1",
+      archive_uri: io.calls.filter((c) => c.startsWith("commit:")).length > 1 ? secondUri : ARCHIVE_URI,
+    };
+  };
   const core = makeCore(io);
   await openWindow(core, io, { toolCallId: "call-1" });
   assert.equal(core.overviewReady, true);
@@ -1409,9 +1470,12 @@ test("a second reset carries the previous Working Memory as a stale block while 
   io.overview = null;
   const out = await openWindow(core, io, { toolCallId: "call-2", branch: branchFor("call-2") });
   assert.equal(out.details.overviewState, "pending");
-  assert.ok(core.headerText.includes('<working-memory status="pending"'));
-  assert.ok(core.headerText.includes('stale="true"'));
+  // The stale block belongs to the *previous* archive; tagging it with the new
+  // one would present a summary as belonging to the archive that has none.
+  assert.ok(core.headerText.includes('<working-memory status="stale" archive="archive_002"'));
+  assert.equal(core.headerText.includes('<working-memory status="pending" archive="archive_003"'), false);
   assert.ok(core.headerText.includes("Current State"));
+  assert.match(core.headerText, /Working Memory for archive_003 is not ready yet/);
 });
 
 test("restore ignores a window entry written by a different OpenViking session", async () => {
@@ -1815,9 +1879,9 @@ test("a pending window keeps its stale Working Memory block across a persist/res
   const restored = makeCore(makeIo({ overview: null }));
   restored.restore([{ type: "custom", customType: WINDOW_ENTRY_TYPE, data }]);
   assert.equal(restored.previousOverview, data.previousOverview);
-  assert.ok(restored.headerText.includes('stale="true"'), "the frozen header still carries it");
+  assert.ok(restored.headerText.includes('status="stale"'), "the frozen header still carries it");
   assert.ok(
-    restored.rebuildHeader({ overviewState: "pending" }).includes('stale="true"'),
+    restored.rebuildHeader({ overviewState: "pending" }).includes('status="stale"'),
     "and a rebuild in the new process does not lose it",
   );
 });
@@ -1849,4 +1913,167 @@ test("an unavailable window survives a restore and spends no further overview re
   assert.equal(restored.overviewUnavailable, true);
   assert.equal(await restored.refreshPendingOverview(), false);
   assert.deepEqual(io2.calls, [], "an unavailable window does not read .overview.md again");
+});
+
+// --------------------------------------------------------------------------
+// terminal archive tasks, handoff retraction, the archive ledger
+// --------------------------------------------------------------------------
+
+test("a task that completes without a Working Memory ends the wait instead of burning the deadline", async () => {
+  const io = makeIo({ overview: null, task: { status: "completed" } });
+  const core = makeCore(io);
+  const out = await openWindow(core, io);
+
+  assert.equal(out.ok, true);
+  assert.equal(out.details.overviewState, "unavailable");
+  // Two polls to see the terminal status, three more for a write that is only
+  // a moment behind — not the full 60s deadline.
+  assert.equal(out.details.attempts, 5);
+  assert.ok(io.clock < 1_700_000_000_000 + 60000, "the deadline is not spent");
+  assert.ok(core.headerText.includes("is unavailable"));
+});
+
+test("a cancelled archive task ends the wait as unavailable", async () => {
+  const io = makeIo({ overview: null, task: { status: "cancelled" } });
+  const core = makeCore(io);
+  const out = await openWindow(core, io);
+  assert.equal(out.details.overviewState, "unavailable");
+  assert.equal(out.details.attempts, 2);
+});
+
+test("a Working Memory that lands inside the grace period is still picked up", async () => {
+  const io = makeIo({ overview: null, task: { status: "completed" } });
+  io.readArchiveOverview = async () => {
+    io.calls.push("readArchiveOverview");
+    // Arrives one poll after the task reported completed.
+    return io.calls.filter((c) => c === "readArchiveOverview").length >= 3 ? "# Working Memory\nlate" : null;
+  };
+  const core = makeCore(io);
+  const out = await openWindow(core, io);
+  assert.equal(out.details.overviewState, "ready");
+  assert.ok(core.headerText.includes("late"));
+});
+
+test("a refusal after the handoff note was written retracts it", async () => {
+  const io = makeIo({ commit: async () => null });
+  const core = makeCore(io);
+  const out = await openWindow(core, io);
+
+  assert.equal(out.ok, false);
+  assert.equal(io.handoffs.length, 2);
+  assert.match(io.handoffs[0], /^\[Context Window Handoff\] w1 -> w2/);
+  assert.match(io.handoffs[1], /RETRACTED/);
+  assert.match(io.handoffs[1], /this window is still open/);
+  assert.equal(core.windowIndex, 1);
+});
+
+test("a refusal before the handoff note leaves the session untouched", async () => {
+  const io = makeIo({ flush: async () => false });
+  const core = makeCore(io);
+  const out = await openWindow(core, io);
+  assert.equal(out.ok, false);
+  assert.deepEqual(io.handoffs, []);
+});
+
+test("an accepted commit without an archive_uri refuses instead of opening a nameless window", async () => {
+  const io = makeIo({ commit: async () => ({ status: "accepted", task_id: "t", trace_id: "tr-9" }) });
+  const core = makeCore(io);
+  const out = await openWindow(core, io);
+
+  assert.equal(out.ok, false);
+  assert.equal(out.kind, "refused");
+  assert.match(out.text, /^Context window NOT reset: OpenViking refused the archive commit \(trace tr-9\)/);
+  assert.equal(core.windowIndex, 1);
+  assert.equal(core.armed, false);
+  assert.match(io.handoffs[1], /RETRACTED/);
+});
+
+test("a null commit reports the trace id the transport recorded", async () => {
+  const io = makeIo({ commit: async () => null, commitTraceId: () => "tr-transport" });
+  const core = makeCore(io);
+  const out = await openWindow(core, io);
+  assert.match(out.text, /\(trace tr-transport\)/);
+});
+
+test("every archive is recorded with the window it closed", async () => {
+  const uris = [
+    "viking://user/u1/sessions/pi-abc/history/archive_001",
+    "viking://user/u1/sessions/pi-abc/history/archive_002",
+  ];
+  const io = makeIo();
+  io.commit = async (opts = {}) => {
+    io.calls.push(`commit:${opts.keepRecentCount}`);
+    const n = io.calls.filter((c) => c.startsWith("commit:")).length;
+    return { status: "accepted", task_id: "t", archive_uri: uris[n - 1] };
+  };
+  const core = makeCore(io);
+  await openWindow(core, io, { toolCallId: "call-1" });
+  // A compaction nobody asked us for closes w2 without producing an archive.
+  core.absorbExternalCompaction("pi compaction");
+  assert.equal(core.windowId, "w3");
+  await openWindow(core, io, { toolCallId: "call-9", branch: branchFor("call-9") });
+
+  assert.deepEqual(
+    core.archives.map((a) => `${a.windowId}:${a.archiveId}`),
+    ["w1:archive_001", "w3:archive_002"],
+    "w2 closed without an archive, so it is not in the ledger",
+  );
+  assert.equal(core.statusSnapshot().archiveCount, 2, "not 3, the window index over-counts");
+  assert.deepEqual(
+    core.persistedState().archives.map((a) => a.windowId),
+    ["w1", "w3"],
+    "the ledger survives into the persisted entry",
+  );
+
+  const restored = makeCore(makeIo());
+  restored.restore([{ type: "custom", customType: WINDOW_ENTRY_TYPE, data: core.persistedState() }]);
+  assert.deepEqual(restored.archives, core.archives);
+});
+
+test("messages OpenViking rejected for good are named in the window header", async () => {
+  let dropped = 0;
+  const io = makeIo({ droppedCount: () => dropped });
+  const core = makeCore(io);
+  dropped = 2;
+  await openWindow(core, io);
+  assert.match(core.headerText, /2 messages of this session were rejected by OpenViking/);
+  assert.equal(core.statusSnapshot().undeliveredCount, 2);
+});
+
+test("a stale [context-reminder] is dropped in pi's own custom-message shape", () => {
+  const messages = [
+    user("old", 1),
+    assistantCalls([{ id: "call-1", name: "new_context" }]),
+    toolResult("call-1", "new_context"),
+    // What pi actually emits before convertToLlm rewrites it: role "custom".
+    { role: "custom", customType: REMINDER_CUSTOM_TYPE, content: "[context-reminder] w1 is 87% full", timestamp: 5 },
+    user("carry on", 6),
+  ];
+  const cut = applyWindowCut(messages, { anchorToolCallId: "call-1", headerText: "HEADER" });
+  assert.equal(cut.applied, true);
+  assert.equal(cut.messages.length, 1);
+  assert.ok(String(cut.messages[0].content).startsWith("HEADER"));
+  assert.equal(JSON.stringify(cut.messages).includes("87% full"), false);
+});
+
+test("the pi-compaction fallback does not present the previous window's notes as this one's", async () => {
+  const io = makeIo();
+  const core = makeCore(io);
+  await openWindow(core, io, { toolCallId: "call-1", notes: "notes written for w2" });
+  assert.ok(core.headerText.includes("notes written for w2"));
+
+  io.clock += 10 * 60_000; // past the recent-reset guard
+  io.watermark = 99;
+  const out = await core.handleBeforeCompact({
+    preparation: { firstKeptEntryId: "e1", tokensBefore: 1000 },
+    branchEntries: [{ id: "e1", type: "message", message: user("still here", io.clock) }],
+  });
+
+  assert.ok(out, "the fallback took over");
+  assert.equal(out.compaction.summary.includes("notes written for w2"), false);
+  assert.equal(core.notes, "");
+  const handoff = io.handoffs.at(-1);
+  assert.match(handoff, /automatic: pi compaction threshold/);
+  assert.match(handoff, /the harness compacted this window before new_context was called/);
+  assert.equal(handoff.includes("notes written for w2"), false);
 });

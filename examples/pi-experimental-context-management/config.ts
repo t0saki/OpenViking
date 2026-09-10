@@ -36,6 +36,13 @@ export interface OVContextWindowConfig {
   statusEveryTurn: boolean;
   /** Per-item cap for `history` reads out of an archived `messages.jsonl`. */
   historyItemMaxChars: number;
+  /**
+   * How long after a reset `session_before_compact` refuses to archive again.
+   * A provider hiccup can make pi estimate from the untransformed list and
+   * compact a window that just opened; inside this guard the current header is
+   * returned as the summary instead.
+   */
+  recentResetGuardMs: number;
 }
 
 export interface OVConfig {
@@ -60,8 +67,6 @@ export interface OVConfig {
   scoreThreshold: number;
   minQueryLength: number;
   profileTokenBudget: number;
-  resumeContextBudget: number;
-  commitTokenThreshold: number;
   commitKeepRecentCount: number;
   /**
    * Fixed on in this fork: the archive is the model's only way back to a
@@ -102,8 +107,6 @@ const DEFAULT_CONFIG: OVConfig = {
   scoreThreshold: 0.35,
   minQueryLength: 3,
   profileTokenBudget: 10000,
-  resumeContextBudget: 32000,
-  commitTokenThreshold: 20000,
   commitKeepRecentCount: 10,
   faithfulCapture: true,
   // The `history` tool promises the archive can be read back, so tool output
@@ -127,6 +130,7 @@ const DEFAULT_CONFIG: OVConfig = {
     idleGapMinutes: 30,
     statusEveryTurn: true,
     historyItemMaxChars: 8000,
+    recentResetGuardMs: 60000,
   },
 };
 
@@ -177,6 +181,7 @@ export function loadConfig(extensionDir: string): OVConfig {
       idleGapMinutes: cw.idleGapMinutes ?? cwDefaults.idleGapMinutes,
       statusEveryTurn: cw.statusEveryTurn ?? cwDefaults.statusEveryTurn,
       historyItemMaxChars: cw.historyItemMaxChars ?? cwDefaults.historyItemMaxChars,
+      recentResetGuardMs: cw.recentResetGuardMs ?? cwDefaults.recentResetGuardMs,
     },
   };
 
@@ -219,8 +224,6 @@ export function loadConfig(extensionDir: string): OVConfig {
   config.scoreThreshold = clampNumber(config.scoreThreshold, 0, 1, DEFAULT_CONFIG.scoreThreshold);
   config.minQueryLength = clampInt(config.minQueryLength, 1, 64, DEFAULT_CONFIG.minQueryLength);
   config.profileTokenBudget = clampInt(config.profileTokenBudget, 500, 50000, DEFAULT_CONFIG.profileTokenBudget);
-  config.resumeContextBudget = clampInt(config.resumeContextBudget, 1024, 128000, DEFAULT_CONFIG.resumeContextBudget);
-  config.commitTokenThreshold = clampInt(config.commitTokenThreshold, 1000, 1000000, DEFAULT_CONFIG.commitTokenThreshold);
   config.commitKeepRecentCount = clampInt(config.commitKeepRecentCount, 0, 1000, DEFAULT_CONFIG.commitKeepRecentCount);
   config.captureToolResults = config.captureToolResults !== false;
   config.captureMaxLength = clampInt(config.captureMaxLength, 200, 100000, DEFAULT_CONFIG.captureMaxLength);
@@ -239,6 +242,7 @@ export function loadConfig(extensionDir: string): OVConfig {
   if (window.hardPercent < window.softPercent) window.hardPercent = window.softPercent;
   window.idleGapMinutes = clampInt(window.idleGapMinutes, 0, 1440, cwDefaults.idleGapMinutes);
   window.historyItemMaxChars = clampInt(window.historyItemMaxChars, 500, 100000, cwDefaults.historyItemMaxChars);
+  window.recentResetGuardMs = clampInt(window.recentResetGuardMs, 0, 600000, cwDefaults.recentResetGuardMs);
   window.statusEveryTurn = envBool(String(window.statusEveryTurn), cwDefaults.statusEveryTurn);
   config.recallPeerScope = config.recallPeerScope === "actor" ? "actor" : "all";
   config.recallQueryExpansion = config.recallQueryExpansion === "off" ? "off" : "auto";
