@@ -1,99 +1,146 @@
 # pi × OpenViking — experimental context management
 
-**EXPERIMENTAL.** This is a fork of [`examples/pi-coding-agent-extension`](../pi-coding-agent-extension),
-kept as the base for agent-driven context windows: the model decides when the
-current window is done, the extension archives it to OpenViking and opens a
-fresh one carrying a handoff note plus the server-written Working Memory, and
-the model can read the closed windows back. It is a pi-side take on Codex's
-`features.context_management.experimental_mode`.
+> **EXPERIMENTAL.** A demo extension, not a supported product. It changes what
+> the model sees on every provider request. Do not point it at a session you
+> cannot afford to lose, and do not load it next to the `openviking` extension.
 
-Nothing of that is here yet. This directory currently holds the skeleton:
-turn sync, recall, profile injection and the six `viking_*` tools, with the
-takeover mode removed. `new_context` / `history` / `get_context_remaining` and
-the window core land in later phases, and this README grows with them.
+## What this is
 
-## Do not run it next to the openviking extension
+A fork of [`examples/pi-coding-agent-extension`](../pi-coding-agent-extension)
+in which takeover mode is replaced by **agent-managed context windows** — a
+pi-side take on Codex's `features.context_management.experimental_mode`.
 
-Both extensions register the same `viking_*` tools and both sync the same
-OpenViking session, so loading them together duplicates every tool and gives
-one session two writers. On startup this one probes `pi.getAllTools()` for
-`viking_search`; if the other extension already registered it, this extension
-disables itself and says so. Disable the other one (`enabled: false` in its
-`config.json`, or drop it from `settings.json`'s `packages`) before installing
-this.
+The model decides when the current window is done and calls `new_context`. The
+extension archives the conversation to OpenViking, waits for the server to write
+a Working Memory of it, and then cuts everything up to that tool call out of the
+next provider request, putting a frozen window header in front: the model's own
+handoff notes, the reason it gave, the user's last request and the Working
+Memory. Nothing is summarized by an LLM, and nothing is deleted — closed windows
+are readable again through the `history` tool.
+
+Everything else the upstream extension does — turn sync, recall before every
+prompt, profile injection, the `viking_*` tools — still works.
+
+Full design, exact prompt texts, failure matrix and the e2e gate:
+[CONTEXT-WINDOW.md](./CONTEXT-WINDOW.md).
+
+## Install
+
+```bash
+pi install /abs/path/to/examples/pi-experimental-context-management
+```
+
+**Disable the `openviking` extension first.** Both register the same `viking_*`
+tools and both sync the same OpenViking session, so loading them together
+duplicates every tool and gives one session two writers. Set
+`"enabled": false` in `~/.pi/agent/extensions/openviking/config.json`, or drop
+it from `settings.json`'s `packages`. As a backstop, this extension probes
+`pi.getAllTools()` for `viking_search` at startup and disables itself with a
+warning if the other one already registered it.
+
+Credentials resolve exactly as upstream: `OPENVIKING_*` environment variables →
+`~/.openviking/ovcli.conf` → `ov.conf`. No new config file.
+
+## Quick config
+
+`config.json` keeps the upstream fields (minus `captureMode` — capture here is
+always faithful) and adds one nested `contextWindow` block:
+
+```json
+{
+  "captureToolResults": true,
+  "contextWindow": {
+    "resetDeadlineMs": 60000,
+    "softPercent": 70,
+    "hardPercent": 85,
+    "idleGapMinutes": 30,
+    "statusEveryTurn": true
+  }
+}
+```
+
+`resetDeadlineMs` bounds the blocking `new_context` call end to end (sync,
+barrier, commit, and the wait for the server-side Working Memory — measured at
+25–55s on the reference server, so 60s is the default). `softPercent` /
+`hardPercent` are the one-shot reminder thresholds, clamped at runtime under
+pi's own auto-compaction line. `statusEveryTurn` emits the one-line context
+status after every user prompt. Two environment variables override the block
+for one run: `OPENVIKING_CONTEXT_STATUS_EVERY_TURN` and
+`OPENVIKING_CONTEXT_RESET_DEADLINE_MS`.
+
+The full table, with ranges and clamping rules, is in
+[CONTEXT-WINDOW.md §6](./CONTEXT-WINDOW.md#6-configuration-contextwindow-block).
+
+## Tools
+
+| Tool | Parameters | What it does |
+| --- | --- | --- |
+| `new_context` | `reason`, `notes`, `next_steps?` | Archives the current window to OpenViking and opens a fresh one. Blocks until the archive exists. Call it alone |
+| `history` | `action`, `window?`, `item?`, `query?`, `offset?`, `limit?` | Reads closed windows: `list_windows`, `list_items`, `read_item`, `search_contents` |
+| `get_context_remaining` | — | Tokens left, window age, turns, idle gaps, archive readiness, one advice line |
+| `viking_search` | `query`, `scope?`, `limit?` | Semantic search over the OpenViking knowledge base |
+| `viking_read` | `uri`, `level` | Read a `viking://` URI at `abstract` / `overview` / `full` detail |
+| `viking_browse` | `action`, `uri?` | `list` or `stat` the store like a filesystem |
+| `viking_remember` | `content`, `category?` | Store a fact in the session for memory extraction |
+| `viking_forget` | `uri?`, `query?` | Delete a memory by URI or strongest match |
+| `viking_add_resource` | `url`, `reason?` | Ingest an HTTP URL into OpenViking |
+
+`viking_archive_expand` is gone — it read `viking://session/{id}`, a namespace
+the server does not serve, and `history` replaces it.
 
 ## What differs from the upstream extension
 
-- No takeover mode: no `takeover.ts`, no boundary state machine, no
-  threshold-driven commit inside `syncBranch`. Archive boundaries will be
-  written only by the reset path and by the pi compaction fallback.
-- Tool output reaches the archive. `normalizeRole` recognises pi's
-  `toolResult` messages and captures them as `[tool-result <toolName>] …`
-  user turns, bounded by `captureToolMaxChars`; `captureToolResults` defaults
-  to true here. Without this the promise that a closed window can be read back
-  would be empty.
-- Capture is always faithful — the archive is the only way back to a window
-  that is no longer in context, so nothing is filtered but plugin chatter and
-  slash commands.
-- No recall injection ledger: replaying historical recall blocks needed
+- **Agent-managed windows instead of takeover**: no `takeover.ts`, no boundary
+  state machine, no threshold-driven commit inside `syncBranch`. Archives are
+  produced only by `new_context` and by the pi-compaction fallback.
+- **Tool output reaches the archive.** `normalizeRole` recognises pi's
+  `toolResult` messages and captures them as `[tool-result <toolName>] …`,
+  bounded by `captureToolMaxChars`; `captureToolResults` defaults to true. The
+  upstream adapter dropped them, which would have made `history` a false
+  promise.
+- **Capture is always faithful** — the archive is the only way back to a closed
+  window, so nothing is filtered but plugin chatter and slash commands.
+- **No recall injection ledger**: replaying historical recall blocks needed
   `SessionManager.buildContextEntries()`, which pi 0.80.3 does not expose.
-  `injectRecall` prepends this turn's block to the newest user message only,
-  and skips any message that already carries an `<openviking-context` block.
-- `viking_archive_expand` is gone: it read `viking://session/{id}`, a
-  namespace the server does not serve. The `history` tool replaces it.
-- `sync.flushForTakeover()` is now `sync.flushBarrier({budgetMs})`, so a reset
-  can cap how long it waits for the pending queue to drain.
+  `injectRecall` prepends this turn's block to the newest user message only and
+  skips any message that already carries an `<openviking-context` block — which
+  is also what keeps it away from the frozen window header.
+- **`sync.flushForTakeover()` is now `sync.flushBarrier({budgetMs})`**, so a
+  reset can cap how long it waits for the pending queue to drain.
 
 ## Layout
 
 | Path | What it is |
 | --- | --- |
-| `index.ts` | Extension entry: event handlers, coexistence guard, `/viking` command |
-| `client.ts` | OpenViking HTTP client |
+| `index.ts` | Extension entry: event handlers, coexistence guard, static guidance, `/viking` command |
+| `client.ts` | OpenViking HTTP client, including the archive read/list/grep helpers |
 | `sync.ts` | Session sync, disk pending queue, `flushBarrier`, `commit` |
 | `recall.ts` | Per-prompt recall search and injection |
-| `config.ts`, `config.json` | Config and credential resolution |
-| `tools.ts` | The six `viking_*` tools |
-| `lib/text-budget.mjs` | Pure token estimation / truncation helpers |
+| `config.ts`, `config.json` | Config, the `contextWindow` block, credential resolution |
+| `tools.ts` | Six `viking_*` tools plus `new_context` / `history` / `get_context_remaining` |
+| `context-window.ts` | Adapter binding the core to pi, the client and the sync manager |
+| `lib/context-window-core.mjs` | Pure, harness-agnostic window state machine |
+| `lib/text-budget.mjs` | Token estimation / truncation helpers |
 | `lib/capture-adapter.mjs` | Branch entries → OpenViking message payloads |
 | `lib/uri-guard-adapter.mjs` | Blocks builtin file tools on `viking://` URIs |
+| `lib/pi-settings.mjs` | Reads pi's `compaction.reserveTokens` |
 | `shared/` | Generated from `examples/memory-plugin-shared/lib` — do not edit |
-
-## Configuration
-
-`config.json` keeps the upstream fields, minus `captureMode` — capture here is
-always faithful, so the semantic/keyword switch had no reader and is gone —
-plus one nested `contextWindow` block for the agent-driven windows. Every
-number below is rounded and clamped on load: an out-of-range value is pulled to
-the nearest bound, and one that is not a number at all (`"soon"`, `{}`, or a
-missing key) falls back to the default. `hardPercent` is clamped first and then
-raised to `softPercent` if it was configured lower, so the hard reminder can
-never fire before the soft one. Unknown keys inside `contextWindow` are
-dropped, and a `contextWindow` that is not an object is ignored entirely.
-
-| Field | Default | Range | Description |
-| --- | --- | --- | --- |
-| `contextWindow.resetDeadlineMs` | `60000` | 5000–600000 | Whole-reset budget: sync, barrier, commit and the wait for the archive overview |
-| `contextWindow.archivePollMs` | `2000` | 250–30000 | Delay between `.overview.md` polls while the server builds Working Memory |
-| `contextWindow.overviewRefreshMaxAttempts` | `20` | 0–200 | Non-blocking retries at `turn_end` when a window opened before its overview was ready |
-| `contextWindow.overviewBudget` | `3000` | 100–50000 | Token budget for the Working Memory block in the window header |
-| `contextWindow.notesBudget` | `1500` | 100–20000 | Token budget for the agent's handoff notes in the window header |
-| `contextWindow.pendingRequestBudget` | `400` | 0–8000 | Token budget for the last user message carried into the new window |
-| `contextWindow.softPercent` | `70` | 10–99 | Usage that earns one soft "checkpoint, then reset" reminder per window |
-| `contextWindow.hardPercent` | `85` | 10–99 | Usage that earns one hard "reset now" reminder; never below `softPercent` |
-| `contextWindow.idleGapMinutes` | `30` | 0–1440 | Idle gap after which the status line suggests considering a new window |
-| `contextWindow.statusEveryTurn` | `true` | boolean | Append a one-line context status after every user prompt |
-| `contextWindow.historyItemMaxChars` | `8000` | 500–100000 | Per-item cap for `history` reads out of an archived `messages.jsonl` |
-
-Two environment variables override the block for a single run:
-`OPENVIKING_CONTEXT_STATUS_EVERY_TURN` (`0`/`1`, `true`/`false`, `on`/`off`,
-`yes`/`no`; anything else leaves the configured value alone) and
-`OPENVIKING_CONTEXT_RESET_DEADLINE_MS` (clamped like the file value; an empty
-value is ignored). The same spellings work for `statusEveryTurn` in
-`config.json`.
+| `scripts/` | Manual e2e gates (`e2e-live.mjs`, `e2e-window.mjs`) and the setup wizard |
 
 ## Tests
 
 ```bash
 node --test examples/pi-experimental-context-management/tests/*.test.mjs
 ```
+
+Run by CI on every PR that touches this directory. The end-to-end gate is
+manual and needs live credentials — see
+[CONTEXT-WINDOW.md §13](./CONTEXT-WINDOW.md#13-end-to-end-gate).
+
+## Links
+
+- [CONTEXT-WINDOW.md](./CONTEXT-WINDOW.md) — design, prompts, failure matrix
+- [examples/pi-coding-agent-extension](../pi-coding-agent-extension) — the
+  stable extension this forks
+- [docs/en/agent-integrations/11-pi.md](../../docs/en/agent-integrations/11-pi.md)
+  · [docs/zh/agent-integrations/11-pi.md](../../docs/zh/agent-integrations/11-pi.md)

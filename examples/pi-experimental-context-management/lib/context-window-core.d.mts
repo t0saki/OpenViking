@@ -132,7 +132,11 @@ export interface WindowPersistedState {
   archiveUri: string;
   taskId: string;
   overviewReady: boolean;
+  /** The archive will never get a Working Memory (task failed / budget spent). */
+  overviewUnavailable: boolean;
   overviewAttempts: number;
+  /** Working Memory of the *previous* window, truncated to `overviewBudget`. */
+  previousOverview: string;
   siblingToolNames: string[];
   syncedEntryCount: number;
   lastResetAt: number;
@@ -163,6 +167,15 @@ export interface ContextWindowIo {
   connected?: () => boolean;
   sessionId?: () => string | null;
   pendingCount?: () => number;
+}
+
+/**
+ * A commit that threw after the request was sent: the archive may or may not
+ * exist, so the next reset re-checks connectivity before it syncs again.
+ */
+export interface CommitTransportError {
+  at: number;
+  message: string;
 }
 
 export interface ResetOutcome {
@@ -213,16 +226,31 @@ export class ContextWindowCore {
     awaitingFirstObservation: boolean;
     lastWindowTokens: number;
     turnsInWindow: number;
+    lastCommitError: CommitTransportError | null;
   };
+  /** True while a restore is still waiting for the OpenViking session id. */
+  pendingSessionCheck: boolean;
+  lastCommitError: CommitTransportError | null;
   persistedState(): WindowPersistedState;
   restore(entries: any[]): this["state"];
+  /**
+   * Settle a restore that ran before `io.sessionId()` was known. Returns false
+   * (and drops the window) when the entry belongs to another session. Idempotent.
+   */
+  validateSession(): boolean;
   persist(): void;
   shutdown(): Promise<void>;
   transformContext(messages: WindowMessage[]): WindowMessage[];
-  /** Refresh `lastWindowTokens` / `turnsInWindow` from a message list. */
+  /**
+   * Refresh `lastWindowTokens` / `turnsInWindow` from a message list.
+   * With `headerIndex < 0` only assistant messages newer than the last reset count.
+   */
   recordWindowMetrics(messages: WindowMessage[], headerIndex: number): void;
   observeAssistantResponse(): void;
+  /** Release the boundary and clear the window metrics. */
   disarm(reason: string): void;
+  /** Flush budget for one barrier: clamped to [2s, 15s] of the remaining deadline. */
+  flushBudget(deadline: number): number;
   requestReset(opts: {
     reason?: string;
     notes?: string;

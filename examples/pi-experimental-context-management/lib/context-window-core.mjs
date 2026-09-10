@@ -695,7 +695,11 @@ export class ContextWindowCore {
     this.archiveUri = "";
     this.taskId = "";
     this.overviewReady = false;
+    this.overviewUnavailable = false;
     this.overviewAttempts = 0;
+    // Persisted (truncated) so a window that opened with a stale Working Memory
+    // block keeps it across `pi -c` instead of rendering a header without it.
+    this.previousOverview = "";
     this.siblingToolNames = [];
     this.syncedEntryCount = 0;
     this.lastResetAt = 0;
@@ -708,10 +712,19 @@ export class ContextWindowCore {
     this.lastWindowTokens = 0;
     this.turnsInWindow = 0;
     this.overviewText = "";
-    this.previousOverview = "";
-    this.overviewUnavailable = false;
     this.disarmLogged = false;
     this.lastPersisted = "";
+    /**
+     * Set when `restore()` adopted a window while the OpenViking session id was
+     * still unknown; `validateSession()` settles it once the id exists.
+     */
+    this.pendingSessionCheck = false;
+    /**
+     * `{at, message}` of the last `io.commit` that threw. A throw after the
+     * request left the process is indistinguishable from a request that never
+     * arrived, so the archive may or may not exist.
+     */
+    this.lastCommitError = null;
   }
 
   get windowId() {
@@ -732,6 +745,7 @@ export class ContextWindowCore {
       awaitingFirstObservation: this.awaitingFirstObservation,
       lastWindowTokens: this.lastWindowTokens,
       turnsInWindow: this.turnsInWindow,
+      lastCommitError: this.lastCommitError ? { ...this.lastCommitError } : null,
     };
   }
 
@@ -751,7 +765,11 @@ export class ContextWindowCore {
       archiveUri: this.archiveUri,
       taskId: this.taskId,
       overviewReady: this.overviewReady,
+      overviewUnavailable: this.overviewUnavailable,
       overviewAttempts: this.overviewAttempts,
+      // Truncated without the "(truncated)" marker: the entry only has to be
+      // small, the frozen `headerText` already carries the rendered block.
+      previousOverview: truncateToTokens(this.previousOverview || "", this.config.overviewBudget),
       siblingToolNames: [...this.siblingToolNames],
       syncedEntryCount: this.syncedEntryCount,
       lastResetAt: this.lastResetAt,
@@ -787,12 +805,18 @@ export class ContextWindowCore {
       this.archiveUri = typeof data.archiveUri === "string" ? data.archiveUri : "";
       this.taskId = typeof data.taskId === "string" ? data.taskId : "";
       this.overviewReady = data.overviewReady === true;
+      this.overviewUnavailable = data.overviewUnavailable === true;
       this.overviewAttempts = Math.max(0, Math.floor(Number(data.overviewAttempts) || 0));
+      this.previousOverview = typeof data.previousOverview === "string" ? data.previousOverview : "";
       this.siblingToolNames = normalizeNames(data.siblingToolNames);
       this.syncedEntryCount = Math.max(0, Math.floor(Number(data.syncedEntryCount) || 0));
       this.lastResetAt = Math.max(0, Math.floor(Number(data.lastResetAt) || 0));
       this.lastResetBy = typeof data.lastResetBy === "string" ? data.lastResetBy : "";
       this.lastPersisted = JSON.stringify(this.persistedState());
+      // The adapter often restores before the OpenViking session id is known
+      // (the sync manager derives it from pi's session id, which arrives with
+      // the first event). Remember that the ownership check is still owed.
+      this.pendingSessionCheck = !sid && !!this.ovSessionId;
       this.log(
         `context-window: restored ${this.windowId}` +
           (this.armed ? ` anchored at ${this.anchorToolCallId}` : " (not armed)"),
@@ -800,6 +824,34 @@ export class ContextWindowCore {
       return this.state;
     }
     return this.state;
+  }
+
+  /**
+   * Settle a restore that happened before `io.sessionId()` was known: if the
+   * window belonged to a different OpenViking session, drop it. Safe to call on
+   * every context transform — it does nothing once the check is settled.
+   */
+  validateSession() {
+    if (!this.pendingSessionCheck) return true;
+    const sid = this.safeSessionId();
+    if (!sid) return true;
+    this.pendingSessionCheck = false;
+    if (!this.ovSessionId || this.ovSessionId === sid) {
+      this.ovSessionId = sid;
+      return true;
+    }
+    this.disarm(`restored window belongs to ${this.ovSessionId}, this session is ${sid}; window dropped`);
+    this.windowIndex = 1;
+    this.headerText = "";
+    this.archiveId = "";
+    this.archiveUri = "";
+    this.taskId = "";
+    this.previousOverview = "";
+    this.overviewReady = false;
+    this.overviewUnavailable = false;
+    this.ovSessionId = sid;
+    this.lastPersisted = "";
+    return false;
   }
 
   persist() {
@@ -823,6 +875,10 @@ export class ContextWindowCore {
 
   transformContext(messages) {
     const list = Array.isArray(messages) ? messages : [];
+    // Opportunistic: by the time a context is built the session id always
+    // exists, so a window restored from another session is dropped here at the
+    // latest, even if the adapter never called `validateSession()` itself.
+    this.validateSession();
     if (!this.armed || !this.headerText) {
       this.recordWindowMetrics(list, -1);
       return list;
@@ -843,13 +899,33 @@ export class ContextWindowCore {
     return cut.messages;
   }
 
+  /**
+   * Refresh `lastWindowTokens` / `turnsInWindow` from the message list that is
+   * actually going to the provider.
+   *
+   * With a header at `headerIndex` the turn count is simply "assistants after
+   * it". Without one (`headerIndex < 0`, i.e. the anchor was lost) the list is
+   * the *whole* session again, so counting every assistant message would tell
+   * the model that a window opened a minute ago is dozens of turns old. Fall
+   * back to the timestamp of the last reset instead.
+   */
   recordWindowMetrics(messages, headerIndex) {
     const list = Array.isArray(messages) ? messages : [];
+    const since = headerIndex < 0 && this.lastResetAt > 0 ? this.lastResetAt : 0;
     let tokens = 0;
     let assistants = 0;
     for (let i = 0; i < list.length; i++) {
-      tokens += messageTokens(list[i]);
-      if (i > headerIndex && list[i]?.role === "assistant") assistants++;
+      const msg = list[i];
+      tokens += messageTokens(msg);
+      if (i <= headerIndex) continue;
+      if (msg?.role !== "assistant") continue;
+      if (since > 0) {
+        const ts = Number(msg.timestamp);
+        // An undated message is counted: pi always stamps them, so this only
+        // happens for synthetic ones, and over-counting is the safe direction.
+        if (Number.isFinite(ts) && ts < since) continue;
+      }
+      assistants++;
     }
     this.lastWindowTokens = tokens;
     this.turnsInWindow = assistants;
@@ -860,6 +936,11 @@ export class ContextWindowCore {
     this.awaitingFirstObservation = false;
   }
 
+  /**
+   * Release the virtual boundary. The window metrics described the cut window,
+   * so they are reset too: keeping them would let the status line report "12
+   * turns" for a window that no longer exists.
+   */
   disarm(reason) {
     if (!this.disarmLogged) {
       this.log(`context-window: ${reason}`);
@@ -867,6 +948,8 @@ export class ContextWindowCore {
     }
     this.anchorToolCallId = null;
     this.awaitingFirstObservation = false;
+    this.turnsInWindow = 0;
+    this.lastWindowTokens = 0;
   }
 
   // ---- reset ------------------------------------------------------------
@@ -903,15 +986,25 @@ export class ContextWindowCore {
       if (!toolCallId) {
         return this.refuse("this call has no tool call id to anchor the new window to", { stage: "anchor" });
       }
-      if (signal?.aborted) {
-        return {
-          ok: false,
-          kind: "noop",
-          text: "Context window reset was cancelled before anything was archived; nothing changed.",
-          details: { stage: "aborted-early" },
-        };
+      if (signal?.aborted) return this.cancelled("aborted-early");
+      const connected = this.io.connected();
+      if (this.lastCommitError) {
+        // A previous commit threw *after* the request went out, so we never
+        // learned whether the server archived the session. Re-checking
+        // connectivity is all we can do; if it is back we try again, which may
+        // produce an empty second archive (commit answers `skipped`) — the
+        // failure mode we accept, because the alternative is a window that can
+        // never be reset again.
+        if (!connected) {
+          return this.refuse(
+            "the previous archive commit failed in transport and OpenViking is still unreachable",
+            { stage: "commit-transport", error: this.lastCommitError.message },
+          );
+        }
+        this.log("context-window: retrying after an unresolved commit transport error");
+        this.lastCommitError = null;
       }
-      if (!this.io.connected() || !this.safeSessionId()) {
+      if (!connected || !this.safeSessionId()) {
         return this.refuse("OpenViking is unreachable, so this window cannot be archived", {
           stage: "connectivity",
         });
@@ -925,12 +1018,25 @@ export class ContextWindowCore {
         );
       }
 
-      const flushBudget = Math.max(0, Math.min(15000, deadline - this.io.now()));
-      const flushed = await this.io.flush({ budgetMs: flushBudget });
+      if (signal?.aborted) return this.cancelled("aborted-before-flush");
+
+      const flushed = await this.io.flush({ budgetMs: this.flushBudget(deadline) });
       if (!flushed) {
         const pending = Math.max(0, Math.floor(Number(this.io.pendingCount()) || 0));
         const detail = pending > 0 ? `${pending} captured message(s) are still queued` : "captured messages are still queued";
         return this.refuse(`the archive barrier did not clear — ${detail}`, { stage: "flush", pending });
+      }
+
+      // Everything from here on is either cheap or irreversible, so both the
+      // abort and the deadline are checked *before* the handoff note is
+      // written: a refusal after it would leave a "[Context Window Handoff]"
+      // message in the live OpenViking session for a window that never closed.
+      if (signal?.aborted) return this.cancelled("aborted-before-handoff");
+      if (this.io.now() >= deadline) {
+        return this.refuse(
+          "the reset deadline was exhausted while syncing this window to OpenViking",
+          { stage: "deadline", deadlineMs: this.config.resetDeadlineMs },
+        );
       }
 
       const nextWindowId = `w${this.windowIndex + 1}`;
@@ -946,16 +1052,24 @@ export class ContextWindowCore {
         return this.refuse("the handoff note could not be written to OpenViking", { stage: "handoff" });
       }
 
-      if (signal?.aborted) {
-        return {
-          ok: false,
-          kind: "noop",
-          text: "Context window reset was cancelled before anything was archived; nothing changed.",
-          details: { stage: "aborted-before-commit" },
-        };
-      }
+      if (signal?.aborted) return this.cancelled("aborted-before-commit");
 
-      const commit = await this.io.commit({ keepRecentCount: 0 });
+      let commit;
+      try {
+        commit = await this.io.commit({ keepRecentCount: 0 });
+      } catch (err) {
+        // A throw here is ambiguous by construction: the request may have been
+        // rejected before it left the process, or it may have archived the
+        // session and lost the response. We fail closed (nothing is cut) and
+        // remember it, so the next attempt at least re-checks connectivity
+        // before it syncs and flushes again.
+        this.lastCommitError = { at: this.safeNow(), message: String(err?.message || err) };
+        this.log(`context-window: commit transport error; the archive may or may not exist (${this.lastCommitError.message})`);
+        return this.refuse(
+          "the archive commit failed in transport; the archive may or may not exist, so nothing was cut",
+          { stage: "commit-transport", error: this.lastCommitError.message },
+        );
+      }
       if (!commit || typeof commit !== "object") {
         return this.refuse("OpenViking refused the archive commit", { stage: "commit" });
       }
@@ -1158,6 +1272,26 @@ export class ContextWindowCore {
     } catch {
       return null;
     }
+  }
+
+  /**
+   * Budget for one flush barrier: never more than 15s of the reset deadline,
+   * but never less than 2s either — a barrier called with a nearly empty budget
+   * reports "not delivered" for a queue that would have drained in a moment.
+   */
+  flushBudget(deadline) {
+    const remaining = Number(deadline) - this.io.now();
+    return Math.max(2000, Math.min(15000, Number.isFinite(remaining) ? remaining : 0));
+  }
+
+  /** Cancelled before anything irreversible happened. */
+  cancelled(stage) {
+    return {
+      ok: false,
+      kind: "noop",
+      text: "Context window reset was cancelled before anything was archived; nothing changed.",
+      details: { stage },
+    };
   }
 
   refuse(cause, details = {}) {
@@ -1411,8 +1545,13 @@ export class ContextWindowCore {
       if (!this.io.connected() || !this.safeSessionId()) return undefined;
       const deadline = this.io.now() + this.config.resetDeadlineMs;
 
-      const flushBudget = Math.max(0, Math.min(15000, deadline - this.io.now()));
-      if (!(await this.io.flush({ budgetMs: flushBudget }))) return undefined;
+      // pi hands us the branch it is about to compact; whatever of it the
+      // capture path has not delivered yet must reach the archive first, or the
+      // window header would claim messages that were never archived.
+      const synced = await this.io.syncBranch(entries);
+      if (synced && synced.allDelivered === false) return undefined;
+
+      if (!(await this.io.flush({ budgetMs: this.flushBudget(deadline) }))) return undefined;
 
       const previousWindowId = this.windowId;
       const reason = "automatic: pi compaction threshold";

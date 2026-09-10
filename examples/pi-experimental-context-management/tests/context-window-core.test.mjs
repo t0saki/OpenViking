@@ -1547,3 +1547,306 @@ test("Chinese notes, pending request and overview survive the merge into a kept 
   assert.ok(out[0].content.endsWith("继续"));
   assert.deepEqual(lastUserTimestamps(out), [9]);
 });
+
+// --------------------------------------------------------------------------
+// abort, deadline and commit-transport follow-ups
+// --------------------------------------------------------------------------
+
+test("an abort during the sync stops before the flush barrier", async () => {
+  const signal = { aborted: false };
+  const io = makeIo({
+    syncBranch: async () => {
+      io.calls.push("syncBranch");
+      signal.aborted = true;
+      return { added: 1, tokens: 10, allDelivered: true };
+    },
+  });
+  const core = makeCore(io);
+  const out = await openWindow(core, io, { signal });
+
+  assert.equal(out.ok, false);
+  assert.equal(out.kind, "noop");
+  assert.equal(out.details.stage, "aborted-before-flush");
+  assert.deepEqual(io.calls, ["syncBranch"]);
+  assert.equal(core.windowIndex, 1);
+  assert.equal(io.persisted.length, 0);
+});
+
+test("an abort during the flush leaves no handoff message in the live session", async () => {
+  const signal = { aborted: false };
+  const io = makeIo({
+    flush: async (opts = {}) => {
+      io.calls.push(`flush:${opts.budgetMs}`);
+      signal.aborted = true;
+      return true;
+    },
+  });
+  const core = makeCore(io);
+  const out = await openWindow(core, io, { signal });
+
+  assert.equal(out.kind, "noop");
+  assert.equal(out.details.stage, "aborted-before-handoff");
+  assert.deepEqual(io.calls, ["syncBranch", "flush:15000"], "no postHandoff, no commit");
+  assert.deepEqual(io.handoffs, [], "a cancelled reset must not leave a handoff note behind");
+  assert.equal(core.windowIndex, 1);
+  assert.equal(core.armed, false);
+});
+
+test("the flush budget never drops below two seconds", async () => {
+  const io = makeIo({
+    syncBranch: async () => {
+      io.calls.push("syncBranch");
+      io.clock += 4900; // almost the whole 5s deadline
+      return { added: 1, tokens: 10, allDelivered: true };
+    },
+  });
+  const core = makeCore(io, { resetDeadlineMs: 5000 });
+  const out = await openWindow(core, io);
+
+  assert.equal(out.ok, true);
+  assert.ok(io.calls.includes("flush:2000"), `expected a 2s floor, got ${io.calls.join(",")}`);
+});
+
+test("a deadline exhausted before the commit refuses without writing the handoff", async () => {
+  const io = makeIo({
+    syncBranch: async () => {
+      io.calls.push("syncBranch");
+      io.clock += 9000; // past the 5s deadline
+      return { added: 1, tokens: 10, allDelivered: true };
+    },
+  });
+  const core = makeCore(io, { resetDeadlineMs: 5000 });
+  const out = await openWindow(core, io);
+
+  assert.equal(out.ok, false);
+  assert.equal(out.kind, "refused");
+  assert.equal(out.details.stage, "deadline");
+  assert.ok(out.text.includes("deadline was exhausted while syncing"));
+  assert.deepEqual(io.calls, ["syncBranch", "flush:2000"]);
+  assert.deepEqual(io.handoffs, []);
+  assert.equal(core.windowIndex, 1);
+});
+
+test("a commit that throws is fail-closed and forces a connectivity re-check next time", async () => {
+  let throwOnCommit = true;
+  const io = makeIo({
+    commit: async () => {
+      io.calls.push("commit:0");
+      if (throwOnCommit) throw new Error("ECONNRESET");
+      return { status: "accepted", task_id: "task-2", archive_uri: ARCHIVE_URI };
+    },
+  });
+  const core = makeCore(io);
+
+  const out = await openWindow(core, io);
+  assert.equal(out.ok, false);
+  assert.equal(out.kind, "refused");
+  assert.equal(out.details.stage, "commit-transport");
+  assert.ok(out.text.includes("may or may not exist"));
+  assert.equal(core.windowIndex, 1, "fail-closed: nothing is cut");
+  assert.equal(core.armed, false);
+  assert.ok(core.lastCommitError.message.includes("ECONNRESET"));
+  assert.equal(core.state.lastCommitError.message, core.lastCommitError.message);
+  assert.ok(io.logs.some((line) => line.includes("commit transport error; the archive may or may not exist")));
+
+  io.connectedValue = false;
+  io.calls.length = 0;
+  const offline = await openWindow(core, io);
+  assert.equal(offline.kind, "refused");
+  assert.equal(offline.details.stage, "commit-transport");
+  assert.deepEqual(io.calls, [], "an unresolved commit must not sync or flush again while offline");
+
+  io.connectedValue = true;
+  throwOnCommit = false;
+  const retry = await openWindow(core, io);
+  assert.equal(retry.ok, true);
+  assert.equal(core.windowId, "w2");
+  assert.equal(core.lastCommitError, null, "a successful attempt clears the unresolved commit");
+});
+
+// --------------------------------------------------------------------------
+// handleBeforeCompact: sync before the barrier
+// --------------------------------------------------------------------------
+
+test("handleBeforeCompact syncs the branch before the flush barrier", async () => {
+  const io = makeIo();
+  const core = makeCore(io);
+
+  const out = await core.handleBeforeCompact({
+    preparation: { firstKeptEntryId: "e5", tokensBefore: 11 },
+    branchEntries: compactionEntries(),
+  });
+  assert.ok(out, "the compaction is taken over");
+  assert.deepEqual(io.calls, ["syncBranch", "flush:15000", "postHandoff", "commit:0", "readArchiveOverview"]);
+  assert.equal(core.lastResetBy, "pi-compaction");
+});
+
+test("handleBeforeCompact gives up when the branch cannot be delivered", async () => {
+  const io = makeIo({
+    syncBranch: async () => {
+      io.calls.push("syncBranch");
+      return { added: 0, tokens: 0, allDelivered: false };
+    },
+  });
+  const core = makeCore(io);
+  const out = await core.handleBeforeCompact({
+    preparation: { firstKeptEntryId: "e1", tokensBefore: 1 },
+    branchEntries: compactionEntries(),
+  });
+  assert.equal(out, undefined, "pi writes its own summary instead");
+  assert.deepEqual(io.calls, ["syncBranch"], "the barrier is not even attempted");
+});
+
+// --------------------------------------------------------------------------
+// window metrics after a disarm
+// --------------------------------------------------------------------------
+
+test("disarm clears the window metrics", async () => {
+  const io = makeIo();
+  const core = makeCore(io);
+  await openWindow(core, io);
+  core.turnsInWindow = 9;
+  core.lastWindowTokens = 54321;
+
+  core.disarm("anchor missing, boundary released");
+  assert.equal(core.turnsInWindow, 0);
+  assert.equal(core.lastWindowTokens, 0);
+  assert.equal(core.armed, false);
+});
+
+test("after a disarm the turn count only covers assistants newer than the reset", async () => {
+  const io = makeIo();
+  const core = makeCore(io);
+  await openWindow(core, io);
+  const resetAt = core.lastResetAt;
+
+  // The anchor is gone (a fork, /tree or a native compaction), so the whole
+  // session comes back: without the lastResetAt filter every old assistant turn
+  // would be reported as part of the current window.
+  const out = core.transformContext([
+    user("way back", resetAt - 600_000),
+    { role: "assistant", content: "old answer 1", timestamp: resetAt - 500_000 },
+    { role: "assistant", content: "old answer 2", timestamp: resetAt - 400_000 },
+    user("recent", resetAt + 1000),
+    { role: "assistant", content: "new answer", timestamp: resetAt + 2000 },
+  ]);
+  assert.equal(core.armed, false);
+  assert.equal(out.length, 5, "nothing is cut once the anchor is gone");
+  assert.equal(core.turnsInWindow, 1, "only the assistant message after the reset counts");
+});
+
+// --------------------------------------------------------------------------
+// lazy session validation
+// --------------------------------------------------------------------------
+
+function restoredIn(sid, data) {
+  const io = makeIo({ sid: null });
+  const core = makeCore(io);
+  core.restore([{ type: "custom", customType: WINDOW_ENTRY_TYPE, data }]);
+  io.sid = sid;
+  return { io, core };
+}
+
+test("a window restored before the session id is known is validated lazily", async () => {
+  const io = makeIo();
+  const core = makeCore(io);
+  await openWindow(core, io);
+  const data = io.persisted[0].data;
+
+  const foreign = restoredIn("pi-somewhere-else", data);
+  assert.equal(foreign.core.armed, true, "the entry is adopted while the session id is unknown");
+  assert.equal(foreign.core.pendingSessionCheck, true);
+  assert.equal(foreign.core.validateSession(), false);
+  assert.equal(foreign.core.armed, false);
+  assert.equal(foreign.core.headerText, "");
+  assert.equal(foreign.core.windowIndex, 1);
+  assert.equal(foreign.core.ovSessionId, "pi-somewhere-else");
+  assert.equal(foreign.core.validateSession(), true, "the check is settled and does not repeat");
+
+  const same = restoredIn("pi-abc", data);
+  assert.equal(same.core.validateSession(), true);
+  assert.equal(same.core.armed, true);
+  assert.equal(same.core.headerText, data.headerText);
+  assert.equal(same.core.windowIndex, 2);
+});
+
+test("transformContext validates a lazily restored window before it cuts anything", async () => {
+  const io = makeIo();
+  const core = makeCore(io);
+  await openWindow(core, io);
+  const data = io.persisted[0].data;
+
+  const foreign = restoredIn("pi-somewhere-else", data);
+  const messages = [
+    user("old", 1),
+    assistantCalls([{ id: "call-1", name: "new_context" }]),
+    toolResult("call-1", "new_context"),
+    assistant("carry on"),
+  ];
+  const out = foreign.core.transformContext(messages);
+  assert.equal(out, messages, "a foreign window never cuts this session's context");
+  assert.equal(foreign.core.armed, false);
+
+  const same = restoredIn("pi-abc", data);
+  const cut = same.core.transformContext(messages);
+  assert.equal(cut.length, 2, "the same session still cuts");
+  assert.ok(String(cut[0].content).startsWith(WINDOW_HEADER_OPEN));
+});
+
+// --------------------------------------------------------------------------
+// previousOverview / overviewUnavailable round trip
+// --------------------------------------------------------------------------
+
+test("a pending window keeps its stale Working Memory block across a persist/restore round trip", async () => {
+  const io = makeIo();
+  const core = makeCore(io);
+  await openWindow(core, io, { toolCallId: "call-1" });
+  assert.equal(core.overviewReady, true);
+
+  io.overview = null;
+  await openWindow(core, io, { toolCallId: "call-2", branch: branchFor("call-2") });
+  assert.equal(core.overviewReady, false);
+  assert.ok(core.previousOverview.includes("Current State"));
+
+  const data = io.persisted[1].data;
+  assert.ok(data.previousOverview.includes("Current State"), "the stale overview is persisted");
+  assert.equal(data.overviewUnavailable, false);
+
+  const restored = makeCore(makeIo({ overview: null }));
+  restored.restore([{ type: "custom", customType: WINDOW_ENTRY_TYPE, data }]);
+  assert.equal(restored.previousOverview, data.previousOverview);
+  assert.ok(restored.headerText.includes('stale="true"'), "the frozen header still carries it");
+  assert.ok(
+    restored.rebuildHeader({ overviewState: "pending" }).includes('stale="true"'),
+    "and a rebuild in the new process does not lose it",
+  );
+});
+
+test("the persisted previousOverview is capped at overviewBudget", async () => {
+  const io = makeIo({ overview: "记忆".repeat(5000) });
+  const core = makeCore(io, { overviewBudget: 100 });
+  await openWindow(core, io, { toolCallId: "call-1" });
+  io.overview = null;
+  await openWindow(core, io, { toolCallId: "call-2", branch: branchFor("call-2") });
+
+  const data = io.persisted[1].data;
+  assert.ok(estimateTokens(data.previousOverview) <= 100, "a huge overview is not carried whole into the entry");
+  assert.ok(estimateTokens(core.previousOverview) > 100, "the in-memory copy is untouched");
+});
+
+test("an unavailable window survives a restore and spends no further overview read", async () => {
+  const io = makeIo({ overview: null, task: { status: "failed" } });
+  const core = makeCore(io);
+  await openWindow(core, io);
+  assert.equal(core.overviewUnavailable, true);
+
+  const data = io.persisted[0].data;
+  assert.equal(data.overviewUnavailable, true);
+
+  const io2 = makeIo({ overview: "# Working Memory\ntoo late" });
+  const restored = makeCore(io2);
+  restored.restore([{ type: "custom", customType: WINDOW_ENTRY_TYPE, data }]);
+  assert.equal(restored.overviewUnavailable, true);
+  assert.equal(await restored.refreshPendingOverview(), false);
+  assert.deepEqual(io2.calls, [], "an unavailable window does not read .overview.md again");
+});

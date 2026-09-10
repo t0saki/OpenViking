@@ -1,11 +1,14 @@
 /**
  * Pi OpenViking Extension — EXPERIMENTAL context management
  *
- * A fork of examples/pi-coding-agent-extension with the takeover mode removed,
- * kept as the base for agent-driven context windows (`new_context` / `history`
- * / `get_context_remaining`, added in a later phase). Everything else is the
- * same: turns sync to an OpenViking session, recall is injected into the
- * newest user message, and `viking_*` tools expose the store.
+ * A fork of examples/pi-coding-agent-extension whose takeover mode is replaced
+ * by agent-driven context windows: the model decides when a window ends, calls
+ * `new_context`, and the extension archives the conversation to OpenViking and
+ * cuts it out of the next provider request, leaving a frozen window header with
+ * the Working Memory and the model's own handoff notes. `history` reads the
+ * archived windows back, `get_context_remaining` reports the pressure. Turns
+ * still sync to an OpenViking session and recall is still injected into the
+ * newest user message.
  *
  * Do not load this together with the openviking extension — they would both
  * register `viking_*` tools and both sync the same OV session, so this one
@@ -19,10 +22,51 @@ import { RecallManager } from "./recall.js";
 import { SyncManager } from "./sync.js";
 import { buildProfileBlock } from "./shared/profile-inject.mjs";
 import { guardVikingUriToolCall } from "./lib/uri-guard-adapter.mjs";
-import { registerTools } from "./tools.js";
+import { registerContextWindowTools, registerTools } from "./tools.js";
+import { createContextWindowManager, readPiReserveTokens } from "./context-window.js";
+import {
+  buildStatusLine,
+  reminderText,
+  REMINDER_CUSTOM_TYPE,
+  STATUS_CUSTOM_TYPE,
+} from "./lib/context-window-core.mjs";
 
 /** The tool whose presence means the non-experimental extension is loaded. */
 const COEXISTENCE_PROBE_TOOL = "viking_search";
+
+/**
+ * Static system-prompt guidance (plan §5). Identical for the whole session, so
+ * it is appended once per turn without moving any prompt-cache boundary.
+ * Unlike Codex we do not ask the model to hide this machinery from the user —
+ * the demo is supposed to be visible.
+ */
+const CONTEXT_WINDOW_GUIDANCE = `<context-window-management>
+You manage your own context window in this session. When the conversation grows it is not summarized behind your back: you decide when the current window ends, and OpenViking archives it so you can read it back afterwards.
+
+Three tools do this:
+- new_context — archive the current window and continue in a fresh one. OpenViking generates a Working Memory of the archived window, and your next window opens with that Working Memory, your handoff notes and the user's most recent request.
+- history — read windows that were already archived: list_windows, list_items, read_item, search_contents. Closing a window loses nothing; it only stops being in front of you.
+- get_context_remaining — how much room is left, how long this window has been open, and how long it has been since the user's last message.
+
+Start a new window when:
+- a phase of the work is finished and its details no longer matter for what comes next;
+- the user switches to an unrelated topic or a different area of the code;
+- the user comes back after a long idle gap with something new;
+- the status line or get_context_remaining shows the window filling up — around 70% is the moment to act, and do not push past 85%, because after that the harness compacts the conversation for you and your notes are never written.
+
+Do not start a new window:
+- in the middle of an edit sequence you have not verified;
+- immediately after a reset;
+- to get away from a problem you have not solved — the new window carries the same problem with less information.
+
+Write the notes before you call new_context: the goal, the decisions and why you made them, what is finished, what is in flight, exact file paths and identifiers, and the next steps. Write them for someone who has not seen this conversation, because that is exactly what your next window is. Call new_context alone — tool results from the same batch are discarded together with the old window.
+
+In a new window, read the <openviking-context source="context-window"> block first: it carries the Working Memory, your notes and the request that is still pending. Use history for anything it does not cover, and never ask the user to repeat something an archived window already holds.
+</context-window-management>`;
+
+const TOOL_LIST_LINE =
+  "OpenViking tools: viking_search, viking_read, viking_browse, viking_remember, viking_forget, viking_add_resource. " +
+  "Context window tools: new_context, history, get_context_remaining.";
 
 export default async function (pi: ExtensionAPI) {
   // --- Load config ---
@@ -37,16 +81,24 @@ export default async function (pi: ExtensionAPI) {
     debug: Boolean(config.debugLogPath),
     debugLogPath: config.debugLogPath,
   });
+  const windows = createContextWindowManager({ pi, client, sync, config, logger });
 
   // Session state
   let connected = false;
   let bypassed = false;
   let profileBlock = "";
-  let archiveOverview = "";
   let toolsRegistered = false;
-  let compacted = false;
+  /** The offline half of start() — session id, window restore, tools. */
+  let offlineInitDone = false;
   let started = false;
   let startPromise: Promise<void> | null = null;
+  /**
+   * The message list the `context` hook last produced. `get_context_remaining`
+   * needs the *transformed* list: the untransformed one still holds the closed
+   * windows and would report the session, not the window.
+   */
+  let lastTransformed: any[] | undefined;
+  const reserveTokens = readPiReserveTokens(process.cwd());
 
   /**
    * True when another OpenViking extension already owns the tool surface.
@@ -93,11 +145,25 @@ export default async function (pi: ExtensionAPI) {
         }
       }
 
-      // Register tools before the health check: they need no network, and a
-      // pi -c continuation must have them even while OV is unreachable.
-      if (!toolsRegistered) {
+      // Everything up to the health check is offline and must run even when OV
+      // is down: `pi -c` otherwise replays a whole archived window back to the
+      // model together with the tool result that claims it was archived.
+      const piSessionId = ctx.sessionManager.getSessionId();
+      if (!offlineInitDone) {
+        // Derives "pi-<piSessionId>" locally; no request, so it cannot fail.
+        await sync.ensureSession(piSessionId);
+
+        const branch = ctx.sessionManager.getBranch?.() ?? [];
+        const restored = windows.restore(branch);
+        sync.restoreWatermark(Math.max(restored.syncedEntryCount ?? 0, sync.syncedCount));
+
         registerTools(pi, client, sync);
+        registerContextWindowTools(pi, client, sync, windows, config, {
+          getMessages: () => lastTransformed,
+          reserveTokens,
+        });
         toolsRegistered = true;
+        offlineInitDone = true;
       }
 
       // Health check
@@ -109,26 +175,12 @@ export default async function (pi: ExtensionAPI) {
         return;
       }
 
-      // Ensure OV session
-      const piSessionId = ctx.sessionManager.getSessionId();
-      const ok = await sync.ensureSession(piSessionId);
-      if (!ok) {
-        if (config.logLevel !== "silent") {
-          ctx.ui.notify("OpenViking: failed to create session", "error");
-        }
-        return;
-      }
       await sync.replayPending();
 
       // Profile injection
       profileBlock = await buildSessionProfileBlock(client, config);
 
-      if (sync.sessionId) {
-        // Resume rehydration — fetch archive overview if session was previously committed.
-        archiveOverview = await fetchArchiveOverview(client, sync.sessionId, config);
-      }
-
-      updateStatus(ctx, connected, 0, sync.sessionId, config);
+      updateStatus(ctx, connected, windows, sync.sessionId);
 
       started = true;
       if (config.logLevel === "info") {
@@ -157,38 +209,67 @@ export default async function (pi: ExtensionAPI) {
   pi.on("before_agent_start", async (event, ctx) => {
     // session_start doesn't fire for pi -c continuations.
     await start(ctx);
-
-    if (!connected || bypassed) return;
+    if (bypassed) return;
 
     // Queue recall for the context hook. Pi renders the user message before
     // that hook, so recall latency does not delay the message appearing.
-    recall.queueSearch(event.prompt);
+    if (connected) recall.queueSearch(event.prompt);
 
-    // Compose system prompt additions
+    // Compose system prompt additions. The window guidance and the tool list
+    // describe tools that are registered whether or not OV answers, so they go
+    // in either way; only the profile block depends on the server.
     const parts: string[] = [];
     if (profileBlock) parts.push(profileBlock);
-    if (archiveOverview && (compacted || archiveOverview.trim())) {
-      parts.push(archiveOverview);
+    parts.push(CONTEXT_WINDOW_GUIDANCE);
+    parts.push(TOOL_LIST_LINE);
+
+    const result: any = { systemPrompt: event.systemPrompt + "\n\n" + parts.join("\n\n") };
+
+    // One status line per user prompt (not per sampling). It is derived from
+    // local state only, so an unreachable server still gets the agent its
+    // window id, its token pressure and the idle gap.
+    if (config.contextWindow.statusEveryTurn) {
+      const snapshot = windows.statusSnapshot({
+        usage: (ctx as any).getContextUsage?.(),
+        now: Date.now(),
+        messages: lastTransformed,
+        reserveTokens,
+      });
+      result.message = {
+        customType: STATUS_CUSTOM_TYPE,
+        content: buildStatusLine({
+          windowId: snapshot.windowId,
+          turnsInWindow: snapshot.turnsInWindow,
+          usedTokens: snapshot.usedTokens,
+          contextWindow: snapshot.contextWindow,
+          estimated: snapshot.estimated,
+          sinceLastUserMs: snapshot.sinceLastUserMs,
+          idleGapMs: snapshot.idleGapMs,
+          idleGapMinutes: config.contextWindow.idleGapMinutes,
+        }),
+        display: true,
+      };
     }
-    parts.push("OpenViking tools: viking_search, viking_read, viking_browse, viking_remember, viking_forget, viking_add_resource.");
 
-    const additions = parts.join("\n\n");
-    if (!additions) return;
-
-    return {
-      systemPrompt: event.systemPrompt + "\n\n" + additions,
-    };
+    return result;
   });
 
   // --- context ---
   pi.on("context", async (event, ctx) => {
-    if (!connected || bypassed) return;
+    if (bypassed) return;
+
+    // The window cut runs first and does not depend on the server: the anchor
+    // is in the branch, and dropping it because OV is down would hand the model
+    // an archived window back together with the tool result that archived it.
+    const transformed = windows.transformContext(event.messages as any[]);
+    lastTransformed = transformed;
+    if (!connected) return { messages: transformed };
 
     // Keep recall synchronous with the provider request so the current prompt
     // still receives current-query memory, without blocking user-message UI.
     await recall.searchPending();
-
-    const messages = recall.injectRecall(event.messages as any[]);
+    const messages = recall.injectRecall(transformed);
+    lastTransformed = messages;
     return { messages };
   });
 
@@ -201,37 +282,92 @@ export default async function (pi: ExtensionAPI) {
 
   // --- turn_end ---
   pi.on("turn_end", async (event, ctx) => {
-    if (!connected || bypassed || !config.syncTurns) return;
+    if (bypassed) return;
 
-    const branch = ctx.sessionManager.getBranch();
-    const result = await sync.syncBranch(branch);
-    logger.log("turn_end", { added: result.added, tokens: result.tokens });
-    updateStatus(ctx, connected, result.added, sync.sessionId, config);
+    if (connected && config.syncTurns) {
+      const branch = ctx.sessionManager.getBranch();
+      const result = await sync.syncBranch(branch);
+      logger.log("turn_end", { added: result.added, tokens: result.tokens });
+    }
+
+    // Re-arm the reminders only for an assistant response that belongs to the
+    // *current* window. The turn a reset happens in ends here too, and its
+    // assistant message is the pre-reset one: pi still reports the whole
+    // session as used (the virtual cut never touches its message state), so
+    // clearing the guard now would fire a "you are at 95%, call new_context"
+    // reminder one line after the window opened — and burn the level for the
+    // rest of the window. An undated message counts as current, the same
+    // direction the core takes: pi stamps every real message.
+    const turnAssistantAt = Number((event as any).message?.timestamp);
+    const lastResetAt = Number(windows.state.lastResetAt) || 0;
+    if (!Number.isFinite(turnAssistantAt) || turnAssistantAt >= lastResetAt) {
+      windows.observeAssistantResponse();
+    }
+
+    const usage = (ctx as any).getContextUsage?.();
+    const level = windows.dueReminder({
+      usage,
+      contextWindow: usage?.contextWindow ?? 0,
+      reserveTokens,
+    });
+    if (level) {
+      const { used } = windows.usedTokens(usage);
+      try {
+        (pi as any).sendMessage?.(
+          {
+            customType: REMINDER_CUSTOM_TYPE,
+            content: reminderText(level, {
+              windowId: windows.windowId,
+              usedTokens: used,
+              contextWindow: usage?.contextWindow ?? 0,
+            }),
+            display: true,
+          },
+          // Mid-batch the reminder has to jump the queue; at the end of a turn
+          // the next sampling picks it up on its own.
+          { deliverAs: event.toolResults?.length ? "steer" : "nextTurn" },
+        );
+      } catch (error) {
+        logger.logError("reminder", error);
+      }
+    }
+
+    // One non-blocking retry per turn for a window that opened before its
+    // Working Memory was generated.
+    if (connected) await windows.refreshPendingOverview();
+
+    updateStatus(ctx, connected, windows, sync.sessionId);
   });
 
   // --- session_before_compact ---
-  pi.on("session_before_compact", async (_event, _ctx) => {
-    if (!connected || bypassed) return;
+  pi.on("session_before_compact", async (event, ctx) => {
+    if (bypassed || !connected) return;
+    // Takes over pi's compaction: archive to OpenViking and hand pi our window
+    // header as the summary. Returns undefined on any failure, which leaves
+    // pi's own summarizer in charge.
+    return await windows.handleBeforeCompact({
+      preparation: (event as any).preparation,
+      branchEntries: (event as any).branchEntries ?? ctx.sessionManager.getBranch?.() ?? [],
+    });
+  });
 
-    const archiveId = await sync.commit();
-    compacted = true;
-
-    // Cache archive overview for rehydration after compaction
-    if (archiveId && sync.sessionId) {
-      archiveOverview = await fetchArchiveOverview(
-        client, sync.sessionId, config,
-      );
-    }
-    // Return nothing → pi proceeds with default compaction. The context-window
-    // core replaces this fallback in a later phase.
+  // --- session_compact ---
+  pi.on("session_compact", async (event, _ctx) => {
+    if (bypassed) return;
+    // A compaction we did not produce already cut the history natively, so the
+    // virtual anchor is stale and the header no longer describes what is in
+    // context.
+    if (!(event as any).fromExtension) windows.absorbExternalCompaction("pi compaction");
   });
 
   // --- session_shutdown ---
   pi.on("session_shutdown", async (_event, _ctx) => {
-    if (!connected || bypassed) return;
+    if (bypassed) return;
 
-    // No forced commit: archive boundaries belong to the reset path, and a
-    // commit on exit would split a window the next process still owns.
+    // Persist the window state with the final watermark. No forced commit:
+    // archive boundaries belong to the reset path, and a commit on exit would
+    // split a window the next process still owns.
+    await windows.shutdown();
     await sync.shutdown();
   });
 
@@ -245,14 +381,43 @@ export default async function (pi: ExtensionAPI) {
   // ================================================================
 
   pi.registerCommand("viking", {
-    description: "OpenViking status and manual operations. Use 'commit' to force a sync.",
+    description:
+      "OpenViking status and manual operations: 'commit' to force a sync, 'window' for the context window status.",
     handler: async (args, ctx) => {
+      const command = args?.trim() ?? "";
+
+      if (command === "window") {
+        const snapshot = windows.statusSnapshot({
+          usage: (ctx as any).getContextUsage?.(),
+          now: Date.now(),
+          messages: lastTransformed,
+          reserveTokens,
+        });
+        ctx.ui.notify(
+          buildStatusLine({
+            windowId: snapshot.windowId,
+            turnsInWindow: snapshot.turnsInWindow,
+            usedTokens: snapshot.usedTokens,
+            contextWindow: snapshot.contextWindow,
+            estimated: snapshot.estimated,
+            sinceLastUserMs: snapshot.sinceLastUserMs,
+            idleGapMs: snapshot.idleGapMs,
+            idleGapMinutes: config.contextWindow.idleGapMinutes,
+          }) +
+            `\narchive: ${snapshot.archiveId || "none"}` +
+            ` · working memory ${snapshot.overviewReady ? "ready" : "not ready"}` +
+            ` · ${snapshot.advice}`,
+          "info",
+        );
+        return;
+      }
+
       if (!connected) {
         ctx.ui.notify("OpenViking: not connected", "warning");
         return;
       }
 
-      if (args?.trim() === "commit") {
+      if (command === "commit") {
         await sync.shutdown();
         const commitResult = await sync.commit();
         if (commitResult !== null) {
@@ -270,7 +435,7 @@ export default async function (pi: ExtensionAPI) {
       // Status
       const sid = sync.sessionId ?? "none";
       ctx.ui.notify(
-        `OpenViking: ${connected ? "connected" : "disconnected"} | session: ${sid.slice(0, 12)}...`,
+        `OpenViking: ${connected ? "connected" : "disconnected"} | session: ${sid.slice(0, 12)}... | window: ${windows.windowId}`,
         "info",
       );
     },
@@ -313,36 +478,25 @@ async function buildSessionProfileBlock(
   }
 }
 
-/** Fetch archive overview for rehydration using the session context API. */
-async function fetchArchiveOverview(
-  client: OVClient, sessionId: string, config: OVConfig,
-): Promise<string> {
-  try {
-    const ctx = await client.getSessionContext(sessionId, config.resumeContextBudget);
-    if (!ctx || !ctx.latest_archive_overview) return "";
-
-    return [
-      '<openviking-context source="session-archive">',
-      "<session-archive>",
-      ctx.latest_archive_overview,
-      "</session-archive>",
-      "</openviking-context>",
-    ].join("\n");
-  } catch {
-    return "";
-  }
-}
-
+/** Status bar: connection, current window, pressure, latest archive, session. */
 function updateStatus(
   ctx: any,
   connected: boolean,
-  added: number,
+  windows: { statusSnapshot: (opts?: any) => any },
   sessionId: string | null,
-  config: OVConfig,
 ): void {
   const setter = ctx?.ui?.setStatus;
   if (typeof setter !== "function") return;
-  const status = `${connected ? "OV ✓" : "OV ✗"} · ↩${added} · ✎ ${config.commitTokenThreshold} · ${sessionId ? sessionId.slice(0, 12) : "none"}`;
+  let snapshot: any;
+  try {
+    snapshot = windows.statusSnapshot({ usage: ctx?.getContextUsage?.(), now: Date.now() });
+  } catch {
+    return;
+  }
+  const archive = snapshot.archiveId ? snapshot.archiveId.replace(/^archive_/, "a") : "a—";
+  const status =
+    `${connected ? "OV ✓" : "OV ✗"} · ${snapshot.windowId} · ${snapshot.percent}% · ${archive}` +
+    ` · ${sessionId ? sessionId.slice(0, 12) : "none"}`;
   try {
     setter("openviking", status);
   } catch {
