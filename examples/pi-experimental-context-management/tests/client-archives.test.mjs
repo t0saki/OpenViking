@@ -202,10 +202,10 @@ test("readArchiveMessages parses JSONL and keeps a malformed line as a placehold
   stubFetch(() => ({ status: "ok", result: lines }));
 
   const msgs = await makeClient().readArchiveMessages(ARCHIVE);
-  // Four, not three: `search_contents` turns a grep hit's line number into an
-  // item index, so an unreadable line keeps its slot instead of shifting every
-  // pointer after it by one. (Empty lines carry no content and are skipped.)
-  assert.equal(msgs.length, 4);
+  // Five, not three: `search_contents` turns a grep hit's line number into an
+  // item index, so every line of the file keeps its slot — a malformed one and
+  // a blank one included — instead of shifting every pointer after it by one.
+  assert.equal(msgs.length, 5);
   assert.ok(calls[0].url.includes(encodeURIComponent(`${ARCHIVE}/messages.jsonl`)));
 
   assert.deepEqual(msgs[0], {
@@ -220,8 +220,11 @@ test("readArchiveMessages parses JSONL and keeps a malformed line as a placehold
   });
   assert.equal(msgs[2].text, "running it\n[tool bash] exit 0");
   assert.equal(msgs[2].parts.length, 2);
-  assert.equal(msgs[3].text, "plain content");
-  assert.equal(msgs[3].created_at, "");
+  assert.deepEqual(msgs[3], {
+    id: "", role: "blank", text: "(blank archive line)", parts: [], created_at: "",
+  });
+  assert.equal(msgs[4].text, "plain content");
+  assert.equal(msgs[4].created_at, "");
 });
 
 test("readArchiveMessages returns null when the file is unreadable", async () => {
@@ -325,9 +328,37 @@ test("readArchiveMessages tolerates a non-array parts field and a JSON scalar li
 });
 
 test("readArchiveMessages returns [] for an archive that is present but empty", async () => {
-  stubFetch(() => ({ status: "ok", result: "\n\n" }));
+  stubFetch(() => ({ status: "ok", result: "" }));
   assert.deepEqual(await makeClient().readArchiveMessages(ARCHIVE), []);
   assert.equal(await makeClient().readArchiveMessages("   "), null);
+});
+
+test("readArchiveMessages keeps blank lines numbered and drops only the final newline", async () => {
+  // Two blank lines: the trailing newline terminates line 2 rather than opening
+  // a line 3, so the file is two items, both placeholders. Anything else would
+  // move `line - 1` off the item a grep hit points at.
+  stubFetch(() => ({ status: "ok", result: "\n\n" }));
+  const blanks = await makeClient().readArchiveMessages(ARCHIVE);
+  assert.equal(blanks.length, 2);
+  for (const item of blanks) {
+    assert.deepEqual(item, {
+      id: "", role: "blank", text: "(blank archive line)", parts: [], created_at: "",
+    });
+  }
+
+  // A blank line between two real messages keeps the second one at line 3.
+  const lines = [
+    JSON.stringify({ id: "m1", role: "user", content: "one" }),
+    "",
+    JSON.stringify({ id: "m2", role: "user", content: "two" }),
+    "",
+  ].join("\n");
+  stubFetch(() => ({ status: "ok", result: lines }));
+  const msgs = await makeClient().readArchiveMessages(ARCHIVE);
+  assert.equal(msgs.length, 3, "the trailing newline is not a fourth line");
+  assert.equal(msgs[0].id, "m1");
+  assert.equal(msgs[1].role, "blank");
+  assert.equal(msgs[2].id, "m2");
 });
 
 // ---------- listSessionArchives ----------

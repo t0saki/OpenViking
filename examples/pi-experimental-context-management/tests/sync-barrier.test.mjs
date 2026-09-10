@@ -8,7 +8,6 @@ import { enqueue, listPending } from "../shared/pending-queue.mjs";
 
 function config(overrides = {}) {
   return {
-    commitTokenThreshold: 20000,
     commitKeepRecentCount: 10,
     captureAssistantTurns: true,
     captureToolMaxChars: 2000,
@@ -365,7 +364,11 @@ test("syncBranch never auto-commits: archive boundaries belong to the reset path
         return { result: { task_id: "t-1", archive_uri: "viking://archive/1" } };
       },
     });
-    const sync = new SyncManager(c, config({ commitTokenThreshold: 1 }));
+    // `commitTokenThreshold` is deliberately not an OVConfig key any more, so
+    // it goes in as an unknown extra: the guard is that a config still carrying
+    // the old auto-commit threshold — and a server reporting ten million
+    // pending tokens — makes syncBranch commit exactly nothing.
+    const sync = new SyncManager(c, { ...config(), commitTokenThreshold: 1 });
     await sync.ensureSession("pi-session");
 
     await sync.syncBranch([

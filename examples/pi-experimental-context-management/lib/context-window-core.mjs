@@ -419,20 +419,22 @@ export function buildWindowHeader(opts = {}) {
 
   const siblings = normalizeNames(opts.siblingToolNames);
   if (siblings.length > 0) {
-    const plural = siblings.length === 1;
+    const singular = siblings.length === 1;
     lines.push(
       "",
-      `${siblings.length} other tool result${plural ? " was" : "s were"} discarded with the same batch; ` +
-        `re-run ${plural ? "it" : "them"} if needed. Tools: ${siblings.join(", ")}.`,
+      `${siblings.length} other tool result${singular ? " was" : "s were"} discarded with the same batch; ` +
+        `re-run ${singular ? "it" : "them"} if needed. Tools: ${siblings.join(", ")}.`,
     );
   }
 
   const undelivered = Math.max(0, Math.floor(Number(opts.undeliveredCount) || 0));
   if (undelivered > 0) {
+    const singular = undelivered === 1;
     lines.push(
       "",
-      `${undelivered} message${undelivered === 1 ? "" : "s"} of this session ${undelivered === 1 ? "was" : "were"} ` +
-        "rejected by OpenViking and are missing from the archive, so history cannot show them.",
+      `${undelivered} message${singular ? "" : "s"} of this session ${singular ? "was" : "were"} ` +
+        `rejected by OpenViking and ${singular ? "is" : "are"} missing from the archive, ` +
+        `so history cannot show ${singular ? "it" : "them"}.`,
     );
   }
 
@@ -647,6 +649,87 @@ function entryId(entry) {
   if (entry.id !== undefined && entry.id !== null) return entry.id;
   if (entry.entryId !== undefined && entry.entryId !== null) return entry.entryId;
   return null;
+}
+
+/** pi stamps session entries with an ISO string; its messages carry epoch ms. */
+function entryTimestamp(entry) {
+  const raw = entry?.timestamp;
+  if (typeof raw === "number") return Number.isFinite(raw) ? raw : 0;
+  const parsed = Date.parse(String(raw ?? ""));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function appendBranchMessage(out, entry) {
+  if (!entry || typeof entry !== "object") return;
+  if (entry.type === "message") {
+    if (entry.message && typeof entry.message === "object") out.push(entry.message);
+    return;
+  }
+  if (entry.type === "custom_message") {
+    out.push({
+      role: "custom",
+      customType: entry.customType,
+      content: entry.content,
+      display: entry.display,
+      details: entry.details,
+      timestamp: entryTimestamp(entry),
+    });
+    return;
+  }
+  if (entry.type === "branch_summary" && entry.summary) {
+    out.push({
+      role: "branchSummary",
+      summary: entry.summary,
+      fromId: entry.fromId,
+      timestamp: entryTimestamp(entry),
+    });
+  }
+}
+
+/**
+ * The provider-visible message list of a pi branch — the same list
+ * `SessionManager.buildSessionContext()` would build from those entries:
+ * `message` entries contribute their message, `custom_message` entries a
+ * `{role:"custom"}` message, and a compaction replaces everything before its
+ * `firstKeptEntryId` with the summary. Every other entry type (this
+ * extension's own window state, model or thinking-level changes, labels)
+ * carries no message.
+ *
+ * `before_agent_start` runs before the `context` hook ever fires in a process,
+ * so this is the only message list a status line built there can work from —
+ * without it the first prompt after `pi -c` reports a window with no turns and
+ * no idle gap.
+ */
+export function messagesFromBranch(entries) {
+  const list = Array.isArray(entries) ? entries : [];
+  let compactionIndex = -1;
+  for (let i = list.length - 1; i >= 0; i--) {
+    if (list[i]?.type === "compaction") {
+      compactionIndex = i;
+      break;
+    }
+  }
+
+  const out = [];
+  if (compactionIndex < 0) {
+    for (const entry of list) appendBranchMessage(out, entry);
+    return out;
+  }
+
+  const compaction = list[compactionIndex];
+  out.push({
+    role: "compactionSummary",
+    summary: compaction.summary,
+    tokensBefore: compaction.tokensBefore,
+    timestamp: entryTimestamp(compaction),
+  });
+  let kept = false;
+  for (let i = 0; i < compactionIndex; i++) {
+    if (entryId(list[i]) === compaction.firstKeptEntryId) kept = true;
+    if (kept) appendBranchMessage(out, list[i]);
+  }
+  for (let i = compactionIndex + 1; i < list.length; i++) appendBranchMessage(out, list[i]);
+  return out;
 }
 
 /**
@@ -955,6 +1038,24 @@ export class ContextWindowCore {
   // ---- context transform ------------------------------------------------
 
   transformContext(messages) {
+    return this.cutAndRecord(messages, true);
+  }
+
+  /**
+   * The same cut and the same metrics, but without the right to release the
+   * boundary — for a caller that only wants to describe the window (the status
+   * line, built in `before_agent_start` from the session branch).
+   *
+   * Only the hook that actually feeds the provider may disarm: a list that is
+   * missing the anchor because pi has not finished writing it would otherwise
+   * release the boundary from a status readout, and the next request would hand
+   * the model back a window it was told is archived.
+   */
+  observeMessages(messages) {
+    return this.cutAndRecord(messages, false);
+  }
+
+  cutAndRecord(messages, mayDisarm) {
     const list = Array.isArray(messages) ? messages : [];
     // Opportunistic: by the time a context is built the session id always
     // exists, so a window restored from another session is dropped here at the
@@ -971,7 +1072,7 @@ export class ContextWindowCore {
       headerTimestamp: this.openedAt,
     });
     if (!cut.applied) {
-      this.disarm("anchor missing, boundary released");
+      if (mayDisarm) this.disarm("anchor missing, boundary released");
       this.recordWindowMetrics(list, -1);
       return list;
     }

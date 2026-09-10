@@ -156,7 +156,10 @@ be in the window header. Only a refusal (nothing was cut) is actually read.
 **Anchor missing → boundary released.** If the anchor is not in the branch any
 more (a fork, `/tree`, a native pi compaction), the transform returns the
 messages untouched, logs once and disarms. That is the single invariant that
-keeps a failure mode of "no reset" rather than "corrupted request".
+keeps a failure mode of "no reset" rather than "corrupted request". Only the
+`context` hook may release it that way: the status line runs the same cut
+through `observeMessages`, which records the metrics and leaves the anchor
+alone (§4.2).
 
 ## 4. Exact prompt texts
 
@@ -222,12 +225,25 @@ NOTE: 47 minutes passed since the previous user message. If this request starts 
 ```
 
 The gap it reports is `sinceLastUserMs` — the time since the newest genuine user
-message in the list the previous `context` hook produced, i.e. the gap the user
-just came back from. (`get_context_remaining` reports the gap *before* that
-message separately; it is not what gates this NOTE.)
+message in the branch, which at `before_agent_start` is still the *previous*
+prompt, i.e. the gap the user just came back from. (`get_context_remaining`
+reports the gap *before* that message separately; it is not what gates this
+NOTE.)
 
 It is emitted from `before_agent_start`, so it appears **once per user prompt**,
 not once per sampling: it does not update while a tool loop runs.
+
+Its numbers come from the session branch, not from the last `context` hook:
+`messagesFromBranch(ctx.sessionManager.getBranch())` rebuilds the list pi would
+send and `core.observeMessages()` runs the same cut over it to refresh
+`turnsInWindow`, the token estimate and the user timestamps. The `context` hook
+is the only other place those are recorded, and it has not run yet on the first
+prompt of a process — a resumed session (`pi -c`) would otherwise open with
+`window w2 · 0 turns` and no idle gap however long the window had already been
+running. `observeMessages` is `transformContext` minus the right to release the
+boundary: a status readout must never disarm a window over a list pi has not
+finished writing. Nothing is persisted and no request is made, so the line is
+identical whether or not OpenViking answers.
 
 ### 4.3 Reminders (at most one of each per window, `customType: "ov-context-reminder"`)
 
@@ -306,9 +322,11 @@ truncated to their token budgets and then get a `\n...(truncated)` marker.
 One more line appears only when the sync manager lost messages for good (a
 non-retryable rejection, or a queue entry whose retries ran out): `N messages of
 this session were rejected by OpenViking and are missing from the archive, so
-history cannot show them.` The barrier cannot catch those — they are counted as
-accepted so the watermark can move past them — so the header names them instead
-of letting `history` quietly under-report the window.
+history cannot show them.` (singular wording: `1 message of this session was
+rejected by OpenViking and is missing …, so history cannot show it.`) The
+barrier cannot catch those — they are counted as accepted so the watermark can
+move past them — so the header names them instead of letting `history` quietly
+under-report the window.
 
 ### 4.6 Window header — Working Memory still pending
 
@@ -391,9 +409,12 @@ failure with a pointer at `search_contents`, not as "still being archived"
 message clipped to `contextWindow.historyItemMaxChars`. `search_contents` greps
 every archive case-insensitively, shows at most 20 matches grouped by window,
 and turns each `messages.jsonl` hit into a `read_item` pointer (line number − 1
-is the item index, because the file holds one message per line — a line the
-client cannot parse keeps its slot as an `(unreadable archive line)` placeholder
-rather than shifting every pointer after it).
+is the item index, because the file holds one message per line). Every line of
+the file produces exactly one item, so that arithmetic holds: a line the client
+cannot parse keeps its slot as an `(unreadable archive line)` placeholder and a
+blank one as `(blank archive line)`, rather than shifting every pointer after
+it. The only thing dropped is the empty string after a trailing final newline,
+which is not a line of its own.
 
 One tool with an `action` enum rather than four tools: pi's tool namespace is
 flat, so four `history_*` tools would cost four slots in every request.

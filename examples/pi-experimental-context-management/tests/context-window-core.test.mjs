@@ -17,6 +17,7 @@ import {
   formatDuration,
   formatTokens,
   lastUserTimestamps,
+  messagesFromBranch,
   reminderText,
   windowConfig,
 } from "../lib/context-window-core.mjs";
@@ -322,6 +323,80 @@ test("transformContext releases the boundary once when the anchor is gone", asyn
   assert.equal(io.logs.filter((line) => line.includes("anchor missing")).length, 1);
 });
 
+test("observeMessages records the window metrics but never releases the boundary", async () => {
+  const io = makeIo();
+  const core = makeCore(io);
+  await openWindow(core, io);
+
+  const messages = [
+    user("old", 1),
+    assistantCalls([{ id: "call-1", name: "new_context" }]),
+    toolResult("call-1", "new_context"),
+    user("what is left?", 2),
+    assistant("the tests"),
+  ];
+  const observed = core.observeMessages(messages);
+  assert.equal(JSON.stringify(observed), JSON.stringify(core.transformContext(messages)));
+  assert.equal(core.turnsInWindow, 1);
+
+  // A list without the anchor — pi had not written it yet, or the caller built
+  // the list from the branch — must not cost the boundary: the status line is
+  // not allowed to hand an archived window back to the model.
+  io.logs.length = 0;
+  core.observeMessages([user("fresh branch", 3), assistant("hi")]);
+  assert.equal(core.armed, true, "the anchor survives a metrics-only pass");
+  assert.equal(io.logs.filter((line) => line.includes("anchor missing")).length, 0);
+});
+
+test("messagesFromBranch builds the list pi would send, entry by entry", () => {
+  const branch = [
+    { id: "e1", type: "message", message: user("first", 1) },
+    { id: "e2", type: "thinking_level_change", thinkingLevel: "high" },
+    {
+      id: "e3",
+      type: "custom_message",
+      customType: STATUS_CUSTOM_TYPE,
+      content: "[context-status] window w1",
+      display: true,
+      timestamp: "2026-09-10T06:00:00.000Z",
+    },
+    { id: "e4", type: "custom", customType: WINDOW_ENTRY_TYPE, data: { windowIndex: 2 } },
+    { id: "e5", type: "message", message: assistant("second") },
+  ];
+  const messages = messagesFromBranch(branch);
+  assert.deepEqual(messages.map((m) => m.role), ["user", "custom", "assistant"]);
+  assert.equal(messages[0], branch[0].message, "message entries are passed through, not copied");
+  assert.equal(messages[1].customType, STATUS_CUSTOM_TYPE);
+  assert.equal(messages[1].timestamp, Date.parse("2026-09-10T06:00:00.000Z"));
+  assert.deepEqual(messagesFromBranch(null), []);
+});
+
+test("messagesFromBranch replays a compaction the way buildSessionContext does", () => {
+  const branch = [
+    { id: "e1", type: "message", message: user("ancient", 1) },
+    { id: "e2", type: "message", message: assistant("also ancient") },
+    { id: "e3", type: "message", message: user("kept", 2) },
+    {
+      id: "e4",
+      type: "compaction",
+      summary: "SUMMARY",
+      firstKeptEntryId: "e3",
+      tokensBefore: 900,
+      timestamp: "2026-09-10T06:00:00.000Z",
+    },
+    { id: "e5", type: "message", message: assistant("after the compaction") },
+  ];
+  const messages = messagesFromBranch(branch);
+  assert.deepEqual(messages.map((m) => m.role), ["compactionSummary", "user", "assistant"]);
+  assert.equal(messages[0].summary, "SUMMARY");
+  assert.equal(messages[1].content, "kept");
+  assert.equal(
+    JSON.stringify(messages).includes("ancient"),
+    false,
+    "entries pi dropped at the compaction must not be counted again",
+  );
+});
+
 // --------------------------------------------------------------------------
 // header / handoff / status text
 // --------------------------------------------------------------------------
@@ -461,6 +536,19 @@ test("buildWindowHeader names messages OpenViking rejected for good", () => {
     undeliveredCount: 3,
   });
   assert.match(header, /3 messages of this session were rejected by OpenViking and are missing from the archive/);
+  assert.match(header, /so history cannot show them\./);
+  const one = buildWindowHeader({
+    windowId: "w2",
+    previousWindowId: "w1",
+    archiveId: "archive_001",
+    overviewState: "ready",
+    overview: "wm",
+    undeliveredCount: 1,
+  });
+  assert.match(
+    one,
+    /1 message of this session was rejected by OpenViking and is missing from the archive, so history cannot show it\./,
+  );
   const clean = buildWindowHeader({
     windowId: "w2",
     previousWindowId: "w1",

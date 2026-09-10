@@ -30,6 +30,7 @@ import { registerContextWindowTools, registerTools } from "./tools.js";
 import { createContextWindowManager, readPiReserveTokens } from "./context-window.js";
 import {
   buildStatusLine,
+  messagesFromBranch,
   reminderText,
   REMINDER_CUSTOM_TYPE,
   STATUS_CUSTOM_TYPE,
@@ -105,6 +106,41 @@ export default async function (pi: ExtensionAPI) {
    */
   let lastTransformed: any[] | undefined;
   const reserveTokens = readPiReserveTokens(process.cwd());
+
+  /**
+   * The message list a status readout is built from, with the window metrics
+   * refreshed against it.
+   *
+   * `turnsInWindow`, the window token estimate and the last-user timestamps are
+   * only recorded by `transformContext`, which runs in the `context` hook — and
+   * that hook has not fired yet when the first prompt of a process reaches
+   * `before_agent_start`. After `pi -c` the line would then describe a restored
+   * window as "0 turns" with no idle gap, however many turns it already had in
+   * the previous process. Rebuilding the list from the branch fixes that, and
+   * keeps the count current on later prompts too: the branch already holds the
+   * assistant message the previous turn's last `context` hook could not see.
+   *
+   * The branch is what pi builds the next provider request from anyway, so the
+   * cut here only repeats the one the `context` hook will make. `observeMessages`
+   * rather than `transformContext`: it touches the in-memory metrics and nothing
+   * else — no persist, no network, and no right to release the boundary from a
+   * list pi may not have finished writing.
+   */
+  const statusMessages = (ctx: any): any[] | undefined => {
+    let branch: any[] | undefined;
+    try {
+      branch = ctx?.sessionManager?.getBranch?.();
+    } catch {
+      return lastTransformed;
+    }
+    if (!Array.isArray(branch) || branch.length === 0) return lastTransformed;
+    try {
+      return windows.observeMessages(messagesFromBranch(branch) as any[]);
+    } catch (error) {
+      logger.logError("status-metrics", error);
+      return lastTransformed;
+    }
+  };
 
   /** This extension's own directory, to tell our tools from a peer's. */
   const ownDir = dirname(fileURLToPath(import.meta.url));
@@ -288,7 +324,7 @@ export default async function (pi: ExtensionAPI) {
       const snapshot = windows.statusSnapshot({
         usage: (ctx as any).getContextUsage?.(),
         now: Date.now(),
-        messages: lastTransformed,
+        messages: statusMessages(ctx),
         reserveTokens,
       });
       result.message = {
@@ -469,7 +505,7 @@ export default async function (pi: ExtensionAPI) {
         const snapshot = windows.statusSnapshot({
           usage: (ctx as any).getContextUsage?.(),
           now: Date.now(),
-          messages: lastTransformed,
+          messages: statusMessages(ctx),
           reserveTokens,
         });
         ctx.ui.notify(

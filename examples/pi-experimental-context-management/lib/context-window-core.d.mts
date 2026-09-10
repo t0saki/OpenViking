@@ -123,6 +123,12 @@ export function formatTokens(n: number): string;
 export function formatDuration(ms: number): string;
 export function lastUserTimestamps(messages: WindowMessage[]): number[];
 export function lastUserTextFromBranch(branch: any[]): string;
+/**
+ * Branch entries → the message list `buildSessionContext()` would produce
+ * (messages, custom messages, branch summaries, compaction handling). Used
+ * where no `context` hook has run yet in this process.
+ */
+export function messagesFromBranch(entries: any[]): WindowMessage[];
 export function siblingToolNamesFromBranch(branch: any[], anchorToolCallId: string): string[];
 
 export interface ArchiveRef {
@@ -271,6 +277,12 @@ export class ContextWindowCore {
   persist(): void;
   shutdown(): Promise<void>;
   transformContext(messages: WindowMessage[]): WindowMessage[];
+  /**
+   * `transformContext` without the right to release the boundary: the cut and
+   * the window metrics for a caller that only describes the window (the status
+   * line, built from the session branch before any `context` hook has run).
+   */
+  observeMessages(messages: WindowMessage[]): WindowMessage[];
   /**
    * Refresh `lastWindowTokens` / `turnsInWindow` from a message list.
    * With `headerIndex < 0` only assistant messages newer than the last reset count.

@@ -179,6 +179,91 @@ test("before_agent_start ships the window guidance and one status line, server o
   assert.match(result.message.content, /^\[context-status\] window w1/);
 });
 
+test("the first status line of a process counts the branch, not an empty window", { skip: !JITI_PATH }, async (t) => {
+  withDeadServer(t);
+  const calls = await loadExtension();
+
+  // A `pi -c` continuation: the window was opened in the previous process, so
+  // the `context` hook — the only place that records the window metrics — has
+  // never run here. Reading them off the branch is what stops the first line of
+  // the session from claiming an open window has no turns and no idle gap.
+  const now = Date.now();
+  const headerText =
+    '<openviking-context source="context-window">\n' +
+    '<context_window id="w2" previous="w1" archive="archive_001">restored</context_window>\n' +
+    "</openviking-context>";
+  const branch = [
+    { type: "message", id: "e1", message: { role: "user", content: "phase one", timestamp: now - 3_600_000 } },
+    {
+      type: "message",
+      id: "e2",
+      message: {
+        role: "assistant",
+        content: [{ type: "toolCall", id: "call-1", name: "new_context", arguments: {} }],
+        timestamp: now - 3_500_000,
+      },
+    },
+    {
+      type: "custom",
+      id: "e3",
+      customType: "ov-context-window",
+      data: {
+        version: 1,
+        ovSessionId: "pi-pi-session-abc",
+        windowIndex: 2,
+        anchorToolCallId: "call-1",
+        openedAt: now - 3_400_000,
+        headerText,
+        reason: "phase one is done",
+        notes: "codename ZEPHYR-9942",
+        nextSteps: [],
+        pendingRequest: "",
+        archiveId: "archive_001",
+        archiveUri: ARCHIVE,
+        taskId: "task-1",
+        overviewReady: true,
+        overviewUnavailable: false,
+        overviewAttempts: 0,
+        previousOverview: "",
+        siblingToolNames: [],
+        syncedEntryCount: 4,
+        lastResetAt: now - 3_400_000,
+        lastResetBy: "agent",
+      },
+    },
+    {
+      type: "message",
+      id: "e4",
+      message: { role: "toolResult", toolCallId: "call-1", toolName: "new_context", content: "ok", timestamp: now - 3_400_000 },
+    },
+    // The window's own two turns: a user prompt five minutes ago, answered.
+    { type: "message", id: "e5", message: { role: "user", content: "what is left?", timestamp: now - 300_000 } },
+    { type: "message", id: "e6", message: { role: "assistant", content: "the tests", timestamp: now - 290_000 } },
+  ];
+
+  const first = await calls.handlers.get("before_agent_start")(
+    { type: "before_agent_start", prompt: "run them", systemPrompt: "BASE" },
+    fakeCtx({ branch }),
+  );
+  const line = first.message.content.split("\n")[0];
+  assert.match(line, /^\[context-status\] window w2 · 1 turn · /, `singular turn count: ${line}`);
+  assert.match(line, / 5m since your previous message$/);
+
+  // The window entry is restored once, so a longer branch on the next prompt
+  // has to move the count — and pluralize it.
+  const grown = [
+    ...branch,
+    { type: "message", id: "e7", message: { role: "user", content: "and now?", timestamp: now - 120_000 } },
+    { type: "message", id: "e8", message: { role: "assistant", content: "done", timestamp: now - 110_000 } },
+  ];
+  const second = await calls.handlers.get("before_agent_start")(
+    { type: "before_agent_start", prompt: "next", systemPrompt: "BASE" },
+    fakeCtx({ branch: grown }),
+  );
+  assert.match(second.message.content, /^\[context-status\] window w2 · 2 turns · /);
+  assert.match(second.message.content.split("\n")[0], / 2m since your previous message$/);
+});
+
 test("the context hook returns the messages untouched while no window is armed", { skip: !JITI_PATH }, async (t) => {
   withDeadServer(t);
   const calls = await loadExtension();

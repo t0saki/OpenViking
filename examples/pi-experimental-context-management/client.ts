@@ -378,9 +378,9 @@ export class OVClient {
   /**
    * Messages of one archive: `GET /content/read?uri=<archive>/messages.jsonl`.
    *
-   * Readable right after commit phase 1. Malformed JSONL lines are skipped
-   * rather than failing the whole read. Returns null when the file cannot be
-   * read at all.
+   * Readable right after commit phase 1. A line that is malformed or blank
+   * becomes a placeholder item rather than failing the read or shifting the
+   * ones after it. Returns null when the file cannot be read at all.
    */
   async readArchiveMessages(archiveUri: string): Promise<OVArchiveMessage[] | null> {
     const base = stripTrailingSlash(String(archiveUri ?? "").trim());
@@ -391,21 +391,32 @@ export class OVClient {
     );
     if (!res.ok || typeof res.result !== "string") return null;
 
+    // Every line of the file has to produce exactly one item, because
+    // `search_contents` turns a grep hit's line number into an item index
+    // (`line - 1`). The only thing dropped is the empty string left behind by a
+    // trailing final newline, which is not a line of its own.
+    const lines = res.result.split("\n");
+    if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
+
     const out: OVArchiveMessage[] = [];
-    for (const rawLine of res.result.split("\n")) {
+    for (const rawLine of lines) {
       const line = rawLine.trim();
-      if (!line) continue;
-      let obj: any;
-      try {
-        obj = JSON.parse(line);
-      } catch {
-        obj = null; // a truncated or non-JSON line must not lose the rest
+      let obj: any = null;
+      if (line) {
+        try {
+          obj = JSON.parse(line);
+        } catch {
+          obj = null; // a truncated or non-JSON line must not lose the rest
+        }
       }
       if (!obj || typeof obj !== "object" || Array.isArray(obj)) {
-        // A placeholder rather than a skip: `search_contents` turns a grep hit's
-        // line number into an item index, so dropping a line silently would
-        // shift every pointer after it by one.
-        out.push({ id: "", role: "unreadable", text: "(unreadable archive line)", parts: [], created_at: "" });
+        out.push({
+          id: "",
+          role: line ? "unreadable" : "blank",
+          text: line ? "(unreadable archive line)" : "(blank archive line)",
+          parts: [],
+          created_at: "",
+        });
         continue;
       }
       const parts = Array.isArray(obj.parts) ? obj.parts : [];
