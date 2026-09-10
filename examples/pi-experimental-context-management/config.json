@@ -11,10 +11,22 @@
   "commitTokenThreshold": 20000,
   "commitKeepRecentCount": 10,
   "captureToolResults": true,
-  "captureMode": "semantic",
   "captureMaxLength": 24000,
   "captureToolMaxChars": 1000000,
   "captureAssistantTurns": true,
   "bypassPatterns": [],
-  "logLevel": "error"
+  "logLevel": "error",
+  "contextWindow": {
+    "resetDeadlineMs": 60000,
+    "archivePollMs": 2000,
+    "overviewRefreshMaxAttempts": 20,
+    "overviewBudget": 3000,
+    "notesBudget": 1500,
+    "pendingRequestBudget": 400,
+    "softPercent": 70,
+    "hardPercent": 85,
+    "idleGapMinutes": 30,
+    "statusEveryTurn": true,
+    "historyItemMaxChars": 8000
+  }
 }

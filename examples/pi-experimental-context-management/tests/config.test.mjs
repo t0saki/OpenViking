@@ -1,10 +1,26 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdtemp, rm, writeFile, readFile } from "node:fs/promises";
+import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { loadConfig, loadConfigFromModuleUrl } from "../config.ts";
+
+const EXTENSION_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
+
+const CONTEXT_WINDOW_DEFAULTS = {
+  resetDeadlineMs: 60000,
+  archivePollMs: 2000,
+  overviewRefreshMaxAttempts: 20,
+  overviewBudget: 3000,
+  notesBudget: 1500,
+  pendingRequestBudget: 400,
+  softPercent: 70,
+  hardPercent: 85,
+  idleGapMinutes: 30,
+  statusEveryTurn: true,
+  historyItemMaxChars: 8000,
+};
 
 async function withConfigFile(body, fn, env = {}, cliConfig = null) {
   const dir = await mkdtemp(join(tmpdir(), "ov-pi-config-用户-"));
@@ -21,6 +37,8 @@ async function withConfigFile(body, fn, env = {}, cliConfig = null) {
     OPENVIKING_CONFIG_FILE: process.env.OPENVIKING_CONFIG_FILE,
     OPENVIKING_DEBUG_LOG: process.env.OPENVIKING_DEBUG_LOG,
     OV_DEBUG_LOG: process.env.OV_DEBUG_LOG,
+    OPENVIKING_CONTEXT_STATUS_EVERY_TURN: process.env.OPENVIKING_CONTEXT_STATUS_EVERY_TURN,
+    OPENVIKING_CONTEXT_RESET_DEADLINE_MS: process.env.OPENVIKING_CONTEXT_RESET_DEADLINE_MS,
   };
   process.env.OPENVIKING_CREDENTIAL_SOURCE = "env";
   process.env.OPENVIKING_URL = "http://127.0.0.1:1933";
@@ -34,6 +52,8 @@ async function withConfigFile(body, fn, env = {}, cliConfig = null) {
   delete process.env.OPENVIKING_RECALL_PEER_SCOPE;
   delete process.env.OPENVIKING_DEBUG_LOG;
   delete process.env.OV_DEBUG_LOG;
+  delete process.env.OPENVIKING_CONTEXT_STATUS_EVERY_TURN;
+  delete process.env.OPENVIKING_CONTEXT_RESET_DEADLINE_MS;
   for (const [key, value] of Object.entries(env)) {
     if (value === undefined) delete process.env[key];
     else process.env[key] = value;
@@ -199,4 +219,217 @@ test("loadConfig gives ovcli peer precedence over config peer", async () => {
     url: "http://127.0.0.1:1933",
     actor_peer_id: "ovcli-peer",
   });
+});
+
+test("loadConfig ships the contextWindow defaults", async () => {
+  await withConfigFile({}, (cfg) => {
+    assert.deepEqual(cfg.contextWindow, CONTEXT_WINDOW_DEFAULTS);
+  });
+});
+
+test("the shipped config.json parses and restates the defaults exactly", async () => {
+  // config.json spells every default out, so it silently overrides config.ts
+  // once the two drift apart. Load the real file to keep them tied together.
+  const shipped = JSON.parse(await readFile(join(EXTENSION_DIR, "config.json"), "utf8"));
+  assert.ok(!("captureMode" in shipped), "the dead captureMode key is gone from config.json");
+  await withConfigFile(shipped, (cfg) => {
+    assert.deepEqual(cfg.contextWindow, CONTEXT_WINDOW_DEFAULTS);
+    assert.equal(cfg.captureToolResults, true);
+    assert.equal(cfg.captureMaxLength, 24000);
+    assert.equal(cfg.captureToolMaxChars, 1000000);
+    assert.equal(cfg.commitTokenThreshold, 20000);
+    assert.equal(cfg.commitKeepRecentCount, 10);
+    // config.json must not name recallLimit or recallQueryExpansion: both
+    // carry a "…Configured" flag that recall reads as "the user chose this".
+    assert.equal(cfg.recallLimitConfigured, false);
+    assert.equal(cfg.recallQueryExpansionConfigured, false);
+  });
+});
+
+test("loadConfig never writes the clamped window back into the module defaults", async () => {
+  // The window object is rebuilt per call and clamped in place; if it ever
+  // aliased DEFAULT_CONFIG.contextWindow, the hardPercent lift below would
+  // leak into every later load in the same process.
+  await withConfigFile({ contextWindow: { softPercent: 90, hardPercent: 20 } }, (cfg) => {
+    assert.equal(cfg.contextWindow.hardPercent, 90);
+  });
+  await withConfigFile({}, (cfg) => {
+    assert.deepEqual(cfg.contextWindow, CONTEXT_WINDOW_DEFAULTS);
+  });
+});
+
+test("loadConfig drops the dead captureMode key", async () => {
+  // Capture is always faithful in this fork, so nothing reads a
+  // semantic/keyword switch and the defaults must not name one.
+  await withConfigFile({}, (cfg) => {
+    assert.ok(!("captureMode" in cfg), "captureMode is gone from the defaults");
+    assert.equal(cfg.captureMaxLength, 24000);
+    assert.equal(cfg.captureToolMaxChars, 1000000);
+    assert.equal(cfg.captureToolResults, true);
+  });
+});
+
+test("loadConfig merges contextWindow over the defaults key by key", async () => {
+  await withConfigFile({
+    contextWindow: {
+      resetDeadlineMs: 120000,
+      notesBudget: 900,
+      statusEveryTurn: false,
+      unknownKey: "ignored",
+    },
+  }, (cfg) => {
+    assert.equal(cfg.contextWindow.resetDeadlineMs, 120000);
+    assert.equal(cfg.contextWindow.notesBudget, 900);
+    assert.equal(cfg.contextWindow.statusEveryTurn, false);
+    assert.ok(!("unknownKey" in cfg.contextWindow), "unknown keys are ignored");
+    // Untouched keys keep their defaults.
+    assert.equal(cfg.contextWindow.archivePollMs, 2000);
+    assert.equal(cfg.contextWindow.softPercent, 70);
+    assert.equal(cfg.contextWindow.hardPercent, 85);
+    assert.equal(cfg.contextWindow.historyItemMaxChars, 8000);
+  });
+});
+
+test("loadConfig ignores a non-object contextWindow", async () => {
+  for (const block of ["yes", null, 7, false, []]) {
+    await withConfigFile({ contextWindow: block }, (cfg) => {
+      assert.deepEqual(cfg.contextWindow, CONTEXT_WINDOW_DEFAULTS, `contextWindow: ${JSON.stringify(block)}`);
+    });
+  }
+});
+
+const CONTEXT_WINDOW_BOUNDS = [
+  { key: "resetDeadlineMs", min: 5000, max: 600000 },
+  { key: "archivePollMs", min: 250, max: 30000 },
+  { key: "overviewRefreshMaxAttempts", min: 0, max: 200 },
+  { key: "overviewBudget", min: 100, max: 50000 },
+  { key: "notesBudget", min: 100, max: 20000 },
+  { key: "pendingRequestBudget", min: 0, max: 8000 },
+  { key: "softPercent", min: 10, max: 99, withHigh: { hardPercent: 99 } },
+  { key: "hardPercent", min: 10, max: 99, withLow: { softPercent: 10 } },
+  { key: "idleGapMinutes", min: 0, max: 1440 },
+  { key: "historyItemMaxChars", min: 500, max: 100000 },
+];
+
+for (const { key, min, max, withLow, withHigh } of CONTEXT_WINDOW_BOUNDS) {
+  test(`loadConfig clamps contextWindow.${key} to ${min}..${max}`, async () => {
+    await withConfigFile({ contextWindow: { [key]: -1000000, ...(withLow || {}) } }, (cfg) => {
+      assert.equal(cfg.contextWindow[key], min);
+    });
+    await withConfigFile({ contextWindow: { [key]: 100000000, ...(withHigh || {}) } }, (cfg) => {
+      assert.equal(cfg.contextWindow[key], max);
+    });
+  });
+}
+
+test("loadConfig falls back to the default for a non-numeric contextWindow value", async () => {
+  await withConfigFile({
+    contextWindow: { resetDeadlineMs: "soon", overviewBudget: null, idleGapMinutes: {} },
+  }, (cfg) => {
+    assert.equal(cfg.contextWindow.resetDeadlineMs, 60000);
+    // null means "not set" for `??`, so it falls back before the clamp sees it.
+    assert.equal(cfg.contextWindow.overviewBudget, 3000);
+    assert.equal(cfg.contextWindow.idleGapMinutes, 30);
+  });
+});
+
+test("loadConfig pulls a coercible junk value to the nearest bound", async () => {
+  // `Number("")`, `Number([])` and `Number(true)` are 0 and 1, not NaN, so
+  // these never reach the fallback — they land on the minimum. Pinned because
+  // it is the one place the README's "falls back to the default" does not hold.
+  await withConfigFile({
+    contextWindow: { overviewBudget: "", notesBudget: [], archivePollMs: true },
+  }, (cfg) => {
+    assert.equal(cfg.contextWindow.overviewBudget, 100);
+    assert.equal(cfg.contextWindow.notesBudget, 100);
+    assert.equal(cfg.contextWindow.archivePollMs, 250);
+  });
+});
+
+test("loadConfig accepts a numeric string from config.json", async () => {
+  await withConfigFile({ contextWindow: { resetDeadlineMs: "120000" } }, (cfg) => {
+    assert.equal(cfg.contextWindow.resetDeadlineMs, 120000);
+  });
+});
+
+test("loadConfig rounds fractional contextWindow values", async () => {
+  await withConfigFile({ contextWindow: { archivePollMs: 2500.6, softPercent: 60.4 } }, (cfg) => {
+    assert.equal(cfg.contextWindow.archivePollMs, 2501);
+    assert.equal(cfg.contextWindow.softPercent, 60);
+  });
+});
+
+test("loadConfig lifts hardPercent to softPercent when it is configured lower", async () => {
+  await withConfigFile({ contextWindow: { softPercent: 80, hardPercent: 60 } }, (cfg) => {
+    assert.equal(cfg.contextWindow.softPercent, 80);
+    assert.equal(cfg.contextWindow.hardPercent, 80);
+  });
+  // Clamping happens first, so a below-range hardPercent is lifted too.
+  await withConfigFile({ contextWindow: { softPercent: 40, hardPercent: 1 } }, (cfg) => {
+    assert.equal(cfg.contextWindow.hardPercent, 40);
+  });
+  await withConfigFile({ contextWindow: { softPercent: 40, hardPercent: 90 } }, (cfg) => {
+    assert.equal(cfg.contextWindow.hardPercent, 90);
+  });
+});
+
+test("loadConfig reads statusEveryTurn spellings from config.json", async () => {
+  await withConfigFile({ contextWindow: { statusEveryTurn: "off" } }, (cfg) => {
+    assert.equal(cfg.contextWindow.statusEveryTurn, false);
+  });
+  await withConfigFile({ contextWindow: { statusEveryTurn: "yes" } }, (cfg) => {
+    assert.equal(cfg.contextWindow.statusEveryTurn, true);
+  });
+  await withConfigFile({ contextWindow: { statusEveryTurn: 0 } }, (cfg) => {
+    assert.equal(cfg.contextWindow.statusEveryTurn, false);
+  });
+});
+
+test("OPENVIKING_CONTEXT_STATUS_EVERY_TURN overrides config.json", async () => {
+  await withConfigFile({ contextWindow: { statusEveryTurn: true } }, (cfg) => {
+    assert.equal(cfg.contextWindow.statusEveryTurn, false);
+  }, { OPENVIKING_CONTEXT_STATUS_EVERY_TURN: "0" });
+  await withConfigFile({ contextWindow: { statusEveryTurn: false } }, (cfg) => {
+    assert.equal(cfg.contextWindow.statusEveryTurn, true);
+  }, { OPENVIKING_CONTEXT_STATUS_EVERY_TURN: "on" });
+  // An unparseable value leaves the configured one alone.
+  await withConfigFile({ contextWindow: { statusEveryTurn: false } }, (cfg) => {
+    assert.equal(cfg.contextWindow.statusEveryTurn, false);
+  }, { OPENVIKING_CONTEXT_STATUS_EVERY_TURN: "maybe" });
+});
+
+test("OPENVIKING_CONTEXT_RESET_DEADLINE_MS overrides config.json and is clamped", async () => {
+  await withConfigFile({ contextWindow: { resetDeadlineMs: 60000 } }, (cfg) => {
+    assert.equal(cfg.contextWindow.resetDeadlineMs, 120000);
+  }, { OPENVIKING_CONTEXT_RESET_DEADLINE_MS: "120000" });
+  await withConfigFile({ contextWindow: { resetDeadlineMs: 60000 } }, (cfg) => {
+    assert.equal(cfg.contextWindow.resetDeadlineMs, 600000);
+  }, { OPENVIKING_CONTEXT_RESET_DEADLINE_MS: "9999999" });
+  await withConfigFile({ contextWindow: { resetDeadlineMs: 90000 } }, (cfg) => {
+    assert.equal(cfg.contextWindow.resetDeadlineMs, 60000);
+  }, { OPENVIKING_CONTEXT_RESET_DEADLINE_MS: "later" });
+  // An empty value is not an override: the file value survives untouched.
+  await withConfigFile({ contextWindow: { resetDeadlineMs: 90000 } }, (cfg) => {
+    assert.equal(cfg.contextWindow.resetDeadlineMs, 90000);
+  }, { OPENVIKING_CONTEXT_RESET_DEADLINE_MS: "" });
+  // "0" is a truthy string, so it overrides and then clamps up to the floor —
+  // there is no way to ask for a zero (non-blocking) reset deadline.
+  await withConfigFile({ contextWindow: { resetDeadlineMs: 90000 } }, (cfg) => {
+    assert.equal(cfg.contextWindow.resetDeadlineMs, 5000);
+  }, { OPENVIKING_CONTEXT_RESET_DEADLINE_MS: "0" });
+});
+
+test("statusEveryTurn stays a boolean whatever the file and env say", async () => {
+  // envBool's fallback is the raw configured value, so an unparseable env var
+  // on top of a string in config.json must still normalize to a boolean.
+  await withConfigFile({ contextWindow: { statusEveryTurn: "off" } }, (cfg) => {
+    assert.equal(cfg.contextWindow.statusEveryTurn, false);
+    assert.equal(typeof cfg.contextWindow.statusEveryTurn, "boolean");
+  }, { OPENVIKING_CONTEXT_STATUS_EVERY_TURN: "maybe" });
+  for (const value of ["banana", "", 2, []]) {
+    await withConfigFile({ contextWindow: { statusEveryTurn: value } }, (cfg) => {
+      assert.equal(typeof cfg.contextWindow.statusEveryTurn, "boolean", `statusEveryTurn: ${JSON.stringify(value)}`);
+      assert.equal(cfg.contextWindow.statusEveryTurn, true, "unreadable spellings fall back to the default");
+    });
+  }
 });

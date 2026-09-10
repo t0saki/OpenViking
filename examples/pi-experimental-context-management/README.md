@@ -59,6 +59,39 @@ this.
 | `lib/uri-guard-adapter.mjs` | Blocks builtin file tools on `viking://` URIs |
 | `shared/` | Generated from `examples/memory-plugin-shared/lib` — do not edit |
 
+## Configuration
+
+`config.json` keeps the upstream fields, minus `captureMode` — capture here is
+always faithful, so the semantic/keyword switch had no reader and is gone —
+plus one nested `contextWindow` block for the agent-driven windows. Every
+number below is rounded and clamped on load: an out-of-range value is pulled to
+the nearest bound, and one that is not a number at all (`"soon"`, `{}`, or a
+missing key) falls back to the default. `hardPercent` is clamped first and then
+raised to `softPercent` if it was configured lower, so the hard reminder can
+never fire before the soft one. Unknown keys inside `contextWindow` are
+dropped, and a `contextWindow` that is not an object is ignored entirely.
+
+| Field | Default | Range | Description |
+| --- | --- | --- | --- |
+| `contextWindow.resetDeadlineMs` | `60000` | 5000–600000 | Whole-reset budget: sync, barrier, commit and the wait for the archive overview |
+| `contextWindow.archivePollMs` | `2000` | 250–30000 | Delay between `.overview.md` polls while the server builds Working Memory |
+| `contextWindow.overviewRefreshMaxAttempts` | `20` | 0–200 | Non-blocking retries at `turn_end` when a window opened before its overview was ready |
+| `contextWindow.overviewBudget` | `3000` | 100–50000 | Token budget for the Working Memory block in the window header |
+| `contextWindow.notesBudget` | `1500` | 100–20000 | Token budget for the agent's handoff notes in the window header |
+| `contextWindow.pendingRequestBudget` | `400` | 0–8000 | Token budget for the last user message carried into the new window |
+| `contextWindow.softPercent` | `70` | 10–99 | Usage that earns one soft "checkpoint, then reset" reminder per window |
+| `contextWindow.hardPercent` | `85` | 10–99 | Usage that earns one hard "reset now" reminder; never below `softPercent` |
+| `contextWindow.idleGapMinutes` | `30` | 0–1440 | Idle gap after which the status line suggests considering a new window |
+| `contextWindow.statusEveryTurn` | `true` | boolean | Append a one-line context status after every user prompt |
+| `contextWindow.historyItemMaxChars` | `8000` | 500–100000 | Per-item cap for `history` reads out of an archived `messages.jsonl` |
+
+Two environment variables override the block for a single run:
+`OPENVIKING_CONTEXT_STATUS_EVERY_TURN` (`0`/`1`, `true`/`false`, `on`/`off`,
+`yes`/`no`; anything else leaves the configured value alone) and
+`OPENVIKING_CONTEXT_RESET_DEADLINE_MS` (clamped like the file value; an empty
+value is ignored). The same spellings work for `statusEveryTurn` in
+`config.json`.
+
 ## Tests
 
 ```bash

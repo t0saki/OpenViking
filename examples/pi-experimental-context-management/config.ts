@@ -7,6 +7,37 @@ import { resolveEffectivePeerId } from "./shared/workspace-peer.mjs";
 /** Hand-maintained: this extension ships no manifest to read a version from. */
 export const EXTENSION_VERSION = "0.1.0";
 
+/**
+ * Agent-driven context windows. Every number is clamped on load: these bound
+ * a blocking tool call and the size of the frozen window header, so an absurd
+ * value in `config.json` must not be able to hang a reset or blow the header
+ * past the budget the model reads it under.
+ */
+export interface OVContextWindowConfig {
+  /** Total budget for one reset: sync, barrier, commit and archive wait. */
+  resetDeadlineMs: number;
+  /** Delay between `.overview.md` polls while Phase 2 runs. */
+  archivePollMs: number;
+  /** Non-blocking retries at `turn_end` when a window opened without its overview. */
+  overviewRefreshMaxAttempts: number;
+  /** Token budget for the Working Memory block in the window header. */
+  overviewBudget: number;
+  /** Token budget for the agent's handoff notes in the window header. */
+  notesBudget: number;
+  /** Token budget for the last user message carried into the new window. */
+  pendingRequestBudget: number;
+  /** Context usage that earns one soft "checkpoint soon" reminder. */
+  softPercent: number;
+  /** Context usage that earns one hard "reset now" reminder; never below `softPercent`. */
+  hardPercent: number;
+  /** Idle gap after which the status line suggests considering a new window. */
+  idleGapMinutes: number;
+  /** Append a one-line context status after every user prompt. */
+  statusEveryTurn: boolean;
+  /** Per-item cap for `history` reads out of an archived `messages.jsonl`. */
+  historyItemMaxChars: number;
+}
+
 export interface OVConfig {
   enabled: boolean;
   endpoint: string;
@@ -38,13 +69,13 @@ export interface OVConfig {
    */
   faithfulCapture: true;
   captureToolResults: boolean;
-  captureMode: "semantic" | "keyword";
   captureMaxLength: number;
   captureToolMaxChars: number;
   captureAssistantTurns: boolean;
   bypassPatterns: string[];
   logLevel: "silent" | "error" | "info";
   debugLogPath: string;
+  contextWindow: OVContextWindowConfig;
 }
 
 const DEFAULT_CONFIG: OVConfig = {
@@ -78,13 +109,25 @@ const DEFAULT_CONFIG: OVConfig = {
   // The `history` tool promises the archive can be read back, so tool output
   // has to reach OpenViking — unlike the non-experimental extension.
   captureToolResults: true,
-  captureMode: "semantic",
   captureMaxLength: 24000,
   captureToolMaxChars: 1000000,
   captureAssistantTurns: true,
   bypassPatterns: [],
   logLevel: "error",
   debugLogPath: "",
+  contextWindow: {
+    resetDeadlineMs: 60000,
+    archivePollMs: 2000,
+    overviewRefreshMaxAttempts: 20,
+    overviewBudget: 3000,
+    notesBudget: 1500,
+    pendingRequestBudget: 400,
+    softPercent: 70,
+    hardPercent: 85,
+    idleGapMinutes: 30,
+    statusEveryTurn: true,
+    historyItemMaxChars: 8000,
+  },
 };
 
 export function loadConfigFromModuleUrl(moduleUrl: string): OVConfig {
@@ -101,6 +144,10 @@ export function loadConfig(extensionDir: string): OVConfig {
   }
 
   const creds = resolveOpenVikingCredentials();
+  // Nested block: keys are picked one by one, so an unknown key in
+  // `contextWindow` is ignored instead of landing in the config.
+  const cw = file.contextWindow && typeof file.contextWindow === "object" ? file.contextWindow : {};
+  const cwDefaults = DEFAULT_CONFIG.contextWindow;
   const config: OVConfig = {
     ...DEFAULT_CONFIG,
     ...file,
@@ -118,6 +165,19 @@ export function loadConfig(extensionDir: string): OVConfig {
     minQueryLength: file.minQueryLength ?? file.recallMinQueryLength ?? DEFAULT_CONFIG.minQueryLength,
     profileTokenBudget: file.profileTokenBudget ?? file.profileBudget ?? DEFAULT_CONFIG.profileTokenBudget,
     faithfulCapture: true,
+    contextWindow: {
+      resetDeadlineMs: cw.resetDeadlineMs ?? cwDefaults.resetDeadlineMs,
+      archivePollMs: cw.archivePollMs ?? cwDefaults.archivePollMs,
+      overviewRefreshMaxAttempts: cw.overviewRefreshMaxAttempts ?? cwDefaults.overviewRefreshMaxAttempts,
+      overviewBudget: cw.overviewBudget ?? cwDefaults.overviewBudget,
+      notesBudget: cw.notesBudget ?? cwDefaults.notesBudget,
+      pendingRequestBudget: cw.pendingRequestBudget ?? cwDefaults.pendingRequestBudget,
+      softPercent: cw.softPercent ?? cwDefaults.softPercent,
+      hardPercent: cw.hardPercent ?? cwDefaults.hardPercent,
+      idleGapMinutes: cw.idleGapMinutes ?? cwDefaults.idleGapMinutes,
+      statusEveryTurn: cw.statusEveryTurn ?? cwDefaults.statusEveryTurn,
+      historyItemMaxChars: cw.historyItemMaxChars ?? cwDefaults.historyItemMaxChars,
+    },
   };
 
   if (process.env.OPENVIKING_URL || process.env.OPENVIKING_BASE_URL) config.endpoint = creds.baseUrl;
@@ -143,6 +203,15 @@ export function loadConfig(extensionDir: string): OVConfig {
   // name, kept working so existing setups still log.
   const debugLogEnv = process.env.OPENVIKING_DEBUG_LOG || process.env.OV_DEBUG_LOG;
   if (debugLogEnv) config.debugLogPath = debugLogEnv;
+  if (process.env.OPENVIKING_CONTEXT_STATUS_EVERY_TURN !== undefined) {
+    config.contextWindow.statusEveryTurn = envBool(
+      process.env.OPENVIKING_CONTEXT_STATUS_EVERY_TURN,
+      config.contextWindow.statusEveryTurn,
+    );
+  }
+  if (process.env.OPENVIKING_CONTEXT_RESET_DEADLINE_MS) {
+    config.contextWindow.resetDeadlineMs = Number(process.env.OPENVIKING_CONTEXT_RESET_DEADLINE_MS);
+  }
 
   config.recallLimit = clampInt(config.recallLimit, 1, 50, DEFAULT_CONFIG.recallLimit);
   config.recallMaxContentChars = clampInt(config.recallMaxContentChars, 100, 5000, DEFAULT_CONFIG.recallMaxContentChars);
@@ -156,7 +225,21 @@ export function loadConfig(extensionDir: string): OVConfig {
   config.captureToolResults = config.captureToolResults !== false;
   config.captureMaxLength = clampInt(config.captureMaxLength, 200, 100000, DEFAULT_CONFIG.captureMaxLength);
   config.captureToolMaxChars = clampInt(config.captureToolMaxChars, 200, 1000000, DEFAULT_CONFIG.captureToolMaxChars);
-  config.captureMode = config.captureMode === "keyword" ? "keyword" : "semantic";
+  const window = config.contextWindow;
+  window.resetDeadlineMs = clampInt(window.resetDeadlineMs, 5000, 600000, cwDefaults.resetDeadlineMs);
+  window.archivePollMs = clampInt(window.archivePollMs, 250, 30000, cwDefaults.archivePollMs);
+  window.overviewRefreshMaxAttempts = clampInt(window.overviewRefreshMaxAttempts, 0, 200, cwDefaults.overviewRefreshMaxAttempts);
+  window.overviewBudget = clampInt(window.overviewBudget, 100, 50000, cwDefaults.overviewBudget);
+  window.notesBudget = clampInt(window.notesBudget, 100, 20000, cwDefaults.notesBudget);
+  window.pendingRequestBudget = clampInt(window.pendingRequestBudget, 0, 8000, cwDefaults.pendingRequestBudget);
+  window.softPercent = clampInt(window.softPercent, 10, 99, cwDefaults.softPercent);
+  window.hardPercent = clampInt(window.hardPercent, 10, 99, cwDefaults.hardPercent);
+  // The hard reminder is the last one before the harness compacts on its own,
+  // so it can never fire before the soft one.
+  if (window.hardPercent < window.softPercent) window.hardPercent = window.softPercent;
+  window.idleGapMinutes = clampInt(window.idleGapMinutes, 0, 1440, cwDefaults.idleGapMinutes);
+  window.historyItemMaxChars = clampInt(window.historyItemMaxChars, 500, 100000, cwDefaults.historyItemMaxChars);
+  window.statusEveryTurn = envBool(String(window.statusEveryTurn), cwDefaults.statusEveryTurn);
   config.recallPeerScope = config.recallPeerScope === "actor" ? "actor" : "all";
   config.recallQueryExpansion = config.recallQueryExpansion === "off" ? "off" : "auto";
   if (!Array.isArray(config.bypassPatterns)) config.bypassPatterns = [];
