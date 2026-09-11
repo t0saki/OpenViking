@@ -133,7 +133,7 @@ the server does not serve, and `history` replaces it.
 | `lib/capture-adapter.mjs` | Branch entries → OpenViking message payloads |
 | `lib/uri-guard-adapter.mjs` | Blocks builtin file tools on `viking://` URIs |
 | `lib/pi-settings.mjs` | Reads pi's `compaction.reserveTokens` |
-| `shared/` | Generated from `examples/memory-plugin-shared/lib` — do not edit |
+| `shared/` | Copied from `examples/memory-plugin-shared/lib` — do not edit (see "Not wired into the repo" below) |
 | `scripts/` | The manual e2e gate (`e2e-window.mjs` with the `e2e-window.sh` wrapper), the `e2e-probe.ts` payload recorder and the setup wizard |
 | `demo-evidence/` | A redacted snapshot of two real runs: transcripts, provider payloads either side of each reset, and the OpenViking archives pulled back off the server |
 
@@ -143,9 +143,27 @@ the server does not serve, and `history` replaces it.
 node --test examples/pi-experimental-context-management/tests/*.test.mjs
 ```
 
-Run by CI on every PR that touches this directory. The end-to-end gate is
-manual and needs live credentials — see
+These are not in the CI glob yet (see below), so run them locally. The
+end-to-end gate is manual and needs live credentials — see
 [CONTEXT-WINDOW.md §13](./CONTEXT-WINDOW.md#13-end-to-end-gate).
+
+## Not wired into the repo
+
+This directory is deliberately self-contained: nothing outside it changes. Two
+repo-level hooks are therefore missing, and a maintainer who wants to promote
+this out of experimental status has to add them:
+
+- **CI does not run these tests.** Add
+  `examples/pi-experimental-context-management/tests/*.test.mjs` to the
+  `plugin-tests` glob list in `.github/workflows/pr.yml`.
+- **`shared/` is not refreshed by the sync script.** Add a `TARGETS` entry for
+  `examples/pi-experimental-context-management/shared` (with `PI_SHARED_FILES`)
+  in `examples/memory-plugin-shared/sync.mjs`. Until then the copies here are
+  frozen at the commit that added them and will drift as the shared modules
+  change.
+
+The root `.gitignore` ignores every `lib/` directory, so this extension carries
+its own `.gitignore` with `!lib/` instead of adding another exception there.
 
 ## Links
 
@@ -154,3 +172,4 @@ manual and needs live credentials — see
   stable extension this forks
 - [docs/en/agent-integrations/11-pi.md](../../docs/en/agent-integrations/11-pi.md)
   · [docs/zh/agent-integrations/11-pi.md](../../docs/zh/agent-integrations/11-pi.md)
+  — the pi integration docs for the stable extension; they do not cover this one
