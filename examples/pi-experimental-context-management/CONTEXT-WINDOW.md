@@ -714,9 +714,10 @@ is a manual gate, not part of CI.
 | `E2E_WINDOW_LONG_SOFT_PERCENT` | no | Where the soft reminder fires in the long run; default `45` |
 | `E2E_WINDOW_LONG_TURN_TIMEOUT_MS` | no | Per-turn timeout for the long run; default 25 minutes |
 
-A passing long run, recorded on 2026-09-11: 96 provider requests, a peak of 47%
-of a 128k window, three resets the agent chose itself, and 22 of 22 files
-inventoried across four windows. The transcripts are in
+A passing long run, recorded on 2026-09-11 against Volcengine's Doubao 2.1 Pro
+(`doubao-seed-2-1-pro-260628`) on Ark with `reasoning_effort: high`: 96 provider
+requests, a peak of 47% of a 128k window, three resets the agent chose itself,
+and 22 of 22 files inventoried across four windows. The transcripts are in
 [`demo-evidence/`](demo-evidence/README.md).
 
 **Never write an API key into a file.** Pass both keys through the environment

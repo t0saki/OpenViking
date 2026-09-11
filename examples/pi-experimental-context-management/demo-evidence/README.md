@@ -1,10 +1,10 @@
 # Demo evidence
 
 `pi-ctxwin-demo.zip` is a redacted snapshot of the sandbox this extension was
-demonstrated in, captured on 2026-09-11 against a live OpenViking server and a
-live model (an OpenAI-compatible relay, `reasoning_effort: high`). It is here as
-evidence for the numbers quoted in the docs: unpack it and read the transcripts
-rather than taking them on trust.
+demonstrated in, captured on 2026-09-11 against a live OpenViking server and
+Volcengine's Doubao 2.1 Pro (`doubao-seed-2-1-pro-260628`) on Ark, with
+`reasoning_effort: high`. It is here as evidence for the numbers quoted in the
+docs: unpack it and read the transcripts rather than taking them on trust.
 
     unzip pi-ctxwin-demo.zip && cd pi-ctxwin-demo && $EDITOR README.md
 
@@ -30,5 +30,6 @@ payloads either side of each reset, and the archives pulled back off the server
 (Working Memory, raw messages, a grep result).
 
 Reproduce either run with `scripts/e2e-window.sh`; see the extension README.
-`REDACTIONS.md` inside the archive lists exactly what was scrubbed: the secrets
-file is absent, the relay hostname and the operator's username are replaced.
+`REDACTIONS.md` inside the archive lists exactly what changed: the secrets file
+is absent, the operator's username is replaced, and the private proxy the runs
+went through is named as the official Ark endpoint it forwards to.
