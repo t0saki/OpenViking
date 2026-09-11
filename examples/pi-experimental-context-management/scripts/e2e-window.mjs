@@ -25,7 +25,15 @@
  *   E2E_LLM_BASE_URL         default https://llm-relay.example.com/v1
  *   E2E_LLM_MODEL            default doubao-seed-2-0-code-preview-260215
  *   E2E_LLM_API              pi provider api type; default openai-completions
+ *   E2E_LLM_REASONING        thinking level for the model: off (default),
+ *                            minimal, low, medium, high or xhigh. Anything but
+ *                            off marks the model as reasoning-capable and sets
+ *                            pi's defaultThinkingLevel, so an OpenAI-compatible
+ *                            relay receives reasoning_effort.
  *   E2E_KEEP_TMP=1           keep the temp workspaces even on success
+ *   E2E_KEEP_OV_SESSION=1    do not delete the OpenViking sessions afterwards,
+ *                            so the archives stay readable on the server (for
+ *                            demos; the sessions are yours to clean up)
  *   E2E_WINDOW_FAILCLOSED=1  run ONLY the fail-closed variant: OPENVIKING_URL
  *                            is pointed at a closed port and the gate asserts
  *                            that nothing was cut. `=both` runs both scenarios.
@@ -65,6 +73,9 @@ const LLM_KEY = process.env.E2E_LLM_API_KEY;
 const LLM_BASE = process.env.E2E_LLM_BASE_URL ?? "https://llm-relay.example.com/v1";
 const LLM_MODEL = process.env.E2E_LLM_MODEL ?? "doubao-seed-2-0-code-preview-260215";
 const LLM_API = process.env.E2E_LLM_API ?? "openai-completions";
+const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"];
+const LLM_REASONING = (process.env.E2E_LLM_REASONING ?? "off").trim() || "off";
+const KEEP_OV_SESSION = (process.env.E2E_KEEP_OV_SESSION ?? "") === "1";
 const FAILCLOSED_MODE = (process.env.E2E_WINDOW_FAILCLOSED ?? "").trim();
 const RUN_FAILCLOSED = FAILCLOSED_MODE === "1" || FAILCLOSED_MODE === "both";
 const RUN_MAIN = FAILCLOSED_MODE !== "1";
@@ -76,6 +87,9 @@ const PROVIDER_ID = "e2e-relay";
 const RESET_TOOL = "new_context";
 const CODENAME = "ZEPHYR-9942";
 const DEPLOY_WINDOW = "Friday 03:00 UTC";
+const RELEASE_FILE = "release.md";
+/** Only present in release.md, so answering with it proves the file was read. */
+const RELEASE_OWNER = "dana-okonkwo";
 const RESET_REASON = "phase one complete, starting phase two";
 /** The part of the reason we require verbatim in the archive and the entry. */
 const REASON_MARKER = "phase one complete";
@@ -107,6 +121,12 @@ for (const [key, value] of [
 }
 if (!existsSync(PI_BIN)) {
   console.error(`e2e-window: pi binary not found: ${PI_BIN}`);
+  process.exit(2);
+}
+if (!THINKING_LEVELS.includes(LLM_REASONING)) {
+  console.error(
+    `e2e-window: E2E_LLM_REASONING must be one of ${THINKING_LEVELS.join(", ")}, got "${LLM_REASONING}"`,
+  );
   process.exit(2);
 }
 if (FAILCLOSED_MODE && !["1", "both"].includes(FAILCLOSED_MODE)) {
@@ -175,7 +195,12 @@ function makeWorkspace(label) {
               {
                 id: LLM_MODEL,
                 name: "OpenViking e2e model",
-                reasoning: false,
+                reasoning: LLM_REASONING !== "off",
+                // A custom relay is not recognised by pi-ai's URL-based
+                // auto-detection, so reasoning_effort has to be enabled here.
+                ...(LLM_REASONING !== "off" && LLM_API === "openai-completions"
+                  ? { compat: { supportsReasoningEffort: true, thinkingFormat: "openai" } }
+                  : {}),
                 input: ["text"],
                 cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
                 contextWindow: 128000,
@@ -191,7 +216,14 @@ function makeWorkspace(label) {
   );
   writeFileSync(
     join(ws.agentDir, "settings.json"),
-    JSON.stringify({ defaultProjectTrust: "always" }, null, 2),
+    JSON.stringify(
+      {
+        defaultProjectTrust: "always",
+        ...(LLM_REASONING !== "off" ? { defaultThinkingLevel: LLM_REASONING } : {}),
+      },
+      null,
+      2,
+    ),
   );
 
   // The extension itself: sources plus lib/shared/scripts, with a config that
@@ -226,6 +258,22 @@ function makeWorkspace(label) {
       null,
       2,
     ),
+  );
+
+  // A file for T1 to read: the gate asserts that tool OUTPUT reaches the
+  // archive, so the first turn must produce a tool result rather than relying
+  // on the model deciding to use a tool on its own.
+  writeFileSync(
+    join(ws.projDir, RELEASE_FILE),
+    [
+      "# Release checklist",
+      "",
+      `- codename: ${CODENAME}`,
+      `- deploy window: ${DEPLOY_WINDOW}`,
+      `- owner: ${RELEASE_OWNER}`,
+      "- status: phase one in progress",
+      "",
+    ].join("\n"),
   );
 
   console.log(`e2e-window: [${label}] workspace ${root}`);
@@ -502,8 +550,9 @@ function readSessionEntries(ws) {
 // ============================================================================
 
 const T1_PROMPT =
-  `Remember two facts for the rest of this session: the release codename is ${CODENAME}, ` +
-  `and the deploy window is ${DEPLOY_WINDOW}. Acknowledge in one short sentence. ${PAD1}`;
+  `Read the file ${RELEASE_FILE} in the working directory with the read tool, then tell me who owns ` +
+  `the release. Also remember for the rest of this session: the release codename is ${CODENAME}, ` +
+  `and the deploy window is ${DEPLOY_WINDOW}. Keep the answer to one short sentence. ${PAD1}`;
 
 const T2_PROMPT =
   "Phase one is complete. Do exactly this, nothing else. " +
@@ -683,7 +732,7 @@ async function runMainScenario() {
       check(messages.status === 200 && messages.text.length > 0, `${archive.archiveId}/messages.jsonl is readable`);
       check(messages.text.includes(HANDOFF_MARKER), `messages.jsonl contains "${HANDOFF_MARKER}"`);
       check(messages.text.includes(REASON_MARKER), `messages.jsonl contains the reason "${REASON_MARKER}"`);
-      check(messages.text.includes("[tool-result"), 'messages.jsonl contains a "[tool-result" entry');
+      check(messages.text.includes("[tool-result"), 'messages.jsonl contains a "[tool-result" entry (tool output reached the archive)');
 
       const grep = await ovFetch("/api/v1/search/grep", {
         method: "POST",
@@ -697,10 +746,17 @@ async function runMainScenario() {
       check(matches.length >= 1, `grep "ZEPHYR" over <root>/history has >=1 match (got ${matches.length})`);
     }
 
-    const del = await ovFetch(`/api/v1/sessions/${encodeURIComponent(ovSessionId)}`, { method: "DELETE" });
-    console.log(
-      `e2e-window: cleanup OV session ${ovSessionId}: ${del.ok ? "deleted" : "FAILED; delete it manually"}`,
-    );
+    if (KEEP_OV_SESSION) {
+      console.log(
+        `e2e-window: keeping OV session ${ovSessionId} (E2E_KEEP_OV_SESSION=1); ` +
+          `archives stay under <session root>/history — delete it yourself when done`,
+      );
+    } else {
+      const del = await ovFetch(`/api/v1/sessions/${encodeURIComponent(ovSessionId)}`, { method: "DELETE" });
+      console.log(
+        `e2e-window: cleanup OV session ${ovSessionId}: ${del.ok ? "deleted" : "FAILED; delete it manually"}`,
+      );
+    }
   }
 
   return ws;
