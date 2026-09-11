@@ -701,12 +701,23 @@ is a manual gate, not part of CI.
 | `OPENVIKING_URL` | yes | OpenViking server base URL |
 | `OPENVIKING_API_KEY` | yes | OpenViking API key |
 | `E2E_LLM_API_KEY` | yes | API key of the OpenAI-compatible LLM endpoint |
-| `E2E_LLM_BASE_URL` | no | LLM base URL |
-| `E2E_LLM_MODEL` | no | Model id |
+| `E2E_LLM_BASE_URL` | yes | LLM base URL. No default: a private relay must not end up hardcoded in the repo |
+| `E2E_LLM_MODEL` | yes | Model id served by that endpoint |
 | `E2E_LLM_API` | no | pi provider api type, e.g. `openai-completions` |
+| `E2E_LLM_REASONING` | no | `off` (default), `minimal`, `low`, `medium`, `high`, `xhigh`. Anything but `off` marks the model as reasoning-capable, sets pi's `defaultThinkingLevel` and, for a custom relay, turns on `compat.supportsReasoningEffort` so the request carries `reasoning_effort` |
 | `PI_BIN` | no | Path to the pi binary; defaults to `which pi` |
 | `E2E_KEEP_TMP` | no | `1` keeps the temporary workspace on success |
+| `E2E_KEEP_OV_SESSION` | no | `1` leaves the OpenViking sessions in place so the archives stay readable afterwards; you clean them up |
 | `E2E_WINDOW_FAILCLOSED` | no | `1` runs only the fail-closed scenario, `both` runs it after the main one. The script points pi at a dead port itself; `OPENVIKING_URL` / `OPENVIKING_API_KEY` stay required because the gate also checks the OpenViking side |
+| `E2E_WINDOW_LONG` | no | `1` runs only the long-context scenario, `both` adds it. The workspace is seeded with this extension's own sources — 22 files, around 105k tokens of material — and the agent is asked to inventory them one file at a time. The prompt never mentions the context tools: the point is whether the agent reaches for them once the window fills. Slow (25-40 minutes) and dependent on model judgement, so the judgement checks warn while harness behaviour still fails the gate |
+| `E2E_WINDOW_LONG_MIN_PERCENT` | no | Share of the window the long run should reach before resetting; default `40`. Measured from the provider payloads, because the per-prompt `[context-status]` line undersamples a tool-heavy turn |
+| `E2E_WINDOW_LONG_SOFT_PERCENT` | no | Where the soft reminder fires in the long run; default `45` |
+| `E2E_WINDOW_LONG_TURN_TIMEOUT_MS` | no | Per-turn timeout for the long run; default 25 minutes |
+
+A passing long run, recorded on 2026-09-11: 96 provider requests, a peak of 47%
+of a 128k window, three resets the agent chose itself, and 22 of 22 files
+inventoried across four windows. The transcripts are in
+[`demo-evidence/`](demo-evidence/README.md).
 
 **Never write an API key into a file.** Pass both keys through the environment
 of the run only:

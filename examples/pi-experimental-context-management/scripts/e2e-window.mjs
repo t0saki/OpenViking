@@ -22,8 +22,10 @@
  *
  * Optional env:
  *   PI_BIN                   path to the pi binary; defaults to `which pi`
- *   E2E_LLM_BASE_URL         default https://llm-relay.example.com/v1
- *   E2E_LLM_MODEL            default doubao-seed-2-0-code-preview-260215
+ *   E2E_LLM_BASE_URL         base URL of an OpenAI- or Anthropic-compatible
+ *                            endpoint; required, no default, so a private relay
+ *                            never ends up hardcoded here
+ *   E2E_LLM_MODEL            model id served by that endpoint; required
  *   E2E_LLM_API              pi provider api type; default openai-completions
  *   E2E_LLM_REASONING        thinking level for the model: off (default),
  *                            minimal, low, medium, high or xhigh. Anything but
@@ -78,8 +80,8 @@ const EXT_SRC = dirname(dirname(fileURLToPath(import.meta.url)));
 const OV_URL = process.env.OPENVIKING_URL;
 const OV_KEY = process.env.OPENVIKING_API_KEY;
 const LLM_KEY = process.env.E2E_LLM_API_KEY;
-const LLM_BASE = process.env.E2E_LLM_BASE_URL ?? "https://llm-relay.example.com/v1";
-const LLM_MODEL = process.env.E2E_LLM_MODEL ?? "doubao-seed-2-0-code-preview-260215";
+const LLM_BASE = process.env.E2E_LLM_BASE_URL;
+const LLM_MODEL = process.env.E2E_LLM_MODEL;
 const LLM_API = process.env.E2E_LLM_API ?? "openai-completions";
 const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"];
 const LLM_REASONING = (process.env.E2E_LLM_REASONING ?? "off").trim() || "off";
@@ -128,6 +130,8 @@ for (const [key, value] of [
   ["OPENVIKING_URL", OV_URL],
   ["OPENVIKING_API_KEY", OV_KEY],
   ["E2E_LLM_API_KEY", LLM_KEY],
+  ["E2E_LLM_BASE_URL", LLM_BASE],
+  ["E2E_LLM_MODEL", LLM_MODEL],
   ["PI_BIN or pi on PATH", PI_BIN],
 ]) {
   if (!value) {

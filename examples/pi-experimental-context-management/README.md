@@ -135,6 +135,7 @@ the server does not serve, and `history` replaces it.
 | `lib/pi-settings.mjs` | Reads pi's `compaction.reserveTokens` |
 | `shared/` | Generated from `examples/memory-plugin-shared/lib` — do not edit |
 | `scripts/` | The manual e2e gate (`e2e-window.mjs` with the `e2e-window.sh` wrapper), the `e2e-probe.ts` payload recorder and the setup wizard |
+| `demo-evidence/` | A redacted snapshot of two real runs: transcripts, provider payloads either side of each reset, and the OpenViking archives pulled back off the server |
 
 ## Tests
 
