@@ -34,6 +34,13 @@
  *   E2E_KEEP_OV_SESSION=1    do not delete the OpenViking sessions afterwards,
  *                            so the archives stay readable on the server (for
  *                            demos; the sessions are yours to clean up)
+ *   E2E_WINDOW_LONG=1        run ONLY the long-context scenario: the agent
+ *                            inventories a real code tree until context
+ *                            pressure makes it reset on its own, with no
+ *                            instruction to call the tool. `=both` adds it to
+ *                            the other scenarios. Slow (10-20 min) and it
+ *                            depends on model judgement, so the judgement
+ *                            checks warn rather than fail.
  *   E2E_WINDOW_FAILCLOSED=1  run ONLY the fail-closed variant: OPENVIKING_URL
  *                            is pointed at a closed port and the gate asserts
  *                            that nothing was cut. `=both` runs both scenarios.
@@ -49,6 +56,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  statSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -77,8 +85,16 @@ const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"];
 const LLM_REASONING = (process.env.E2E_LLM_REASONING ?? "off").trim() || "off";
 const KEEP_OV_SESSION = (process.env.E2E_KEEP_OV_SESSION ?? "") === "1";
 const FAILCLOSED_MODE = (process.env.E2E_WINDOW_FAILCLOSED ?? "").trim();
+const LONG_MODE = (process.env.E2E_WINDOW_LONG ?? "").trim();
 const RUN_FAILCLOSED = FAILCLOSED_MODE === "1" || FAILCLOSED_MODE === "both";
-const RUN_MAIN = FAILCLOSED_MODE !== "1";
+const RUN_LONG = LONG_MODE === "1" || LONG_MODE === "both";
+const RUN_MAIN = FAILCLOSED_MODE !== "1" && LONG_MODE !== "1";
+/** Context share the long scenario must reach before the agent resets. */
+const LONG_MIN_PERCENT = Number(process.env.E2E_WINDOW_LONG_MIN_PERCENT ?? 40);
+/** Where the soft reminder fires: high enough that the run is a real workload. */
+const LONG_SOFT_PERCENT = Number(process.env.E2E_WINDOW_LONG_SOFT_PERCENT ?? 45);
+/** What models.json tells pi the window is; used to turn payload size into a share. */
+const LONG_CONTEXT_WINDOW = 128000;
 
 /** A port nothing listens on: the fail-closed variant's "OpenViking is down". */
 const DEAD_OV_URL = "http://127.0.0.1:9";
@@ -129,6 +145,10 @@ if (!THINKING_LEVELS.includes(LLM_REASONING)) {
   );
   process.exit(2);
 }
+if (LONG_MODE && !["1", "both"].includes(LONG_MODE)) {
+  console.error(`e2e-window: E2E_WINDOW_LONG must be "1" or "both", got "${LONG_MODE}"`);
+  process.exit(2);
+}
 if (FAILCLOSED_MODE && !["1", "both"].includes(FAILCLOSED_MODE)) {
   console.error(`e2e-window: E2E_WINDOW_FAILCLOSED must be "1" or "both", got "${FAILCLOSED_MODE}"`);
   process.exit(2);
@@ -161,7 +181,7 @@ const section = (title) => console.log(`\ne2e-window: --- ${title} ---`);
  * its own copy of the extension, its own session dir and project cwd. Nothing
  * touches the user's ~/.pi.
  */
-function makeWorkspace(label) {
+function makeWorkspace(label, { windowConfig = {}, seedSourceTree = false } = {}) {
   const root = mkdtempSync(join(tmpdir(), `ov-pi-window-${label}-`));
   const ws = {
     label,
@@ -253,12 +273,52 @@ function makeWorkspace(label) {
           softPercent: 60,
           hardPercent: 75,
           statusEveryTurn: true,
+          ...windowConfig,
         },
       },
       null,
       2,
     ),
   );
+
+  // The long scenario needs enough real material that reading it through does
+  // not fit in one window. The extension's own sources are the closest thing to
+  // hand: about 60k tokens of TypeScript and ESM, already in the repo.
+  if (seedSourceTree) {
+    const srcDir = join(ws.projDir, "src");
+    mkdirSync(srcDir, { recursive: true });
+    let bytes = 0;
+    for (const name of readdirSync(EXT_SRC)) {
+      const from = join(EXT_SRC, name);
+      if (name.endsWith(".ts")) {
+        copyFileSync(from, join(srcDir, name));
+        bytes += statSync(from).size;
+      } else if (name === "lib" || name === "tests") {
+        for (const child of readdirSync(from)) {
+          if (!child.endsWith(".mjs")) continue;
+          copyFileSync(join(from, child), join(srcDir, child));
+          bytes += statSync(join(from, child)).size;
+        }
+      }
+    }
+    const files = readdirSync(srcDir).sort();
+    writeFileSync(
+      join(ws.projDir, "TASK.md"),
+      [
+        "# Source inventory task",
+        "",
+        `There are ${files.length} files under src/ (~${Math.round(bytes / 1024)} KB).`,
+        "Work through them in alphabetical order:",
+        "",
+        ...files.map((f) => `- [ ] src/${f}`),
+        "",
+      ].join("\n"),
+    );
+    console.log(
+      `e2e-window: [${label}] seeded ${files.length} source files, ` +
+        `${Math.round(bytes / 1024)} KB (~${Math.round(bytes / 4000)}k tokens if fully read)`,
+    );
+  }
 
   // A file for T1 to read: the gate asserts that tool OUTPUT reaches the
   // archive, so the first turn must produce a tool result rather than relying
@@ -281,7 +341,7 @@ function makeWorkspace(label) {
 }
 
 /** Run one pi turn in a workspace and capture stdout/stderr. */
-function runTurn(ws, turn, prompt, { continueSession = false, ovUrl = OV_URL } = {}) {
+function runTurn(ws, turn, prompt, { continueSession = false, ovUrl = OV_URL, timeoutMs = 600_000 } = {}) {
   console.log(`\ne2e-window: [${ws.label}] --- turn ${turn} ---`);
   const args = [
     "--provider", PROVIDER_ID,
@@ -312,7 +372,7 @@ function runTurn(ws, turn, prompt, { continueSession = false, ovUrl = OV_URL } =
       OV_E2E_TURN: String(turn),
       OPENVIKING_DEBUG_LOG: join(ws.outDir, "ov-pi.log"),
     },
-    timeout: 600_000,
+    timeout: timeoutMs,
     encoding: "utf8",
   });
   const out = `${res.stdout ?? ""}`;
@@ -564,6 +624,27 @@ const T2_PROMPT =
 
 const T3_PROMPT = "What is the release codename I gave you earlier? Answer with just the codename.";
 
+/**
+ * The long scenario never mentions the context tools: the point is that the
+ * agent reaches for them on its own once the window fills up. The work is
+ * deliberately bigger than one window, and the running file means progress is
+ * visible even across a reset.
+ */
+const LONG_T1_PROMPT =
+  "Read TASK.md, then work through every file it lists, in order. For each file: read it with the " +
+  "read tool, and append one entry to INVENTORY.md with the file name, what it is responsible for, " +
+  "its main exports, and anything that looks risky. Tick the file off in TASK.md as you go. " +
+  "Append after each file rather than holding everything until the end, and keep going until every " +
+  "file is covered. Do not summarise the files you have not read yet.";
+
+const LONG_T2_PROMPT =
+  "Continue the inventory exactly where you left off: read TASK.md and INVENTORY.md first to see " +
+  "what is already done, then carry on until every file is ticked off.";
+
+const LONG_T3_PROMPT =
+  "In the very first file you inventoried, what did you write down as its main responsibility, and " +
+  "what was the first thing that file imports? Answer in two short lines.";
+
 // ============================================================================
 // Scenario: the main gate
 // ============================================================================
@@ -766,6 +847,239 @@ async function runMainScenario() {
 // Scenario: fail-closed
 // ============================================================================
 
+/**
+ * Highest context share the extension's own status line reported, and the
+ * biggest provider request seen. Both are evidence that the window really did
+ * fill up before the agent reset it.
+ */
+function contextPressureSeen(ws, entries) {
+  let peakPercent = 0;
+  let peakTokens = "";
+  for (const entry of entries) {
+    if (entry?.customType !== STATUS_CUSTOM_TYPE) continue;
+    const text = typeof entry.content === "string" ? entry.content : "";
+    const match = text.match(/~([\d.]+k?)\/(\S+)\s+tokens\s+\((\d+)%\)/);
+    if (!match) continue;
+    const percent = Number(match[3]);
+    if (percent > peakPercent) {
+      peakPercent = percent;
+      peakTokens = `${match[1]}/${match[2]}`;
+    }
+  }
+  let peakBytes = 0;
+  let peakPayload = "";
+  for (const turn of [1, 2, 3]) {
+    for (const entry of payloadsFor(ws, turn)) {
+      const bytes = messagesOf(entry).reduce((sum, m) => sum + JSON.stringify(m).length, 0);
+      if (bytes > peakBytes) {
+        peakBytes = bytes;
+        peakPayload = entry.file;
+      }
+    }
+  }
+  // chars/4 is the same estimate the extension itself uses for non-CJK text.
+  const peakEstimatedTokens = Math.round(peakBytes / 4);
+  const peakEstimatedPercent = Math.round((peakEstimatedTokens / LONG_CONTEXT_WINDOW) * 100);
+  return {
+    peakPercent,
+    peakTokens,
+    peakBytes,
+    peakPayload,
+    peakEstimatedTokens,
+    peakEstimatedPercent,
+  };
+}
+
+/**
+ * The OpenViking side of a scenario that does not control when the reset
+ * happens: assert the archive exists and carries the handoff, without assuming
+ * a particular reason string.
+ */
+async function checkOpenVikingSide(ws, { requireHandoff }) {
+  section("long: OpenViking archive");
+  const sessionIdFile = join(ws.outDir, "session-id.txt");
+  if (!existsSync(sessionIdFile)) {
+    fail("probe did not record a pi session id");
+    return;
+  }
+  const ovSessionId = `pi-${readFileSync(sessionIdFile, "utf8").trim()}`;
+  const rootUri = await sessionRootUri(ovSessionId);
+  console.log(`e2e-window: OV session ${ovSessionId} root ${rootUri}`);
+
+  const archives = await listArchives(rootUri);
+  if (!requireHandoff && archives.length === 0) {
+    warn("no archive: the agent never reset, so nothing was committed");
+  } else {
+    check(archives.length >= 1, `session has >=1 archive under <root>/history (got ${archives.length})`);
+  }
+
+  if (archives.length > 0) {
+    const newest = archives[0];
+    const overview = await waitForOverview(newest.uri);
+    check(
+      overview.status === 200 && overview.text.trim().length > 0,
+      `${newest.archiveId}/.overview.md is readable, Working Memory generated ` +
+        `(status ${overview.status}, waited ${overview.waitedMs}ms)`,
+    );
+    const messages = await readArchiveFile(newest.uri, "messages.jsonl");
+    check(
+      messages.status === 200 && messages.text.length > 0,
+      `${newest.archiveId}/messages.jsonl is readable`,
+    );
+    if (messages.text) {
+      check(messages.text.includes(HANDOFF_MARKER), `messages.jsonl contains "${HANDOFF_MARKER}"`);
+      check(
+        messages.text.includes("[tool-result"),
+        'messages.jsonl contains a "[tool-result" entry (tool output reached the archive)',
+      );
+    }
+  }
+
+  if (KEEP_OV_SESSION) {
+    console.log(
+      `e2e-window: keeping OV session ${ovSessionId} (E2E_KEEP_OV_SESSION=1); ` +
+        "delete it yourself when done",
+    );
+  } else {
+    const del = await ovFetch(`/api/v1/sessions/${encodeURIComponent(ovSessionId)}`, { method: "DELETE" });
+    console.log(
+      `e2e-window: cleanup OV session ${ovSessionId}: ${del.ok ? "deleted" : "FAILED; delete it manually"}`,
+    );
+  }
+}
+
+// ============================================================================
+// Scenario: long context, the agent resets under pressure on its own
+// ============================================================================
+
+async function runLongScenario() {
+  const ws = makeWorkspace("long", {
+    seedSourceTree: true,
+    // Soft reminder well before pi's own compaction line, so the agent has room
+    // to finish the file it is on, write notes and reset deliberately.
+    windowConfig: { softPercent: LONG_SOFT_PERCENT, hardPercent: 70 },
+  });
+  // Reading 400 KB of source with reasoning on is slow: a turn that gets killed
+  // mid-inventory looks like a product failure in the transcript when it is
+  // only the harness giving up.
+  const turnTimeoutMs = Number(process.env.E2E_WINDOW_LONG_TURN_TIMEOUT_MS ?? 1_500_000);
+  const t1 = runTurn(ws, 1, LONG_T1_PROMPT, { timeoutMs: turnTimeoutMs });
+  const t2 = runTurn(ws, 2, LONG_T2_PROMPT, { continueSession: true, timeoutMs: turnTimeoutMs });
+  const t3 = runTurn(ws, 3, LONG_T3_PROMPT, { continueSession: true, timeoutMs: turnTimeoutMs });
+
+  section("long: pi runs");
+  check(
+    t1.status === 0 && t2.status === 0 && t3.status === 0,
+    `all three pi runs exited 0 (got ${t1.status}/${t2.status}/${t3.status})`,
+  );
+
+  const { file: sessionFile, entries } = readSessionEntries(ws);
+  check(Boolean(sessionFile), "session JSONL found");
+
+  section("long: context pressure");
+  const pressure = contextPressureSeen(ws, entries);
+  const { peakPercent, peakTokens, peakBytes, peakPayload, peakEstimatedTokens, peakEstimatedPercent } =
+    pressure;
+  console.log(
+    `e2e-window: biggest provider request ${peakPayload} ${Math.round(peakBytes / 1024)} KB ` +
+      `(~${Math.round(peakEstimatedTokens / 1000)}k tokens, ${peakEstimatedPercent}% of ` +
+      `${Math.round(LONG_CONTEXT_WINDOW / 1000)}k)`,
+  );
+  console.log(
+    `e2e-window: highest [context-status] line seen: ${peakPercent}% (${peakTokens || "none"}) — ` +
+      "that line is emitted once per user prompt, so it undersamples a long tool-heavy turn",
+  );
+  // The payload is what actually went to the model; the status line is a sample.
+  const reached = Math.max(peakPercent, peakEstimatedPercent);
+  if (reached >= LONG_MIN_PERCENT) {
+    pass(`context reached ${reached}% of the window (>= ${LONG_MIN_PERCENT}%)`);
+  } else {
+    warn(
+      `context only reached ${reached}% (< ${LONG_MIN_PERCENT}%): the model stopped reading ` +
+        "early, so this run does not exercise the pressure path",
+    );
+  }
+
+  section("long: the agent's own decision");
+  const resets = [];
+  for (const entry of entries) {
+    for (const msg of [entry?.message].filter(Boolean)) {
+      for (const block of asArray(msg.content)) {
+        if (block?.type === "toolCall" && block?.name === RESET_TOOL) {
+          resets.push(block.arguments ?? {});
+        }
+      }
+    }
+  }
+  const windowEntries = entries.filter((e) => e?.customType === WINDOW_ENTRY_TYPE);
+  const armed = windowEntries.filter((e) => e?.data?.anchorToolCallId);
+  if (resets.length === 0) {
+    warn("the agent never called new_context: nothing was instructed, so this is model judgement");
+  } else {
+    pass(`the agent called ${RESET_TOOL} ${resets.length}x without being told to`);
+    console.log(`e2e-window: reason: ${JSON.stringify(resets[0]?.reason ?? "")}`);
+    console.log(`e2e-window: notes:  ${JSON.stringify(String(resets[0]?.notes ?? "").slice(0, 300))}`);
+    check(
+      String(resets[0]?.notes ?? "").length > 40,
+      "the reset carried handoff notes of its own",
+    );
+    check(armed.length > 0, `a window was armed and persisted (${armed.length} entries)`);
+  }
+
+  section("long: the cut");
+  if (resets.length === 0) {
+    warn("no reset, so there is no cut to check");
+  } else {
+    const afterCut = [];
+    for (const turn of [1, 2, 3]) {
+      for (const entry of payloadsFor(ws, turn)) {
+        const first = firstNonSystem(messagesOf(entry));
+        if (first && messageText(first).startsWith(WINDOW_HEADER_OPEN)) afterCut.push(entry);
+      }
+    }
+    check(afterCut.length > 0, `at least one provider request starts with the window header (${afterCut.length})`);
+    for (const entry of afterCut.slice(0, 2)) {
+      assertNoOrphanToolResults(messagesOf(entry), `post-cut payload ${entry.file}`);
+    }
+    const post = afterCut[0];
+    if (post) {
+      const postBytes = messagesOf(post).reduce((sum, m) => sum + JSON.stringify(m).length, 0);
+      check(
+        postBytes * 2 < peakBytes,
+        `the reset more than halved the request (${Math.round(peakBytes / 1024)} KB -> ` +
+          `${Math.round(postBytes / 1024)} KB)`,
+      );
+      check(
+        !mentionsResetToolCall(messagesOf(post)),
+        "the reset tool call and its result are gone from the new window",
+      );
+    }
+  }
+
+  section("long: work continued across the boundary");
+  const inventory = join(ws.projDir, "INVENTORY.md");
+  const taskFile = join(ws.projDir, "TASK.md");
+  if (existsSync(inventory)) {
+    const body = readFileSync(inventory, "utf8");
+    const sourceFiles = readdirSync(join(ws.projDir, "src")).sort();
+    const covered = sourceFiles.filter((f) => body.includes(f));
+    console.log(`e2e-window: INVENTORY.md covers ${covered.length}/${sourceFiles.length} files`);
+    check(covered.length > 0, "the agent produced an inventory");
+    if (resets.length > 0 && covered.length <= 1) {
+      warn("only one file made it into the inventory: the run stopped too early to show continuity");
+    }
+    if (existsSync(taskFile)) {
+      const ticked = (readFileSync(taskFile, "utf8").match(/- \[x\]/gi) ?? []).length;
+      console.log(`e2e-window: TASK.md ticked off ${ticked} files`);
+    }
+  } else {
+    warn("no INVENTORY.md: the agent never started the task");
+  }
+
+  await checkOpenVikingSide(ws, { requireHandoff: resets.length > 0 });
+  return ws;
+}
+
 async function runFailClosedScenario() {
   const ws = makeWorkspace("failclosed");
   console.log(`e2e-window: [failclosed] OPENVIKING_URL=${DEAD_OV_URL}`);
@@ -806,6 +1120,7 @@ async function runFailClosedScenario() {
 const workspaces = [];
 try {
   if (RUN_MAIN) workspaces.push(await runMainScenario());
+  if (RUN_LONG) workspaces.push(await runLongScenario());
   if (RUN_FAILCLOSED) workspaces.push(await runFailClosedScenario());
 } catch (error) {
   fail(`unexpected error: ${error?.stack || error}`);
