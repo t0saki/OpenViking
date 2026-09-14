@@ -97,6 +97,9 @@ jobs:
         with:
           node-version: '24'
 
+      - name: Generate the shared runtime copies
+        run: node ../memory-plugin-shared/sync.mjs
+
       - name: Install plugin dependencies
         run: npm ci --ignore-scripts
 
