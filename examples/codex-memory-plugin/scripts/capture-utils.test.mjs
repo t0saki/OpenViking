@@ -409,6 +409,50 @@ test("falls back to command stdout and stderr when aggregated output is absent",
   });
 });
 
+test("uses the final legacy command lifecycle event", async (t) => {
+  for (const exitCode of [1, 130]) {
+    await t.test(`records exit ${exitCode} as an error`, () => {
+      const callId = `exec-backgrounded-${exitCode}`;
+      const turns = extractCaptureTurns(
+        [
+          {
+            type: "event_msg",
+            payload: {
+              type: "exec_command_end",
+              call_id: callId,
+              command: ["long-running-command"],
+              aggregated_output: "",
+              exit_code: 0,
+              status: "backgrounded",
+            },
+          },
+          {
+            type: "event_msg",
+            payload: {
+              type: "exec_command_end",
+              call_id: callId,
+              command: ["long-running-command"],
+              aggregated_output: `failed with exit ${exitCode}`,
+              exit_code: exitCode,
+              status: "failed",
+            },
+          },
+        ],
+        CAPTURE_CONFIG,
+      );
+
+      assert.deepEqual(toolParts(turns, "exec_command").map((part) => part.tool_status), [
+        "running",
+        "error",
+      ]);
+      assert.equal(
+        toolParts(turns, "exec_command").at(-1).tool_output,
+        `failed with exit ${exitCode}`,
+      );
+    });
+  }
+});
+
 test("captures completed paginated tools without duplicating legacy events", () => {
   const experienceUri = "viking://user/test/memories/experiences/refund.md";
   const turns = extractCaptureTurns(
@@ -471,6 +515,7 @@ test("captures completed paginated tools without duplicating legacy events", () 
             id: "nested-command",
             command: ["false"],
             cwd: "/workspace",
+            parsed_cmd: [],
             source: "unified_exec_startup",
             status: "failed",
             aggregated_output: "command failed",
@@ -485,9 +530,9 @@ test("captures completed paginated tools without duplicating legacy events", () 
           call_id: "nested-command",
           command: ["false"],
           cwd: "/workspace",
-          status: "failed",
-          aggregated_output: "command failed",
-          exit_code: 1,
+          status: "backgrounded",
+          aggregated_output: "backgrounded",
+          exit_code: 0,
         },
       },
       {
@@ -547,6 +592,7 @@ test("captures completed paginated tools without duplicating legacy events", () 
     "running",
     "error",
   ]);
+  assert.equal(toolParts(turns, "exec_command").at(-1).tool_output, "command failed");
   assert.deepEqual(toolParts(turns, "apply_patch").map((part) => part.tool_status), [
     "running",
     "completed",

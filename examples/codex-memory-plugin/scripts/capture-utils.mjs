@@ -33,6 +33,7 @@ const COMPLETED_TURN_TOOL_TYPES = new Set([
 ]);
 
 const FAILED_TOOL_STATUSES = new Set(["failed", "error", "declined"]);
+const TERMINAL_TOOL_STATUSES = new Set(["completed", ...FAILED_TOOL_STATUSES]);
 
 function inheritedEntry(entry, type, payload) {
   const turnId = entry?.payload?.turn_id;
@@ -149,6 +150,12 @@ function completedToolKey(tool) {
   return [tool.kind, tool.id, tool.name].join("\0");
 }
 
+function completedToolPriority(entry) {
+  const source = entry?.type === "turn_item" ? 2 : 0;
+  const status = String(entry?.payload?.status || "").toLowerCase();
+  return source + (TERMINAL_TOOL_STATUSES.has(status) ? 1 : 0);
+}
+
 function responseItemKey(entry) {
   if (entry?.type !== "response_item") return "";
   const payload = entry.payload;
@@ -180,7 +187,8 @@ function deduplicateCodexToolEvents(rolloutEntries) {
     if (!tool?.id || !tool.name) continue;
     completedTools.set(entry, tool);
     const key = completedToolKey(tool);
-    if (!preferredCompleted.has(key) || entry.type === "turn_item") {
+    const previous = preferredCompleted.get(key);
+    if (!previous || completedToolPriority(entry) >= completedToolPriority(previous)) {
       preferredCompleted.set(key, entry);
     }
   }
