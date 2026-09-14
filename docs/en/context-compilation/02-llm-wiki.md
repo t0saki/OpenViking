@@ -11,7 +11,7 @@ The Skill picks the smallest page type that matches each page's retrieval purpos
 | `method` | A reusable procedure with prerequisites, ordered steps, and a verifiable outcome |
 | `comparison` | Two or more subjects evaluated side by side on explicit dimensions |
 | `analysis` | A cross-source conclusion tied to a clear question |
-| `summary` | A faithful digest of one source (only when `--reason` explicitly asks for it) |
+| `summary` | A faithful digest of one source (only when `--instruction` explicitly asks for it) |
 
 `entity` and `concept` are the defaults; the others are promoted only when they pass their stricter tests. The result is a knowledge base, not a source-by-source pile of summaries.
 
@@ -23,12 +23,12 @@ If the material is not in OpenViking yet, import it. Use `ov add-resource` for d
 
 ```bash
 # Import a directory as a source
-ov add-resource ./my-research --to viking://resources/research --wait
+ov add-resource ./my-research --to viking://resources/research
 
 # Or write a single file
 ov mkdir viking://resources/research
 ov write viking://resources/research/notes.md \
-  --from-file ./notes.md --mode create --wait
+  --from-file ./notes.md --mode create
 ```
 
 Confirm the source is in place:
@@ -42,7 +42,7 @@ ov ls -r viking://resources/research
 Install the LLM Wiki Skill. By default it lands in your user-private skills namespace; use `-p viking://agent/skills` to make it shared across the team:
 
 ```bash
-ov add-skill examples/compile/ov-compile-skills/llm-wiki --wait
+ov add-skill examples/compile/ov-compile-skills/llm-wiki
 ```
 
 Find the installed Skill URI:
@@ -59,7 +59,7 @@ ov compile \
   --from viking://resources/research \
   --to viking://resources/research-wiki \
   --skill viking://agent/skills/llm-wiki \
-  --reason "Organize into a team-searchable Wiki, keeping the source of every claim"
+  --instruction "Organize into a team-searchable Wiki, keeping the source of every claim"
 ```
 
 - `--from` can be repeated or comma-separated to pass multiple sources at once.

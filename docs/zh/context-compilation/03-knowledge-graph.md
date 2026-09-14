@@ -21,14 +21,14 @@ Skill 源码：[examples/compile/ov-compile-skills/knowledge-graph](https://gith
 ## 第一步：准备来源
 
 ```bash
-ov add-resource ./journal-to-the-west --to viking://resources/journal --wait
+ov add-resource ./journal-to-the-west --to viking://resources/journal
 ov ls -r viking://resources/journal
 ```
 
 ## 第二步：添加 Skill
 
 ```bash
-ov add-skill examples/compile/ov-compile-skills/knowledge-graph --wait
+ov add-skill examples/compile/ov-compile-skills/knowledge-graph
 ov skills list
 # → viking://agent/skills/knowledge-graph
 ```
@@ -40,7 +40,7 @@ ov compile \
   --from viking://resources/journal \
   --to viking://resources/journal-kg \
   --skill viking://agent/skills/knowledge-graph \
-  --reason "抽取人物、地点、法宝及其关系，构建可遍历的知识图谱"
+  --instruction "抽取人物、地点、法宝及其关系，构建可遍历的知识图谱"
 ```
 
 命令会立刻返回 `task_id`，之后：

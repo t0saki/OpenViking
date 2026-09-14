@@ -91,6 +91,7 @@ export const KNOBS = [
   { name: "recallContextTimeoutMs", type: "int", default: 0, min: 0, max: 600000, env: "OPENVIKING_RECALL_CONTEXT_TIMEOUT_MS", capability: "recall" },
   { name: "logRankingDetails", type: "bool", default: false, env: "OPENVIKING_LOG_RANKING_DETAILS", capability: "recall" },
   { name: "recallLedger", type: "bool", default: true, env: "OPENVIKING_RECALL_LEDGER", capability: "recall" },
+  { name: "recallQueryFilters", type: "list", default: [], env: "OPENVIKING_RECALL_QUERY_FILTERS", capability: "recall" },
 
   // Digest compression. Claude Code reads this as the tri-state
   // off/client/server/auto through `normalizeRewriteMode`; Codex reads the same
@@ -132,6 +133,7 @@ export const KNOBS = [
   { name: "captureAssistantTurns", type: "bool", default: true, env: "OPENVIKING_CAPTURE_ASSISTANT_TURNS", capability: "capture" },
   { name: "captureLastAssistantOnStop", type: "bool", default: true, env: "OPENVIKING_CAPTURE_LAST_ASSISTANT_ON_STOP", capability: "capture" },
   { name: "captureToolResults", type: "bool", default: false, env: "OPENVIKING_CAPTURE_TOOL_RESULTS", capability: "capture" },
+  { name: "captureFilters", type: "list", default: [], env: "OPENVIKING_CAPTURE_FILTERS", capability: "capture" },
   // 0 means "derive from timeoutMs": a write gets a longer budget than a read.
   { name: "captureTimeoutMs", type: "int", default: 0, min: 0, max: 600000, env: "OPENVIKING_CAPTURE_TIMEOUT_MS", capability: "capture" },
   { name: "commitTokenThreshold", type: "int", default: 20000, min: 1000, max: 1000000, env: "OPENVIKING_COMMIT_TOKEN_THRESHOLD", workspace: "capture.commit_token_threshold", capability: "capture" },

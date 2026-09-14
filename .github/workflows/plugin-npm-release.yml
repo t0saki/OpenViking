@@ -12,6 +12,7 @@ on:
       - "examples/opencode-plugin/**"
       - "examples/memory-plugin-shared/lib/**"
       - ".github/workflows/plugin-npm-release.yml"
+      - ".github/scripts/opencode-release-version*.mjs"
   workflow_dispatch:
 
 permissions:
@@ -20,6 +21,8 @@ permissions:
 
 jobs:
   publish:
+    # Forks must not publish the official packages.
+    if: github.repository == 'volcengine/OpenViking' && github.ref == 'refs/heads/main'
     name: Publish ${{ matrix.package }}
     runs-on: ubuntu-24.04
     strategy:
@@ -42,6 +45,9 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
+        with:
+          # Queued runs package current main, never an older event snapshot.
+          ref: main
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
@@ -58,35 +64,39 @@ jobs:
           npm test
           npm pack --dry-run
 
-      - name: Resolve package version
+      - name: Resolve release version
         id: package
         env:
           EXPECTED_NAME: ${{ matrix.package }}
         run: |
-          node -e "
-            const pkg = require('./package.json')
-            if (pkg.name !== process.env.EXPECTED_NAME) {
-              throw new Error('Unexpected package name: ' + pkg.name)
-            }
-            console.log('name=' + pkg.name)
-            console.log('version=' + pkg.version)
-          " >> "$GITHUB_OUTPUT"
-
-      - name: Check whether version already exists
-        id: published
-        env:
-          PACKAGE_NAME: ${{ steps.package.outputs.name }}
-          PACKAGE_VERSION: ${{ steps.package.outputs.version }}
-        run: |
-          if npm view "$PACKAGE_NAME@$PACKAGE_VERSION" version --registry=https://registry.npmjs.org >/dev/null 2>&1; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-            echo "::notice::$PACKAGE_NAME@$PACKAGE_VERSION is already published; skipping."
+          if [ "$EXPECTED_NAME" = "@openviking/opencode-plugin" ]; then
+            node --test "$GITHUB_WORKSPACE/.github/scripts/opencode-release-version.test.mjs"
+            SOURCE_COMMIT="$(git rev-parse HEAD)"
+            export SOURCE_COMMIT
+            cd "$GITHUB_WORKSPACE"
+            node .github/scripts/opencode-release-version.mjs
+            exit 0
+          fi
+          package_name=$(node -p "require('./package.json').name")
+          package_version=$(node -p "require('./package.json').version")
+          if [ "$package_name" != "$EXPECTED_NAME" ]; then
+            echo "Unexpected package name: $package_name" >&2
+            exit 1
+          fi
+          echo "version=$package_version" >> "$GITHUB_OUTPUT"
+          if npm view "$package_name@$package_version" version --registry=https://registry.npmjs.org >/dev/null 2>&1; then
+            echo "published=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::$package_name@$package_version is already published; skipping."
           else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "published=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Validate versioned artifact
+        if: steps.package.outputs.published == 'false'
+        run: npm pack --dry-run
+
       - name: Publish package
-        if: steps.published.outputs.exists == 'false'
+        if: steps.package.outputs.published == 'false'
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
@@ -95,4 +105,4 @@ jobs:
           else
             echo "::notice::NPM_TOKEN is not set; npm publish will use Trusted Publishing/OIDC. For first-time packages, publish once with an npm token or configure npm trusted publishing after the package exists."
           fi
-          npm publish --access public --provenance
+          npm publish --access public --provenance --tag latest

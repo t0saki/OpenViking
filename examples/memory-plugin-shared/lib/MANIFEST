@@ -6,6 +6,7 @@ config-schema.mjs
 credentials.mjs
 debug-log.mjs
 doctor-core.mjs
+input-filters.mjs
 mcp-proxy-config.mjs
 mcp-proxy-core.mjs
 ov-http.mjs

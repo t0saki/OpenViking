@@ -17,6 +17,7 @@ import { createHostCompressor } from "./lib/host-compressor.mjs";
 import { getEffectivePeerId } from "./lib/workspace-peer.mjs";
 import { runHookStage } from "./shared/agent-hook-runtime.mjs";
 import { buildRecallBlockDetailed } from "./shared/recall-core.mjs";
+import { applyInputFilters, compileInputFilters } from "./shared/input-filters.mjs";
 
 if (!isPluginEnabled()) {
   process.stdout.write(JSON.stringify({ decision: "approve" }) + "\n");
@@ -76,7 +77,7 @@ runHookStage({
     writeRecallState({ count: 0, reason, cc_session_id: sessionId });
   },
 }, async ({ cfg, input, cwd, sessionId }) => {
-  const userPrompt = (input.prompt || "").trim();
+  let userPrompt = (input.prompt || "").trim();
   const effectivePeer = getEffectivePeerId(cfg, { sessionId, cwd });
   log("start", {
     query: userPrompt.slice(0, 200),
@@ -91,6 +92,20 @@ runHookStage({
     },
   });
 
+  // Filters run before the length gate, so a prompt whose only content was a
+  // stripped prefix is short_query rather than a search for the empty string.
+  const queryFilters = compileInputFilters(cfg.recallQueryFilters);
+  if (queryFilters.rules.length) {
+    const verdict = applyInputFilters(userPrompt, queryFilters.rules, { role: "user" });
+    if (verdict.dropped) {
+      log("skip", { reason: "query_filter", rule: verdict.ruleIndex, op: verdict.op });
+      writeRecallState({ count: 0, reason: "query_filtered", cc_session_id: sessionId });
+      return;
+    }
+    if (verdict.changed) log("query_filter", { rawLength: userPrompt.length, length: verdict.text.length });
+    userPrompt = verdict.text;
+  }
+  if (queryFilters.errors.length) log("query_filter_errors", queryFilters.errors);
   if (!userPrompt || userPrompt.length < cfg.minQueryLength) {
     log("skip", { reason: "query too short or empty" });
     writeRecallState({ count: 0, reason: "short_query", cc_session_id: sessionId });

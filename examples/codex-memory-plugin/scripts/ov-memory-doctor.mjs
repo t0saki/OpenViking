@@ -42,6 +42,7 @@ import {
   sweepEnv,
   tryJson,
 } from "./shared/doctor-core.mjs";
+import { describeInputFilters } from "./shared/input-filters.mjs";
 
 const PLUGIN_ROOT = resolvePath(dirname(fileURLToPath(import.meta.url)), "..");
 const PLUGIN_ID = "openviking-memory@openviking";
@@ -324,6 +325,20 @@ function checkConfig(report, cfg, host) {
     if (env.openviking.some((e) => e.name === "OPENVIKING_MEMORY_ENABLED")) r.warn("OPENVIKING_MEMORY_ENABLED has no effect on the Codex plugin", "disable it with OPENVIKING_AUTO_RECALL=0 / OPENVIKING_AUTO_CAPTURE=0, or codex plugin remove", "");
     if (cfg.credentialSource === "env") r.info("credential env vars override ovcli.conf — edits to the file (and `ov config switch`) do not take effect while they are set");
   });
+  for (const filters of describeInputFilters(cfg)) {
+    if (!filters.total) continue;
+    report.info(`${filters.label}  ${filters.summary}`);
+    for (const e of filters.errors) {
+      const where = `${filters.env} or ovcli.conf plugin.codex.${filters.key}`;
+      report.warn(
+        `${filters.key}[${e.index}]: ${e.message}`,
+        e.source ? `rule: ${e.source}` : "this rule is skipped, the rest still apply",
+        e.message.startsWith("invalid regular expression")
+          ? `fix the pattern in ${where} (the u flag rejects escapes that are legal without it)`
+          : `fix the rule in ${where}`,
+      );
+    }
+  }
 
   return { keyInfo, peer, ovConf };
 }
