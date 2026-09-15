@@ -25,6 +25,10 @@ OpenViking 可以作为多种 Agent 运行时的长期记忆与上下文后端�
 
 想知道各个集成在工具面、自动召回、会话与 commit、压缩接管、降级容错上的具体差异，见 [集成能力参考](./16-capability-reference.md)——一份覆盖全部集成的横向对照矩阵。
 
+## 开发与维护插件
+
+新增或维护集成时，请遵循 [Hook + MCP Agent 插件开发与维护规范](./18-plugin-development.md)。使用 VibeCoding 时，务必让 coding agent 在修改前阅读并遵循该规范；实现可以参考 Claude Code、Codex 和其他现有插件。
+
 ## 所有集成的共同前置
 
 本页所有集成都需要连接到一个正在运行的 OpenViking 服务。如果你还没有，请先按 [快速开始](../getting-started/02-quickstart.md) 部署。默认端点是 `http://localhost:1933`；远程使用需要 API Key（参见 [鉴权](../guides/04-authentication.md)）。

@@ -1,6 +1,6 @@
 # Memory Plugin Shared Library
 
-For contributor guidance on adding and maintaining hook + MCP integrations, see the [Agent plugin development and maintenance standard (Chinese)](../../docs/design/agent-plugin-development.md).
+For contributor guidance on adding and maintaining hook + MCP integrations, see the [Agent plugin development and maintenance standard](../../docs/en/agent-integrations/18-plugin-development.md) ([中文](../../docs/zh/agent-integrations/18-plugin-development.md)). When using a coding agent, have it read and follow this standard before making changes.
 
 This directory contains shared JavaScript modules. `sync.mjs` vendors each module into the plugins whose code imports it — Claude Code, Codex, OpenCode, dsh, pi, openclaw and the bundled `agent-plugins` servers — together with the matching `lib/*.d.mts` declaration for the targets written in TypeScript. cursor, trae, trae-cn and zcode vendor nothing: the installer copies the modules `lib/MANIFEST` names — the same sync writes it — to `$OV_HOME/agent-integrations/memory-plugin-shared/lib`, and they import it from there.
 
