@@ -1,14 +1,11 @@
 #!/usr/bin/env bash
-# Fail when a marketplace-distributed plugin changed without its version string.
+# Fail when a distributed plugin changed without its version string.
 #
 # Claude Code resolves an installed plugin by the `version` in its manifest
 # rather than by the commit the marketplace ref points at, so a frozen version
 # string means users keep running the build they already have no matter how
-# many fixes land on main. Every other host in this list distributes by the same
-# kind of manifest, except pi, which is copied wholesale and reports its manifest
-# version as the build talking on the wire. The generated `shared/` copies live
-# inside each plugin directory, so a shared-library change reaches this check
-# through them.
+# many fixes land on main. Other entries use their package or installer manifest;
+# pi is copied wholesale and reports its manifest version on the wire.
 #
 # Usage: check-plugin-version-bumps.sh <base-ref>
 set -euo pipefail
@@ -26,7 +23,7 @@ cd "$ROOT"
 PLUGINS=(
   "examples/claude-code-memory-plugin:examples/claude-code-memory-plugin/.claude-plugin/plugin.json"
   "examples/codex-memory-plugin:examples/codex-memory-plugin/.codex-plugin/plugin.json"
-  "examples/agent-hook-plugin:examples/agent-hook-plugin/.claude-plugin/plugin.json"
+  "examples/agent-hook-plugin:examples/agent-hook-plugin/plugin.json"
   "examples/opencode-plugin:examples/opencode-plugin/package.json"
   "examples/dsh-memory-plugin:examples/dsh-memory-plugin/package.json"
   "examples/pi-coding-agent-extension:examples/pi-coding-agent-extension/package.json"
@@ -60,9 +57,9 @@ process.stdin.on("end", () => {
 # decides "nothing changed" by the other, so a mismatch means a plugin that
 # reports upgraded and behaves like it did not.
 PAIRED=(
-  "examples/agent-hook-plugin/.claude-plugin/plugin.json:examples/agent-hook-plugin/hosts/cursor/openviking.integration.json"
-  "examples/agent-hook-plugin/.claude-plugin/plugin.json:examples/agent-hook-plugin/hosts/trae/openviking.integration.json"
-  "examples/agent-hook-plugin/.claude-plugin/plugin.json:examples/agent-hook-plugin/hosts/zcode/openviking.integration.json"
+  "examples/agent-hook-plugin/plugin.json:examples/agent-hook-plugin/hosts/cursor/openviking.integration.json"
+  "examples/agent-hook-plugin/plugin.json:examples/agent-hook-plugin/hosts/trae/openviking.integration.json"
+  "examples/agent-hook-plugin/plugin.json:examples/agent-hook-plugin/hosts/zcode/openviking.integration.json"
 )
 
 failed=0

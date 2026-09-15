@@ -20,7 +20,7 @@ async function runHook(event, input, env) {
 
 test("Cursor command-installed integration contains Hook, Rule, Skill, and MCP entrypoints", () => {
   for (const file of [
-    ".claude-plugin/plugin.json",
+    "plugin.json",
     "hosts/cursor/hooks.json",
     "hosts/cursor/.mcp.json",
     "hosts/cursor/openviking.integration.json",
@@ -34,7 +34,7 @@ test("Cursor command-installed integration contains Hook, Rule, Skill, and MCP e
   ]) {
     assert.ok(existsSync(join(pluginRoot, file)), `${file} must exist`);
   }
-  const plugin = JSON.parse(readFileSync(join(pluginRoot, ".claude-plugin", "plugin.json"), "utf8"));
+  const plugin = JSON.parse(readFileSync(join(pluginRoot, "plugin.json"), "utf8"));
   const integration = JSON.parse(readFileSync(join(pluginRoot, "hosts", "cursor", "openviking.integration.json"), "utf8"));
   const hooks = JSON.parse(readFileSync(join(pluginRoot, "hosts", "cursor", "hooks.json"), "utf8"));
   assert.equal(plugin.version, integration.version);

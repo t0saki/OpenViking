@@ -42,7 +42,7 @@ import {
 } from "../../memory-plugin-shared/lib/doctor-core.mjs";
 
 const PLUGIN_ROOT = resolvePath(dirname(fileURLToPath(import.meta.url)), "..");
-const REQUIRED_PLUGIN_FILES = ["scripts/hook.mjs", "scripts/uri-guard.mjs", "servers/mcp-proxy.mjs", "hosts/index.mjs"];
+const REQUIRED_PLUGIN_FILES = ["plugin.json", "scripts/hook.mjs", "scripts/uri-guard.mjs", "servers/mcp-proxy.mjs", "hosts/index.mjs"];
 
 /**
  * Where each client keeps the two things the installer writes.
@@ -109,7 +109,7 @@ function hookStateDir() {
 
 function checkInstall(report) {
   report.section("Plugin install");
-  const manifest = tryJson(join(PLUGIN_ROOT, ".claude-plugin", "plugin.json"));
+  const manifest = tryJson(join(PLUGIN_ROOT, "plugin.json"));
   const installed = tryJson(join(PLUGIN_ROOT, "integration.json"));
   report.info(`running from ${homeShort(PLUGIN_ROOT)} (version ${manifest?.version || "?"}, client ${CLIENT})`);
   if (installed?.client && installed.client !== CLIENT) {

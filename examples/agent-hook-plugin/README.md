@@ -21,6 +21,8 @@ bash examples/memory-plugin-shared/install.sh --harness zcode
 
 `scripts/hook.mjs` is the single entry every hook command runs. It owns the state machine all four clients share — the debounce, the prompt dedup, the recall cache, the cross-process lock — and asks the adapter under `hosts/` for the four things that differ: the event vocabulary, the response envelope, how a prompt is read out of the payload, and how a finished turn is captured. `scripts/uri-guard.mjs` and `servers/mcp-proxy.mjs` are likewise one file each, with the host chosen from the client id the installer passes.
 
+The root `plugin.json` is host-neutral package metadata used for version checks and diagnostics. It is not a Claude Code, Cursor, TRAE, or ZCode native plugin manifest.
+
 `hosts/<host>/` holds only what a host reads as configuration — `hooks.json`, `.mcp.json`, `openviking.integration.json`, plus Cursor's rule and skill. Everything executable stays one level up, because `../../memory-plugin-shared/lib` is the path that resolves both in this repository and in an installed `~/.openviking/agent-integrations/<client>/`.
 
 The memory logic itself is not here: recall, batching, the pending queue, credential resolution and the MCP proxy all come from `examples/memory-plugin-shared/lib`, which the installer copies to `~/.openviking/agent-integrations/memory-plugin-shared/lib`.

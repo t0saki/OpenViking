@@ -2398,7 +2398,7 @@ EOF
       && [ -f "$OV_HOME/agent-integrations/cursor/scripts/uri-guard.mjs" ] \
       && [ -f "$OV_HOME/agent-integrations/memory-plugin-shared/lib/uri-guard.mjs" ] \
       && [ -f "$OV_HOME/agent-integrations/memory-plugin-shared/lib/agent-hook-runtime.mjs" ] \
-      && [ -f "$OV_HOME/agent-integrations/cursor/.claude-plugin/plugin.json" ] \
+      && [ -f "$OV_HOME/agent-integrations/cursor/plugin.json" ] \
       && [ -f "$OV_HOME/agent-integrations/cursor/integration.json" ] \
       && [ -f "$HOME/.cursor/rules/openviking-memory.mdc" ] \
       && [ -f "$HOME/.cursor/skills/openviking-memory/SKILL.md" ]; then

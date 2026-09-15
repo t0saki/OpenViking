@@ -23,6 +23,7 @@ const EXAMPLES = join(ROOT, "examples");
 
 // Manifests a host reads by name to find everything else.
 const HOST_MANIFESTS = ["openviking.integration.json", ".mcp.json", "hooks.json", join("hooks", "hooks.json")];
+const PACKAGE_MANIFESTS = ["plugin.json"];
 
 // Directories a host loads whole; what is inside them is named nowhere.
 const CONTENT_DIRS = ["skills", "rules", "commands"];
@@ -117,6 +118,9 @@ async function manifestRoots(root) {
 async function pluginRequirements(root) {
   const required = new Set();
   const entrypoints = new Set();
+  for (const manifest of PACKAGE_MANIFESTS) {
+    if (await isFile(join(root, manifest))) required.add(join(root, manifest));
+  }
 
   for (const entry of await readdir(root, { withFileTypes: true }).catch(() => [])) {
     // `.claude-plugin/`, `.codex-plugin/`: the host's own manifest directory,

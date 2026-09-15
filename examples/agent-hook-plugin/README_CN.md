@@ -21,6 +21,8 @@ bash examples/memory-plugin-shared/install.sh --harness zcode
 
 `scripts/hook.mjs` 是所有 hook 命令的唯一入口，持有四家共用的状态机——防抖、prompt 去重、召回缓存、跨进程锁——差异部分向 `hosts/` 下的适配器索取：事件词汇、响应信封、如何从 payload 读出 prompt、如何采集完成的回合。`scripts/uri-guard.mjs` 与 `servers/mcp-proxy.mjs` 同样各只有一份，按安装器传入的 client id 选择宿主。
 
+根目录的 `plugin.json` 是宿主无关的包元数据，只用于版本检查和诊断，不是 Claude Code、Cursor、TRAE 或 ZCode 的原生插件 manifest。
+
 `hosts/<host>/` 只放宿主当作配置读取的东西——`hooks.json`、`.mcp.json`、`openviking.integration.json`，以及 Cursor 的 rule 与 skill。可执行文件一律放在上一层，因为 `../../memory-plugin-shared/lib` 这条相对路径要在本仓库和安装后的 `~/.openviking/agent-integrations/<client>/` 两处同时成立。
 
 记忆逻辑本身不在这里：召回、批量写入、待处理队列、凭据解析与 MCP 代理都来自 `examples/memory-plugin-shared/lib`，由安装脚本复制到 `~/.openviking/agent-integrations/memory-plugin-shared/lib`。

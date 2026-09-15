@@ -47,9 +47,14 @@ ZCode's strict JSON schema rejects unrecognized keys. The adapter's envelope emi
 
 **Provenance**: Adversarial review R1-F1, R4-V1 — the #1 silent-failure mode.
 
-### 5. No host plugin manifest
+### 5. No ZCode host plugin manifest
 
-ZCode probes `.zcode-plugin/plugin.json`, then `.claude-plugin/plugin.json`, then `.codex-plugin/plugin.json` — but nothing here is registered with its plugin system. The installer writes hooks and MCP config straight into `~/.zcode/cli/config.json`, so the only manifest that matters is `hosts/zcode/openviking.integration.json`, which the installer reads.
+ZCode probes `.zcode-plugin/plugin.json`, then `.claude-plugin/plugin.json`, then `.codex-plugin/plugin.json` — but nothing here is registered with its plugin system. The installer writes hooks and MCP config straight into `~/.zcode/cli/config.json`, so the host-consumed manifest is `hosts/zcode/openviking.integration.json`, which the installer reads.
+
+The root `plugin.json` is host-neutral package metadata. The installer copies it
+with the integration, the doctor reads its version, and repository checks keep
+that version aligned with each host's `openviking.integration.json`. No host
+probes or loads it as a native plugin manifest.
 
 ## Primary unknowns
 

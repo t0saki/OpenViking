@@ -58,6 +58,8 @@ test("release marketplace archive supports a ZCode TOS install", () => {
     assert.equal(installed.status, 0, `${installed.stdout}\n${installed.stderr}`);
 
     const integrationRoot = join(home, ".openviking", "agent-integrations", "zcode");
+    assert.ok(existsSync(join(integrationRoot, "plugin.json")));
+    assert.equal(existsSync(join(integrationRoot, ".claude-plugin")), false);
     assert.ok(existsSync(join(integrationRoot, "scripts", "hook.mjs")));
     assert.ok(existsSync(join(integrationRoot, "hosts", "zcode.mjs")));
     assert.ok(existsSync(join(integrationRoot, "hosts", "zcode-capture.mjs")));
@@ -126,6 +128,13 @@ test("staging rejects an archive missing a generated shared copy", () => {
     const rechecked = run("node", [archiveCheck, stage, ...stagedDirs]);
     assert.equal(rechecked.status, 1, `${rechecked.stdout}\n${rechecked.stderr}`);
     assert.match(rechecked.stderr, /opencode-plugin\/lib\/shared\/plugin-config\.mjs/);
+
+    const restaged = run("bash", [stageScript, stage]);
+    assert.equal(restaged.status, 0, `${restaged.stdout}\n${restaged.stderr}`);
+    rmSync(join(stage, "agent-hook-plugin", "plugin.json"));
+    const missingManifest = run("node", [archiveCheck, stage, ...stagedDirs]);
+    assert.equal(missingManifest.status, 1, `${missingManifest.stdout}\n${missingManifest.stderr}`);
+    assert.match(missingManifest.stderr, /agent-hook-plugin\/plugin\.json/);
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
