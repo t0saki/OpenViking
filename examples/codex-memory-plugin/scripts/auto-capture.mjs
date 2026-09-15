@@ -109,7 +109,7 @@ async function capture(sessionId, transcriptPath, cwd, heartbeat) {
     return "";
   }
 
-  const { added, ovSessionId } = await catchUpTurns({
+  const { newTurns, added, ovSessionId } = await catchUpTurns({
     state,
     transcriptPath,
     fetchJSONRes,
@@ -124,7 +124,7 @@ async function capture(sessionId, transcriptPath, cwd, heartbeat) {
   let commitInfo = { committed: false, traceId: "" };
   if (added > 0) {
     log("appended", { ovSessionId, added });
-    commitInfo = await maybeCommitByThreshold(ovSessionId, added);
+    if (added === newTurns.length) commitInfo = await maybeCommitByThreshold(ovSessionId, added);
   }
 
   await saveState(state);

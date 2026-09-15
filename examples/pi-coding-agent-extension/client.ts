@@ -1,4 +1,5 @@
 import type { OVConfig } from "./config.js";
+import type { OvHttpRequestOptions } from "./shared/ov-http.mjs";
 import { createOvHttp } from "./shared/ov-http.mjs";
 
 // --- OV API Response Shapes ---
@@ -94,19 +95,19 @@ export class OVClient {
     this.cfg = config;
     this.http = createOvHttp(
       { ...config, baseUrl: config.endpoint.replace(/\/+$/, "") },
-      { resolveActorPeerId: () => config.peerId },
+      { defaultTimeoutMs: 10000, resolveActorPeerId: () => config.peerId },
     );
   }
 
   /** Core fetch wrapper. Returns { ok, result } after parsing OV's { status, result } envelope. */
-  async fetchJSON<T>(path: string, init?: RequestInit, timeoutMs = 10000): Promise<OVResponse<T>> {
-    return this.http(path, init, { timeoutMs });
+  async fetchJSON<T>(path: string, init?: RequestInit, options?: OvHttpRequestOptions): Promise<OVResponse<T>> {
+    return this.http(path, init, options);
   }
 
   // ========== Health ==========
 
   async health(): Promise<boolean> {
-    const res = await this.fetchJSON<any>("/health", undefined, 5000);
+    const res = await this.fetchJSON<any>("/health", undefined, { timeoutMs: 5000 });
     this.connected = res.ok;
     return res.ok;
   }
@@ -118,7 +119,7 @@ export class OVClient {
     const q = autoCreate ? "?auto_create=true" : "";
     const res = await this.fetchJSON<OVSessionMeta>(
       `/api/v1/sessions/${encodeURIComponent(sessionId)}${q}`,
-      undefined, 5000,
+      undefined, { timeoutMs: 5000 },
     );
     return res.ok ? res.result : null;
   }
@@ -127,7 +128,7 @@ export class OVClient {
   async getSessionContext(sessionId: string, tokenBudget = 128000): Promise<OVSessionContext | null> {
     const res = await this.fetchJSON<OVSessionContext>(
       `/api/v1/sessions/${encodeURIComponent(sessionId)}/context?token_budget=${tokenBudget}`,
-      undefined, 10000,
+      undefined, { timeoutMs: 10000 },
     );
     return res.ok ? res.result : null;
   }
@@ -137,7 +138,7 @@ export class OVClient {
     const res = await this.fetchJSON<any>(
       `/api/v1/sessions/${encodeURIComponent(sessionId)}/messages`,
       { method: "POST", body: JSON.stringify({ role, content }) },
-      10000,
+      { timeoutMs: 10000 },
     );
     return res.ok;
   }
@@ -150,7 +151,7 @@ export class OVClient {
     const res = await this.fetchJSON<OVCommitResult>(
       `/api/v1/sessions/${encodeURIComponent(sessionId)}/commit`,
       { method: "POST", body: JSON.stringify({ keep_recent_count: keepRecentCount }) },
-      30000,
+      { timeoutMs: 30000 },
     );
     if (res.ok && res.result && !res.result.trace_id && res.traceId) {
       res.result.trace_id = res.traceId;
@@ -184,7 +185,7 @@ export class OVClient {
 
     const res = await this.fetchJSON<any>("/api/v1/search/find", {
       method: "POST", body: JSON.stringify(body),
-    }, 10000);
+    }, { timeoutMs: 10000 });
     if (!res.ok || !res.result) return [];
 
     // OV returns { memories: [...], resources: [...], skills: [...], total }
@@ -215,7 +216,7 @@ export class OVClient {
   async abstract(uri: string): Promise<string | null> {
     const res = await this.fetchJSON<string>(
       `/api/v1/content/abstract?uri=${encodeURIComponent(uri)}`,
-      undefined, 10000,
+      undefined, { timeoutMs: 10000 },
     );
     return res.ok ? res.result : null;
   }
@@ -224,7 +225,7 @@ export class OVClient {
   async overview(uri: string): Promise<string | null> {
     const res = await this.fetchJSON<string>(
       `/api/v1/content/overview?uri=${encodeURIComponent(uri)}`,
-      undefined, 10000,
+      undefined, { timeoutMs: 10000 },
     );
     return res.ok ? res.result : null;
   }
@@ -233,7 +234,7 @@ export class OVClient {
   async readContent(uri: string): Promise<string | null> {
     const res = await this.fetchJSON<string>(
       `/api/v1/content/read?uri=${encodeURIComponent(uri)}`,
-      undefined, 10000,
+      undefined, { timeoutMs: 10000 },
     );
     return res.ok ? res.result : null;
   }
@@ -244,7 +245,7 @@ export class OVClient {
   async ls(uri: string): Promise<OVDirEntry[]> {
     const res = await this.fetchJSON<any[]>(
       `/api/v1/fs/ls?uri=${encodeURIComponent(uri)}`,
-      undefined, 10000,
+      undefined, { timeoutMs: 10000 },
     );
     if (!res.ok || !Array.isArray(res.result)) return [];
     return res.result.map(e => ({
@@ -262,7 +263,7 @@ export class OVClient {
   async stat(uri: string): Promise<OVStatInfo | null> {
     const res = await this.fetchJSON<OVStatInfo>(
       `/api/v1/fs/stat?uri=${encodeURIComponent(uri)}`,
-      undefined, 10000,
+      undefined, { timeoutMs: 10000 },
     );
     return res.ok ? res.result : null;
   }
@@ -272,7 +273,7 @@ export class OVClient {
     const res = await this.fetchJSON<any>(
       `/api/v1/fs?uri=${encodeURIComponent(uri)}&recursive=${recursive}`,
       { method: "DELETE" },
-      10000,
+      { timeoutMs: 10000 },
     );
     return res.ok;
   }
@@ -288,7 +289,7 @@ export class OVClient {
     const res = await this.fetchJSON<{ root_uri: string }>(
       "/api/v1/resources",
       { method: "POST", body: JSON.stringify(body) },
-      30000,
+      { timeoutMs: 30000 },
     );
     return res.ok ? res.result : null;
   }

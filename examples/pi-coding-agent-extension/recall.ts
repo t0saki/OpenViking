@@ -44,7 +44,7 @@ export class RecallManager {
 
     const userQuery = this.pendingPrompt;
     this.pendingPrompt = "";
-    if (!isRecallEnabled(this.config as any)) {
+    if (!isRecallEnabled(this.config)) {
       this.cache = { block: null, promptText: userQuery };
       return null;
     }
@@ -57,9 +57,8 @@ export class RecallManager {
       // 10s is this extension's own budget for a bare retrieval; when the
       // request also spends a server fuse the helper hands down a longer
       // deadline, and ignoring it would abort a request still inside its fuse.
-      (path: string, init?: any, options?: any) =>
-        this.client.fetchJSON(path, init, options?.timeoutMs ?? 10000),
-      this.config as any,
+      (path, init, options) => this.client.fetchJSON(path, init, options),
+      this.config,
       userQuery,
       {
         actorPeerId: this.config.peerId,

@@ -1,5 +1,12 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { buildPluginConfig } from "./lib/plugin-config.mjs";
+import { buildProxyConnection } from "./lib/credentials.mjs";
+import { createOvHttp } from "./lib/ov-http.mjs";
+import { withMockOpenViking, writeJson } from "./testing/support.mjs";
 
 import { makeAgentFetchJSON } from "./lib/agent-hook-runtime.mjs";
 import { makeFetchJSON as ccMakeFetchJSON } from "../claude-code-memory-plugin/scripts/lib/ov-session.mjs";
@@ -110,3 +117,29 @@ for (const stack of STACKS) {
     );
   });
 }
+
+test("auth mode environment overrides file modes on the wire", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "ov-auth-mode-wire-"));
+  try {
+    const cli = join(dir, "ovcli.conf");
+    const ov = join(dir, "ov.conf");
+    await withMockOpenViking((_req, res) => writeJson(res, { status: "ok", result: {} }), async (baseUrl, requests) => {
+      for (const [mode, fileMode] of [["api_key", "trusted"], ["trusted", "api_key"]]) {
+        await writeFile(cli, JSON.stringify({ url: baseUrl, api_key: "test-key", account: "acct", user: "usr", plugin: { authMode: fileMode } }));
+        await writeFile(ov, JSON.stringify({ server: { auth_mode: fileMode }, codex: { authMode: fileMode } }));
+        const env = {
+          OPENVIKING_HOME: dir, OPENVIKING_CLI_CONFIG_FILE: cli, OPENVIKING_CONFIG_FILE: ov, OPENVIKING_AUTH_MODE: mode,
+        };
+        for (const cfg of [buildPluginConfig("codex", { cwd: dir, env }), buildProxyConnection("agent-plugins", { env })]) {
+          await createOvHttp(cfg)("/health");
+          const headers = requests.at(-1).headers;
+          assert.equal(headers.authorization, "Bearer test-key");
+          assert.equal(headers["x-openviking-account"], mode === "trusted" ? "acct" : undefined);
+          assert.equal(headers["x-openviking-user"], mode === "trusted" ? "usr" : undefined);
+        }
+      }
+    });
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

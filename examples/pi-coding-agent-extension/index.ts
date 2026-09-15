@@ -331,7 +331,7 @@ async function buildSessionProfileBlock(
 ): Promise<string> {
   try {
     const profile = await buildProfileBlock(
-      (path: string, init?: any, options?: any) => client.fetchJSON(path, init, 10000),
+      (path, init, options) => client.fetchJSON(path, init, options),
       config.profileTokenBudget,
       config.peerId,
     );

@@ -72,9 +72,9 @@ runHookStage({
   loadConfig,
   gates: { enabled: (cfg) => cfg.autoRecall },
   envelope: approve,
-  onSkip: (reason, { sessionId }) => {
+  onSkip: (reason, { cfg, sessionId }) => {
     log("skip", { reason });
-    writeRecallState({ count: 0, reason, cc_session_id: sessionId });
+    if (cfg.enabled !== false) writeRecallState({ count: 0, reason, cc_session_id: sessionId });
   },
 }, async ({ cfg, input, cwd, sessionId }) => {
   let userPrompt = (input.prompt || "").trim();

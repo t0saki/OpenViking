@@ -9,6 +9,11 @@ export interface OvHttpConfig {
   [key: string]: unknown;
 }
 
+export interface OvHttpRequestOptions {
+  timeoutMs?: number;
+  actorPeerId?: string;
+}
+
 export interface OvHttpEnvelope {
   ok: boolean;
   status: number;
@@ -38,5 +43,5 @@ export function createOvHttp(
 ): (
   path: string,
   init?: RequestInit,
-  options?: { timeoutMs?: number; actorPeerId?: string },
+  options?: OvHttpRequestOptions,
 ) => Promise<OvHttpEnvelope>;

@@ -40,7 +40,7 @@ import { resolveEffectivePeerId } from "./shared/workspace-peer.mjs";
 
 let cfg = loadConfig();
 const { log, logError } = createLogger("auto-recall");
-let effectivePeer = resolveEffectivePeerId({ cfg, cwd: process.cwd() });
+let effectivePeer = { peerId: "" };
 
 let emitted = false;
 let activeCompressor = null;

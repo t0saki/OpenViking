@@ -2245,6 +2245,7 @@ opencode_register_npm_plugin() {
 
 opencode_install_mcp_proxy_snapshot() {
   local plugin_dir="$1" dest="$2"
+  prepare_opencode_runtime "$plugin_dir" || return 1
   rm -rf "$dest.tmp"
   mkdir -p "$dest.tmp"
   (cd "$plugin_dir" && tar --exclude node_modules --exclude .git -cf - package.json lib servers) | (cd "$dest.tmp" && tar -xf -)
@@ -2269,6 +2270,7 @@ opencode_install_file_plugin() {
     warn "$(t 'OpenCode plugin sources not found; skipping.' '未找到 OpenCode 插件源码，跳过。')"
     return 0
   }
+  prepare_opencode_runtime "$plugin_dir" || return 1
   dest="$HOME/.config/opencode/plugins/openviking"
   mkdir -p "$(dirname "$dest")"
   if [ "$SOURCE_MODE" = "dev" ]; then
@@ -2293,16 +2295,23 @@ opencode_install_file_plugin() {
 # pi
 # ---------------------------------------------------------------------------
 
-# The pi extension is copied wholesale rather than assembled, so its shared
-# runtime has to be on disk before the copy. A marketplace archive was staged
-# with the generator already run; a source checkout has not been, so run it
-# there. Anywhere else this is a no-op and the check below reports the gap.
+# Whole-directory installs need generated dependencies before copying. Flat
+# marketplace archives already contain them and have no source generator.
 sync_shared_runtime() {
   local shared root
   shared="$(plugin_dir_on_disk memory-plugin-shared)" || return 0
+  shared="$(cd "$shared" && pwd -P)" || return 1
   root="$(cd "$shared/../.." 2>/dev/null && pwd)" || return 0
   [ -f "$shared/sync.mjs" ] && [ -d "$root/examples/memory-plugin-shared" ] || return 0
-  "$NODE_BIN" "$shared/sync.mjs" >/dev/null 2>&1 || true
+  "$NODE_BIN" "$shared/sync.mjs" >/dev/null
+}
+
+prepare_opencode_runtime() {
+  local plugin_dir="$1"
+  sync_shared_runtime || return 1
+  # Import resolves the complete dependency graph; node --check only parses.
+  "$NODE_BIN" --input-type=module -e 'import { pathToFileURL } from "node:url"; await import(pathToFileURL(process.argv[2]));' \
+    check-runtime "$plugin_dir/servers/mcp-proxy.mjs" || return 1
 }
 
 install_pi() {

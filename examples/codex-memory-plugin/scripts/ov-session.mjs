@@ -167,10 +167,8 @@ export async function catchUpTurns({
   });
 
   const r = await sendSessionMessages(fetchJSONRes, ovSessionId, payloads, {
-    // Codex hooks are short-lived subprocesses with no retry of their own, so
-    // a retryable failure has to survive on disk until the next SessionStart
-    // replays it. Without this the turns were simply dropped.
-    enqueueOnRetryable: true,
+    // The transcript and persisted cursor own retries, including SessionStart
+    // catch-up. Queueing the same tail would create a second retry owner.
     onSent: async (n) => {
       state.capturedTurnCount += n;
       await saveState(state);

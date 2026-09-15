@@ -11,6 +11,7 @@ on:
       - "examples/dsh-memory-plugin/**"
       - "examples/opencode-plugin/**"
       - "examples/memory-plugin-shared/lib/**"
+      - "examples/memory-plugin-shared/sync.mjs"
       - ".github/workflows/plugin-npm-release.yml"
       - ".github/scripts/opencode-release-version*.mjs"
   workflow_dispatch:
@@ -60,6 +61,7 @@ jobs:
 
       - name: Validate package
         run: |
+          node ../memory-plugin-shared/sync.mjs
           npm run check
           npm test
           npm pack --dry-run

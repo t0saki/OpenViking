@@ -6,7 +6,7 @@ import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { readRequestBody, withMockOpenViking, writeJson } from "../../memory-plugin-shared/testing/support.mjs";
+import { expectExit, runHookScript, readRequestBody, withMockOpenViking, writeJson } from "../../memory-plugin-shared/testing/support.mjs";
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 
@@ -659,15 +659,21 @@ test("the workspace that decides capture is the payload's, not the hook process'
   }
 });
 
-test("a retryable send failure queues the turns instead of dropping them", async () => {
+test("failed capture resumes from the transcript once before committing", async () => {
   const stateDir = await mkdtemp(join(tmpdir(), "ov-auto-capture-pending-"));
   const transcriptPath = join(stateDir, "transcript.jsonl");
   const pendingDir = join(stateDir, "pending");
+  let healthy = false;
+  const delivered = [];
+  let commits = 0;
+  const messages = Array.from({ length: 101 }, (_, i) => ({
+    role: "user", parts: [{ type: "text", text: `this turn must survive the outage ${i}` }],
+  }));
 
   try {
-    await writeFile(transcriptPath, JSON.stringify({
-      payload: { message: { role: "user", content: "this turn must survive the outage" } },
-    }));
+    await writeFile(transcriptPath, messages.map((message) => JSON.stringify({
+      payload: { message: { role: message.role, content: message.parts[0].text } },
+    })).join("\n"));
 
     await withMockOpenViking(async (req, res) => {
       const url = new URL(req.url, "http://127.0.0.1");
@@ -675,36 +681,58 @@ test("a retryable send failure queues the turns instead of dropping them", async
         writeJson(res, { status: "ok", result: { ok: true } });
         return;
       }
-      if (req.method === "POST" && url.pathname.endsWith("/messages/batch")) {
-        await readRequestBody(req);
+      if (req.method === "POST" && /\/messages(?:\/batch)?$/.test(url.pathname)) {
+        const body = await readRequestBody(req);
+        if (healthy || body.messages?.length === 100) {
+          delivered.push(...(body.messages || [body]));
+          writeJson(res, { status: "ok", result: {} });
+          return;
+        }
         res.writeHead(503, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ status: "error", error: { message: "server restarting" } }));
         return;
       }
-      res.writeHead(404, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ status: "error", error: "not found" }));
+      if (url.pathname.endsWith("/commit")) commits++;
+      writeJson(res, { status: "ok", result: { pending_tokens: 99999 } });
     }, async (baseUrl) => {
-      await runAutoCapture(
-        { session_id: "cx-outage", transcript_path: transcriptPath, cwd: stateDir },
-        {
-          OPENVIKING_CODEX_STATE_DIR: stateDir,
-          OPENVIKING_PENDING_DIR: pendingDir,
-          OPENVIKING_HOME: join(stateDir, "home"),
-          OPENVIKING_CONFIG_FILE: join(stateDir, "missing-ov.conf"),
-          OPENVIKING_CLI_CONFIG_FILE: join(stateDir, "missing-ovcli.conf"),
-          OPENVIKING_CREDENTIAL_SOURCE: "env",
-          OPENVIKING_WRITE_PATH_ASYNC: "0",
-          OPENVIKING_TIMEOUT_MS: "5000",
-          OPENVIKING_URL: baseUrl,
-        },
-      );
-    });
+      const input = { session_id: "cx-outage", transcript_path: transcriptPath, cwd: stateDir };
+      const env = {
+        HOME: stateDir,
+        OPENVIKING_CODEX_STATE_DIR: stateDir,
+        OPENVIKING_PENDING_DIR: pendingDir,
+        OPENVIKING_HOME: join(stateDir, "home"),
+        OPENVIKING_CONFIG_FILE: join(stateDir, "missing-ov.conf"),
+        OPENVIKING_CLI_CONFIG_FILE: join(stateDir, "missing-ovcli.conf"),
+        OPENVIKING_CREDENTIAL_SOURCE: "env",
+        OPENVIKING_WRITE_PATH_ASYNC: "0",
+        OPENVIKING_TIMEOUT_MS: "5000",
+        OPENVIKING_URL: baseUrl,
+        OPENVIKING_RECALL_COMPRESS: "off",
+        OPENVIKING_NO_AUTO_INJECT: "1",
+        OV_HOOK_WORKER: "1",
+      };
+      await runAutoCapture(input, env);
+      expectExit(await runHookScript(join(SCRIPT_DIR, "session-end.mjs"), { input, env }));
+      const statePath = join(stateDir, "cx-outage.json");
+      const failed = JSON.parse(await readFile(statePath, "utf-8"));
+      assert.equal(failed.capturedTurnCount, 100);
+      assert.ok(failed.ovSessionId);
+      assert.equal(commits, 0, "failed tail must keep the session live");
+      assert.ok(await endedMarkerExists(stateDir, "cx-outage"));
 
-    const queued = await readdir(pendingDir).catch(() => []);
-    assert.equal(queued.length, 1, `expected one queued entry, got ${JSON.stringify(queued)}`);
-    const entry = JSON.parse(await readFile(join(pendingDir, queued[0]), "utf-8"));
-    assert.equal(entry.type, "addMessage");
-    assert.match(JSON.stringify(entry.payload), /must survive the outage/);
+      healthy = true;
+      expectExit(await runHookScript(join(SCRIPT_DIR, "session-start-commit.mjs"), {
+        input: { source: "startup", session_id: "next", cwd: stateDir }, env,
+      }));
+      await runAutoCapture(input, env);
+      assert.deepEqual(delivered, messages);
+      assert.equal(commits, 1);
+      const recovered = JSON.parse(await readFile(statePath, "utf-8"));
+      assert.equal(recovered.capturedTurnCount, 101);
+      assert.equal(recovered.ovSessionId, null);
+      assert.equal(await endedMarkerExists(stateDir, "cx-outage"), false);
+      assert.deepEqual(await readdir(pendingDir).catch(() => []), []);
+    });
   } finally {
     await rm(stateDir, { recursive: true, force: true });
   }

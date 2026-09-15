@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import { filterCaptureTurns } from "./lib/capture-utils.mjs";
+import { expectExit, runHookScript, withMockOpenViking, writeJson } from "./testing/support.mjs";
 
 import {
   commitAgentSession,
@@ -13,6 +15,51 @@ import {
   resolveNativeSessionId,
   runHookStage,
 } from "./lib/agent-hook-runtime.mjs";
+
+test("disabled Claude Code and Codex hooks make no requests or session writes", async (t) => {
+  const home = mkdtempSync(join(tmpdir(), "ov-disabled-hooks-"));
+  try {
+    const cli = join(home, "ovcli.conf");
+    writeFileSync(cli, JSON.stringify({ plugin: { enabled: false, skillExperience: true } }));
+    const transcript = join(home, "transcript.jsonl");
+    writeFileSync(transcript, JSON.stringify({ payload: { message: { role: "user", content: "remember disabled hooks" } } }));
+    await withMockOpenViking((_req, res) => writeJson(res, { status: "ok", result: {} }), async (baseUrl, requests) => {
+      for (const plugin of ["claude-code-memory-plugin", "codex-memory-plugin"]) {
+        const root = new URL(`../${plugin}/`, import.meta.url);
+        const manifest = JSON.parse(readFileSync(new URL("hooks/hooks.json", root), "utf-8"));
+        for (const [event, entries] of Object.entries(manifest.hooks)) {
+          if (event === "PreToolUse") continue; // URI guard has no memory I/O.
+          const script = entries[0].hooks[0].command.split("scripts/")[1].replaceAll('"', '');
+          await t.test(`${plugin} ${event}`, async () => {
+            requests.length = 0;
+            const before = readdirSync(home, { recursive: true }).sort();
+            const result = expectExit(await runHookScript(fileURLToPath(new URL(`scripts/${script}`, root)), {
+              cwd: home,
+              input: { session_id: "disabled", agent_id: "child", source: "startup", cwd: home, prompt: "remember disabled hooks", transcript_path: transcript },
+              env: {
+                ...Object.fromEntries(Object.keys(process.env).filter((key) => key.startsWith("OPENVIKING_")).map((key) => [key, undefined])),
+                HOME: home,
+                TMPDIR: home,
+                OPENVIKING_HOME: join(home, ".openviking"),
+                OPENVIKING_CLI_CONFIG_FILE: cli,
+                OPENVIKING_CONFIG_FILE: join(home, "missing.conf"),
+                OPENVIKING_URL: baseUrl,
+                OPENVIKING_WRITE_PATH_ASYNC: "0",
+                OPENVIKING_RECALL_COMPRESS: "off",
+                OV_HOOK_WORKER: "1",
+              },
+            }));
+            assert.doesNotThrow(() => JSON.parse(result.stdout));
+            assert.deepEqual(requests, []);
+            assert.deepEqual(readdirSync(home, { recursive: true }).sort(), before);
+          });
+        }
+      }
+    });
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
 
 function jsonResponse(status, value) {
   return new Response(JSON.stringify(value), {

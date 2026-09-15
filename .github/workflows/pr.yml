@@ -191,7 +191,7 @@ jobs:
             echo "langchain_changed=false" >> $GITHUB_OUTPUT
           fi
 
-          OPENCLAW_PATTERN="examples/openclaw-plugin/|\.github/workflows/pr\.yml"
+          OPENCLAW_PATTERN="examples/openclaw-plugin/|examples/memory-plugin-shared/(lib/|sync\.mjs)|\.github/workflows/pr\.yml"
           OPENCLAW_CHANGED_FILES=$(git diff --name-only origin/${{ github.base_ref }} HEAD | grep -E "$OPENCLAW_PATTERN" || true)
 
           if [ -n "$OPENCLAW_CHANGED_FILES" ]; then

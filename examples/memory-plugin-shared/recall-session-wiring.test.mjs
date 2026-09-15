@@ -71,11 +71,6 @@ const TIMEOUT_PASSTHROUGH = [
     file: join(ROOT, "examples", "opencode-plugin", "lib", "memory-recall.mjs"),
     pattern: /timeoutMs:\s*options\.timeoutMs\s*\?\?\s*\d+/,
   },
-  {
-    name: "pi keeps the per-request deadline the helper hands down",
-    file: join(ROOT, "examples", "pi-coding-agent-extension", "recall.ts"),
-    pattern: /fetchJSON\(path,\s*init,\s*options\?\.timeoutMs\s*\?\?\s*\d+\)/,
-  },
 ];
 
 for (const { name, file, pattern } of TIMEOUT_PASSTHROUGH) {

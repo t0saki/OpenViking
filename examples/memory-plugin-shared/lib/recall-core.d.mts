@@ -1,3 +1,5 @@
+import type { OvHttpRequestOptions } from "./ov-http.mjs";
+
 export type ContextSearchBody = {
   query: string;
   mode: "context";
@@ -40,8 +42,8 @@ export function normalizeContextEntry(entry?: unknown): NormalizedContextEntry;
 
 export type RecallFetchJSON = (
   path: string,
-  init?: any,
-  options?: any,
+  init?: RequestInit,
+  options?: OvHttpRequestOptions,
 ) => Promise<{ ok: boolean; status?: number; result?: any; error?: any }>;
 
 export type RecallOptions = {

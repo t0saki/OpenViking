@@ -335,6 +335,7 @@ export function buildProxyConnection(harness, { env = process.env, manifestUrl =
     user: credentials.user,
     peerId: credentials.peerId,
     ...resolveAuthMode({
+      settings: { authMode: env.OPENVIKING_AUTH_MODE },
       ovFile: credentials.ovFile,
       account: credentials.account,
       user: credentials.user,

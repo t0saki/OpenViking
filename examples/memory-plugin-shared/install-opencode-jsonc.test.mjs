@@ -10,7 +10,8 @@
  */
 
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
+import { copyFileSync, mkdirSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -18,6 +19,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { stripJsonc, updateOpencodeConfig } from "./lib/install/jsonc-edit.mjs";
+import { expectExit, runHookScript } from "./testing/support.mjs";
 
 const PROXY = "/home/u/.openviking/opencode-mcp-proxy/openviking/servers/mcp-proxy.mjs";
 const SPEC = "@openviking/opencode-plugin";
@@ -138,9 +140,9 @@ test("a server the user disabled stays disabled", () => {
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const installer = join(repoRoot, "examples", "memory-plugin-shared", "install.sh");
 
-function runInstaller(args, options) {
+function runInstaller(args, options, script = installer) {
   return new Promise((resolvePromise, reject) => {
-    execFile("bash", [installer, ...args], options, (error, stdout, stderr) => {
+    execFile("bash", [script, ...args], options, (error, stdout, stderr) => {
       if (error) {
         error.stdout = stdout;
         error.stderr = stderr;
@@ -155,47 +157,70 @@ function runInstaller(args, options) {
 // The cases above are the editor; this is the wiring. It is the only thing that
 // proves install.sh still finds the module and hands it the right three
 // arguments now that the editor no longer lives inside the script.
-test("the OpenCode installer runs the editor against the real config", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "ov-opencode-jsonc-"));
-  try {
-    const home = join(dir, "home");
-    const bin = join(dir, "bin");
-    const configDir = join(home, ".config", "opencode");
-    await mkdir(bin, { recursive: true });
-    await mkdir(configDir, { recursive: true });
+for (const sourceMode of ["dev", "archive", "remote"]) {
+  test(`the OpenCode ${sourceMode} install loads its entries from clean sources`, async () => {
+    const dir = await mkdtemp(join(tmpdir(), "ov-opencode-jsonc-"));
+    try {
+      const home = join(dir, "home");
+      const bin = join(dir, "bin");
+      const configDir = join(home, ".config", "opencode");
+      await mkdir(bin, { recursive: true });
+      await mkdir(configDir, { recursive: true });
 
-    const opencode = join(bin, "opencode");
-    await writeFile(opencode, "#!/usr/bin/env sh\nprintf 'opencode 0.0.0-test\\n'\n");
-    await chmod(opencode, 0o755);
+      const opencode = join(bin, "opencode");
+      await writeFile(opencode, "#!/usr/bin/env sh\nprintf 'opencode 0.0.0-test\\n'\n");
+      await chmod(opencode, 0o755);
 
-    const configPath = join(configDir, "opencode.jsonc");
-    await writeFile(configPath, '{\n  // keep this user note\n  "theme": "system"\n}\n');
+      const configPath = join(configDir, "opencode.jsonc");
+      await writeFile(configPath, '{\n  // keep this user note\n  "theme": "system"\n}\n');
 
-    await runInstaller([
-      "--harness", "opencode",
-      "--source", "dev",
-      "--dist", "github",
-      "--lang", "en",
-      "--url", "http://127.0.0.1:1933",
-      "--api-key", "",
-      "--yes",
-    ], {
-      cwd: repoRoot,
-      env: {
-        ...process.env,
-        HOME: home,
-        OPENVIKING_HOME: join(home, ".openviking"),
-        PATH: `${bin}:${process.env.PATH}`,
-      },
-    });
+      // Copy only tracked paths from the working tree: no ignored generated
+      // runtime or node_modules may hide a missing installation step.
+      const source = join(dir, "source");
+      const files = execFileSync("git", ["ls-files", "-z", "--", "examples", "agent-plugins"], { cwd: repoRoot, encoding: "utf8" }).split("\0").filter(Boolean);
+      for (const file of files) {
+        mkdirSync(dirname(join(source, file)), { recursive: true });
+        copyFileSync(join(repoRoot, file), join(source, file));
+      }
+      await mkdir(join(source, ".git"));
+      if (sourceMode === "archive") {
+        execFileSync("zip", ["-rq", join(dir, "source.zip"), "source"], { cwd: dir });
+      }
 
-    // A dev-source install registers the plugin as a directory, not as the npm
-    // package, so only the MCP fallback reaches the config here.
-    const raw = await readFile(configPath, "utf8");
-    assert.match(raw, /keep this user note/);
-    assert.match(raw, /"theme": "system"/);
-    assert.match(parse(raw).mcp.openviking.command[1], /servers\/mcp-proxy\.mjs$/);
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
-});
+      await runInstaller([
+        "--harness", "opencode",
+        "--source", sourceMode,
+        "--dist", "github",
+        "--lang", "en",
+        "--url", "http://127.0.0.1:1933",
+        "--api-key", "",
+        "--yes",
+      ], {
+        cwd: source,
+        env: {
+          ...process.env,
+          HOME: home,
+          OPENVIKING_HOME: join(home, ".openviking"),
+          OPENVIKING_MARKETPLACE_ARCHIVE_URL: "",
+          OPENVIKING_REPO_ARCHIVE_URL: `file://${join(dir, "source.zip")}`,
+          PATH: `${bin}:${process.env.PATH}`,
+        },
+      }, join(source, "examples/memory-plugin-shared/install.sh"));
+
+      const raw = await readFile(configPath, "utf8");
+      assert.match(raw, /keep this user note/);
+      assert.match(raw, /"theme": "system"/);
+      assert.match(parse(raw).mcp.openviking.command[1], /servers\/mcp-proxy\.mjs$/);
+      const installedRoot = join(configDir, "plugins/openviking");
+      const env = { HOME: home, OPENVIKING_HOME: join(home, ".openviking") };
+      expectExit(await runHookScript(parse(raw).mcp.openviking.command[1], { cwd: home, env }));
+      if (sourceMode !== "remote") {
+        expectExit(await runHookScript(join(installedRoot, "index.mjs"), { cwd: home, env }));
+      } else {
+        assert.deepEqual(parse(raw).plugin, [SPEC]);
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+}

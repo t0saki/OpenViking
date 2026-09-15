@@ -46,7 +46,7 @@ export const KNOBS = [
   { name: "apiKey", type: "string", default: "", capability: "connection" },
   { name: "accountId", type: "string", default: "", capability: "connection" },
   { name: "userId", type: "string", default: "", capability: "connection" },
-  { name: "authMode", type: "enum", values: ["trusted", "api_key"], default: "", aliases: ["auth_mode"], capability: "connection" },
+  { name: "authMode", type: "enum", values: ["trusted", "api_key"], default: "", env: "OPENVIKING_AUTH_MODE", aliases: ["auth_mode"], capability: "connection" },
   {
     name: "timeoutMs",
     type: "int",

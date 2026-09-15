@@ -350,7 +350,7 @@ export async function runHookStage({
     emit();
     return undefined;
   }
-  if (enabled && !enabled(cfg, stage)) {
+  if (cfg.enabled === false || (enabled && !enabled(cfg, stage))) {
     onSkip("disabled", stage);
     emit();
     return undefined;
