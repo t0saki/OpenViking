@@ -17,7 +17,7 @@
  *     set; otherwise the active ovcli.conf is used, so `ov config switch`
  *     changes hooks, MCP, and in-process `ov` commands together on next launch.
  *   - Set OPENVIKING_CREDENTIAL_SOURCE=cli to force ovcli.conf, or =env to
- *     force env-var credentials.
+ *     read env vars only, with neither config file.
  *   - Without env vars or ovcli.conf, ov.conf/defaults are used.
  *
  * The stdio MCP proxy builds its connection from this same `loadConfig()`, so
