@@ -49,6 +49,8 @@ test("credentials resolved by the plugin reach the proxy through the child env",
     OPENVIKING_ACCOUNT: "acme",
     OPENVIKING_USER: "casey",
     OPENVIKING_PEER_ID: "workspace-peer",
+    OPENVIKING_AUTH_MODE: config.authMode,
+    OPENVIKING_TIMEOUT_MS: String(config.timeoutMs),
   });
 
   // The proxy must reconstruct the same target from that env alone — DSH
@@ -61,6 +63,25 @@ test("credentials resolved by the plugin reach the proxy through the child env",
   assert.equal(proxy.account, "acme");
   assert.equal(proxy.user, "casey");
   assert.equal(proxy.peerId, "workspace-peer");
+});
+
+test("the auth mode and timeout the host named reach the proxy too", async () => {
+  const config = resolveConfig({
+    endpoint: "http://ov.example.com",
+    apiKey: "secret",
+    account: "acme",
+    user: "casey",
+    authMode: "api_key",
+    timeoutMs: 45000,
+  }, {});
+  assert.equal(config.sendIdentityHeaders, false);
+
+  // Left to derive them, the proxy would call an account and user "trusted"
+  // and fall back to the harness default timeout.
+  const { readProxyConfig } = await import("./servers/mcp-proxy.mjs");
+  const proxy = readProxyConfig(buildMcpConfig(config).env, "/workspace");
+  assert.equal(proxy.sendIdentityHeaders, false);
+  assert.equal(proxy.timeoutMs, 45000);
 });
 
 test("an anonymous local server forwards no credential env", () => {

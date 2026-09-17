@@ -12,14 +12,12 @@
 import { resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveConfig } from "../config.mjs";
-import { resolveOpenVikingCredentials } from "../shared/credentials.mjs";
 import { createLogger } from "../shared/debug-log.mjs";
 import { buildMcpProxyConfig } from "../shared/mcp-proxy-config.mjs";
 import { createOpenVikingMcpProxy } from "../shared/mcp-proxy-core.mjs";
 
 export function readProxyConfig(env = process.env, cwd = process.cwd()) {
   const cfg = resolveConfig({}, env, cwd);
-  const creds = resolveOpenVikingCredentials(env, "dsh");
   return buildMcpProxyConfig({
     baseUrl: cfg.endpoint,
     apiKey: cfg.apiKey,
@@ -35,9 +33,9 @@ export function readProxyConfig(env = process.env, cwd = process.cwd()) {
     timeoutMs: cfg.requestTimeoutMs,
     debug: Boolean(env.OV_DEBUG_LOG),
     debugLogPath: env.OV_DEBUG_LOG,
-    credentialSource: creds.credentialSource,
-    credentialPath: creds.cliPath || creds.ovPath,
-    watchedPaths: [creds.cliPath, creds.ovPath, creds.cliPathCandidate],
+    credentialSource: cfg.credentialSource,
+    credentialPath: cfg.configPath || "",
+    watchedPaths: [cfg.cliPath, cfg.ovPath],
     env,
   });
 }

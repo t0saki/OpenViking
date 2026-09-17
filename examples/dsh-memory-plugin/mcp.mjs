@@ -25,6 +25,8 @@ export function buildMcpConfig(config) {
   if (config.account) env.OPENVIKING_ACCOUNT = config.account;
   if (config.user) env.OPENVIKING_USER = config.user;
   if (config.peerId) env.OPENVIKING_PEER_ID = config.peerId;
+  if (config.authMode) env.OPENVIKING_AUTH_MODE = config.authMode;
+  if (config.timeoutMs) env.OPENVIKING_TIMEOUT_MS = String(config.timeoutMs);
   return {
     transport: "stdio",
     serverName: MCP_SERVER_NAME,

@@ -133,6 +133,17 @@ test("every MCP proxy shapes its config through the shared builder", () => {
   }
 });
 
+test("a proxy shipped beside hooks takes its connection from the hook loader", () => {
+  // Called on its own, the credential chain never sees ovcli.conf's
+  // `plugin.<harness>` keys or the ov.conf fallback the loader adds, so the
+  // proxy would authenticate as someone other than the hooks. Only the portable
+  // package, which has no hook loader, calls it directly.
+  for (const { rel, source } of MCP_PROXIES) {
+    if (rel.startsWith("agent-plugins/")) continue;
+    assert.doesNotMatch(source, /resolveOpenVikingCredentials/, `${rel} must not resolve credentials on its own`);
+  }
+});
+
 test("no MCP proxy derives its peer from the launch directory", () => {
   // A proxy is long-lived and may start anywhere, so unlike a hook it cannot
   // re-derive a peer per turn. Codex already had this rule; it holds for all.
