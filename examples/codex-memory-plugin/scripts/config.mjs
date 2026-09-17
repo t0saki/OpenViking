@@ -20,9 +20,9 @@
  *     force env-var credentials.
  *   - Without env vars or ovcli.conf, ov.conf/defaults are used.
  *
- * The stdio MCP proxy calls the same resolver directly. Aligning the resolver
- * prevents identity drift between auto-capture/auto-recall hooks, MCP calls,
- * and child `ov` commands launched from inside Codex.
+ * The stdio MCP proxy builds its connection from this same `loadConfig()`, so
+ * the auto-capture/auto-recall hooks and MCP calls cannot drift apart on
+ * identity.
  *
  * File-path env vars:
  *   OPENVIKING_CLI_CONFIG_FILE  alternate ovcli.conf path  (preferred)

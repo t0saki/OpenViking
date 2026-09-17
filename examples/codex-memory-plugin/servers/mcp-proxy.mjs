@@ -12,31 +12,29 @@ import { resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadConfig } from "../scripts/config.mjs";
 import { createLogger } from "../scripts/debug-log.mjs";
-import { resolveOpenVikingCredentials } from "../scripts/shared/credentials.mjs";
 import {
   buildMcpProxyConfig,
   resolveMcpActorPeerId,
 } from "../scripts/shared/mcp-proxy-config.mjs";
 import { createOpenVikingMcpProxy } from "../scripts/shared/mcp-proxy-core.mjs";
 
-function readProxyConfig() {
-  const creds = resolveOpenVikingCredentials();
+export function readProxyConfig() {
   const cfg = loadConfig();
   return buildMcpProxyConfig({
-    baseUrl: creds.baseUrl,
-    mcpUrl: creds.mcpUrl,
-    apiKey: creds.apiKey,
-    account: creds.account,
-    user: creds.user,
+    baseUrl: cfg.baseUrl,
+    mcpUrl: cfg.mcpUrl,
+    apiKey: cfg.apiKey,
+    account: cfg.account,
+    user: cfg.user,
     sendIdentityHeaders: cfg.sendIdentityHeaders,
     peerId: resolveMcpActorPeerId(cfg),
     userAgent: cfg.userAgent,
     timeoutMs: cfg.timeoutMs,
     debug: cfg.debug,
     debugLogPath: cfg.debugLogPath,
-    credentialSource: creds.credentialSource,
-    credentialPath: creds.credentialPath,
-    watchedPaths: [creds.cliPath, creds.ovPath, creds.cliPathCandidate],
+    credentialSource: cfg.credentialSource,
+    credentialPath: cfg.credentialPath,
+    watchedPaths: [cfg.cliPath, cfg.ovPath],
   });
 }
 
