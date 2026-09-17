@@ -225,7 +225,9 @@ function firstLayer(layers) {
  *
  * ovcli.conf pins the chain when it names a url, key, identity or peer and the
  * environment names none of those; pinned, the environment's credentials no
- * longer apply. `OPENVIKING_CREDENTIAL_SOURCE` forces either side. Every chain
+ * longer apply. `OPENVIKING_CREDENTIAL_SOURCE` forces either side, and forced
+ * to `env` no file is read at all — which is what lets a parent process hand a
+ * resolved connection, including an empty key, to a child verbatim. Every chain
  * runs host → env (unpinned) → ovcli.conf → its `plugin.<harness>` and
  * `plugin` keys → ov.conf's harness section; the key then ends at
  * `server.root_api_key`, which a pinned chain reaches only with
@@ -249,6 +251,8 @@ export function resolveConnection(harness, {
   const pinned = mode === "cli" ||
     (mode === "auto" && !envHasCredentials && Boolean(cliPath) && hasCredentialFields(cliFile));
   const unpinned = (layer) => (pinned ? [] : [layer]);
+  const fromFiles = mode !== "env";
+  const filed = (...layers) => (fromFiles ? layers : []);
   const plugin = pluginSection(cliFile, name);
   const section = harnessSection(ovFile, name);
   const server = isSection(ovFile.server) ? ovFile.server : {};
@@ -256,39 +260,38 @@ export function resolveConnection(harness, {
   const key = firstLayer([
     [str(host.apiKey, ""), "host"],
     ...unpinned([str(env.OPENVIKING_BEARER_TOKEN, str(env.OPENVIKING_API_KEY, "")), "env"]),
-    [str(cliFile.api_key, ""), "ovcli", cliPath],
-    [scalar(plugin.apiKey), "ovcli", cliPath],
-    [scalar(section.apiKey), "ov", ovPath],
-    ...((pinned && !rootKeyFallback) ? [] : [[str(server.root_api_key, ""), "ov", ovPath]]),
+    ...filed(
+      [str(cliFile.api_key, ""), "ovcli", cliPath],
+      [scalar(plugin.apiKey), "ovcli", cliPath],
+      [scalar(section.apiKey), "ov", ovPath],
+    ),
+    ...((pinned && !rootKeyFallback) ? [] : filed([str(server.root_api_key, ""), "ov", ovPath])),
   ]);
 
   const identity = (hostValue, envName, cliValue, knob) => firstLayer([
     [str(hostValue, ""), "host"],
     ...unpinned([str(env[envName], ""), "env"]),
-    [cliValue, "ovcli", cliPath],
-    [scalar(plugin[knob]), "ovcli", cliPath],
-    ...unpinned([str(section[knob], ""), "ov", ovPath]),
+    ...filed([cliValue, "ovcli", cliPath], [scalar(plugin[knob]), "ovcli", cliPath]),
+    ...(pinned ? [] : filed([str(section[knob], ""), "ov", ovPath])),
   ]).value;
   const account = identity(host.account, "OPENVIKING_ACCOUNT", str(cliFile.account, str(cliFile.account_id, "")), "accountId");
   const user = identity(host.user, "OPENVIKING_USER", str(cliFile.user, str(cliFile.user_id, "")), "userId");
 
-  const cliPeer = str(cliFile.actor_peer_id, str(cliFile.peer_id, ""));
-  const peerId = pinned
-    ? cliPeer
-    : (str(env.OPENVIKING_PEER_ID, "") || cliPeer || str(section.peerId, str(section.peer_id, "")));
+  const peerId = firstLayer([
+    ...unpinned([str(env.OPENVIKING_PEER_ID, ""), "env"]),
+    ...filed([str(cliFile.actor_peer_id, str(cliFile.peer_id, "")), "ovcli"]),
+    ...(pinned ? [] : filed([str(section.peerId, str(section.peer_id, "")), "ov"])),
+  ]).value;
 
   const authMode = normalizeAuthMode(host.authMode)
     || normalizeAuthMode(env.OPENVIKING_AUTH_MODE)
-    || authModeIn(plugin)
-    || authModeIn(section)
-    || normalizeAuthMode(server.auth_mode)
+    || (fromFiles && (authModeIn(plugin) || authModeIn(section) || normalizeAuthMode(server.auth_mode)))
     || ((account || user) ? "trusted" : "api_key");
 
   const hostBaseUrl = trimSlash(str(host.baseUrl, ""));
   const envUrl = pinned ? "" : str(env.OPENVIKING_URL, str(env.OPENVIKING_BASE_URL, ""));
-  const cliUrl = mode === "env" ? "" : str(cliFile.url, "");
-  const serverUrl = str(server.url, "");
-  const baseUrl = hostBaseUrl || trimSlash(envUrl || cliUrl || serverUrl) || serverAddress(server);
+  const fileUrl = fromFiles ? (str(cliFile.url, "") || str(server.url, "")) : "";
+  const baseUrl = hostBaseUrl || trimSlash(envUrl || fileUrl) || serverAddress(fromFiles ? server : {});
   const envMcpUrl = pinned ? "" : str(env.OPENVIKING_MCP_URL, "");
   const mcpUrl = (!hostBaseUrl && envMcpUrl) ? envMcpUrl : `${baseUrl}/mcp`;
 

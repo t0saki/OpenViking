@@ -76,6 +76,28 @@ test("env source can be forced explicitly", async () => {
   });
 });
 
+test("a forced env source reads no file, so an empty variable stays empty", async () => {
+  await withFiles({
+    ovcli: { url: "https://cli.example.com", api_key: "cli-key", account: "acct-cli", actor_peer_id: "cli-peer", plugin: { userId: "usr-plugin", authMode: "trusted" } },
+    ov: { server: { url: "https://ov.example.com", root_api_key: "root-key", auth_mode: "trusted" }, codex: { apiKey: "sk-codex" } },
+  }, async ({ env }) => {
+    const bare = resolveConnection("codex", { env: { ...env, OPENVIKING_CREDENTIAL_SOURCE: "env" }, rootKeyFallback: true });
+    assert.equal(bare.credentialSource, "env");
+    assert.equal(bare.baseUrl, "http://127.0.0.1:1933");
+    assert.deepEqual(identity(bare), { apiKey: "", account: "", user: "" });
+    assert.equal(bare.apiKeySource, "none");
+    assert.equal(bare.peerId, "");
+    assert.equal(bare.authMode, "api_key");
+
+    const named = resolveConnection("codex", {
+      env: { ...env, OPENVIKING_CREDENTIALS_SOURCE: "environment", OPENVIKING_URL: "https://env.example.com", OPENVIKING_USER: "usr-env" },
+    });
+    assert.equal(named.mcpUrl, "https://env.example.com/mcp");
+    assert.deepEqual(identity(named), { apiKey: "", account: "", user: "usr-env" });
+    assert.equal(named.authMode, "trusted");
+  });
+});
+
 test("ovcli source can be forced explicitly without inheriting env key", async () => {
   await withFiles({ ovcli: { url: "http://127.0.0.1:1933" } }, async ({ env }) => {
     const creds = resolveConnection("codex", {
