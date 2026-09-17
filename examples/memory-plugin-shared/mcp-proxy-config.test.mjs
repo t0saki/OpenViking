@@ -5,11 +5,12 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { KNOB_BY_NAME } from "./lib/config-schema.mjs";
-import { buildProxyConnection, CONNECTION_ENV_VARS } from "./lib/credentials.mjs";
+import { buildProxyConnection, CONNECTION_ENV_VARS, resolveConnection } from "./lib/credentials.mjs";
 import {
   buildMcpProxyConfig,
   DEFAULT_PROXY_TIMEOUT_MS,
   defaultCredentialPaths,
+  forwardConnectionEnv,
   MCP_PROXY_ENV_VARS,
   normalizeConfigPath,
   parseExtraHeaders,
@@ -133,6 +134,36 @@ test("the forwarded-env list names every variable a proxy's config reads", () =>
   ]);
   assert.deepEqual(new Set(MCP_PROXY_ENV_VARS), expected);
   assert.equal(MCP_PROXY_ENV_VARS.length, expected.size, "no name is listed twice");
+});
+
+test("a forwarded connection resolves back to itself, whatever the files hold", async () => {
+  const files = await credentialFiles("ov-proxy-forward-", {
+    ovcli: { url: "https://cli.example.com", plugin: { codex: { accountId: "acct-plugin" } } },
+    ov: { server: { root_api_key: "root-key", auth_mode: "trusted" }, codex: { apiKey: "sk-ov" } },
+  });
+  const fields = (c) => ({
+    baseUrl: c.baseUrl,
+    mcpUrl: c.mcpUrl,
+    apiKey: c.apiKey,
+    account: c.account,
+    user: c.user,
+    authMode: c.authMode,
+  });
+  try {
+    for (const connection of [
+      resolveConnection("codex", { env: files.env }),
+      resolveConnection("codex", { env: { ...files.env, OPENVIKING_AUTH_MODE: "api_key" }, hostInput: { user: "host-user" } }),
+      resolveConnection("codex", { env: { ...files.env, OPENVIKING_MCP_URL: "https://mcp.example.com/x", OPENVIKING_API_KEY: "sk-env" } }),
+    ]) {
+      // Names a host lets a child inherit may not fill what the parent left empty.
+      const inherited = { ...files.env, OPENVIKING_ACCOUNT: "stale", OPENVIKING_USER: "stale", OPENVIKING_PEER_ID: "stale" };
+      const back = resolveConnection("codex", { env: { ...inherited, ...forwardConnectionEnv(connection) } });
+      assert.deepEqual(fields(back), fields(connection));
+      assert.equal(back.peerId, connection.peerId);
+    }
+  } finally {
+    await rm(files.dir, { recursive: true, force: true });
+  }
 });
 
 test("the shared mapper carries every connection field a loader resolved", () => {

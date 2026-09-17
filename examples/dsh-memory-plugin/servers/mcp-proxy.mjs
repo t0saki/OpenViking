@@ -23,8 +23,9 @@ export function readProxyConfig(env = process.env, cwd = process.cwd()) {
     env,
     // Not gated through `resolveMcpActorPeerId` like the other proxies: DSH's
     // parent process resolves the peer per session and hands it over in the
-    // child env, so this one is not a guess at the launch directory.
-    peerId: cfg.peerId || "",
+    // child env. Empty means it has none, and deriving one from wherever DSH
+    // launched this process would send a peer the runtime does not.
+    peerId: String(env.OPENVIKING_PEER_ID || "").trim(),
     debug: Boolean(env.OV_DEBUG_LOG),
     debugLogPath: env.OV_DEBUG_LOG || "",
   });

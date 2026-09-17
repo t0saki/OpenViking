@@ -11,7 +11,7 @@
 import { homedir } from "node:os";
 import { join, resolve as resolvePath } from "node:path";
 
-import { CONNECTION_ENV_VARS } from "./credentials.mjs";
+import { CONNECTION_ENV_VARS, CREDENTIAL_ENV_VARS } from "./credentials.mjs";
 
 export const DEFAULT_PROXY_TIMEOUT_MS = 15000;
 const MIN_PROXY_TIMEOUT_MS = 1000;
@@ -32,6 +32,34 @@ export const MCP_PROXY_ENV_VARS = [
   "OPENVIKING_DEBUG_LOG",
   "OPENVIKING_EXTRA_HEADERS",
 ];
+
+/**
+ * A resolved connection as the environment of a child proxy process.
+ *
+ * The other way across the process boundary, for a host that cannot hand its
+ * MCP servers the inputs (DSH drops credential-shaped names from what a child
+ * inherits): the parent resolves once and the child reads the answer back. The
+ * forced `env` source makes that exact — the child reads no file, so a key the
+ * parent left empty stays empty instead of falling through to
+ * `server.root_api_key`. Every credential variable is written, the empty ones
+ * too, because the rest of the parent's environment still reaches the child:
+ * an `OPENVIKING_ACCOUNT` the parent's pinned chain ignored must not fill the
+ * gap there.
+ */
+export function forwardConnectionEnv(connection) {
+  const env = Object.fromEntries(CREDENTIAL_ENV_VARS.map((name) => [name, ""]));
+  return {
+    ...env,
+    OPENVIKING_CREDENTIAL_SOURCE: "env",
+    OPENVIKING_URL: connection.baseUrl,
+    OPENVIKING_MCP_URL: connection.mcpUrl,
+    OPENVIKING_API_KEY: connection.apiKey || "",
+    OPENVIKING_ACCOUNT: connection.account || "",
+    OPENVIKING_USER: connection.user || "",
+    OPENVIKING_PEER_ID: connection.peerId || "",
+    OPENVIKING_AUTH_MODE: connection.authMode,
+  };
+}
 
 export function trimSlash(value) {
   return String(value || "").replace(/\/+$/, "");
@@ -73,7 +101,7 @@ export function defaultCredentialPaths(env = process.env) {
  * start: the proxy is what carries every memory tool, and taking those away
  * because a scope preference cannot be honoured costs the user far more than
  * the wider search does. Only the harness whose parent process injects the peer
- * (dsh, `mcp.mjs:27`) can satisfy this without the user setting it.
+ * (dsh, `mcp-env.mjs`) can satisfy this without the user setting it.
  */
 export function resolveMcpActorPeerId({
   peerId = "",
