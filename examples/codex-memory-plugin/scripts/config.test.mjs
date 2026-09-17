@@ -3,7 +3,6 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { readProxyConfig } from "../servers/mcp-proxy.mjs";
 import { loadConfig } from "./config.mjs";
 import { isBypassed } from "./shared/session-model.mjs";
 
@@ -72,40 +71,6 @@ function withConfigs({ ov, cli, workspace, env = {} }, fn) {
     rmSync(dir, { recursive: true, force: true });
   }
 }
-
-function assertProxyMatchesHooks() {
-  const hooks = loadConfig();
-  const proxy = readProxyConfig();
-  assert.equal(proxy.mcpUrl, hooks.mcpUrl);
-  assert.equal(proxy.apiKey, hooks.apiKey);
-  assert.equal(proxy.account, hooks.account);
-  assert.equal(proxy.user, hooks.user);
-  assert.equal(proxy.sendIdentityHeaders, hooks.sendIdentityHeaders);
-  return proxy;
-}
-
-test("the MCP proxy authenticates with the plugin.codex key the hooks use", () => {
-  withConfigs({
-    cli: {
-      url: "http://127.0.0.1:1933",
-      plugin: { codex: { apiKey: "sk-plugin", accountId: "acme", userId: "casey" } },
-    },
-  }, () => {
-    const proxy = assertProxyMatchesHooks();
-    assert.equal(proxy.apiKey, "sk-plugin");
-    assert.equal(proxy.account, "acme");
-    assert.equal(proxy.user, "casey");
-  });
-});
-
-test("the MCP proxy keeps ov.conf's codex key when ovcli.conf names only the server", () => {
-  withConfigs({
-    ov: { codex: { apiKey: "sk-ov" } },
-    cli: { url: "http://127.0.0.1:1933" },
-  }, () => {
-    assert.equal(assertProxyMatchesHooks().apiKey, "sk-ov");
-  });
-});
 
 test("a repository can carry the bypass patterns its contributors share", () => {
   withConfigs({

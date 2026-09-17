@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { rm } from "node:fs/promises";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { KNOB_BY_NAME } from "./lib/config-schema.mjs";
@@ -20,6 +20,7 @@ import {
 } from "./lib/mcp-proxy-config.mjs";
 import { createOpenVikingMcpProxy } from "./lib/mcp-proxy-core.mjs";
 import { ROOT } from "./sync.mjs";
+import { writeCredentialFiles } from "./testing/support.mjs";
 
 const OVCLI = join(homedir(), ".openviking", "ovcli.conf");
 const OV = join(homedir(), ".openviking", "ov.conf");
@@ -137,7 +138,7 @@ test("the forwarded-env list names every variable a proxy's config reads", () =>
 });
 
 test("a forwarded connection resolves back to itself, whatever the files hold", async () => {
-  const files = await credentialFiles("ov-proxy-forward-", {
+  const files = await writeCredentialFiles("ov-proxy-forward-", {
     ovcli: { url: "https://cli.example.com", plugin: { codex: { accountId: "acct-plugin" } } },
     ov: { server: { root_api_key: "root-key", auth_mode: "trusted" }, codex: { apiKey: "sk-ov" } },
   });
@@ -320,25 +321,11 @@ test("the identity headers follow the auth mode, not a resolved account", async 
   assert.equal(sent[1]["X-OpenViking-User"], "alice");
 });
 
-async function credentialFiles(prefix, { ovcli, ov }) {
-  const dir = await mkdtemp(join(tmpdir(), prefix));
-  const cliPath = join(dir, "ovcli.conf");
-  const ovPath = join(dir, "ov.conf");
-  await writeFile(cliPath, JSON.stringify(ovcli, null, 2) + "\n");
-  await writeFile(ovPath, JSON.stringify(ov, null, 2) + "\n");
-  return {
-    dir,
-    cliPath,
-    ovPath,
-    env: { OPENVIKING_CLI_CONFIG_FILE: cliPath, OPENVIKING_CONFIG_FILE: ovPath },
-  };
-}
-
 // The portable bundle ships without an installer, so nobody moves a working
 // install's key out of ov.conf for it. ovcli.conf naming only a url pins the
 // credential chain to that file, and the chain has to keep going anyway.
 test("a portable proxy keeps the server key when ovcli.conf names only a url", async () => {
-  const files = await credentialFiles("ov-proxy-rootkey-", {
+  const files = await writeCredentialFiles("ov-proxy-rootkey-", {
     ovcli: { url: "https://ov.example.com" },
     ov: { server: { root_api_key: "root-key" } },
   });
@@ -357,7 +344,7 @@ test("a portable proxy keeps the server key when ovcli.conf names only a url", a
 });
 
 test("a portable proxy reports the auth mode, its own log path, and the files to watch", async () => {
-  const files = await credentialFiles("ov-proxy-shape-", {
+  const files = await writeCredentialFiles("ov-proxy-shape-", {
     ovcli: { url: "https://ov.example.com", api_key: "cli-key", account: "acme", user: "alice" },
     ov: {},
   });
@@ -390,7 +377,7 @@ test("a portable proxy reports the auth mode, its own log path, and the files to
 });
 
 test("an api_key deployment keeps the operator's identity off the wire", async () => {
-  const files = await credentialFiles("ov-proxy-apikey-", {
+  const files = await writeCredentialFiles("ov-proxy-apikey-", {
     ovcli: { url: "https://ov.example.com", api_key: "cli-key", account: "acme" },
     ov: { server: { auth_mode: "api_key" } },
   });
