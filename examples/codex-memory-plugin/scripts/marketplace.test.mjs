@@ -219,7 +219,7 @@ test("Codex MCP entrypoint forwards only native OpenViking tools", () => {
   const entrypoint = readFileSync(join(pluginDir, "servers", "mcp-proxy.mjs"), "utf-8");
   assert.doesNotMatch(entrypoint, /createExperienceToolProvider/);
   assert.doesNotMatch(entrypoint, /localToolProvider/);
-  assert.match(entrypoint, /resolveMcpActorPeerId\(cfg\)/);
+  assert.match(entrypoint, /toMcpProxyConfig\(/);
   assert.doesNotMatch(entrypoint, /resolveEffectivePeerId|process\.cwd\(\)/);
 });
 

@@ -182,17 +182,19 @@ test("the shared mapper carries every connection field a loader resolved", () =>
   assert.equal(quiet.debugLogPath, "");
 });
 
-test("every MCP proxy shapes its config through the shared builder", () => {
+test("every MCP proxy shapes its config through the shared mapper", () => {
   assert.equal(
     MCP_PROXIES.length,
     MCP_PROXY_COUNT,
     `expected ${MCP_PROXY_COUNT} proxies, found ${MCP_PROXIES.map((p) => p.rel).join(", ")}`,
   );
   for (const { rel, source } of MCP_PROXIES) {
+    assert.match(source, /toMcpProxyConfig\(/, `${rel} must map its config through toMcpProxyConfig`);
+    assert.doesNotMatch(source, /buildMcpProxyConfig\(/, `${rel} must not pick fields for the proxy by hand`);
     assert.match(
       source,
-      /buildMcpProxyConfig\(/,
-      `${rel} must shape its config through buildMcpProxyConfig`,
+      /export function readProxyConfig\(env = process\.env/,
+      `${rel} must export readProxyConfig(env) so the parity test can drive it`,
     );
   }
 });
@@ -341,7 +343,7 @@ test("a portable proxy reports the auth mode, its own log path, and the files to
       join(homedir(), ".openviking", "logs", "agent-plugins.log"),
     );
     assert.deepEqual(
-      buildMcpProxyConfig({ watchedPaths: cfg.watchedPaths, env: files.env }).watchedPaths,
+      toMcpProxyConfig(cfg, { env: files.env }).watchedPaths,
       [files.cliPath, files.ovPath, OVCLI, OV],
     );
 

@@ -3,39 +3,20 @@
 /**
  * stdio -> streamable-HTTP MCP proxy for the OpenViking Codex plugin.
  *
- * Codex starts this process as a local stdio MCP server. The proxy reads the
- * same OpenViking credential sources as the lifecycle hooks, forwards JSON-RPC
- * requests to the server's /mcp endpoint, and keeps stdout protocol-clean.
+ * Codex starts this process as a local stdio MCP server. The proxy resolves its
+ * connection through the hooks' own `loadConfig()`, forwards JSON-RPC requests
+ * to the server's /mcp endpoint, and keeps stdout protocol-clean.
  */
 
 import { resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadConfig } from "../scripts/config.mjs";
 import { createLogger } from "../scripts/debug-log.mjs";
-import {
-  buildMcpProxyConfig,
-  resolveMcpActorPeerId,
-} from "../scripts/shared/mcp-proxy-config.mjs";
+import { toMcpProxyConfig } from "../scripts/shared/mcp-proxy-config.mjs";
 import { createOpenVikingMcpProxy } from "../scripts/shared/mcp-proxy-core.mjs";
 
-export function readProxyConfig() {
-  const cfg = loadConfig();
-  return buildMcpProxyConfig({
-    baseUrl: cfg.baseUrl,
-    mcpUrl: cfg.mcpUrl,
-    apiKey: cfg.apiKey,
-    account: cfg.account,
-    user: cfg.user,
-    sendIdentityHeaders: cfg.sendIdentityHeaders,
-    peerId: resolveMcpActorPeerId(cfg),
-    userAgent: cfg.userAgent,
-    timeoutMs: cfg.timeoutMs,
-    debug: cfg.debug,
-    debugLogPath: cfg.debugLogPath,
-    credentialSource: cfg.credentialSource,
-    credentialPath: cfg.credentialPath,
-    watchedPaths: [cfg.cliPath, cfg.ovPath],
-  });
+export function readProxyConfig(env = process.env) {
+  return toMcpProxyConfig(loadConfig(undefined, { env }), { env });
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === resolvePath(process.argv[1])) {

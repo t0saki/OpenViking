@@ -61,9 +61,10 @@ function configBool(value, fallback) {
  * workspace file may not carry connection or credential keys, so baseUrl/apiKey
  * cannot move — loggers and fetch helpers built from the first load stay valid.
  */
-export function loadConfig(cwd = process.cwd()) {
+export function loadConfig(cwd = process.cwd(), { env = process.env } = {}) {
   const config = buildPluginConfig("codex", {
     cwd,
+    env,
     manifestUrl: MANIFEST_URL,
     logFile: "codex-hooks.log",
   });

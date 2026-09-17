@@ -73,7 +73,8 @@ export function buildProxyConnection(
   apiKeySource: string;
   credentialPath: string;
   hasApiKey: boolean;
-  watchedPaths: string[];
+  cliPath: string;
+  ovPath: string;
   timeoutMs: number;
   debug: boolean;
   debugLogPath: string;

@@ -364,7 +364,8 @@ export function buildProxyConnection(harness, { env = process.env, manifestUrl =
     apiKeySource: connection.apiKeySource,
     credentialPath: connection.credentialPath,
     hasApiKey: connection.hasApiKey,
-    watchedPaths: [connection.cliPath, connection.ovPath, connection.cliPathCandidate],
+    cliPath: connection.cliPath,
+    ovPath: connection.ovPath,
     timeoutMs: clampTimeout(env.OPENVIKING_TIMEOUT_MS),
     debug: envFlag(env, "OPENVIKING_DEBUG"),
     debugLogPath: str(env.OPENVIKING_DEBUG_LOG)
