@@ -1142,7 +1142,7 @@ export function inspectConfigFiles(report, { harness = "", launcherHint = "this 
  * block from `server.root_api_key`.
  *
  * The identity has no such answer to read, so account and user follow the chain
- * in `resolveOpenVikingCredentials` step for step: pinned to ovcli.conf it ends
+ * in `resolveConnection` step for step: pinned to ovcli.conf it ends
  * at that file's `plugin` section, and otherwise the environment wins and
  * ov.conf's harness block is last.
  */
