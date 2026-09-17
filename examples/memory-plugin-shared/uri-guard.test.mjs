@@ -52,15 +52,8 @@ test("evaluateUriGuard denies a guarded tool and passes everything else", () => 
 
   assert.equal(evaluateUriGuard("Read", { file_path: "/tmp/a.md" }), null)
   assert.equal(evaluateUriGuard("Task", { file_path: "viking://resources/a.md" }), null)
-})
-
-test("evaluateUriGuard only guards the tools the host names", () => {
-  const call = ["read", { file_path: "viking://resources/a.md" }]
-  assert.equal(evaluateUriGuard(...call, { guarded: new Set(["glob", "grep"]) }), null)
-  assert.equal(
-    evaluateUriGuard(...call, { guarded: new Set(["read", "grep"]) })?.uri,
-    "viking://resources/a.md",
-  )
+  assert.equal(evaluateUriGuard("Write", { file_path: "viking://resources/a.md", content: "x" })?.uri, "viking://resources/a.md")
+  assert.equal(evaluateUriGuard("Write", { file_path: "/tmp/a.md", content: "see viking://resources/a.md" }), null)
 })
 
 test("a shell command that carries a viking:// URI gets a notice, never a deny", () => {

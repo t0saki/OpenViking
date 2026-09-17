@@ -109,6 +109,14 @@ export const DEFAULT_TOOL_HINTS = {
       `grep(uri="${uri}", pattern="${String(input.pattern ?? "").replaceAll('"', '\\"')}")`
     ),
   },
+  edit: {
+    tool: "OpenViking MCP edit",
+    example: (uri) => `edit(uri="${uri}", old_string="...", new_string="...")`,
+  },
+  write: {
+    tool: "OpenViking MCP write",
+    example: (uri) => `write(uri="${uri}", content="...")`,
+  },
   bash: {
     tool: "OpenViking MCP read or search",
     example: (uri) => `read(uris="${uri}")`,
@@ -133,9 +141,8 @@ const SHELL_TOOL_NAMES = new Set(["bash", "shell", "runcommand"]);
 // glob's pattern.
 const TEXT_ARGS_BY_TOOL = { grep: ["pattern"] };
 
-function resolveGuardedUri(toolName, input, { hints = DEFAULT_TOOL_HINTS, guarded } = {}) {
+function resolveGuardedUri(toolName, input, { hints = DEFAULT_TOOL_HINTS } = {}) {
   const name = normalizeToolName(toolName);
-  if (guarded && !guarded.has(name)) return null;
   const hint = hints[name];
   if (!hint) return null;
   const textArgs = TEXT_ARGS_BY_TOOL[name];
