@@ -3,7 +3,8 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { CREDENTIAL_ENV_VARS, resolveConnection } from "./lib/credentials.mjs";
+import { KNOB_BY_NAME } from "./lib/config-schema.mjs";
+import { CONNECTION_ENV_VARS, CREDENTIAL_ENV_VARS, resolveConnection } from "./lib/credentials.mjs";
 
 /**
  * Run `fn` against an ovcli.conf / ov.conf pair in a throwaway directory. A
@@ -303,4 +304,21 @@ test("a host's endpoint outranks every URL, including an explicit MCP URL", asyn
     assert.equal(hosted.baseUrl, "https://host.example.com");
     assert.equal(hosted.mcpUrl, "https://host.example.com/mcp");
   });
+});
+
+// credentials.mjs reads these knobs out of the plugin section itself, so the
+// portable bundle does not have to ship the schema; every spelling the schema
+// accepts has to land.
+test("every spelling of a connection knob in the schema reaches the chain", async () => {
+  const values = { apiKey: ["apiKey", "sk-plugin"], accountId: ["account", "acct-plugin"], userId: ["user", "usr-plugin"], authMode: ["authMode", "trusted"] };
+  for (const [name, [field, value]] of Object.entries(values)) {
+    const knob = KNOB_BY_NAME.get(name);
+    assert.equal(knob.capability, "connection");
+    if (knob.env) assert.ok(CONNECTION_ENV_VARS.includes(knob.env), `${knob.env} is a connection variable`);
+    for (const spelling of [name, ...(knob.aliases || [])]) {
+      await withFiles({ ovcli: { plugin: { codex: { [spelling]: value } } }, ov: { server: { auth_mode: "api_key" } } }, async ({ env }) => {
+        assert.equal(resolveConnection("codex", { env })[field], value, `plugin.codex.${spelling}`);
+      });
+    }
+  }
 });

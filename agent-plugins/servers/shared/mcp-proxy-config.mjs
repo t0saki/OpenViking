@@ -12,8 +12,27 @@
 import { homedir } from "node:os";
 import { join, resolve as resolvePath } from "node:path";
 
+import { CONNECTION_ENV_VARS } from "./credentials.mjs";
+
 export const DEFAULT_PROXY_TIMEOUT_MS = 15000;
 const MIN_PROXY_TIMEOUT_MS = 1000;
+
+/**
+ * Every variable that changes what an MCP proxy sends. Hooks inherit their
+ * host's whole environment; a host that hands its MCP servers an allowlist
+ * instead (Codex's `env_vars`) has to name each of these, or the proxy
+ * resolves a different connection from the hooks beside it.
+ */
+export const MCP_PROXY_ENV_VARS = [
+  ...CONNECTION_ENV_VARS,
+  "OPENVIKING_HOME",
+  "OPENVIKING_STATE_DIR",
+  "OPENVIKING_RECALL_PEER_SCOPE",
+  "OPENVIKING_TIMEOUT_MS",
+  "OPENVIKING_DEBUG",
+  "OPENVIKING_DEBUG_LOG",
+  "OPENVIKING_EXTRA_HEADERS",
+];
 
 export function trimSlash(value) {
   return String(value || "").replace(/\/+$/, "");
@@ -191,4 +210,39 @@ export function buildMcpProxyConfig({
     watchedPaths: uniq([...watchedPaths, ...defaultCredentialPaths(env)]),
     extraHeaders: resolvedExtraHeaders,
   };
+}
+
+/**
+ * The proxy config for a resolved harness config, mapped in one place.
+ *
+ * Every proxy used to copy fields out of its loader by hand, and the copies
+ * drifted: two dropped `mcpUrl`, so `OPENVIKING_MCP_URL` reached the hooks and
+ * not the tools. `cfg` is what `buildPluginConfig` or `buildProxyConnection`
+ * returned. `peerId` replaces the actor peer only for a harness whose parent
+ * process resolved it (dsh); everywhere else a long-lived proxy may send one
+ * only when actor-scoped recall asks for it.
+ */
+export function toMcpProxyConfig(cfg, {
+  env = process.env,
+  peerId = undefined,
+  debug = cfg.debug,
+  debugLogPath = cfg.debugLogPath,
+} = {}) {
+  return buildMcpProxyConfig({
+    baseUrl: cfg.baseUrl,
+    mcpUrl: cfg.mcpUrl,
+    apiKey: cfg.apiKey,
+    account: cfg.account,
+    user: cfg.user,
+    sendIdentityHeaders: cfg.sendIdentityHeaders,
+    peerId: peerId === undefined ? resolveMcpActorPeerId(cfg) : peerId,
+    userAgent: cfg.userAgent,
+    timeoutMs: cfg.timeoutMs,
+    debug,
+    debugLogPath,
+    credentialSource: cfg.credentialSource,
+    credentialPath: cfg.credentialPath || "",
+    watchedPaths: [cfg.cliPath, cfg.ovPath],
+    env,
+  });
 }

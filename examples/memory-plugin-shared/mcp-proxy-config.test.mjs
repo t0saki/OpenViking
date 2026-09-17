@@ -4,14 +4,17 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { buildProxyConnection } from "./lib/credentials.mjs";
+import { KNOB_BY_NAME } from "./lib/config-schema.mjs";
+import { buildProxyConnection, CONNECTION_ENV_VARS } from "./lib/credentials.mjs";
 import {
   buildMcpProxyConfig,
   DEFAULT_PROXY_TIMEOUT_MS,
   defaultCredentialPaths,
+  MCP_PROXY_ENV_VARS,
   normalizeConfigPath,
   parseExtraHeaders,
   resolveMcpActorPeerId,
+  toMcpProxyConfig,
   trimSlash,
 } from "./lib/mcp-proxy-config.mjs";
 import { createOpenVikingMcpProxy } from "./lib/mcp-proxy-core.mjs";
@@ -116,6 +119,67 @@ test("path and URL helpers stay exported for entrypoints that need them", () => 
   assert.equal(normalizeConfigPath("~"), homedir());
   assert.equal(normalizeConfigPath("~/a"), join(homedir(), "a"));
   assert.equal(defaultCredentialPaths({}).length, 2);
+});
+
+test("the forwarded-env list names every variable a proxy's config reads", () => {
+  const knobEnv = ["recallPeerScope", "timeoutMs", "debug", "debugLogPath", "authMode"]
+    .map((name) => KNOB_BY_NAME.get(name).env);
+  const expected = new Set([
+    ...CONNECTION_ENV_VARS,
+    ...knobEnv,
+    "OPENVIKING_EXTRA_HEADERS",
+    "OPENVIKING_HOME",
+    "OPENVIKING_STATE_DIR",
+  ]);
+  assert.deepEqual(new Set(MCP_PROXY_ENV_VARS), expected);
+  assert.equal(MCP_PROXY_ENV_VARS.length, expected.size, "no name is listed twice");
+});
+
+test("the shared mapper carries every connection field a loader resolved", () => {
+  const cfg = {
+    baseUrl: "https://ov.example.com",
+    mcpUrl: "https://ov.example.com/custom-mcp",
+    apiKey: "sk",
+    account: "acme",
+    user: "alice",
+    sendIdentityHeaders: true,
+    peerId: "workspace-a",
+    recallPeerScope: "all",
+    userAgent: "openviking-memory-codex/1.0.0",
+    timeoutMs: 30000,
+    debug: true,
+    debugLogPath: "/tmp/codex.log",
+    credentialSource: "ovcli",
+    credentialPath: "/cfg/ovcli.conf",
+    cliPath: "/cfg/ovcli.conf",
+    ovPath: "",
+  };
+  const proxy = toMcpProxyConfig(cfg, { env: {} });
+  assert.deepEqual(
+    { ...proxy, watchedPaths: proxy.watchedPaths.slice(0, 1) },
+    {
+      mcpUrl: "https://ov.example.com/custom-mcp",
+      apiKey: "sk",
+      account: "acme",
+      user: "alice",
+      sendIdentityHeaders: true,
+      peerId: "",
+      userAgent: "openviking-memory-codex/1.0.0",
+      timeoutMs: 30000,
+      debug: true,
+      debugLogPath: "/tmp/codex.log",
+      credentialSource: "ovcli",
+      credentialPath: "/cfg/ovcli.conf",
+      watchedPaths: ["/cfg/ovcli.conf"],
+      extraHeaders: {},
+    },
+  );
+
+  assert.equal(toMcpProxyConfig({ ...cfg, recallPeerScope: "actor" }, { env: {} }).peerId, "workspace-a");
+  assert.equal(toMcpProxyConfig(cfg, { env: {}, peerId: "from-parent" }).peerId, "from-parent");
+  const quiet = toMcpProxyConfig(cfg, { env: {}, debug: false, debugLogPath: "" });
+  assert.equal(quiet.debug, false);
+  assert.equal(quiet.debugLogPath, "");
 });
 
 test("every MCP proxy shapes its config through the shared builder", () => {

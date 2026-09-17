@@ -16,6 +16,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { MCP_PROXY_ENV_VARS } from "./shared/mcp-proxy-config.mjs";
+
 const scriptsDir = dirname(fileURLToPath(import.meta.url));
 const pluginDir = resolve(scriptsDir, "..");
 const repoRoot = resolve(scriptsDir, "..", "..", "..");
@@ -208,23 +210,7 @@ test(".mcp.json forwards every env var that changes what the MCP proxy sends", (
   // the names listed here; a missing one is a setting the proxy never sees.
   const server = readJson(join(pluginDir, ".mcp.json")).mcpServers[PLUGIN_NAME];
   const forwarded = new Set(server.env_vars);
-  for (const name of [
-    "OPENVIKING_CLI_CONFIG_FILE",
-    "OPENVIKING_CONFIG_FILE",
-    "OPENVIKING_URL",
-    "OPENVIKING_BASE_URL",
-    "OPENVIKING_MCP_URL",
-    "OPENVIKING_API_KEY",
-    "OPENVIKING_BEARER_TOKEN",
-    "OPENVIKING_AUTH_MODE",
-    "OPENVIKING_ACCOUNT",
-    "OPENVIKING_USER",
-    "OPENVIKING_PEER_ID",
-    "OPENVIKING_CREDENTIAL_SOURCE",
-    "OPENVIKING_RECALL_PEER_SCOPE",
-    "OPENVIKING_TIMEOUT_MS",
-    "OPENVIKING_EXTRA_HEADERS",
-  ]) {
+  for (const name of MCP_PROXY_ENV_VARS) {
     assert.ok(forwarded.has(name), `.mcp.json env_vars must forward ${name}`);
   }
 });
