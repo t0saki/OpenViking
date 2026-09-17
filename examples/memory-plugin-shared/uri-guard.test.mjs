@@ -84,6 +84,15 @@ test("a file tool on a viking:// path is denied, never noticed", () => {
   assert.equal(evaluateUriNotice("Task", { command: "viking://resources/a.md" }), null)
 })
 
+test("grep's pattern is search text while glob's pattern is a location", () => {
+  assert.equal(evaluateUriGuard("Grep", { pattern: "viking://", path: "/repo" }), null)
+  assert.equal(
+    evaluateUriGuard("Grep", { pattern: "viking://", path: "viking://resources/project/" })?.uri,
+    "viking://resources/project/",
+  )
+  assert.equal(evaluateUriGuard("Glob", { pattern: "viking://resources/**" })?.uri, "viking://resources/**")
+})
+
 test("buildGuardNotice names the plugin, the URI, the replacement and the way out", () => {
   const notice = buildGuardNotice("viking://resources/a.md", {
     tool: "openviking_read",

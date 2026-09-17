@@ -60,6 +60,14 @@ test("uri guard deny for Glob with viking URI", () => {
   assert.equal(output.hookSpecificOutput.permissionDecision, "deny");
 });
 
+test("uri guard pass-through for Grep searching local files for a viking URI", () => {
+  const output = evaluateHostUriGuard("zcode", {
+    tool_name: "Grep",
+    tool_input: { pattern: "viking://user/", path: "/repo" },
+  });
+  assert.deepEqual(output, {});
+});
+
 test("uri guard handles alternative tool_input field names", () => {
   const output = evaluateHostUriGuard("zcode", {
     tool_name: "Read",

@@ -11,7 +11,6 @@ const DEFAULT_URI_KEYS = [
   "uri",
   "target_uri",
   "targetUri",
-  "pattern",
 ];
 
 export function normalizeToolName(value) {
@@ -129,12 +128,18 @@ export const DEFAULT_TOOL_HINTS = {
 // a path the model hoped to open, so the command runs and the model gets a notice.
 const SHELL_TOOL_NAMES = new Set(["bash", "shell", "runcommand"]);
 
+// `pattern` is where glob looks but what grep looks for: a grep for the text
+// "viking://" in a local tree is not a path. The generic sweep still reaches
+// glob's pattern.
+const TEXT_ARGS_BY_TOOL = { grep: ["pattern"] };
+
 function resolveGuardedUri(toolName, input, { hints = DEFAULT_TOOL_HINTS, guarded } = {}) {
   const name = normalizeToolName(toolName);
   if (guarded && !guarded.has(name)) return null;
   const hint = hints[name];
   if (!hint) return null;
-  const uri = findVikingUri(input);
+  const textArgs = TEXT_ARGS_BY_TOOL[name];
+  const uri = findVikingUri(input, DEFAULT_URI_KEYS, textArgs ? [...DEFAULT_CONTENT_KEYS, ...textArgs] : DEFAULT_CONTENT_KEYS);
   if (!uri) return null;
   return {
     uri,
