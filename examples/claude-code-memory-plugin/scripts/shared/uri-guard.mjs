@@ -205,11 +205,9 @@ export function preToolUseOutput(event = {}, opts = {}) {
   return notice ? noticeHookSpecificOutput(notice.reason) : {};
 }
 
-/** Cursor's deny envelope; its shell hook also wants the reason for the agent. */
-export function denyCursorPermission(reason, { agentMessage = false } = {}) {
-  const output = { permission: "deny", user_message: reason };
-  if (agentMessage) output.agent_message = reason;
-  return output;
+/** Cursor's beforeReadFile deny envelope. */
+export function denyCursorPermission(reason) {
+  return { permission: "deny", user_message: reason };
 }
 
 function readHookInput() {

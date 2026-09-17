@@ -125,11 +125,6 @@ test("deny envelopes carry only the keys their host recognizes", () => {
     },
   })
   assert.deepEqual(denyCursorPermission("because"), { permission: "deny", user_message: "because" })
-  assert.deepEqual(denyCursorPermission("because", { agentMessage: true }), {
-    permission: "deny",
-    user_message: "because",
-    agent_message: "because",
-  })
 })
 
 test("the notice envelope leaves the permission decision to the host", () => {
