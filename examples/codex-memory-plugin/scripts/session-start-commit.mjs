@@ -172,6 +172,7 @@ async function buildSessionProfileContext() {
       fetchJSONRes,
       cfg.profileTokenBudget,
       activePeerId,
+      cfg,
     );
     if (!profile?.block) {
       log("skip", { stage: "profile_inject", reason: "no profile content" });
@@ -185,6 +186,9 @@ async function buildSessionProfileContext() {
       entCount: profile.entCount,
       droppedPref: profile.droppedPref,
       droppedEnt: profile.droppedEnt,
+      skillCount: profile.skillCount,
+      droppedSkill: profile.droppedSkill,
+      skillTokens: profile.skillTokens,
     });
     return wrapProfileContext(profile.block);
   } catch (error) {

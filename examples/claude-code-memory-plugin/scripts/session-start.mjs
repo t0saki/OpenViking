@@ -126,7 +126,7 @@ runHookStage({
   let profile = null;
   if (!cfg.noAutoInject) {
     try {
-      profile = await buildProfileBlock(fetchJSON, cfg.profileTokenBudget, effectivePeer.peerId);
+      profile = await buildProfileBlock(fetchJSON, cfg.profileTokenBudget, effectivePeer.peerId, cfg);
     } catch (err) {
       logError("profile_inject", err);
     }
@@ -169,7 +169,7 @@ runHookStage({
   if (cfg.debug) {
     process.stderr.write(
       `[ov] session-start injected ~${composed.length} chars / ~${estimateTokens(composed)} tokens` +
-      (profile ? ` (profile=${profile.profileChars} chars, prefs=${profile.prefCount}${profile.droppedPref ? `(+${profile.droppedPref} dropped)` : ""}, entities=${profile.entCount}${profile.droppedEnt ? `(+${profile.droppedEnt} dropped)` : ""})` : "") +
+      (profile ? ` (profile=${profile.profileChars} chars, prefs=${profile.prefCount}${profile.droppedPref ? `(+${profile.droppedPref} dropped)` : ""}, entities=${profile.entCount}${profile.droppedEnt ? `(+${profile.droppedEnt} dropped)` : ""}, skills=${profile.skillCount}${profile.droppedSkill ? `(+${profile.droppedSkill} dropped)` : ""})` : "") +
       (archiveSection ? " +archive" : "") +
       "\n",
     );

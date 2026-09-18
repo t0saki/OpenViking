@@ -152,6 +152,8 @@ export const KNOBS = [
   { name: "resumeArchiveMaxChars", type: "int", default: 6000, min: 1000, max: 200000, env: "OPENVIKING_RESUME_ARCHIVE_MAX_CHARS", capability: "session" },
   { name: "skillExperience", type: "bool", default: false, env: "OPENVIKING_SKILL_EXPERIENCE", capability: "session" },
   { name: "skillExperienceLimit", type: "int", default: 3, min: 1, max: 50, env: "OPENVIKING_SKILL_EXPERIENCE_LIMIT", capability: "session" },
+  { name: "skillCatalog", type: "bool", default: true, env: "OPENVIKING_SKILL_CATALOG", capability: "session" },
+  { name: "skillCatalogTokenBudget", type: "int", default: 1200, min: 0, max: 20000, env: "OPENVIKING_SKILL_CATALOG_TOKEN_BUDGET", capability: "session" },
   { name: "skipSubagentSessions", type: "bool", default: false, env: "OPENVIKING_SKIP_SUBAGENT_SESSIONS", capability: "session" },
   { name: "repoContext", type: "bool", default: true, capability: "session" },
   { name: "repoContextCacheTtlMs", type: "int", default: 60000, min: 1000, max: 3600000, capability: "session" },

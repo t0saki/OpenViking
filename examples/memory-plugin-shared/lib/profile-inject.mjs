@@ -1,10 +1,11 @@
 /**
  * Session-start profile injection helper.
  *
- * Builds a <user-profile> + <available-memories> block from
+ * Builds a <user-profile> + <available-memories> (+ <available-skills>) block from
  *   viking://user/<space>/memories/profile.md
  *   viking://user/<space>/memories/preferences/   (ls with abstracts)
  *   viking://user/<space>/memories/entities/      (ls with abstracts)
+ *   GET /api/v1/skills                            (own + account-shared skills)
  *
  * Budget enforced via the CJK-aware estimateTokens() below — codepoint >=
  * 0x3000 counts at 1.5 tokens, else chars/4. The estimator is exported so
@@ -184,7 +185,9 @@ function elideProfile(content, maxTokens) {
   return `${head}${ELLIPSIS}${lines.slice(tailStart).join("\n")}`;
 }
 
-function formatListing(headerUri, entries, budgetTokens) {
+const MEMORY_MORE_HINT = "use `memory_recall`";
+
+function formatListing(headerUri, entries, budgetTokens, moreHint = MEMORY_MORE_HINT) {
   if (entries.length === 0) return { lines: [], used: 0, dropped: 0 };
   // Header is the full directory URI; child lines are relative paths so the
   // agent can reconstruct each leaf's full URI by concatenation while the
@@ -194,7 +197,7 @@ function formatListing(headerUri, entries, budgetTokens) {
   // If the header alone busts the budget, emit just a one-line stub instead
   // of silently violating the cap (Copilot review point).
   if (headerTokens > budgetTokens) {
-    const stub = `  ${headerUri}/  (${entries.length} entries, budget too tight; use \`memory_recall\`)`;
+    const stub = `  ${headerUri}/  (${entries.length} entries, budget too tight; ${moreHint})`;
     return { lines: [stub], used: estimateTokens(stub), dropped: entries.length };
   }
   const lines = [header];
@@ -207,11 +210,17 @@ function formatListing(headerUri, entries, budgetTokens) {
     const line = `    - ${e.name}${desc}`;
     const tokens = estimateTokens(line);
     if (used + tokens > budgetTokens) {
-      const remaining = entries.length - i;
-      const tail = `    ... +${remaining} more, use \`memory_recall\``;
+      let remaining = entries.length - i;
+      const tailFor = (n) => `    ... +${n} more, ${moreHint}`;
+      // A listing that stops without the tail hides that anything was cut, so
+      // give entries back until it fits. Only when even the header plus the
+      // tail bust the cap does the listing close silently.
+      while (used + estimateTokens(tailFor(remaining)) > budgetTokens && lines.length > 1) {
+        used -= estimateTokens(lines.pop());
+        remaining++;
+      }
+      const tail = tailFor(remaining);
       const tailTokens = estimateTokens(tail);
-      // Only emit the tail if it fits; otherwise the listing closes silently
-      // rather than violating the cap to advertise its own truncation.
       if (used + tailTokens <= budgetTokens) {
         lines.push(tail);
         return { lines, used: used + tailTokens, dropped: remaining };
@@ -224,34 +233,143 @@ function formatListing(headerUri, entries, budgetTokens) {
   return { lines, used, dropped: 0 };
 }
 
+const AGENT_SKILLS_ROOT = "viking://agent/skills";
+const SKILL_CATALOG_MAX = 200;
+const SKILL_DESCRIPTION_TOKENS = 40;
+const SKILL_MORE_HINT = "search OpenViking skills to find the rest";
+const SKILL_USAGE_LINE =
+  "  OpenViking skills (stored in OpenViking, not local files). Before following one, read <dir>/<name>/SKILL.md with the OpenViking read tool.";
+// Skill descriptions are user-written, and the shared root is account-wide:
+// never let one close or open the envelope the catalog sits in.
+const ENVELOPE_TAG_RE = /<\/?(?:openviking-context|available-skills|available-memories|user-profile|memory)\b[^>]*>/gi;
+
+function sanitizeInline(text) {
+  return String(text || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(ENVELOPE_TAG_RE, (tag) => tag.replace(/</g, "&lt;").replace(/>/g, "&gt;"));
+}
+
+function truncateToTokens(text, maxTokens) {
+  if (estimateTokens(text) <= maxTokens) return text;
+  return `${text.slice(0, Math.max(1, tokensToCharsBudget(text, maxTokens) - 1)).trimEnd()}…`;
+}
+
+/**
+ * Both skill roots from one GET /api/v1/skills, grouped by root with the
+ * user's own skills first. A shared skill whose name the user also has is
+ * dropped: the private one is the one the agent should load. Servers without
+ * the endpoint, or any failure, yield no catalog.
+ */
+async function fetchSkillCatalog(fetchJSON, actorPeerId = "") {
+  const res = await fetchJSON(`/api/v1/skills?node_limit=${SKILL_CATALOG_MAX}`, {}, { actorPeerId });
+  const skills = res.ok && Array.isArray(res.result?.skills) ? res.result.skills : [];
+  const own = [];
+  const shared = [];
+  for (const skill of skills.slice(0, SKILL_CATALOG_MAX)) {
+    const name = typeof skill?.name === "string" ? skill.name.trim() : "";
+    const uri = typeof skill?.uri === "string" ? skill.uri.replace(/\/+$/, "") : "";
+    if (!name || !uri.includes("/")) continue;
+    const entry = {
+      name,
+      root: uri.slice(0, uri.lastIndexOf("/")),
+      abstract: truncateToTokens(sanitizeInline(skill.description), SKILL_DESCRIPTION_TOKENS),
+    };
+    (uri.startsWith(`${AGENT_SKILLS_ROOT}/`) ? shared : own).push(entry);
+  }
+  const ownNames = new Set(own.map((e) => e.name));
+  const byName = (a, b) => a.name.localeCompare(b.name);
+  return [
+    own.sort(byName),
+    shared.filter((e) => !ownNames.has(e.name)).sort(byName),
+  ].filter((group) => group.length > 0);
+}
+
+function renderSkillGroups(groups, budgetTokens, withDescriptions) {
+  const lines = [];
+  let used = 0;
+  let dropped = 0;
+  for (let i = 0; i < groups.length; i++) {
+    const entries = withDescriptions ? groups[i] : groups[i].map((e) => ({ ...e, abstract: "" }));
+    // Earlier groups take up to their share; what they leave rolls over.
+    const share = Math.floor((budgetTokens - used) / (groups.length - i));
+    const block = formatListing(entries[0].root, entries, share, SKILL_MORE_HINT);
+    lines.push(...block.lines);
+    used += block.used;
+    dropped += block.dropped;
+  }
+  return { lines, used, dropped };
+}
+
+/**
+ * <available-skills> within its own token budget: every entry with its
+ * description when that fits, otherwise names only (more skills stay
+ * visible, with a "+N more" tail), and a one-line count when not even one
+ * name fits.
+ */
+function formatSkillCatalog(groups, budgetTokens) {
+  const count = groups.reduce((n, g) => n + g.length, 0);
+  if (count === 0) return { lines: [], used: 0, dropped: 0, count };
+  const open = "<available-skills>";
+  const close = "</available-skills>";
+  const frameTokens = estimateTokens(open) + estimateTokens(SKILL_USAGE_LINE) + estimateTokens(close);
+  const listingBudget = Math.max(0, budgetTokens - frameTokens);
+  let body = renderSkillGroups(groups, listingBudget, true);
+  if (body.dropped > 0) body = renderSkillGroups(groups, listingBudget, false);
+  if (body.dropped >= count) {
+    const stub = `${open}${count} OpenViking skills; search OpenViking skills to find them.${close}`;
+    return { lines: [stub], used: estimateTokens(stub), dropped: count, count };
+  }
+  return {
+    lines: [open, SKILL_USAGE_LINE, ...body.lines, close],
+    used: frameTokens + body.used,
+    dropped: body.dropped,
+    count,
+  };
+}
+
 /**
  * Build the profile injection block.
  *
- * Returns null when neither profile.md nor either listing has any content.
- * The returned `block` is just the inner <user-profile>/<available-memories>
- * payload — the caller wraps it in <openviking-context source="...">.
+ * Returns null when neither profile.md, either listing, nor the skill catalog
+ * has any content. The returned `block` is just the inner
+ * <user-profile>/<available-memories>/<available-skills> payload — the caller
+ * wraps it in <openviking-context source="...">.
  *
  * @param {Function} fetchJSON  ov-session.mjs:makeFetchJSON closure
- * @param {number} totalBudgetTokens  chars/4 budget, total for the whole block
+ * @param {number} totalBudgetTokens  budget for the profile and memory listings
+ * @param {string} [actorPeerId]
+ * @param {{ skillCatalog?: boolean, skillCatalogTokenBudget?: number }} [options]
+ *   callers pass their resolved plugin config: its skillCatalog knob adds
+ *   <available-skills>, budgeted separately by skillCatalogTokenBudget.
+ *   Without it the block is unchanged.
  * @returns {Promise<null | {
  *   block: string, chars: number, tokens: number, profileUri: string,
  *   profileChars: number, prefCount: number, entCount: number,
  *   droppedPref: number, droppedEnt: number,
+ *   skillCount: number, droppedSkill: number, skillTokens: number,
  * }>}
  */
-export async function buildProfileBlock(fetchJSON, totalBudgetTokens, actorPeerId = "") {
+export async function buildProfileBlock(fetchJSON, totalBudgetTokens, actorPeerId = "", options = {}) {
+  const { skillCatalog = false, skillCatalogTokenBudget = 0 } = options;
   const space = await resolveUserSpace(fetchJSON, actorPeerId);
   const profileUri = `viking://user/${space}/memories/profile.md`;
   const prefUri = `viking://user/${space}/memories/preferences`;
   const entUri = `viking://user/${space}/memories/entities`;
 
-  const [profile, prefs, ents] = await Promise.all([
+  const [profile, prefs, ents, skillGroups] = await Promise.all([
     readProfile(fetchJSON, profileUri, actorPeerId),
     lsDir(fetchJSON, prefUri, actorPeerId),
     lsDir(fetchJSON, entUri, actorPeerId),
+    skillCatalog && skillCatalogTokenBudget > 0
+      ? fetchSkillCatalog(fetchJSON, actorPeerId)
+      : [],
   ]);
+  const skills = formatSkillCatalog(skillGroups, skillCatalogTokenBudget);
 
-  if (!profile && prefs.length === 0 && ents.length === 0) return null;
+  if (!profile && prefs.length === 0 && ents.length === 0 && skills.lines.length === 0) {
+    return null;
+  }
 
   // Profile gets up to half the total budget; listings split the rest.
   // Sub-cap protects against a runaway profile blowing the listing budget.
@@ -277,6 +395,7 @@ export async function buildProfileBlock(fetchJSON, totalBudgetTokens, actorPeerI
     lines.push(...entBlock.lines);
     lines.push(`</available-memories>`);
   }
+  lines.push(...skills.lines);
 
   const block = lines.join("\n");
   return {
@@ -289,5 +408,8 @@ export async function buildProfileBlock(fetchJSON, totalBudgetTokens, actorPeerI
     entCount: ents.length,
     droppedPref: prefBlock.dropped,
     droppedEnt: entBlock.dropped,
+    skillCount: skills.count,
+    droppedSkill: skills.dropped,
+    skillTokens: skills.used,
   };
 }
