@@ -70,12 +70,14 @@ from openviking.server.routers.search import context_only_fields_error
 from openviking.server.skill_ingest import install_skills
 from openviking.server.temp_upload_store import TempUploadStore
 from openviking.server.upload_token_store import upload_token_store
+from openviking.service.skill_sources import GIT_SKILL_SOURCE_PREFIXES
 from openviking.utils.media_limits import MAX_INLINE_TOOL_RESULT_MEDIA_BYTES
 from openviking.utils.search_filters import (
     SearchContextTypeInput,
     merge_search_filter,
     resolve_context_types,
 )
+from openviking.utils.skill_processor import SkillProcessor
 from openviking_cli.exceptions import (
     InvalidArgumentError,
     NotFoundError,
@@ -776,6 +778,19 @@ async def ls(
 _TREE_ABSTRACT_LIMIT = 1024
 
 
+def _tree_abstract(entry: Dict[str, Any]) -> str:
+    abstract = (entry.get("abstract") or "").strip()
+    # A directory with no generated .abstract.md (a skill's scripts/, say) comes back as a
+    # placeholder that carries no summary.
+    placeholders = (
+        "[.abstract.md is not ready]",
+        f"# {entry.get('uri', '')} [Directory abstract is not ready]",
+    )
+    if abstract in placeholders:
+        return ""
+    return " ".join(abstract.split())
+
+
 @mcp.tool()
 async def tree(
     uri: str = "viking://",
@@ -836,7 +851,7 @@ async def tree(
             lines.append(f"{indent}{name}/")
         else:
             lines.append(f"{indent}{name} ({e.get('size', 0)} B)")
-        abstract = " ".join((e.get("abstract") or "").split())
+        abstract = _tree_abstract(e)
         if include_abstract and abstract:
             lines.append(f"{indent}  - {abstract}")
     if len(entries) >= effective_limit:
@@ -1413,14 +1428,22 @@ async def add_skill(
             "Error: 'path' must be a Git URL or a local path. To copy a skill already in "
             "OpenViking, read its SKILL.md and pass the text as 'data'."
         )
+    is_git = path.startswith(GIT_SKILL_SOURCE_PREFIXES)
+    if path and not is_git and is_remote_resource_source(path):
+        return (
+            f"Error: unsupported skill source '{path}'. Pass a Git URL "
+            f"({', '.join(GIT_SKILL_SOURCE_PREFIXES)}) or a local path."
+        )
     try:
         target = resolve_path_variables(target_uri).strip() if target_uri else ""
         if target:
             target = validate_content_target_uri(target, ctx, kind="skill", field_name="target_uri")
+            # Fail here, not after a one-time upload token is spent on a root the installer rejects.
+            target = SkillProcessor._resolve_skill_root_uri(ctx, target)  # noqa: SLF001
     except (InvalidArgumentError, PermissionDeniedError) as exc:
         return f"Error: {exc}"
 
-    if data.strip() or is_remote_resource_source(path):
+    if data.strip() or is_git:
         try:
             result = await install_skills(
                 data or path,
@@ -1461,23 +1484,34 @@ async def add_skill(
     expires_iso = datetime.fromtimestamp(expires_at, tz=timezone.utc).isoformat(timespec="seconds")
     minutes = max(1, ttl_seconds // 60)
 
+    if list_only:
+        headline = "Local skill source detected — upload it to list the skills it contains.\n"
+        outcome = (
+            "The URL's token authorizes this one upload (no OpenViking API key needed). The "
+            "server only lists the skills in the file and installs nothing; the upload response "
+            "carries each skill's name, path, and description. To install, call add_skill again "
+            "without list_only (skills=[...] picks some) and upload to the new URL.\n"
+        )
+    else:
+        headline = "Local skill detected — upload it to install.\n"
+        outcome = (
+            "The URL's token authorizes this one upload (no OpenViking API key needed) and the "
+            "server installs the skill once the file arrives — you do NOT need to call add_skill "
+            "again. The upload response carries the installed skill URIs.\n"
+        )
     prose = (
-        "Local skill detected — upload it to install.\n"
+        headline + "\n"
+        "A skill directory must be zipped first (a single SKILL.md can be uploaded as is). "
+        "Every file in the archive is stored with the skill, so leave out VCS data and "
+        "secrets, for example:\n"
         "\n"
-        "A skill directory must be zipped first (a single SKILL.md can be uploaded as is), "
-        "for example:\n"
-        "\n"
-        "  cd <parent dir> && zip -r /tmp/<name>.zip <name>\n"
-        "  python3 -m zipfile -c /tmp/<name>.zip <skill dir>   (when zip is unavailable)\n"
+        "  cd <parent dir> && rm -f /tmp/<name>.zip && zip -r /tmp/<name>.zip <name> "
+        "-x '*/.git/*' '*/.env*' '*/node_modules/*' '*/.DS_Store'\n"
         "\n"
         'Then HTTP POST the file (multipart/form-data, field name "file") to:\n'
         "\n"
         f"  {upload_url}\n"
-        "\n"
-        "The URL's token authorizes this one upload (no OpenViking API key needed) and the "
-        "server installs the skill once the file arrives — you do NOT need to call add_skill "
-        "again. The upload response carries the installed skill URIs.\n"
-        "\n"
+        "\n" + outcome + "\n"
         "If the OpenViking server sits behind a private gateway or reverse proxy that "
         "requires extra request headers, replay the same headers you use for MCP calls "
         "when POSTing the file.\n"

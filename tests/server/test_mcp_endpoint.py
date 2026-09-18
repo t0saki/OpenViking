@@ -1176,9 +1176,48 @@ async def test_add_skill_local_path_issues_skill_upload_token(service):
     upload_token_store.clear()
 
 
+async def test_add_skill_rejects_a_target_below_a_skill_root_before_minting_a_token(service):
+    from openviking.server.upload_token_store import upload_token_store
+
+    upload_token_store.clear()
+    token = _mcp_ctx.set(RequestContext(DEFAULT_CTX.user, Role.USER))
+    try:
+        result = await add_skill(path="/tmp/skills/pdf", target_uri="viking://~/skills/pdf")
+    finally:
+        _mcp_ctx.reset(token)
+
+    assert result.startswith("Error: Unsupported skill root URI")
+    assert "viking://agent/skills" in result
+    assert upload_token_store._store == {}
+
+
+async def test_add_skill_maps_a_shared_subpath_to_the_shared_root(service):
+    from openviking.server.upload_token_store import upload_token_store
+
+    upload_token_store.clear()
+    result = await add_skill(path="/tmp/skills/pdf", target_uri="viking://agent/skills/pdf")
+
+    token = re.search(r"temp_upload\?token=([A-Za-z0-9]+)", result).group(1)
+    assert upload_token_store.peek(token).skill_target_uri == "viking://agent/skills"
+    upload_token_store.clear()
+
+
+async def test_add_skill_list_only_upload_says_nothing_is_installed(service):
+    from openviking.server.upload_token_store import upload_token_store
+
+    upload_token_store.clear()
+    result = await add_skill(path="/tmp/skills", list_only=True)
+
+    assert "upload it to list the skills it contains" in result
+    assert "installs nothing" in result
+    assert "do NOT need to call add_skill" not in result
+    upload_token_store.clear()
+
+
 @pytest.mark.parametrize(
     ("kwargs", "expected"),
     [
+        ({"path": "tos://bucket/skills/pdf"}, "unsupported skill source"),
         ({}, "provide 'data'"),
         ({"data": _skill_md("x"), "path": "/tmp/x"}, "not both"),
         ({"data": "/tmp/skills/pdf/SKILL.md"}, 'add_skill(path="/tmp/skills/pdf/SKILL.md")'),
@@ -2080,6 +2119,38 @@ async def test_tree_include_abstract_renders_directory_abstracts(service, monkey
     assert "\n  SKILL.md (42 B)" in result
     assert captured["output"] == "agent"
     assert captured["abs_limit"] == 1024
+
+
+async def test_tree_include_abstract_skips_not_ready_placeholders(service, monkeypatch):
+    async def fake_tree(uri, **kwargs):
+        return [
+            {
+                "rel_path": "pdf",
+                "uri": "viking://user/test_user/skills/pdf",
+                "isDir": True,
+                "abstract": "name: pdf\ndescription: Fill PDF forms",
+            },
+            {
+                "rel_path": "pdf/scripts",
+                "uri": "viking://user/test_user/skills/pdf/scripts",
+                "isDir": True,
+                "abstract": "# viking://user/test_user/skills/pdf/scripts [Directory abstract is not ready]",
+            },
+            {
+                "rel_path": "pdf/references",
+                "uri": "viking://user/test_user/skills/pdf/references",
+                "isDir": True,
+                "abstract": "[.abstract.md is not ready]",
+            },
+        ]
+
+    monkeypatch.setattr(service.fs, "tree", fake_tree)
+
+    result = await tree(uri="viking://user/test_user/skills", include_abstract=True)
+
+    assert "  - name: pdf description: Fill PDF forms" in result
+    assert "not ready" not in result
+    assert "\n  scripts/\n  references/" in result
 
 
 async def test_tree_include_abstract_still_renders(service):
