@@ -1,10 +1,11 @@
 # Copyright (c) 2026 Beijing Volcano Engine Technology Co., Ltd.
 # SPDX-License-Identifier: AGPL-3.0
-"""Shared skill installation for ``POST /api/v1/skills``.
+"""Shared skill installation for ``POST /api/v1/skills``, the MCP ``add_skill`` tool,
+and signed skill uploads.
 
 One implementation resolves the source (inline SKILL.md, Git URL, or an uploaded
 directory/zip), installs every selected skill, and persists each skill's source
-metadata, so every install entry point behaves the same.
+metadata, so the three entry points cannot drift apart.
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from openviking.server.dependencies import get_service
 from openviking.server.identity import RequestContext
 from openviking.server.skill_source_metadata import persist_skill_source_metadata
 from openviking.server.telemetry import run_operation
+from openviking.server.temp_upload_store import TempUploadStore
 from openviking.service.skill_sources import describe_skill_sources, resolve_skill_source
 from openviking.telemetry import TelemetryRequest
 
@@ -79,3 +81,37 @@ async def install_skills(
             return installed[0]
         return {"installed": installed, "total": len(installed)}
 
+
+async def ingest_temp_upload_skill(
+    store: TempUploadStore,
+    temp_file_id: str,
+    ctx: RequestContext,
+    *,
+    target_uri: str = "",
+    names: Optional[list[str]] = None,
+    list_only: bool = False,
+    source_type: str = "api",
+) -> dict[str, Any]:
+    """Resolve an uploaded SKILL.md, directory archive, or zip and install its skills."""
+    resolved = await store.resolve_for_consume(temp_file_id, ctx)
+    try:
+        source_metadata: dict[str, Any] = {
+            "type": source_type,
+            "source": "temp_upload",
+            "operation": "add",
+            "upload_mode": resolved.mode,
+        }
+        if resolved.original_filename:
+            source_metadata["original_filename"] = resolved.original_filename
+        return await install_skills(
+            resolved.local_path,
+            ctx,
+            names=names,
+            list_only=list_only,
+            target_uri=target_uri,
+            source_metadata=source_metadata,
+            allow_local_path_resolution=True,
+            source_path_hint=resolved.original_filename,
+        )
+    finally:
+        await resolved.cleanup()

@@ -29,6 +29,7 @@ from openviking.server.mcp_endpoint import (
     _mcp_ctx,
     _resolve_mcp_workspace_uri,
     add_resource,
+    add_skill,
     cancel_watch,
     edit,
     forget,
@@ -1028,6 +1029,113 @@ async def test_store_skips_empty_message_content(service, monkeypatch):
     assert peer_id is None
     assert created_at is None
     service.sessions.commit_async.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# add_skill tool
+# ---------------------------------------------------------------------------
+
+
+def _skill_md(name: str, description: str = "Review a PR diff before approving") -> str:
+    return f"---\nname: {name}\ndescription: {description}\n---\n\n# {name}\n\nSteps.\n"
+
+
+async def test_add_skill_inline_data_installs_into_user_skills(service):
+    ctx = RequestContext(DEFAULT_CTX.user, Role.USER)
+    token = _mcp_ctx.set(ctx)
+    try:
+        result = await add_skill(data=_skill_md("mcp-inline-skill"))
+    finally:
+        _mcp_ctx.reset(token)
+
+    assert "Skill added: viking://user/test_user/skills/mcp-inline-skill" in result
+    body = await service.fs.read(
+        "viking://user/test_user/skills/mcp-inline-skill/SKILL.md", ctx=ctx
+    )
+    assert "# mcp-inline-skill" in body
+
+
+async def test_add_skill_forwards_git_source_to_shared_installer(monkeypatch):
+    captured = {}
+
+    async def fake_install_skills(data, ctx, **kwargs):
+        captured.update(kwargs, data=data)
+        return {
+            "skills": [{"name": "pdf", "description": "Fill PDF\nforms", "path": "pdf"}],
+            "total": 1,
+        }
+
+    monkeypatch.setattr(mcp_endpoint, "install_skills", fake_install_skills)
+
+    result = await add_skill(
+        path="https://github.com/org/skills",
+        skills=["pdf"],
+        target_uri="viking://agent/skills",
+        list_only=True,
+    )
+
+    assert captured["data"] == "https://github.com/org/skills"
+    assert captured["names"] == ["pdf"]
+    assert captured["list_only"] is True
+    assert captured["target_uri"] == "viking://agent/skills"
+    assert captured["source_metadata"] is None
+    assert "nothing was installed" in result
+    assert "- pdf (pdf): Fill PDF forms" in result
+
+
+async def test_add_skill_reports_every_installed_skill(monkeypatch):
+    async def fake_install_skills(data, ctx, **kwargs):
+        return {
+            "installed": [
+                {"root_uri": "viking://user/test_user/skills/a"},
+                {"root_uri": "viking://user/test_user/skills/b"},
+            ],
+            "total": 2,
+        }
+
+    monkeypatch.setattr(mcp_endpoint, "install_skills", fake_install_skills)
+
+    result = await add_skill(path="https://github.com/org/skills")
+
+    assert "Skill added: viking://user/test_user/skills/a" in result
+    assert "Skill added: viking://user/test_user/skills/b" in result
+
+
+async def test_add_skill_local_path_issues_skill_upload_token(service):
+    from openviking.server.upload_token_store import upload_token_store
+
+    upload_token_store.clear()
+    result = await add_skill(
+        path="/tmp/skills/pdf",
+        skills=["pdf"],
+        target_uri="viking://agent/skills",
+    )
+
+    assert "local skill detected" in result.lower()
+    assert "zip -r" in result
+    match = re.search(r"/api/v1/resources/temp_upload\?token=([A-Za-z0-9]+)", result)
+    assert match
+    info = upload_token_store.peek(match.group(1))
+    assert info.kind == "skill"
+    assert info.skill_target_uri == "viking://agent/skills"
+    assert info.skill_names == ["pdf"]
+    upload_token_store.clear()
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "expected"),
+    [
+        ({}, "provide 'data'"),
+        ({"data": _skill_md("x"), "path": "/tmp/x"}, "not both"),
+        ({"data": "/tmp/skills/pdf/SKILL.md"}, 'add_skill(path="/tmp/skills/pdf/SKILL.md")'),
+        ({"path": "viking://agent/skills/pdf"}, "read its SKILL.md"),
+        ({"data": _skill_md("x"), "target_uri": "viking://resources/x"}, "Error:"),
+    ],
+)
+async def test_add_skill_rejects_invalid_arguments(kwargs, expected):
+    result = await add_skill(**kwargs)
+    assert result.startswith("Error:")
+    assert expected in result
 
 
 # ---------------------------------------------------------------------------

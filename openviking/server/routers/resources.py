@@ -16,7 +16,7 @@ from openviking.server.identity import RequestContext
 from openviking.server.local_input_guard import require_remote_resource_source
 from openviking.server.resource_ingest import ingest_temp_upload
 from openviking.server.responses import response_from_result
-from openviking.server.skill_ingest import install_skills
+from openviking.server.skill_ingest import ingest_temp_upload_skill, install_skills
 from openviking.server.telemetry import run_operation
 from openviking.server.temp_upload_store import TempUploadStore
 from openviking.telemetry import TelemetryRequest
@@ -179,7 +179,8 @@ async def temp_upload(
     signed ``?token=`` — minted by the MCP ``add_resource`` tool for local-file paths — the
     server additionally finishes ingestion in-request: it resolves the upload, calls
     ``add_resource`` with the token-bound ``to``/``reason``, and returns the final result, so
-    the agent never needs a second call. The ``?token=`` query param is consumed by the auth
+    the agent never needs a second call. Tokens minted by the MCP ``add_skill`` tool install
+    the upload as skills instead. The ``?token=`` query param is consumed by the auth
     dependency.
     """
     signed = getattr(request.state, "signed_upload", None)
@@ -190,6 +191,16 @@ async def temp_upload(
         temp_file_id = await store.save_upload(file, effective_upload_mode, _ctx)
         if signed is None:
             return {"temp_file_id": temp_file_id}
+        if signed.kind == "skill":
+            return await ingest_temp_upload_skill(
+                store,
+                temp_file_id,
+                _ctx,
+                target_uri=signed.skill_target_uri,
+                names=signed.skill_names,
+                list_only=signed.list_only,
+                source_type="mcp",
+            )
         return await ingest_temp_upload(
             store,
             temp_file_id,
