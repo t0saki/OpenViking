@@ -30,8 +30,10 @@ paths: never pass them to local file tools or shell commands.
 
 ## Find a skill
 
-1. Check the `<available-skills>` block injected at session start. It lists
-   every skill's name and description, the user's own first.
+1. Check the `<available-skills>` block injected at session start: the user's
+   own skills first, then shared ones. It is a snapshot from session start,
+   and with many skills it drops descriptions or ends with a "+N more" line,
+   so a name missing from it does not prove the skill is absent.
 2. `find(query="<what the task needs>", context_type="skill")` ranks skills
    from both roots against the task.
 3. `search(query=..., mode="context")` mixes relevant skills into the context
@@ -82,15 +84,23 @@ when the `ov` CLI is installed, otherwise tell the user.
    - Only `name`, `description`, `allowed-tools`, `tags`, and `metadata`
      survive in the frontmatter. Put anything else (version, author, ...)
      under `metadata:` or it is dropped.
-2. Make sure the name is free (check `<available-skills>` or run `find`):
-   installing under an existing name replaces that skill.
+2. Check the name on the target root with
+   `read(uris="<root>/<name>/SKILL.md")`, where `<root>` is
+   `viking://~/skills`, or `viking://agent/skills` when sharing. If it
+   exists, `add_skill` replaces it without asking: show the user what would
+   change and install only after they confirm, or pick another name.
 3. `add_skill(data="<the full SKILL.md text>")`. It goes to the user's own
    skills unless `target_uri` says otherwise. The reply gives the new URI; the
    skill can be read at once and shows up in search a few seconds later.
 
 To change a skill, `read` its SKILL.md, edit the text, and pass the whole new
-text to `add_skill`. `write` and `edit` refuse the skills subtree. A reinstall
-does not delete helper files the new version dropped.
+text to `add_skill` under the root the skill came from. For a shared skill
+that means `target_uri="viking://agent/skills"`, and only after the user
+confirms an account-wide change; without it, `add_skill` creates a private
+copy that shadows the shared one. Do not use `write` or `edit` on skill
+files: they refuse the user's skills subtree and would bypass installation
+under the shared root. A reinstall does not delete helper files the new
+version dropped.
 
 ## Install from a repository or a local folder
 
@@ -100,12 +110,12 @@ does not delete helper files the new version dropped.
   `skills=["a", "b"]`. Install from a source the user did not name only after
   asking them.
 - **Local folder or zip**: `add_skill(path="/abs/path/to/skill")` returns a
-  one-time upload URL. Zip the folder
-  (`cd <parent> && zip -r /tmp/<name>.zip <name>`, or
-  `python3 -m zipfile -c /tmp/<name>.zip <skill dir>`), then
-  `curl -sS -F "file=@/tmp/<name>.zip" "<upload url>"`. The response lists the
-  installed URIs; nothing else to call. A skill that is only a SKILL.md can go
-  through `data=` instead.
+  one-time upload URL. Every file in the archive is stored with the skill,
+  so zip without VCS data and secrets:
+  `cd <parent> && rm -f /tmp/<name>.zip && zip -r /tmp/<name>.zip <name> -x '*/.git/*' '*/.env*' '*/node_modules/*' '*/.DS_Store'`,
+  then `curl -sS -F "file=@/tmp/<name>.zip" "<upload url>"` and delete the
+  archive. The response lists the installed URIs; nothing else to call. A
+  skill that is only a SKILL.md can go through `data=` instead.
 - **`ov` CLI**, when installed: `ov skills add <path or URL>` (`-l` lists,
   `-s a,b` selects, `-p viking://agent/skills` shares, `-y` skips the prompt).
 
@@ -126,7 +136,7 @@ user confirms the exact URI.
 Run this only when the user asks. Nothing is uploaded without their approval
 of that skill.
 
-1. **List candidates.** Read the frontmatter of each `*/SKILL.md` under:
+1. **List candidates.** Read each `*/SKILL.md` under:
    - Claude Code: `~/.claude/skills/`, `<repo>/.claude/skills/`
    - Codex: `~/.agents/skills/`, `<repo>/.agents/skills/`
    - Cursor: `~/.cursor/skills/`
@@ -142,15 +152,24 @@ of that skill.
      `claude-`, or `mcp-` (a hint, not proof: check the body);
    - it is `openviking-skills` or `openviking-memory`.
 
-   Mark skills that hold credentials, tokens, internal hostnames, or personal
-   absolute paths as "clean up first". The rest are portable.
+   For the rest, list the whole folder, hidden files included
+   (`find <dir> -type f`), and check helper files as well as SKILL.md. Mark
+   a skill "clean up first" when any file holds credentials, tokens, `.env`
+   files, internal hostnames, or personal absolute paths. Also flag
+   frontmatter keys other than `name`, `description`, `allowed-tools`,
+   `tags` and `metadata` (for example `disable-model-invocation`,
+   `user-invocable`, `context`, `model`): OpenViking drops them, which can
+   change how the skill behaves. The rest are portable.
 3. **Confirm.** Show a table of name, path, verdict, one-line reason, and
    target (`viking://~/skills` unless the user wants sharing). The user may
    flip any verdict. Upload only what they approve.
 4. **Upload.** A skill that is only a SKILL.md goes through
    `add_skill(data=...)`; a folder with helper files goes through the zip
    upload above, or `ov skills add <dir>` when the CLI is installed
-   (`ov skills validate <dir>` first catches format errors).
+   (`ov skills validate <dir>` first catches format errors). OpenViking
+   requires `name` and `description` in the frontmatter; when a local skill
+   lacks them, fix a copy in a temporary folder (the name is the folder
+   name), never the user's own file.
 5. **Verify.** `tree(uri="viking://~/skills", level_limit=1, include_abstract=true)`
    should list every uploaded name. Then `remember` which skills were migrated
    and which were skipped, so a later session does not ask again.
