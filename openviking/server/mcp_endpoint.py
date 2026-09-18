@@ -39,6 +39,7 @@ from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from openviking.core.path_variables import resolve_path_variables
+from openviking.core.retrieval_targets import default_target_directories
 from openviking.core.uri_validation import (
     validate_content_target_uri,
     validate_request_viking_uri,
@@ -62,12 +63,21 @@ from openviking.server.identity import RequestContext
 from openviking.server.local_input_guard import (
     TEMP_FILE_ID_RE,
     is_remote_resource_source,
+    looks_like_local_path,
 )
 from openviking.server.resource_ingest import ingest_temp_upload
+from openviking.server.routers.search import context_only_fields_error
+from openviking.server.skill_ingest import install_skills
 from openviking.server.temp_upload_store import TempUploadStore
 from openviking.server.upload_token_store import upload_token_store
+from openviking.service.skill_sources import GIT_SKILL_SOURCE_PREFIXES
 from openviking.utils.media_limits import MAX_INLINE_TOOL_RESULT_MEDIA_BYTES
-from openviking.utils.search_filters import SearchContextTypeInput, merge_search_filter
+from openviking.utils.search_filters import (
+    SearchContextTypeInput,
+    merge_search_filter,
+    resolve_context_types,
+)
+from openviking.utils.skill_processor import SkillProcessor
 from openviking_cli.exceptions import (
     InvalidArgumentError,
     NotFoundError,
@@ -75,8 +85,8 @@ from openviking_cli.exceptions import (
     PermissionDeniedError,
     UnauthenticatedError,
 )
+from openviking_cli.retrieve import ContextType
 from openviking_cli.utils import get_logger
-from openviking.server.routers.search import context_only_fields_error
 
 logger = get_logger(__name__)
 
@@ -257,18 +267,22 @@ async def find(
     context_type: Optional[Union[str, List[str]]] = None,
     read_content: bool = False,
 ) -> str:
-    """Fast semantic retrieval without session context. Returns ranked memories, resources, and skills with URI, abstract, and score."""
+    """Fast semantic retrieval without session context. Returns ranked memories, resources, and skills with URI, abstract, and score. context_type="skill" without target_uri searches both the user's own and the account-shared skills."""
     service = get_service()
     ctx = _get_ctx()
+    context_filter = _resolve_context_type_filter(context_type)
     if target_uri:
         target_uri = _resolve_mcp_workspace_uri(target_uri, ctx)
+    elif resolve_context_types(context_type) == [ContextType.SKILL.value]:
+        # The generic default targets stop at the user root and miss viking://agent/skills.
+        target_uri = default_target_directories(ctx, context_type=ContextType.SKILL)
     result = await service.search.find(
         query=query,
         ctx=ctx,
         target_uri=target_uri,
         limit=limit,
         score_threshold=min_score,
-        filter=_resolve_context_type_filter(context_type),
+        filter=context_filter,
         level=level,
     )
     return await _format_search_result(result, service=service, ctx=ctx, read_content=read_content)
@@ -389,7 +403,8 @@ async def search(
             "other_peer_penalties": (other_peer_penalties, None),
             "rewrite": (rewrite, "off"),
             "rewrite_max_bullets": (rewrite_max_bullets, 6),
-        }.items() if value != default
+        }.items()
+        if value != default
     }
     as_named_by_caller: Dict[str, set] = {}
     for name in supplied_by_caller:
@@ -418,6 +433,22 @@ async def search(
     return await _format_search_result(result, service=service, ctx=ctx, read_content=read_content)
 
 
+_SKILL_INDEX_SIDECARS = ("/.abstract.md", "/.overview.md")
+
+
+def _hit_uri(ctx_type: str, uri: str) -> str:
+    """The URI an agent should read for a hit.
+
+    A skill is indexed through its directory's .abstract.md, whose body is only the
+    frontmatter; the skill itself is the SKILL.md beside it.
+    """
+    if ctx_type == "skill":
+        for sidecar in _SKILL_INDEX_SIDECARS:
+            if uri.endswith(sidecar):
+                return f"{uri[: -len(sidecar)]}/SKILL.md"
+    return uri
+
+
 async def _format_search_result(result, *, service, ctx, read_content: bool = False) -> str:
     items = []
     for ctx_type, contexts in [
@@ -426,7 +457,7 @@ async def _format_search_result(result, *, service, ctx, read_content: bool = Fa
         ("skill", result.skills),
     ]:
         for m in contexts:
-            items.append((ctx_type, m))
+            items.append((ctx_type, m, _hit_uri(ctx_type, m.uri)))
 
     if not items:
         return "No matching context found."
@@ -444,17 +475,17 @@ async def _format_search_result(result, *, service, ctx, read_content: bool = Fa
                 except Exception:
                     pass
 
-        await asyncio.gather(*(_read(m.uri) for _, m in items))
+        await asyncio.gather(*(_read(uri) for _, _, uri in items))
 
     lines = []
-    for ctx_type, m in items:
+    for ctx_type, m, uri in items:
         abstract = (
             getattr(m, "abstract", "") or getattr(m, "overview", "") or "(no abstract)"
         ).strip()
         score = getattr(m, "score", 0.0)
-        line = f"- [{ctx_type} {score * 100:.0f}%] {m.uri}\n    {abstract}"
-        if m.uri in contents:
-            line += f"\n\n    {contents[m.uri]}"
+        line = f"- [{ctx_type} {score * 100:.0f}%] {uri}\n    {abstract}"
+        if uri in contents:
+            line += f"\n\n    {contents[uri]}"
         lines.append(line)
 
     return (
@@ -743,6 +774,22 @@ async def ls(
 
 # -- tree ------------------------------------------------------------------
 
+# Long enough to keep a full skill description (the Agent Skills limit is 1024 chars).
+_TREE_ABSTRACT_LIMIT = 1024
+
+
+def _tree_abstract(entry: Dict[str, Any]) -> str:
+    abstract = (entry.get("abstract") or "").strip()
+    # A directory with no generated .abstract.md (a skill's scripts/, say) comes back as a
+    # placeholder that carries no summary.
+    placeholders = (
+        "[.abstract.md is not ready]",
+        f"# {entry.get('uri', '')} [Directory abstract is not ready]",
+    )
+    if abstract in placeholders:
+        return ""
+    return " ".join(abstract.split())
+
 
 @mcp.tool()
 async def tree(
@@ -759,7 +806,8 @@ async def tree(
         uri: Directory URI to traverse.
         level_limit: Maximum traversal depth.
         node_limit: Existing default result limit.
-        include_abstract: Whether to include file summaries.
+        include_abstract: Whether to include directory summaries (a skill directory's
+            summary is its name and description).
         offset: Number of visible nodes to skip.
         limit: Optional result limit that overrides node_limit.
 
@@ -781,6 +829,7 @@ async def tree(
             resolved_uri,
             ctx=ctx,
             output=output,
+            abs_limit=_TREE_ABSTRACT_LIMIT,
             node_limit=effective_limit,
             level_limit=level_limit,
             offset=offset,
@@ -800,9 +849,9 @@ async def tree(
         indent = "  " * max(0, depth - 1)
         if e.get("isDir"):
             lines.append(f"{indent}{name}/")
-            continue
-        lines.append(f"{indent}{name} ({e.get('size', 0)} B)")
-        abstract = (e.get("abstract") or "").strip().replace("\n", " ")
+        else:
+            lines.append(f"{indent}{name} ({e.get('size', 0)} B)")
+        abstract = _tree_abstract(e)
         if include_abstract and abstract:
             lines.append(f"{indent}  - {abstract}")
     if len(entries) >= effective_limit:
@@ -1298,6 +1347,189 @@ async def add_resource(
     return prose
 
 
+# -- add_skill -------------------------------------------------------------
+
+
+def _format_skill_install_result(result: Any, *, list_only: bool) -> str:
+    if not isinstance(result, dict):
+        return "Skill added."
+    if result.get("status") == "error":
+        return f"Error adding skill: {result.get('message') or 'skill processing failed'}"
+    if list_only:
+        found = result.get("skills") or []
+        if not found:
+            return "No skills found in the source."
+        lines = [f"Skills in the source ({len(found)}); nothing was installed:"]
+        for item in found:
+            description = " ".join(str(item.get("description") or "").split())
+            lines.append(f"- {item.get('name', '?')} ({item.get('path', '')}): {description}")
+        return "\n".join(lines)
+    installed = result.get("installed") if "installed" in result else [result]
+    uris = [item.get("root_uri") or item.get("uri") for item in installed if isinstance(item, dict)]
+    uris = [uri for uri in uris if uri]
+    if not uris:
+        return "Skill added (processing in background)."
+    lines = [f"Skill added: {uri}" for uri in uris]
+    lines.append(
+        "Read <uri>/SKILL.md to use it now; semantic search finds it once indexing completes."
+    )
+    return "\n".join(lines)
+
+
+@mcp.tool()
+async def add_skill(
+    data: str = "",
+    path: str = "",
+    skills: Optional[list[str]] = None,
+    target_uri: str = "",
+    list_only: bool = False,
+) -> str:
+    """Create, install, or replace an agent skill in OpenViking.
+
+    Skills are stored as viking://~/skills/<name>/ (the caller's own) or
+    viking://agent/skills/<name>/ (shared with the whole account) and are used by reading
+    <uri>/SKILL.md with the read tool.
+
+    New skill: pass the full SKILL.md text (YAML frontmatter with ``name`` and
+    ``description``, then the Markdown body) as ``data``.
+
+    Git source: pass a repository URL or a GitHub ``.../tree/<ref>/<dir>`` URL as ``path``.
+    Every skill in the source is installed unless ``skills`` names some; ``list_only=true``
+    lists them without installing.
+
+    Local skill: pass the path of a SKILL.md, a skill directory, or a .zip as ``path``. The
+    response is an upload instruction — zip a directory first, then HTTP POST the file to the
+    returned URL and the server installs it; you do NOT need to call this tool again.
+
+    Installing under an existing name replaces that skill's SKILL.md and adds the new files;
+    files the new version no longer has are kept. Ask the user before installing from a
+    source they did not name.
+
+    Args:
+        data: Full SKILL.md text of a skill to create or replace.
+        path: Git URL, or a local path to a SKILL.md, a skill directory, or a .zip.
+        skills: Names of the skill directories to install from a multi-skill source.
+        target_uri: Skill root to install under. Empty installs into the caller's own
+            skills; "viking://agent/skills" shares the skill with the whole account.
+        list_only: Describe the skills in a Git or local source without installing them.
+    """
+    ctx = _get_ctx()
+    path = path.strip()
+    if data.strip() and path:
+        return "Error: pass either 'data' (SKILL.md text) or 'path', not both."
+    if not data.strip() and not path:
+        return "Error: provide 'data' (full SKILL.md text) or 'path' (Git URL or local path)."
+    if data.strip() and looks_like_local_path(data.strip()):
+        return (
+            f"Error: 'data' looks like a file path. Pass it as add_skill(path=\"{data.strip()}\")."
+        )
+    if path.startswith("viking://"):
+        return (
+            "Error: 'path' must be a Git URL or a local path. To copy a skill already in "
+            "OpenViking, read its SKILL.md and pass the text as 'data'."
+        )
+    is_git = path.startswith(GIT_SKILL_SOURCE_PREFIXES)
+    if path and not is_git and is_remote_resource_source(path):
+        return (
+            f"Error: unsupported skill source '{path}'. Pass a Git URL "
+            f"({', '.join(GIT_SKILL_SOURCE_PREFIXES)}) or a local path."
+        )
+    try:
+        target = resolve_path_variables(target_uri).strip() if target_uri else ""
+        if target:
+            target = validate_content_target_uri(target, ctx, kind="skill", field_name="target_uri")
+            # Fail here, not after a one-time upload token is spent on a root the installer rejects.
+            target = SkillProcessor._resolve_skill_root_uri(ctx, target)  # noqa: SLF001
+    except (InvalidArgumentError, PermissionDeniedError) as exc:
+        return f"Error: {exc}"
+
+    if data.strip() or is_git:
+        try:
+            result = await install_skills(
+                data or path,
+                ctx,
+                names=skills,
+                list_only=list_only,
+                target_uri=target,
+                source_metadata=(
+                    {"type": "mcp", "source": "inline_content", "operation": "add"}
+                    if data.strip()
+                    else None
+                ),
+            )
+        except (InvalidArgumentError, PermissionDeniedError) as exc:
+            return f"Error: {exc}"
+        except Exception as exc:
+            return f"Error adding skill: {exc}"
+        return _format_skill_install_result(result, list_only=list_only)
+
+    server_config = get_server_config()
+    ttl_seconds = (
+        server_config.upload_signed_ttl_seconds
+        if server_config is not None
+        else _DEFAULT_UPLOAD_TTL_SECONDS
+    )
+    token, expires_at = upload_token_store.issue(
+        ctx.user.account_id,
+        ctx.user.user_id,
+        ttl_seconds=ttl_seconds,
+        actor_peer_id=ctx.actor_peer_id or "",
+        kind="skill",
+        skill_target_uri=target,
+        skill_names=skills,
+        list_only=list_only,
+    )
+    base_url, url_source = _resolve_public_base_url()
+    upload_url = f"{base_url}/api/v1/resources/temp_upload?token={quote(token, safe='')}"
+    expires_iso = datetime.fromtimestamp(expires_at, tz=timezone.utc).isoformat(timespec="seconds")
+    minutes = max(1, ttl_seconds // 60)
+
+    if list_only:
+        headline = "Local skill source detected — upload it to list the skills it contains.\n"
+        outcome = (
+            "The URL's token authorizes this one upload (no OpenViking API key needed). The "
+            "server only lists the skills in the file and installs nothing; the upload response "
+            "carries each skill's name, path, and description. To install, call add_skill again "
+            "without list_only (skills=[...] picks some) and upload to the new URL.\n"
+        )
+    else:
+        headline = "Local skill detected — upload it to install.\n"
+        outcome = (
+            "The URL's token authorizes this one upload (no OpenViking API key needed) and the "
+            "server installs the skill once the file arrives — you do NOT need to call add_skill "
+            "again. The upload response carries the installed skill URIs.\n"
+        )
+    prose = (
+        headline + "\n"
+        "A skill directory must be zipped first (a single SKILL.md can be uploaded as is). "
+        "Every file in the archive is stored with the skill, so leave out VCS data and "
+        "secrets, for example:\n"
+        "\n"
+        "  cd <parent dir> && rm -f /tmp/<name>.zip && zip -r /tmp/<name>.zip <name> "
+        "-x '*/.git/*' '*/.env*' '*/node_modules/*' '*/.DS_Store'\n"
+        "\n"
+        'Then HTTP POST the file (multipart/form-data, field name "file") to:\n'
+        "\n"
+        f"  {upload_url}\n"
+        "\n" + outcome + "\n"
+        "If the OpenViking server sits behind a private gateway or reverse proxy that "
+        "requires extra request headers, replay the same headers you use for MCP calls "
+        "when POSTing the file.\n"
+        "\n"
+        f"This upload URL expires in ~{minutes} minutes ({expires_iso})."
+    )
+    if url_source not in ("env", "config"):
+        prose += (
+            "\n\n"
+            "Note for the user: this upload URL was auto-detected from the incoming "
+            "request because OPENVIKING_PUBLIC_BASE_URL is not set on the server. "
+            "If the upload fails (connection refused, wrong host, TLS error), ask the "
+            "server operator to set OPENVIKING_PUBLIC_BASE_URL to the agent-facing "
+            "URL of the OpenViking server and retry."
+        )
+    return prose
+
+
 # -- watch management ------------------------------------------------------
 # MCP exposes the minimum closure: list + cancel. Pause/resume/trigger and
 # the unified `update` verb are intentionally NOT exposed — they're either
@@ -1597,8 +1829,9 @@ async def mcp_lifespan():
     """Run the MCP session manager. Call this inside the FastAPI lifespan."""
     async with mcp.session_manager.run():
         logger.info(
-            "MCP endpoint ready (15 tools: find, search, read, write, edit, list, "
-            "tree, remember, add_resource, list_watches, cancel_watch, grep, glob, forget, health)"
+            "MCP endpoint ready (16 tools: find, search, read, write, edit, list, tree, "
+            "remember, add_resource, add_skill, list_watches, cancel_watch, grep, glob, forget, "
+            "health)"
         )
         yield
 

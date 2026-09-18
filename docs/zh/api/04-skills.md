@@ -174,6 +174,8 @@ This tool wraps the MCP tool `search-web`. Call this when the user needs functio
 - `sdk/python/openviking_sdk/client.py:AsyncHTTPClient.add_skill` - Python SDK 入口
 - `openviking_cli/client/http.py` - 兼容导入入口，转发到 Python SDK
 - `openviking/server/routers/resources.py:add_skill` - HTTP 路由
+- `openviking/server/mcp_endpoint.py:add_skill` - MCP 工具
+- `openviking/server/skill_ingest.py:install_skills` - HTTP 路由、MCP 工具与 skill 签名上传共用的安装实现
 - `openviking/service/resource_service.py:ResourceService.add_skill` - 核心服务实现
 - `openviking/server/routers/skills.py` - 列表、检索、读取、校验、更新和删除
 - `crates/ov_cli/src/commands/skills.rs` - CLI Skill 命令处理
@@ -207,6 +209,7 @@ This tool wraps the MCP tool `search-web`. Call this when the user needs functio
     4. 先调用 `POST /api/v1/resources/temp_upload` 上传本地 `SKILL.md` 或目录 ZIP，再调用 `POST /api/v1/skills` 并传入 `temp_file_id`
   - `temp_upload` 默认使用本地临时存储；只有在明确需要分布式共享临时上传时，才传 `upload_mode=shared`。Python HTTP client 可以在 `ovcli.conf` 中设置 `upload.mode = "shared"`；Rust `ov` CLI 则使用 `OPENVIKING_UPLOAD_MODE=shared`。
   - `POST /api/v1/skills` 不接受在 `data` 中直接传宿主机本地路径。
+  - MCP 客户端使用 `add_skill` 工具：`data` 传 SKILL.md 文本，`path` 传 Git URL 或本地路径。传本地路径时工具返回一次性的签名 `temp_upload` URL；客户端把 SKILL.md 或 ZIP POST 上去后，服务端按 token 绑定的 `target_uri`、`skills`、`list_only` 完成安装，上传响应里就是安装结果。
 
 - **目标规则**：
   - 新增使用 `target_uri` 指定 skills 根，不接受 `to`、`parent` 或 `root_uri` 作为 HTTP 请求字段。CLI 的 `-p/--parent-auto-create` 映射到 `target_uri`。

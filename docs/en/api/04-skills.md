@@ -174,6 +174,8 @@ Skills are a special type of resource that define actions or tools agents can pe
 - `sdk/python/openviking_sdk/client.py:AsyncHTTPClient.add_skill` - Python SDK entry point
 - `openviking_cli/client/http.py` - Compatibility import forwarding to the Python SDK
 - `openviking/server/routers/resources.py:add_skill` - HTTP router
+- `openviking/server/mcp_endpoint.py:add_skill` - MCP tool
+- `openviking/server/skill_ingest.py:install_skills` - Install implementation shared by the HTTP router, the MCP tool, and signed skill uploads
 - `openviking/service/resource_service.py:ResourceService.add_skill` - Core service implementation
 - `openviking/server/routers/skills.py` - List, find, read, validate, update, and delete endpoints
 - `crates/ov_cli/src/commands/skills.rs` - CLI Skill command handlers
@@ -206,6 +208,7 @@ Supply at least one of `data` or `temp_file_id`. The current server gives upload
     - First call `POST /api/v1/resources/temp_upload` to upload a local `SKILL.md` or directory ZIP, then call `POST /api/v1/skills` with `temp_file_id`
   - `temp_upload` defaults to local temporary storage; pass `upload_mode=shared` only when you explicitly need distributed shared temporary uploads. Python HTTP clients can set `upload.mode = "shared"` in `ovcli.conf`; the Rust `ov` CLI instead uses `OPENVIKING_UPLOAD_MODE=shared`.
   - `POST /api/v1/skills` does not accept direct host filesystem paths in `data`.
+  - MCP clients use the `add_skill` tool: `data` takes SKILL.md text, and `path` takes a Git URL or a local path. For a local path the tool returns a one-time signed `temp_upload` URL; after the client POSTs the SKILL.md or ZIP there, the server installs it with the token-bound `target_uri`, `skills`, and `list_only`, and the upload response carries the install result.
 
 - **Targeting**:
   - Add requests use `target_uri` for the skills root; `to`, `parent`, and `root_uri` are not HTTP request fields. CLI `-p/--parent-auto-create` maps to `target_uri`.
