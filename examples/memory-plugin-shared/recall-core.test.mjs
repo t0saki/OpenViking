@@ -506,15 +506,16 @@ test("fallback recall also searches the shared skill root and flags skill entrie
 });
 
 test("the skill hint appears only when the assembled context carries a skill", async () => {
-  for (const [type, expected] of [["skills", true], ["events", false]]) {
+  const cases = [
+    ['<memory uri="viking://agent/skills/deploy-runbook" type="skills">body</memory>', true],
+    ["- Roll back with the shared runbook (viking://user/alice/skills/deploy-runbook)", true],
+    ['<memory uri="viking://user/alice/memories/events/deploy.md" type="events">body</memory>', false],
+  ];
+  for (const [rendered, expected] of cases) {
     const block = await buildRecallBlock(async () => ({
       ok: true,
-      result: {
-        rendered: `<memory uri="viking://agent/skills/deploy-runbook" type="${type}">body</memory>`,
-        entries: [],
-        stats: { rewrite: "off" },
-      },
+      result: { rendered, entries: [], stats: { rewrite: "off" } },
     }), {}, "deploy the payments service", { legacyCachePath: await tempPath("context-face.json") });
-    assert.equal(/Skill entries are OpenViking skills/.test(block), expected, type);
+    assert.equal(/Skill entries are OpenViking skills/.test(block), expected, rendered);
   }
 });

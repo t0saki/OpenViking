@@ -20,6 +20,25 @@ const SOURCES = [
 ];
 const SKILL_ENTRY_HINT =
   "Skill entries are OpenViking skills: read SKILL.md under the entry's URI before following one.";
+const SKILL_URI_IN_TEXT_RE = /\bviking:\/\/(?:~|user\/[^/\s"'<>()]+|agent)\/skills\/[^\s"'<>()]/;
+
+/**
+ * The header line for a recall block that carries a skill — an assembled
+ * type="skills" entry, or any skill URI a digest cites — else null.
+ */
+export function skillEntryHint(text) {
+  const value = String(text || "");
+  return /\btype="skills"/.test(value) || SKILL_URI_IN_TEXT_RE.test(value) ? SKILL_ENTRY_HINT : null;
+}
+
+/**
+ * A skill search hit is its directory's .abstract.md (or .overview.md); name
+ * the skill directory instead, as the context face and the session-start
+ * catalog do.
+ */
+export function skillHitUri(uri) {
+  return String(uri || "").replace(/\/\.(?:abstract|overview)\.md$/, "");
+}
 const DEFAULT_CONTEXT_LIMIT = 10;
 const DEFAULT_CONTEXT_MAX_TOKENS = 1600;
 const DEFAULT_REWRITE_MAX_BULLETS = 6;
@@ -323,11 +342,7 @@ async function searchOneSource(fetchJSON, query, source, limit, actorPeerId = ""
   const items = res.result?.[source.bucket] || [];
   return items.map((item) => ({
     ...item,
-    // A skill hit is its directory's .abstract.md; name the skill directory, as
-    // the context face and the session-start catalog do.
-    ...(source.type === "skill" && typeof item.uri === "string"
-      ? { uri: item.uri.replace(/\/\.(?:abstract|overview)\.md$/, "") }
-      : {}),
+    ...(source.type === "skill" ? { uri: skillHitUri(item.uri) } : {}),
     _sourceType: source.type,
   }));
 }
@@ -484,7 +499,7 @@ function wrapContext(body) {
   return [
     "<openviking-context>",
     "Relevant memory from OpenViking. Use the search/read MCP tools to expand URIs.",
-    ...(/\btype="skills"/.test(body) ? [SKILL_ENTRY_HINT] : []),
+    ...(skillEntryHint(body) ? [SKILL_ENTRY_HINT] : []),
     body,
     "</openviking-context>",
   ].join("\n");

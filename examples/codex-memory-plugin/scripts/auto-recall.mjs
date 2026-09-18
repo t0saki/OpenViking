@@ -31,6 +31,8 @@ import {
   fetchAssembledContext,
   normalizeContextEntry,
   postRecall,
+  skillEntryHint,
+  skillHitUri,
 } from "./shared/recall-core.mjs";
 import { runHookStage } from "./shared/agent-hook-runtime.mjs";
 import { createOvHttp } from "./shared/ov-http.mjs";
@@ -63,8 +65,10 @@ function output(obj, exitAfter = false) {
 function wrapRecallContext(additionalContext) {
   const body = sanitizeInjectedText(additionalContext).trim();
   if (!body) return "";
+  const skillHint = skillEntryHint(body);
   return [
     '<openviking-context source="auto-recall" format="digest">',
+    ...(skillHint ? [skillHint] : []),
     body,
     "</openviking-context>",
   ].join("\n");
@@ -201,7 +205,8 @@ function postProcess(items, limit, threshold) {
   const sorted = [...items].sort((a, b) => clampScore(b.score) - clampScore(a.score));
   const result = [];
   for (const item of sorted) {
-    if (item.level !== 2) continue;
+    // Memories are leaves; a skill is found through its directory's abstract.
+    if (item.level !== 2 && item.category !== "skills") continue;
     if (clampScore(item.score) < threshold) continue;
     const cat = (item.category || "").toLowerCase() || "unknown";
     const abs = (item.abstract || item.overview || "").trim().toLowerCase();
@@ -261,13 +266,20 @@ async function searchBucket(query, targetUris, limit, bucket, sessionId = null) 
 }
 
 async function searchAll(query, limit, sessionId = null) {
-  const [userMems, userSkills] = await Promise.all([
+  const [userMems, userSkills, sharedSkills] = await Promise.all([
     searchBucket(query, userScopedTargets("memories"), limit, "memories", sessionId),
     searchBucket(query, userScopedTargets("skills"), limit, "skills", sessionId),
+    searchBucket(query, ["viking://agent/skills"], limit, "skills", sessionId),
   ]);
   log("search_complete", { scope: "user", rawCount: userMems.length, topScores: userMems.slice(0, 3).map((m) => m.score) });
   log("search_complete", { scope: "skills", rawCount: userSkills.length, topScores: userSkills.slice(0, 3).map((m) => m.score) });
-  const all = [...userMems, ...userSkills];
+  log("search_complete", { scope: "shared_skills", rawCount: sharedSkills.length, topScores: sharedSkills.slice(0, 3).map((m) => m.score) });
+  const skills = [...userSkills, ...sharedSkills].map((m) => ({
+    ...m,
+    uri: skillHitUri(m.uri),
+    category: m.category || "skills",
+  }));
+  const all = [...userMems, ...skills];
   const seen = new Set();
   return all.filter((m) => {
     if (seen.has(m.uri)) return false;
