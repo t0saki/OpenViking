@@ -133,7 +133,7 @@ Once connected, OpenViking exposes 16 tools:
 
 | Tool | Description | Key Parameters |
 |------|-------------|----------------|
-| `find` | Fast semantic retrieval without session context | `query`, `target_uri` (optional), `limit`, `min_score`, `level` (optional), `context_type` (optional) |
+| `find` | Fast semantic retrieval without session context. `context_type="skill"` without `target_uri` searches both your own skills and the account-shared `viking://agent/skills` | `query`, `target_uri` (optional), `limit`, `min_score`, `level` (optional), `context_type` (optional) |
 | `search` | Deep semantic retrieval; `mode="context"` assembles injection-ready context and replaces the former `recall` tool | `query`, `mode` (`list` or `context`), `target_uri` (list mode only), `session_id` (optional), `limit`, `min_score`, `level` (list mode), `context_type` (optional), plus context-mode `quotas`, `purpose`, `max_tokens`, `detail` or `detail_by_category`, `dedup_turns`, `exclude_uris`, `peer_scope`, scalar `other_peer_penalty` or `other_peer_penalties` by category, and `rewrite` (`off` or `auto`) |
 | `read` | Read one or more `viking://` URIs. PNG, JPEG, GIF, and WebP return native MCP image content; WAV, MP3, FLAC, OGG, and M4A return native audio content. Video is not supported because MCP has no standard video content block | `uris` (single string or array) |
 | `list` | List entries under a `viking://` directory | `uri`, `recursive`, `offset`, `limit`, `sort_by`, `sort_order` (optional) |

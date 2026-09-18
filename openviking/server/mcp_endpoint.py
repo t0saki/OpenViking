@@ -39,6 +39,7 @@ from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from openviking.core.path_variables import resolve_path_variables
+from openviking.core.retrieval_targets import default_target_directories
 from openviking.core.uri_validation import (
     validate_content_target_uri,
     validate_request_viking_uri,
@@ -70,7 +71,11 @@ from openviking.server.skill_ingest import install_skills
 from openviking.server.temp_upload_store import TempUploadStore
 from openviking.server.upload_token_store import upload_token_store
 from openviking.utils.media_limits import MAX_INLINE_TOOL_RESULT_MEDIA_BYTES
-from openviking.utils.search_filters import SearchContextTypeInput, merge_search_filter
+from openviking.utils.search_filters import (
+    SearchContextTypeInput,
+    merge_search_filter,
+    resolve_context_types,
+)
 from openviking_cli.exceptions import (
     InvalidArgumentError,
     NotFoundError,
@@ -78,6 +83,7 @@ from openviking_cli.exceptions import (
     PermissionDeniedError,
     UnauthenticatedError,
 )
+from openviking_cli.retrieve import ContextType
 from openviking_cli.utils import get_logger
 
 logger = get_logger(__name__)
@@ -259,18 +265,22 @@ async def find(
     context_type: Optional[Union[str, List[str]]] = None,
     read_content: bool = False,
 ) -> str:
-    """Fast semantic retrieval without session context. Returns ranked memories, resources, and skills with URI, abstract, and score."""
+    """Fast semantic retrieval without session context. Returns ranked memories, resources, and skills with URI, abstract, and score. context_type="skill" without target_uri searches both the user's own and the account-shared skills."""
     service = get_service()
     ctx = _get_ctx()
+    context_filter = _resolve_context_type_filter(context_type)
     if target_uri:
         target_uri = _resolve_mcp_workspace_uri(target_uri, ctx)
+    elif resolve_context_types(context_type) == [ContextType.SKILL.value]:
+        # The generic default targets stop at the user root and miss viking://agent/skills.
+        target_uri = default_target_directories(ctx, context_type=ContextType.SKILL)
     result = await service.search.find(
         query=query,
         ctx=ctx,
         target_uri=target_uri,
         limit=limit,
         score_threshold=min_score,
-        filter=_resolve_context_type_filter(context_type),
+        filter=context_filter,
         level=level,
     )
     return await _format_search_result(result, service=service, ctx=ctx, read_content=read_content)

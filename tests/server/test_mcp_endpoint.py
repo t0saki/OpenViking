@@ -308,6 +308,34 @@ async def test_find_tool_calls_lightweight_find(service, monkeypatch):
     }
 
 
+@pytest.mark.parametrize(
+    ("context_type", "expected_targets"),
+    [
+        ("skill", ["viking://user/test_user/skills", "viking://agent/skills"]),
+        (["skill"], ["viking://user/test_user/skills", "viking://agent/skills"]),
+        (["skill", "memory"], ""),
+        (None, ""),
+    ],
+)
+async def test_find_tool_skill_only_searches_both_skill_roots(
+    service, monkeypatch, context_type, expected_targets
+):
+    captured = {}
+
+    async def fake_find(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(memories=[], resources=[], skills=[])
+
+    monkeypatch.setattr(service.search, "find", fake_find)
+    token = _mcp_ctx.set(RequestContext(DEFAULT_CTX.user, Role.USER))
+    try:
+        await mcp_endpoint.find(query="review a PR", context_type=context_type)
+    finally:
+        _mcp_ctx.reset(token)
+
+    assert captured["target_uri"] == expected_targets
+
+
 async def test_find_tool_inlines_visible_content_when_requested(service, monkeypatch):
     async def fake_find(**kwargs):
         del kwargs

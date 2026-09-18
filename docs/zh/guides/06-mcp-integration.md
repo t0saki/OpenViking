@@ -125,7 +125,7 @@ claude mcp add --transport http openviking \
 
 | 工具 | 说明 | 主要参数 |
 |------|------|----------|
-| `find` | 无 session 上下文的快速语义检索 | `query`, `target_uri`(可选), `limit`, `min_score`, `level`(可选), `context_type`(可选) |
+| `find` | 无 session 上下文的快速语义检索。`context_type="skill"` 且不传 `target_uri` 时同时检索自己的 skill 和账户共享的 `viking://agent/skills` | `query`, `target_uri`(可选), `limit`, `min_score`, `level`(可选), `context_type`(可选) |
 | `search` | 深度语义检索；`mode="context"` 组装可直接注入的上下文，并替代原 `recall` 工具 | `query`, `mode`（`list` 或 `context`）, `target_uri`（仅 list 模式）, `session_id`(可选), `limit`, `min_score`, `level`（list 模式）, `context_type`(可选)，以及 context 模式的 `quotas`, `purpose`, `max_tokens`, `detail` 或 `detail_by_category`, `dedup_turns`, `exclude_uris`, `peer_scope`, 标量 `other_peer_penalty` 或按类别设置的 `other_peer_penalties`, `rewrite`（`off` 或 `auto`） |
 | `read` | 读取一个或多个 `viking://` URI 的内容。PNG、JPEG、GIF、WebP 返回 MCP 原生图片内容；WAV、MP3、FLAC、OGG、M4A 返回原生音频内容。MCP 没有标准视频内容块，因此暂不支持视频 | `uris`（单个字符串或数组） |
 | `list` | 列出 `viking://` 目录下的条目 | `uri`, `recursive`(可选) |
