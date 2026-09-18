@@ -16,7 +16,10 @@ const USER_RESERVED_DIRS = new Set(["memories", "skills"]);
 const SOURCES = [
   { type: "memory", uri: "viking://~/memories", bucket: "memories" },
   { type: "skill", uri: "viking://~/skills", bucket: "skills" },
+  { type: "skill", uri: "viking://agent/skills", bucket: "skills" },
 ];
+const SKILL_ENTRY_HINT =
+  "Skill entries are OpenViking skills: read SKILL.md under the entry's URI before following one.";
 const DEFAULT_CONTEXT_LIMIT = 10;
 const DEFAULT_CONTEXT_MAX_TOKENS = 1600;
 const DEFAULT_REWRITE_MAX_BULLETS = 6;
@@ -318,7 +321,15 @@ async function searchOneSource(fetchJSON, query, source, limit, actorPeerId = ""
   }, { actorPeerId });
   if (!res.ok) return [];
   const items = res.result?.[source.bucket] || [];
-  return items.map((item) => ({ ...item, _sourceType: source.type }));
+  return items.map((item) => ({
+    ...item,
+    // A skill hit is its directory's .abstract.md; name the skill directory, as
+    // the context face and the session-start catalog do.
+    ...(source.type === "skill" && typeof item.uri === "string"
+      ? { uri: item.uri.replace(/\/\.(?:abstract|overview)\.md$/, "") }
+      : {}),
+    _sourceType: source.type,
+  }));
 }
 
 async function searchAllSources(fetchJSON, query, perSourceLimit, actorPeerId = "", log = () => {}) {
@@ -366,6 +377,7 @@ async function buildFallbackInjectionBlock(fetchJSON, items, cfg, actorPeerId = 
     "<openviking-context>",
     "Relevant context from OpenViking. Use the read MCP tool to expand URIs.",
   ];
+  if (items.some((item) => item._sourceType === "skill")) lines.push(SKILL_ENTRY_HINT);
   let contentCount = 0;
   let hintCount = 0;
 
@@ -472,6 +484,7 @@ function wrapContext(body) {
   return [
     "<openviking-context>",
     "Relevant memory from OpenViking. Use the search/read MCP tools to expand URIs.",
+    ...(/\btype="skills"/.test(body) ? [SKILL_ENTRY_HINT] : []),
     body,
     "</openviking-context>",
   ].join("\n");

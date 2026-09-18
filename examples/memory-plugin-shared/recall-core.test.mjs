@@ -469,3 +469,52 @@ test("an empty recall says whether the server had nothing or the threshold took 
   assert.equal(belowThreshold.stage, "filtered_out");
   assert.equal(await buildRecallBlock(fallbackFetch([]), {}, "hello", { legacyCachePath }), null);
 });
+
+test("fallback recall also searches the shared skill root and flags skill entries", async () => {
+  const legacyCachePath = await tempPath("context-face.json");
+  const targets = [];
+  const fetchJSON = async (path, init) => {
+    if (path === "/api/v1/search/search") return { ok: false, status: 503 };
+    if (path === "/api/v1/search/recall") return { ok: false, status: 404 };
+    if (path === "/api/v1/search/find") {
+      const body = JSON.parse(init.body);
+      targets.push(body.target_uri);
+      const skills = body.target_uri === "viking://agent/skills"
+        ? [{ uri: "viking://agent/skills/deploy-runbook/.abstract.md", score: 0.8, abstract: "name: deploy-runbook", level: 0 }]
+        : [];
+      return { ok: true, result: { memories: [], skills } };
+    }
+    return { ok: false, status: 404 };
+  };
+
+  const events = [];
+  const block = await buildRecallBlock(fetchJSON, {
+    recallLimit: 3,
+    recallPreferAbstract: true,
+    scoreThreshold: 0.35,
+  }, "how do we deploy the payments service", {
+    legacyCachePath,
+    log: (event, data) => events.push({ event, data }),
+  });
+
+  assert.deepEqual(targets.sort(), ["viking://agent/skills", "viking://~/memories", "viking://~/skills"]);
+  assert.match(block, /\[skill 80%\] name: deploy-runbook/);
+  assert.match(block, /Skill entries are OpenViking skills/);
+  // The hit arrives as the skill's .abstract.md; the entry names the skill directory.
+  const picked = events.find((e) => e.event === "recall_picked").data.items;
+  assert.deepEqual(picked.map((item) => item.uri), ["viking://agent/skills/deploy-runbook"]);
+});
+
+test("the skill hint appears only when the assembled context carries a skill", async () => {
+  for (const [type, expected] of [["skills", true], ["events", false]]) {
+    const block = await buildRecallBlock(async () => ({
+      ok: true,
+      result: {
+        rendered: `<memory uri="viking://agent/skills/deploy-runbook" type="${type}">body</memory>`,
+        entries: [],
+        stats: { rewrite: "off" },
+      },
+    }), {}, "deploy the payments service", { legacyCachePath: await tempPath("context-face.json") });
+    assert.equal(/Skill entries are OpenViking skills/.test(block), expected, type);
+  }
+});
