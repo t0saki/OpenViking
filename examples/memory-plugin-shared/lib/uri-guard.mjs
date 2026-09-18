@@ -90,6 +90,16 @@ export function buildGuardNotice(uri, hint = {}) {
   return lines.join("\n");
 }
 
+const SKILL_URI_RE = /^viking:\/\/(?:~|user\/[^/]+|agent)\/skills(?:\/|$)/i;
+
+/**
+ * Skills sit in a subtree the generic write/edit tools refuse; the MCP
+ * add_skill tool is the only way to create or change one.
+ */
+export function isSkillUri(uri) {
+  return SKILL_URI_RE.test(String(uri || ""));
+}
+
 /** The hints a host gets when it names no table of its own. */
 export const DEFAULT_TOOL_HINTS = {
   read: {
@@ -109,12 +119,18 @@ export const DEFAULT_TOOL_HINTS = {
     ),
   },
   edit: {
-    tool: "OpenViking MCP edit",
-    example: (uri) => `edit(uri="${uri}", old_string="...", new_string="...")`,
+    tool: (uri) => (isSkillUri(uri) ? "OpenViking MCP add_skill" : "OpenViking MCP edit"),
+    example: (uri) => (
+      isSkillUri(uri)
+        ? 'add_skill(data="<the full edited SKILL.md text>")'
+        : `edit(uri="${uri}", old_string="...", new_string="...")`
+    ),
   },
   write: {
-    tool: "OpenViking MCP write",
-    example: (uri) => `write(uri="${uri}", content="...")`,
+    tool: (uri) => (isSkillUri(uri) ? "OpenViking MCP add_skill" : "OpenViking MCP write"),
+    example: (uri) => (
+      isSkillUri(uri) ? 'add_skill(data="<the full SKILL.md text>")' : `write(uri="${uri}", content="...")`
+    ),
   },
   bash: {
     tool: "OpenViking MCP read or search",
@@ -151,7 +167,7 @@ function resolveGuardedUri(toolName, input, { hints = DEFAULT_TOOL_HINTS } = {})
     uri,
     shell: SHELL_TOOL_NAMES.has(name),
     hint: {
-      tool: hint.tool,
+      tool: typeof hint.tool === "function" ? hint.tool(uri, input) : hint.tool,
       example: typeof hint.example === "function" ? hint.example(uri, input) : hint.example,
     },
   };

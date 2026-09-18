@@ -9,6 +9,7 @@ import {
   evaluateUriNotice,
   findVikingUri,
   findVikingUriInValue,
+  isSkillUri,
   noticeHookSpecificOutput,
   normalizeToolName,
   preToolUseOutput,
@@ -154,4 +155,23 @@ test("readToolEvent accepts each host's spelling", () => {
 
 test("normalizeToolName trims and lowercases", () => {
   assert.equal(normalizeToolName(" Read "), "read")
+})
+
+test("a write or edit aimed at a skill points at add_skill, not the refused write tool", () => {
+  for (const uri of [
+    "viking://~/skills/pr-review/SKILL.md",
+    "viking://user/alice/skills/pr-review/SKILL.md",
+    "viking://agent/skills/pr-review",
+  ]) {
+    assert.equal(isSkillUri(uri), true, uri)
+    for (const tool of ["Write", "Edit"]) {
+      const { reason } = evaluateUriGuard(tool, { file_path: uri })
+      assert.match(reason, /Use OpenViking MCP add_skill instead\./, `${tool} ${uri}`)
+      assert.match(reason, /add_skill\(data="<the full (edited )?SKILL\.md text>"\)/)
+    }
+  }
+
+  assert.equal(isSkillUri("viking://resources/skills/notes.md"), false)
+  const { reason } = evaluateUriGuard("Write", { file_path: "viking://~/notes/todo.md" })
+  assert.match(reason, /Use OpenViking MCP write instead\./)
 })
