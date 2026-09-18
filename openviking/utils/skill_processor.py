@@ -27,9 +27,9 @@ from openviking.privacy import (
 )
 from openviking.server.identity import RequestContext
 from openviking.server.local_input_guard import deny_direct_local_skill_input
-from openviking.storage.vikingdb_manager import VikingDBManager
 from openviking.storage.queuefs.embedding_msg_converter import EmbeddingMsgConverter
 from openviking.storage.viking_fs import VikingFS
+from openviking.storage.vikingdb_manager import VikingDBManager
 from openviking.telemetry import get_current_telemetry
 from openviking.telemetry.request_wait_tracker import get_request_wait_tracker
 from openviking.utils.path_safety import safe_join_viking_uri
@@ -393,9 +393,7 @@ class SkillProcessor:
         return normalized
 
     @staticmethod
-    def _resolve_skill_root_uri(
-        ctx: RequestContext, target_uri: Optional[str]
-    ) -> str:
+    def _resolve_skill_root_uri(ctx: RequestContext, target_uri: Optional[str]) -> str:
         """Resolve the skill storage root URI.
 
         Defaults to the per-user private skills root.  Callers may pass
