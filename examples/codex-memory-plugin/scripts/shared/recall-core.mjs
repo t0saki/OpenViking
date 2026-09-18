@@ -257,7 +257,8 @@ function rankItem(item, profile) {
   const abstract = (item.abstract || item.overview || "").trim();
   const cat = (item.category || "").toLowerCase();
   const uri = (item.uri || "").toLowerCase();
-  const leafBoost = (item.level === 2 || uri.endsWith(".md")) ? 0.12 : 0;
+  // A skill hit names its directory, but it is as complete a unit as a memory leaf.
+  const leafBoost = (item.level === 2 || item._sourceType === "skill" || uri.endsWith(".md")) ? 0.12 : 0;
   const eventBoost = profile.wantsTemporal && (cat === "events" || uri.includes("/events/")) ? 0.1 : 0;
   const prefBoost = profile.wantsPreference && (cat === "preferences" || uri.includes("/preferences/")) ? 0.08 : 0;
   const overlapBoost = lexicalOverlapBoost(profile.tokens, `${item.uri} ${abstract}`);

@@ -519,3 +519,37 @@ test("the skill hint appears only when the assembled context carries a skill", a
     assert.equal(/Skill entries are OpenViking skills/.test(block), expected, rendered);
   }
 });
+
+test("a skill hit competes with memory leaves on equal footing in the fallback", async () => {
+  const legacyCachePath = await tempPath("context-face.json");
+  const fetchJSON = async (path, init) => {
+    if (path === "/api/v1/search/search") return { ok: false, status: 503 };
+    if (path === "/api/v1/search/recall") return { ok: false, status: 404 };
+    if (path === "/api/v1/search/find") {
+      const body = JSON.parse(init.body);
+      if (body.target_uri === "viking://~/memories") {
+        return {
+          ok: true,
+          result: {
+            memories: Array.from({ length: 10 }, (_, i) => ({
+              uri: `viking://user/alice/memories/events/e${i}.md`, score: 0.62, abstract: `event ${i}`, level: 2,
+            })),
+            skills: [],
+          },
+        };
+      }
+      if (body.target_uri === "viking://~/skills") {
+        return { ok: true, result: { memories: [], skills: [{ uri: "viking://user/alice/skills/pr-review/.abstract.md", score: 0.7, abstract: "name: pr-review", level: 0 }] } };
+      }
+      return { ok: true, result: { memories: [], skills: [] } };
+    }
+    return { ok: false, status: 404 };
+  };
+  const events = [];
+  await buildRecallBlock(fetchJSON, { recallLimit: 10, recallPreferAbstract: true, scoreThreshold: 0.35 }, "review this pull request", {
+    legacyCachePath,
+    log: (event, data) => events.push({ event, data }),
+  });
+  const picked = events.find((e) => e.event === "recall_picked").data.items.map((item) => item.uri);
+  assert.ok(picked.includes("viking://user/alice/skills/pr-review"), picked.join("\n"));
+});

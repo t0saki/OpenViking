@@ -150,12 +150,17 @@ function lexicalOverlapBoost(tokens, text) {
   return Math.min(0.2, (matched / Math.min(tokens.length, 4)) * 0.2);
 }
 
+// A skill hit names its directory, but it is as complete a unit as a memory leaf.
+function isLeafHit(item) {
+  return item.level === 2 || item.category === "skills" || String(item.uri || "").endsWith(".md");
+}
+
 function getRankingBreakdown(item, profile) {
   const base = clampScore(item.score);
   const abstract = (item.abstract || item.overview || "").trim();
   const cat = (item.category || "").toLowerCase();
   const uri = item.uri.toLowerCase();
-  const leafBoost = (item.level === 2 || uri.endsWith(".md")) ? 0.12 : 0;
+  const leafBoost = isLeafHit(item) ? 0.12 : 0;
   const eventBoost = profile.wantsTemporal && (cat === "events" || uri.includes("/events/")) ? 0.1 : 0;
   const prefBoost = profile.wantsPreference && (cat === "preferences" || uri.includes("/preferences/")) ? 0.08 : 0;
   const overlapBoost = lexicalOverlapBoost(profile.tokens, `${item.uri} ${abstract}`);
@@ -188,7 +193,7 @@ function pickMemories(items, limit, queryText) {
   const profile = buildQueryProfile(queryText);
   const sorted = [...items].sort((a, b) => rankForInjection(b, profile) - rankForInjection(a, profile));
   const deduped = dedupeByAbstract(sorted);
-  const leaves = deduped.filter((m) => m.level === 2 || m.uri.endsWith(".md"));
+  const leaves = deduped.filter(isLeafHit);
   if (leaves.length >= limit) return leaves.slice(0, limit);
   const picked = [...leaves];
   const used = new Set(picked.map((m) => m.uri));
@@ -277,7 +282,7 @@ async function searchAll(query, limit, sessionId = null) {
   const skills = [...userSkills, ...sharedSkills].map((m) => ({
     ...m,
     uri: skillHitUri(m.uri),
-    category: m.category || "skills",
+    category: "skills",
   }));
   const all = [...userMems, ...skills];
   const seen = new Set();
