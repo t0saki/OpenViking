@@ -15,7 +15,6 @@ from openviking.session.memory.dataclass import ResolvedOperation, ResolvedOpera
 from openviking.session.memory.memory_type_registry import MemoryTypeRegistry
 from openviking.session.memory.merge_op import MergeOpFactory
 from openviking.storage.abstract_overview import body_for_preview
-from openviking.storage.content_write import ContentWriteCoordinator
 from openviking.storage.viking_fs import VikingFS, get_viking_fs
 from openviking.utils.skill_processor import SkillProcessor
 from openviking_cli.exceptions import NotFoundError
@@ -125,15 +124,15 @@ class SkillOperationUpdater:
                 "name": merged_skill["name"],
             }
 
-        merged_skill = await self._skill_processor.sanitize_skill_privacy(merged_skill, ctx)
-        serialized = SkillLoader.to_skill_md(merged_skill)
-        write_result = await ContentWriteCoordinator(self._viking_fs).write(
-            uri=skill_md_uri,
-            content=serialized,
+        processor_result = await self._skill_processor.process_skill(
+            data=merged_skill,
+            viking_fs=self._viking_fs,
             ctx=ctx,
-            mode="replace",
+            allow_local_path_resolution=False,
+            target_uri=root_uri.rsplit("/", 1)[0],
+            lease_ref=transaction_handle,
         )
-        updated_root_uri = write_result.get("root_uri") or root_uri
+        updated_root_uri = processor_result.get("root_uri") or root_uri
         return {
             "status": "success",
             "action": "update",

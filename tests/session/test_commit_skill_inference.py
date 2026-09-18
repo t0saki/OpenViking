@@ -250,7 +250,7 @@ async def test_skill_operation_updater_creates_skill_with_session_defaults():
 
 
 @pytest.mark.asyncio
-async def test_skill_operation_updater_updates_existing_skill(monkeypatch):
+async def test_skill_operation_updater_updates_existing_skill():
     existing_skill_md = """---
 name: code-review
 description: Review code carefully
@@ -265,26 +265,11 @@ tags:
 """
     viking_fs = MagicMock()
     viking_fs.read_file = AsyncMock(return_value=existing_skill_md)
-    write_calls = {}
-
-    class _FakeContentWriter:
-        def __init__(self, _viking_fs):
-            self._viking_fs = _viking_fs
-
-        async def write(self, **kwargs):
-            write_calls.update(kwargs)
-            return {
-                "uri": kwargs["uri"],
-                "root_uri": kwargs["uri"].rsplit("/SKILL.md", 1)[0],
-            }
-
-    monkeypatch.setattr(
-        "openviking.session.skill.skill_operation_updater.ContentWriteCoordinator",
-        _FakeContentWriter,
-    )
 
     processor = MagicMock()
-    processor.sanitize_skill_privacy = AsyncMock(side_effect=lambda skill_dict, _ctx: skill_dict)
+    processor.process_skill = AsyncMock(
+        return_value={"root_uri": "viking://user/default/skills/code-review"}
+    )
     updater = SkillOperationUpdater(
         registry=_build_skill_registry(),
         skill_processor=processor,
@@ -323,12 +308,12 @@ tags:
     assert result.written_uris == []
     assert result.edited_uris == [uri]
     assert result.operation_results[0]["action"] == "update"
-    assert write_calls["uri"] == uri
-    assert write_calls["mode"] == "replace"
-    assert "allowed-tools:" in write_calls["content"]
-    assert "tags:" in write_calls["content"]
-    assert "Review code from evidence" in write_calls["content"]
-    assert "- 基于证据总结问题" in write_calls["content"]
+    call = processor.process_skill.await_args.kwargs
+    assert call["target_uri"] == "viking://user/default/skills"
+    assert call["data"]["allowed_tools"] == ["Read"]
+    assert call["data"]["tags"] == ["session-derived"]
+    assert call["data"]["description"] == "Review code from evidence"
+    assert "- 基于证据总结问题" in call["data"]["content"]
 
 
 @pytest.mark.asyncio
@@ -347,23 +332,7 @@ tags:
 """
     viking_fs = MagicMock()
     viking_fs.read_file = AsyncMock(return_value=existing_skill_md)
-    write_calls = {}
-
-    class _FakeContentWriter:
-        def __init__(self, _viking_fs):
-            self._viking_fs = _viking_fs
-
-        async def write(self, **kwargs):
-            write_calls.update(kwargs)
-            return {
-                "uri": kwargs["uri"],
-                "root_uri": kwargs["uri"].rsplit("/SKILL.md", 1)[0],
-            }
-
-    monkeypatch.setattr(
-        "openviking.session.skill.skill_operation_updater.ContentWriteCoordinator",
-        _FakeContentWriter,
-    )
+    viking_fs.write_context = AsyncMock()
 
     async def _fake_extract_skill_privacy_values(*, skill_name, skill_description, content):
         assert skill_name == "code-review"
@@ -384,8 +353,10 @@ tags:
 
     privacy_config_service = MagicMock()
     privacy_config_service.upsert = AsyncMock()
+    vikingdb = MagicMock()
+    vikingdb.enqueue_embedding_msg = AsyncMock(return_value=True)
     processor = SkillProcessor(
-        vikingdb=MagicMock(),
+        vikingdb=vikingdb,
         privacy_config_service=privacy_config_service,
     )
     updater = SkillOperationUpdater(
@@ -424,8 +395,10 @@ tags:
     assert result.written_uris == []
     assert result.edited_uris == [uri]
     assert result.operation_results[0]["action"] == "update"
-    assert "secret-xyz" not in write_calls["content"]
-    assert "{{ov_privacy:skill:code-review:api_key}}" in write_calls["content"]
+    written = viking_fs.write_context.await_args.kwargs
+    assert written["uri"] == "viking://user/default/skills/code-review"
+    assert "secret-xyz" not in written["content"]
+    assert "{{ov_privacy:skill:code-review:api_key}}" in written["content"]
     privacy_config_service.upsert.assert_awaited_once_with(
         ctx=ctx,
         category="skill",
