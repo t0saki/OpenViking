@@ -3,8 +3,9 @@
 Long-term semantic memory and context takeover for [pi](https://github.com/earendil-works/pi) sessions, powered by [OpenViking](https://github.com/volcengine/OpenViking). Recall happens automatically before every prompt, capture happens after every turn, and OpenViking can own long-term context by replacing committed history with an archive overview in pi's `context` hook.
 
 > **Requires an OpenViking server with `viking://~` home-alias support.** Recall targets the
-> caller's own context space through `viking://~/memories` and `viking://~/skills`; the uid-less
-> `viking://user/memories` shorthand is rejected by newer servers.
+> caller's own context space through `viking://~/memories` and `viking://~/skills` (plus the
+> account-shared `viking://agent/skills`); the uid-less `viking://user/memories` shorthand is
+> rejected by newer servers.
 
 > Design informed by lessons from all three OpenViking agent plugins: synchronous recall from OpenClaw, production-hardened capture/ranking from Claude Code, and anti-patterns dodged from Hermes's stale prefetch approach. See [DESIGN.md](./DESIGN.md) for the module-by-module design, including the context-takeover layer.
 
@@ -62,6 +63,8 @@ Behaviour and peer-scoping knobs live in `~/.openviking/ovcli.conf` beside the c
       "scoreThreshold": 0.35,
       "minQueryLength": 3,
       "profileTokenBudget": 10000,
+      "skillCatalog": true,
+      "skillCatalogTokenBudget": 1200,
       "resumeContextBudget": 32000,
       "commitTokenThreshold": 20000,
       "takeoverEnabled": true,
@@ -193,7 +196,11 @@ recent live tail.
 | Field                    | Default    | Description                                                              |
 |--------------------------|------------|--------------------------------------------------------------------------|
 | `profileTokenBudget`     | `10000`    | Token budget for user profile block                                      |
+| `skillCatalog`           | `true`     | Add the `<available-skills>` catalog to the profile block. Env: `OPENVIKING_SKILL_CATALOG` |
+| `skillCatalogTokenBudget`| `1200`     | Separate token budget for the skill catalog (0–20000; `0` turns it off). Env: `OPENVIKING_SKILL_CATALOG_TOKEN_BUDGET` |
 | `resumeContextBudget`    | `32000`    | Token budget for archive overview on session resume                      |
+
+The profile block is built at session start and added to pi's system prompt on every turn. Its `<available-skills>` catalog comes from one `GET /api/v1/skills`: your own skills first, then the ones shared under `viking://agent/skills`, leaving out a shared skill that has the same name as one of yours, with each description cut to about 40 tokens. When the descriptions do not fit `skillCatalogTokenBudget`, the catalog lists names only (with a `... +N more` tail if even the names do not all fit), and when not even one name fits, a one-line count. With no skills, or on a server without that endpoint, it is left out. The model reads a skill's `SKILL.md` with `viking_read` before following it.
 
 ### Misc
 
@@ -300,7 +307,7 @@ Both plugins share the same core design (informed by each other):
 | Tool delivery       | OV server's MCP endpoint (16 tools)     | pi.registerTool() (7 tools)            |
 | Write path          | Detached worker (async)                 | Async promise (pi's event loop)        |
 | Installation        | `claude plugin install` + setup script  | Copy directory → auto-discovered       |
-| Memory index        | None (flashlight search model)          | Built (map model — model sees what OV knows) |
+| Memory index        | Shared profile block (memories + skills), injected at session start | Same block, folded into the system prompt every turn |
 | Subagent isolation  | Explicit hook management                | Natural process-level isolation        |
 
 ## Extension Structure
