@@ -39,7 +39,7 @@
 | hermes | 原生注册（6 个 `viking_*`） | 6（provider 激活即全开） | ✅ | ✅ | ✅ | ✅ `viking_remember`（直写文件，不走抽取） | ✅ 多协议摄取（HTTP/Git/SSH/本地文件/目录 zip） | ❌ | memory-only + `.md` 叶子校验 |
 | ov CLI | CLI 命令 | ~40 命令组 | ✅ `ov find` | ✅ `ov find` | ✅ `ov find` | ✅ `ov add-memory` | ✅ `ov add-resource` | ✅ `ov add-skill` | `ov rm` 直接执行（TUI 删除有确认 + root/scope 禁删） |
 
-¹ MCP `write` 拒绝写用户自己的 `skills/` 子树；写 `viking://agent/skills` 时会生成一个绕过 skill 安装流程的普通文件（没有 frontmatter abstract，也不做 privacy 抽取），所以共享 skill 同样要走 `add_skill`。skill 的新建、安装和替换走 MCP `add_skill` 工具（内联 SKILL.md 文本、Git URL，或本地目录/zip 的签名上传），它和 REST `POST /api/v1/skills` 共用同一套安装实现。
+¹ skill 的新建、安装和替换走 MCP `add_skill` 工具（内联 SKILL.md 文本、Git URL，或本地目录/zip 的签名上传），它和 REST `POST /api/v1/skills` 共用同一套安装实现。MCP `write`/`edit` 写 `<skill 根>/<name>/SKILL.md` 时也走这套安装流程，所以已有 skill 也可以直接原地修改。
 ² MCP `forget` 不区分 memory/resource/skill 类型；存储层保留了命名空间根保护机制（裸 `viking://`、`viking://user`、`viking://agent` 根拒删），详见 [§3.5](#_3-5-写入与删除的类型边界)。
 ³ pi 的 `viking_forget`：其 `recursive` 参数固定为 false（不删除目录），按 query 删除要求匹配分 >0.8。
 ⁴ pi 工具注册前置：需未命中 `bypassSessionPatterns`、`client.health()` 通过、`ensureSession` 成功（`index.ts:66-108`）；health 未通过时本轮不注册工具面。
@@ -94,7 +94,7 @@ per-harness 章节（档案卡）只写差异；所有共享事实均在本章�
 | 4 | `list` | 列目录（函数名 `ls`，注册名显式改写为 `list`） | `recursive=False`（`:423`） |
 | 5 | `tree` | 递归目录树 | `level_limit=3, node_limit=1000, include_abstract=False`；`include_abstract=true` 时打印每个目录的 abstract（最长 1024 字符），因此 `tree(uri="viking://~/skills", level_limit=1, include_abstract=true)` 能列出全部 skill 及其描述（`:764`） |
 | 6 | `remember` | 写长期记忆 | 内部建一次性会话 `mcp-store-<uuid12>` 并立即 `commit_async`（`:504-523`）——这是 MCP 面唯一的 commit 入口；MCP 没有显式 commit 工具 |
-| 7 | `write` | 写 `viking://` 文件 | `mode=replace\|append\|create`：replace 覆盖或在缺失时创建，append 追加或在缺失时创建，create 仅创建缺失文件且已存在时返回冲突；显式 create 的文件扩展名白名单为 `.md .txt .json .yaml .yml .toml .py .js .ts`；可写域 `resources/user/agent`；用户根下 `skills/ peers/ privacy/ sessions/` 只读；已存在的 `.abstract.md/.overview.md` sidecar 可改正文，但公共 API 不能创建（`:529`；`content_write.py:60-81`） |
+| 7 | `write` | 写 `viking://` 文件 | `mode=replace\|append\|create`：replace 覆盖或在缺失时创建，append 追加或在缺失时创建，create 仅创建缺失文件且已存在时返回冲突；显式 create 的文件扩展名白名单为 `.md .txt .json .yaml .yml .toml .py .js .ts`；可写域 `resources/user/agent`；用户根下 `peers/ privacy/ sessions/` 只读；写 `<skill 根>/<name>/SKILL.md` 等同于用 `add_skill` 安装或更新，skill 根下的其他文件原样写入；已存在的 `.abstract.md/.overview.md` sidecar 可改正文，但公共 API 不能创建（`:529`；`content_write.py:60-81`） |
 | 8 | `edit` | 精确字符串替换 | `old_string` 空/0 命中/多命中且非 replace_all 均报错，且文件内容不变（`:569`） |
 | 9 | `add_resource` | 资源摄取（远程 URL / 本地文件签名上传 / Connector） | `watch_interval` 单位为分钟（0=不 watch）；本地路径分支返回签名上传 URL（TTL 默认 600s），上传后自动入库，无需二次调用（`:723-947`） |
 | 10 | `add_skill` | 新建、安装或替换 skill | `data`（完整 SKILL.md 文本）或 `path`（Git URL / GitHub tree URL，或本地 SKILL.md、目录、zip——本地分支和 `add_resource` 一样返回签名上传 URL）；`skills=[...]` 从多 skill 源里挑选，`list_only=true` 只预览；`target_uri="viking://agent/skills"` 表示账户共享。与 REST `POST /api/v1/skills` 共用安装代码（`:1349`） |
@@ -439,7 +439,7 @@ JS 系 harness 的召回逻辑均由 `recall-core.mjs` 中的三级降级链处�
 
 ### 3.5.1 写入边界
 
-MCP `write` / REST `content/write` 的三道 guard（`content_write.py`）：可写域限 `viking://resources|user|agent`；新建文件扩展名需符合白名单 `.md .txt .json .yaml .yml .toml .py .js .ts`；用户根下 `skills/ peers/ privacy/ sessions/` 四个托管子树只读（`_USER_MANAGED_SUBTREES`）。已存在的 `.abstract.md/.overview.md` sidecar 可以改正文，但公共写入 API 不能创建它们。
+MCP `write` / REST `content/write` 的三道 guard（`content_write.py`）：可写域限 `viking://resources|user|agent`；新建文件扩展名需符合白名单 `.md .txt .json .yaml .yml .toml .py .js .ts`；用户根下 `peers/ privacy/ sessions/` 三个托管子树只读（`_USER_MANAGED_SUBTREES`）。在 skill 根（`viking://user/<id>/skills` 或 `viking://agent/skills`）下写 `<name>/SKILL.md` 时不走通用写入，改走 skill 安装流程；其他文件原样写入，不做语义刷新。已存在的 `.abstract.md/.overview.md` sidecar 可以改正文，但公共写入 API 不能创建它们。
 
 ### 3.5.2 删除边界
 
@@ -454,7 +454,7 @@ MCP `write` / REST `content/write` 的三道 guard（`content_write.py`）：可
 
 **第四档：默认不提供删除（LangChain / Open WebUI）**。LangChain `viking_forget` 需配置 `profile="admin"` 或 `allow_forget=True` 才加入工具面；Open WebUI 则完全不提供删除工具。
 
-**skill 的增删边界**：新增入口是 MCP `add_skill`、openclaw `add_skill`（默认开）、`ov add-skill` 与 REST；`add_resource` 拒绝 skill URI，MCP `write` 拒绝用户自己的 `skills/` 子树（`_USER_MANAGED_SUBTREES`）；`viking://agent/skills` 下的 `write` 目前没有拦截，但会绕过 skill 安装流程。对 skill 完全只读（不增不删）的删除面是 openclaw `memory_forget` 与 hermes `viking_forget`。MCP `forget`、dsh、pi、`ov rm` 能删掉 skill 目录，因为删除路径不检查该集合，但只有 `ov skills remove` 和 REST `DELETE /api/v1/skills/{name}` 会同时清理该 skill 的 privacy 配置。
+**skill 的增删边界**：新增入口是 MCP `add_skill`、openclaw `add_skill`（默认开）、`ov add-skill` 与 REST；`add_resource` 拒绝 skill URI，MCP `write`/`edit` 写 skill 的 `SKILL.md` 时走与 `add_skill` 相同的安装流程。对 skill 完全只读（不增不删）的删除面是 openclaw `memory_forget` 与 hermes `viking_forget`。MCP `forget`、dsh、pi、`ov rm` 能删掉 skill 目录，因为删除路径不检查该集合，但只有 `ov skills remove` 和 REST `DELETE /api/v1/skills/{name}` 会同时清理该 skill 的 privacy 配置。
 
 ## 3.6 降级与容错
 

@@ -673,6 +673,8 @@ Missing names/descriptions and invalid YAML produce errors. Directory/name misma
 
 Supply new content/an upload, or set `from_source=true`. The new name must match `skill_name` in the URL; update is neither rename nor a partial patch. The server parses and checks the new package before backing up and replacing the old one, and attempts restoration on synchronous failure. Include all auxiliary files that should remain in the replacement package.
 
+To change only `SKILL.md`, write it in place with `POST /api/v1/content/write` (or MCP `write`/`edit`) at `<root>/<name>/SKILL.md`. The write runs the same installer as `add_skill` and keeps the Skill's other files; see [Content](12-content.md#write).
+
 **Python SDK**
 
 ```python

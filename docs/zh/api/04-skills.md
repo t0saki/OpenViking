@@ -675,6 +675,8 @@ curl -X POST http://localhost:1933/api/v1/skills/find \
 
 必须提供新内容/上传包，或设 `from_source=true`。新内容的名称必须与 URL 中的 `skill_name` 一致；更新不是重命名或局部 patch。先解析并检查新包，再备份替换；同步失败会尝试恢复旧包。需保留的辅助文件应随新包一起提交。
 
+只改 `SKILL.md` 时，可以用 `POST /api/v1/content/write`（或 MCP `write`/`edit`）直接写 `<root>/<name>/SKILL.md`。这次写入走与 `add_skill` 相同的安装流程，并保留 Skill 的其他文件，见 [内容](12-content.md#write)。
+
 **Python SDK**：
 
 ```python
