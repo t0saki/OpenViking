@@ -349,3 +349,17 @@ test("ovcli.conf's plugin section outranks ov.conf, under ovcli.conf's own key",
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("the skill catalog is on by default and its budget clamps to the declared range", () => {
+  withFixture({}, ({ otherDir }) => {
+    const defaults = buildPluginConfig("codex", { cwd: otherDir });
+    assert.equal(defaults.skillCatalog, true);
+    assert.equal(defaults.skillCatalogTokenBudget, 1200);
+
+    process.env.OPENVIKING_SKILL_CATALOG = "false";
+    process.env.OPENVIKING_SKILL_CATALOG_TOKEN_BUDGET = "999999";
+    const overridden = buildPluginConfig("codex", { cwd: otherDir });
+    assert.equal(overridden.skillCatalog, false);
+    assert.equal(overridden.skillCatalogTokenBudget, 20000);
+  });
+});

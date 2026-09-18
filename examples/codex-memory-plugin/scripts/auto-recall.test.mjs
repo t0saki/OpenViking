@@ -683,6 +683,150 @@ test("auto-recall expands configured user in memory search target", async () => 
   }
 });
 
+test("the raw-search fallback also searches shared skills and flags them", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "ov-auto-recall-shared-skills-"));
+  const targets = [];
+
+  try {
+    await withMockOpenViking(async (req, res) => {
+      const url = new URL(req.url, "http://127.0.0.1");
+      if (req.method === "GET" && url.pathname === "/health") {
+        writeJson(res, { status: "ok", result: { ok: true } });
+        return;
+      }
+      if (req.method === "POST" && url.pathname === "/api/v1/search/search") {
+        const body = await readRequestBody(req);
+        if (body.mode === "context") {
+          writeStatusJson(res, 400, { status: "error", error: "Extra inputs are not permitted: mode" });
+          return;
+        }
+        targets.push(body.target_uri);
+        const skills = body.target_uri === "viking://agent/skills"
+          ? [{
+            uri: "viking://agent/skills/deploy-runbook/.abstract.md",
+            level: 0,
+            score: 0.9,
+            abstract: "name: deploy-runbook description: Shared deployment runbook",
+          }]
+          : [];
+        writeJson(res, { status: "ok", result: { memories: [], skills } });
+        return;
+      }
+      if (req.method === "POST" && url.pathname === "/api/v1/search/recall") {
+        writeStatusJson(res, 404, { status: "error", error: "not found" });
+        return;
+      }
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ status: "error", error: "not found" }));
+    }, async (baseUrl) => {
+      const result = await runAutoRecall(
+        { prompt: "how do we roll back the payments deploy", session_id: "codex:789" },
+        {
+          OPENVIKING_AUTO_RECALL: "1",
+          OPENVIKING_CODEX_STATE_DIR: stateDir,
+          OPENVIKING_STATE_DIR: stateDir,
+          OPENVIKING_CONFIG_FILE: join(stateDir, "missing-ov.conf"),
+          OPENVIKING_CLI_CONFIG_FILE: join(stateDir, "missing-ovcli.conf"),
+          OPENVIKING_CREDENTIAL_SOURCE: "env",
+          OPENVIKING_RECALL_COMPRESS: "0",
+          OPENVIKING_RECALL_LIMIT: "1",
+          OPENVIKING_RECALL_TIMEOUT_MS: "10000",
+          OPENVIKING_MIN_QUERY_LENGTH: "1",
+          OPENVIKING_SCORE_THRESHOLD: "0",
+          OPENVIKING_TIMEOUT_MS: "5000",
+          OPENVIKING_URL: baseUrl,
+        },
+      );
+
+      const context = JSON.parse(result.stdout.trim()).hookSpecificOutput.additionalContext;
+      assert.match(context, /Skill entries are OpenViking skills/);
+      assert.match(context, /\[skills\] name: deploy-runbook .*\(viking:\/\/agent\/skills\/deploy-runbook\)/);
+    });
+
+    assert.ok(targets.includes("viking://agent/skills"), `searched ${targets.join(", ")}`);
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("the raw-search fallback keeps a strong skill hit among many memory leaves", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "ov-auto-recall-skill-vs-leaves-"));
+
+  try {
+    await withMockOpenViking(async (req, res) => {
+      const url = new URL(req.url, "http://127.0.0.1");
+      if (req.method === "GET" && url.pathname === "/health") {
+        writeJson(res, { status: "ok", result: { ok: true } });
+        return;
+      }
+      if (req.method === "POST" && url.pathname === "/api/v1/search/search") {
+        const body = await readRequestBody(req);
+        if (body.mode === "context") {
+          writeStatusJson(res, 400, { status: "error", error: "Extra inputs are not permitted: mode" });
+          return;
+        }
+        if (body.target_uri === "viking://~/memories") {
+          writeJson(res, {
+            status: "ok",
+            result: {
+              memories: Array.from({ length: 12 }, (_, i) => ({
+                uri: `viking://user/zeus/memories/events/deploy-${i}.md`,
+                level: 2,
+                score: 0.6,
+                category: "events",
+                abstract: `deploy note ${i}`,
+              })),
+              skills: [],
+            },
+          });
+          return;
+        }
+        const skills = body.target_uri === "viking://agent/skills"
+          ? [{
+            uri: "viking://agent/skills/deploy-runbook/.abstract.md",
+            level: 0,
+            score: 0.95,
+            // The server may label a skill hit with any category; it is still a skill.
+            category: "events",
+            abstract: "name: deploy-runbook description: Shared deployment runbook",
+          }]
+          : [];
+        writeJson(res, { status: "ok", result: { memories: [], skills } });
+        return;
+      }
+      if (req.method === "GET" && url.pathname === "/api/v1/content/read") {
+        writeJson(res, { status: "ok", result: "deploy note detail" });
+        return;
+      }
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ status: "error", error: "not found" }));
+    }, async (baseUrl) => {
+      const result = await runAutoRecall(
+        { prompt: "how do we roll back the payments deploy", session_id: "codex:790" },
+        {
+          OPENVIKING_AUTO_RECALL: "1",
+          OPENVIKING_CODEX_STATE_DIR: stateDir,
+          OPENVIKING_STATE_DIR: stateDir,
+          OPENVIKING_CONFIG_FILE: join(stateDir, "missing-ov.conf"),
+          OPENVIKING_CLI_CONFIG_FILE: join(stateDir, "missing-ovcli.conf"),
+          OPENVIKING_CREDENTIAL_SOURCE: "env",
+          OPENVIKING_RECALL_COMPRESS: "0",
+          OPENVIKING_RECALL_TIMEOUT_MS: "10000",
+          OPENVIKING_MIN_QUERY_LENGTH: "1",
+          OPENVIKING_SCORE_THRESHOLD: "0",
+          OPENVIKING_TIMEOUT_MS: "5000",
+          OPENVIKING_URL: baseUrl,
+        },
+      );
+
+      const context = JSON.parse(result.stdout.trim()).hookSpecificOutput.additionalContext;
+      assert.match(context, /\[skills\] name: deploy-runbook .*\(viking:\/\/agent\/skills\/deploy-runbook\)/);
+    });
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
 test("auto-recall preserves explicit default user memory target", async () => {
   const stateDir = await mkdtemp(join(tmpdir(), "ov-auto-recall-default-user-"));
   const requests = [];

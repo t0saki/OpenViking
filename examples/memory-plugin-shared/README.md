@@ -63,6 +63,14 @@ For deployments where one bot serves multiple real people, such as zouk,
 vikingbot, or AstrBot, configure an explicit actor peer and use the isolation
 mode so one person's memories are not recalled into another person's session.
 
+## Skill Catalog
+
+`lib/profile-inject.mjs` ends the session-start block with `<available-skills>`, built from one `GET /api/v1/skills?node_limit=200`: the user's own skills first, then the ones shared under `viking://agent/skills` (a shared skill whose name the user also owns is left out), each description cut to about 40 tokens. Callers turn it on by passing their resolved config as `buildProfileBlock()`'s fourth argument, and claude-code, codex, cursor, trae, trae-cn, zcode, opencode, dsh and pi all do, so they build it the same way; openclaw and hermes inject no profile, and `pi-experimental-context-management` calls `buildProfileBlock()` without that argument.
+
+`skillCatalog` (default `true`, `OPENVIKING_SKILL_CATALOG`) switches it, and `skillCatalogTokenBudget` (default `1200`, range 0-20000, `OPENVIKING_SKILL_CATALOG_TOKEN_BUDGET`) sizes it on its own, apart from `profileTokenBudget`; a budget of `0` also switches it off. When the descriptions do not fit, the block lists names only, ending with a `... +N more` tail if even the names do not all fit; when not even one name fits, it becomes a one-line count. With no skills, or a server without the endpoint, there is no block.
+
+`lib/recall-core.mjs`'s last-resort find searches `viking://agent/skills` beside `viking://~/memories` and `viking://~/skills`, and a recall block that carries a skill entry gains one header line telling the model to read that skill's `SKILL.md` before following it.
+
 ## Workspace Configuration
 
 `lib/workspace-config.mjs` and `lib/workspace-registry.mjs` give a repository three configuration layers of its own: `<repo-root>/.openviking/config.json`, which the team commits, `<repo-root>/.openviking/config.local.json`, which stays private and gitignored, and a per-machine entry at `~/.openviking/workspaces/<slot>.json`. Precedence, highest first:
