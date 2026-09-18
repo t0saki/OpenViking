@@ -104,6 +104,27 @@ export const SKILL_TARGETS = [
     dir: join(ROOT, "examples", "dsh-memory-plugin", "skills"),
     committed: true,
   },
+  // The MCP harnesses that bundle skills, where add_skill is a real tool.
+  {
+    skill: "openviking-skills",
+    dir: join(ROOT, "examples", "codex-memory-plugin", "skills"),
+    committed: true,
+  },
+  {
+    skill: "openviking-skills",
+    dir: join(ROOT, "examples", "claude-code-memory-plugin", "skills"),
+    committed: true,
+  },
+  {
+    skill: "openviking-skills",
+    dir: join(ROOT, "examples", "agent-hook-plugin", "hosts", "cursor", "skills"),
+    committed: true,
+  },
+  {
+    skill: "openviking-skills",
+    dir: join(ROOT, "examples", "dsh-memory-plugin", "skills"),
+    committed: true,
+  },
   // Only the two harnesses that ship the experience workflow today.
   {
     skill: "ov-experience-memory",
