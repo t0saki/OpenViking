@@ -9,7 +9,9 @@ import binascii
 import os
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
+
+import yaml
 
 from openviking.core.namespace import (
     classify_uri,
@@ -62,6 +64,9 @@ from openviking_cli.utils import VikingURI
 from openviking_cli.utils.config import get_openviking_config
 from openviking_cli.utils.logger import get_logger
 
+if TYPE_CHECKING:
+    from openviking.utils.skill_processor import SkillProcessor
+
 logger = get_logger(__name__)
 
 _DERIVED_FILENAMES = frozenset({".relations.json"})
@@ -83,8 +88,8 @@ _BATCH_MAX_FILE_BYTES = 8 * 1024 * 1024
 _BATCH_MAX_TOTAL_BYTES = 16 * 1024 * 1024
 
 # Subtrees directly under a user root that OpenViking manages itself; only
-# memories/, resources/, and plain files may be written under a user root.
-_USER_MANAGED_SUBTREES = frozenset({"skills", "peers", "privacy", "sessions"})
+# memories/, resources/, skills/, and plain files may be written under a user root.
+_USER_MANAGED_SUBTREES = frozenset({"peers", "privacy", "sessions"})
 
 
 @dataclass(frozen=True)
@@ -114,9 +119,15 @@ class _BatchRefreshOutcome:
 class ContentWriteCoordinator:
     """Write a file (create or modify) and trigger downstream maintenance."""
 
-    def __init__(self, viking_fs: VikingFS, vikingdb: Any = None):
+    def __init__(
+        self,
+        viking_fs: VikingFS,
+        vikingdb: Any = None,
+        skill_processor: Optional["SkillProcessor"] = None,
+    ):
         self._viking_fs = viking_fs
         self._vikingdb = vikingdb
+        self._skill_processor = skill_processor
 
     async def write(
         self,
@@ -136,6 +147,15 @@ class ContentWriteCoordinator:
         normalized_uri = self._validate_uri_path(uri, field_name="uri")
         self._ensure_content_write_policy(normalized_uri)
         await self._viking_fs._ensure_access(normalized_uri, ctx, action=AclAction.WRITE)
+        if classify_uri(normalized_uri).is_skill and not is_abstract_overview_uri(normalized_uri):
+            return await self._write_skill_file(
+                uri=normalized_uri,
+                content=content,
+                mode=mode,
+                ctx=ctx,
+                wait=wait,
+                timeout=timeout,
+            )
         ingest_options = IngestOptions.from_search_tags(tags, mode=tag_mode)
 
         if mode == "create":
@@ -202,6 +222,135 @@ class ContentWriteCoordinator:
             telemetry_id=telemetry_id,
             processing_mode=processing_mode,
             ingest_options=ingest_options,
+        )
+
+    async def _write_skill_file(
+        self,
+        *,
+        uri: str,
+        content: str,
+        mode: str,
+        ctx: RequestContext,
+        wait: bool,
+        timeout: Optional[float],
+    ) -> Dict[str, Any]:
+        """Store a file under a skills root the way add_skill stores it.
+
+        ``<root>/<name>/SKILL.md`` goes through the skill installer, so its
+        frontmatter becomes the L0 abstract and its body the L1 overview. Any
+        other file is stored as-is, like add_skill's auxiliary files, without
+        semantic refresh or vectors.
+        """
+        classification = classify_uri(uri)
+        assert classification.content_index is not None
+        namespace_parts = classification.parts[: classification.content_index + 1]
+        skill_parts = classification.parts[classification.content_index + 1 :]
+        namespace_uri = VikingURI.build(*namespace_parts)
+        skill_uri = (
+            VikingURI.build(*namespace_parts, skill_parts[0])
+            if len(skill_parts) > 1
+            else namespace_uri
+        )
+        written_bytes = len(content.encode("utf-8"))
+
+        stat = await self._safe_stat(uri, ctx=ctx, allow_not_found=True)
+        exists = not stat.get("not_found")
+        if exists and stat.get("isDir"):
+            raise InvalidArgumentError(f"write only supports existing files, got directory: {uri}")
+        if mode == "create" and exists:
+            raise AlreadyExistsError(uri, "file")
+
+        if len(skill_parts) != 2 or skill_parts[1] != "SKILL.md":
+            if mode == "create":
+                self._validate_create_extension(uri)
+            lock_path = self._viking_fs._uri_to_path(uri, ctx=ctx)
+            try:
+                lease = await self._viking_fs._async_agfs.pathlock_acquire_exact(lock_path)
+            except LockAcquisitionError as exc:
+                raise ResourceBusyError(
+                    f"resource is busy and cannot be written now: {uri}", uri=uri
+                ) from exc
+            try:
+                await self._write_in_place(
+                    uri,
+                    content,
+                    mode=mode if exists else "replace",
+                    ctx=ctx,
+                    lease_ref=lease,
+                )
+            finally:
+                await self._viking_fs._async_agfs.pathlock_release(lease)
+            return self._build_write_result(
+                uri=uri,
+                root_uri=skill_uri,
+                context_type="skill",
+                mode=mode,
+                written_bytes=written_bytes,
+                wait=wait,
+                queue_status=None,
+                semantic_status="skipped",
+                vector_status="skipped",
+            )
+
+        if mode == "append":
+            raise InvalidArgumentError(
+                f"append is not supported for SKILL.md; rewrite it with mode=replace or use edit: {uri}"
+            )
+        if self._skill_processor is None:
+            raise InvalidArgumentError(f"use add_skill to install or update skills: {uri}")
+        try:
+            preparation = await self._skill_processor.prepare_skill_processing(
+                content, ctx=ctx, allow_local_path_resolution=False
+            )
+        except (ValueError, yaml.YAMLError) as exc:
+            raise InvalidArgumentError(f"invalid SKILL.md: {exc}") from exc
+        content_name = preparation.skill_dict.get("name")
+        if content_name != skill_parts[0]:
+            raise InvalidArgumentError(
+                f"Skill name mismatch: path name is '{skill_parts[0]}', "
+                f"content name is '{content_name}'",
+                details={"expected": skill_parts[0], "actual": content_name},
+            )
+
+        telemetry_id = get_current_telemetry().telemetry_id
+        if wait and telemetry_id:
+            get_request_wait_tracker().register_request(telemetry_id)
+        try:
+            # Like PUT /api/v1/skills/{name}: an update that drops every secret
+            # also drops the skill's stored privacy values.
+            await self._skill_processor.apply_skill_privacy(
+                preparation.skill_dict,
+                preparation.privacy_values,
+                ctx,
+                change_reason="auto-extracted from content write",
+                delete_if_empty=exists,
+            )
+            await self._skill_processor.process_prepared_skill(
+                preparation,
+                viking_fs=self._viking_fs,
+                ctx=ctx,
+                apply_privacy=False,
+                target_uri=namespace_uri,
+            )
+            queue_status = (
+                await self._wait_for_request(telemetry_id=telemetry_id, timeout=timeout)
+                if wait
+                else None
+            )
+        finally:
+            if wait and telemetry_id:
+                get_request_wait_tracker().cleanup(telemetry_id)
+        _, vector_status = self._refresh_statuses(wait=wait, queue_status=queue_status)
+        return self._build_write_result(
+            uri=uri,
+            root_uri=skill_uri,
+            context_type="skill",
+            mode=mode,
+            written_bytes=written_bytes,
+            wait=wait,
+            queue_status=queue_status,
+            semantic_status="skipped",
+            vector_status=vector_status,
         )
 
     async def batch_write(
@@ -1561,7 +1710,7 @@ class ContentWriteCoordinator:
             else:
                 # Plain files directly under the user root are allowed (e.g. a
                 # persona file at viking://user/<user>/persona.md); the managed
-                # subtrees (skills/, peers/, privacy/, sessions/) are not.
+                # subtrees (peers/, privacy/, sessions/) are not.
                 if len(parts) <= 2 or parts[2] in _USER_MANAGED_SUBTREES:
                     raise InvalidArgumentError(
                         "user-scope writes need a file under memories/, resources/, "
