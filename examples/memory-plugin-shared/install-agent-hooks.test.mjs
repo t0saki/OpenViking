@@ -338,6 +338,7 @@ test("combined hook-host install preserves unrelated hooks and is idempotent", (
     assert.ok(cursorServers["third-party"]);
     assert.match(readFileSync(join(home, ".cursor", "rules", "openviking-memory.mdc"), "utf8"), /OpenViking/);
     assert.match(readFileSync(join(home, ".cursor", "skills", "openviking-memory", "SKILL.md"), "utf8"), /OpenViking Memory/);
+    assert.match(readFileSync(join(home, ".cursor", "skills", "openviking-skills", "SKILL.md"), "utf8"), /^---\nname: openviking-skills\n/);
     const shared = join(home, ".openviking", "agent-integrations", "memory-plugin-shared", "lib");
     assert.ok(existsSync(join(shared, "agent-hook-runtime.mjs")));
     assert.ok(existsSync(join(shared, "batch-send.mjs")));
@@ -363,7 +364,7 @@ test("combined hook-host install preserves unrelated hooks and is idempotent", (
       [join(home, ".openviking", "agent-integrations", "cursor", "scripts", "ov-memory-doctor.mjs"), "cursor", "--offline", "--no-color"],
       { env: { ...process.env, HOME: home }, encoding: "utf8" },
     );
-    assert.match(doctor.stdout, /version 0\.3\.2, client cursor/);
+    assert.match(doctor.stdout, /version 0\.4\.0, client cursor/);
     // A hooks.json entry that names a script the install did not put on disk
     // fails only when the host first runs it, so the rendered commands are
     // checked against the tree they were rendered for.
@@ -427,6 +428,7 @@ test("combined hook-host install preserves unrelated hooks and is idempotent", (
     assert.equal(Boolean(cursorServersAfterUninstall.openviking), false);
     assert.equal(existsSync(join(home, ".cursor", "rules", "openviking-memory.mdc")), false);
     assert.equal(existsSync(join(home, ".cursor", "skills", "openviking-memory")), false);
+    assert.equal(existsSync(join(home, ".cursor", "skills", "openviking-skills")), false);
     assert.equal(Boolean(JSON.parse(readFileSync(traeMcp, "utf8")).mcpServers.openviking), false);
     assert.equal(Boolean(JSON.parse(readFileSync(traeCnMcp, "utf8")).mcpServers.openviking), false);
     assert.ok(JSON.parse(readFileSync(traeCnMcp, "utf8")).mcpServers["third-party"]);
