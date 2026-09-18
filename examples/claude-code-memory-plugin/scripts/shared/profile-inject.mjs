@@ -197,10 +197,11 @@ function formatListing(headerUri, entries, budgetTokens, moreHint = MEMORY_MORE_
   const headerTokens = estimateTokens(header);
   // If the header alone busts the budget, emit just a one-line stub instead
   // of silently violating the cap (Copilot review point).
-  if (headerTokens > budgetTokens) {
+  const stubListing = () => {
     const stub = `  ${headerUri}/  (${entries.length} entries, budget too tight; ${moreHint})`;
     return { lines: [stub], used: estimateTokens(stub), dropped: entries.length };
-  }
+  };
+  if (headerTokens > budgetTokens) return stubListing();
   const lines = [header];
   let used = headerTokens;
   for (let i = 0; i < entries.length; i++) {
@@ -220,6 +221,8 @@ function formatListing(headerUri, entries, budgetTokens, moreHint = MEMORY_MORE_
         used -= estimateTokens(lines.pop());
         remaining++;
       }
+      // A bare header would read as an empty directory.
+      if (lines.length === 1) return stubListing();
       const tail = tailFor(remaining);
       const tailTokens = estimateTokens(tail);
       if (used + tailTokens <= budgetTokens) {
@@ -287,14 +290,18 @@ async function fetchSkillCatalog(fetchJSON, actorPeerId = "") {
 }
 
 function renderSkillGroups(groups, budgetTokens, withDescriptions) {
+  const lists = groups.map((g) => (withDescriptions ? g : g.map((e) => ({ ...e, abstract: "" }))));
+  const fullCost = lists.map((entries) => formatListing(entries[0].root, entries, Infinity, SKILL_MORE_HINT).used);
   const lines = [];
   let used = 0;
   let dropped = 0;
-  for (let i = 0; i < groups.length; i++) {
-    const entries = withDescriptions ? groups[i] : groups[i].map((e) => ({ ...e, abstract: "" }));
-    // Earlier groups take up to their share; what they leave rolls over.
-    const share = Math.floor((budgetTokens - used) / (groups.length - i));
-    const block = formatListing(entries[0].root, entries, share, SKILL_MORE_HINT);
+  for (let i = 0; i < lists.length; i++) {
+    // A group takes its fair share, or everything the later groups leave
+    // when listed in full, whichever is larger.
+    const remaining = budgetTokens - used;
+    const laterCost = fullCost.slice(i + 1).reduce((a, b) => a + b, 0);
+    const share = Math.max(Math.floor(remaining / (lists.length - i)), remaining - laterCost);
+    const block = formatListing(lists[i][0].root, lists[i], share, SKILL_MORE_HINT);
     lines.push(...block.lines);
     used += block.used;
     dropped += block.dropped;
@@ -319,6 +326,7 @@ function formatSkillCatalog(groups, budgetTokens) {
   if (body.dropped > 0) body = renderSkillGroups(groups, listingBudget, false);
   if (body.dropped >= count) {
     const stub = `${open}${count} OpenViking skills; search OpenViking skills to find them.${close}`;
+    if (estimateTokens(stub) > budgetTokens) return { lines: [], used: 0, dropped: count, count };
     return { lines: [stub], used: estimateTokens(stub), dropped: count, count };
   }
   return {

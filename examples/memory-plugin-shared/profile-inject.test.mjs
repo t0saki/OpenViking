@@ -134,3 +134,36 @@ test("without the catalog option nothing asks for skills and the block is unchan
     assert.equal(result.block, '<user-profile uri="viking://user/default/memories/profile.md">\n# Alice\n</user-profile>');
   }
 });
+
+test("the user's own skills keep their descriptions when the shared group needs little", async () => {
+  const description = "Review a pull request against the team's merge checklist before approving: tests, migrations, feature flags, rollout notes, and owners. Use when asked to review.";
+  const own = Array.from({ length: 20 }, (_, i) => skill(OWN, `own-${String(i).padStart(2, "0")}`, description));
+  const { fetchJSON } = fakeServer({ skills: [...own, skill(SHARED, "deploy-runbook", "Shared runbook")] });
+
+  const result = await buildProfileBlock(fetchJSON, 2000, "", CATALOG);
+
+  assert.equal(result.droppedSkill, 0);
+  assert.equal((result.block.match(/ — /g) || []).length, 21);
+  assert.ok(result.skillTokens <= 1200);
+});
+
+test("a group that cannot list a single entry says so instead of showing a bare header", async () => {
+  const skills = [
+    ...Array.from({ length: 6 }, (_, i) => skill(OWN, `own-skill-${i}`)),
+    ...Array.from({ length: 6 }, (_, i) => skill(SHARED, `shared-skill-${i}`)),
+  ];
+  const { fetchJSON } = fakeServer({ skills });
+
+  for (const budget of [70, 80, 90, 100, 120]) {
+    const { block } = await buildProfileBlock(fetchJSON, 2000, "", { skillCatalog: true, skillCatalogTokenBudget: budget });
+    for (const root of [OWN, SHARED]) {
+      assert.ok(!block.split("\n").includes(`  ${root}/`) || block.includes(`  ${root}/\n    - `), `${budget}: bare ${root}\n${block}`);
+    }
+  }
+});
+
+test("a budget too small for even the one-line count injects nothing", async () => {
+  const { fetchJSON } = fakeServer({ skills: [skill(OWN, "pr-review")] });
+  const result = await buildProfileBlock(fetchJSON, 2000, "", { skillCatalog: true, skillCatalogTokenBudget: 5 });
+  assert.equal(result, null);
+});
