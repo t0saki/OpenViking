@@ -79,6 +79,7 @@ TraeCode CLI 2.0 用户启动 `trae-cli`，并可用 `trae-cli plugin list` 确�
 | `OPENVIKING_PROFILE_TOKEN_BUDGET` | `10000` | `profile.md` 及 `preferences/`、`entities/` 索引共用的 CJK-aware token 预算 |
 | `OPENVIKING_SKILL_CATALOG` | `true` | 在会话启动注入中加入 `<available-skills>` 清单；设为 `false` 则不加 |
 | `OPENVIKING_SKILL_CATALOG_TOKEN_BUDGET` | `1200` | `<available-skills>` 清单的 CJK-aware token 预算，独立于 `OPENVIKING_PROFILE_TOKEN_BUDGET`；设为 `0` 同样不加清单 |
+| `OPENVIKING_SESSION_START_MAX_BYTES` | `9500` | SessionStart 注入的总字节上限，保证低于 Codex 默认的 hook 输出上限（约 10,000 字节），模型拿到的是全文而不是截断预览；resume 时会话归档最多占一半。设为 `0` 取消上限 |
 | `OPENVIKING_CODEX_IDLE_TTL_MS` | `1800000` | `SessionStart` 闲置 TTL 清理阈值（毫秒） |
 | `OPENVIKING_CODEX_LOCK_WAIT_MS` | `120000`（SessionEnd）、`40000`（PreCompact） | 捕获类 hook 等待单会话状态锁的时长（毫秒） |
 | `OPENVIKING_CODEX_COMMITTED_TTL_MS` | `2592000000` | 已提交会话的转录游标保留时长（毫秒），过期后删除状态文件 |

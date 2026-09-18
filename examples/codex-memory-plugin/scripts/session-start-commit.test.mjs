@@ -210,6 +210,24 @@ test("startup injects the shared profile block with workspace peer routing", asy
   }
 });
 
+test("resume skips a profile block identical to the one this thread already got", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "ov-codex-session-start-"));
+  const requests = [];
+  try {
+    await withMockOpenViking(profileHandler(requests), async (baseUrl) => {
+      const env = baseEnv(baseUrl, stateDir);
+      const input = { session_id: "resume-dedup", cwd: "/tmp/codex-resume-dedup", hook_event_name: "SessionStart" };
+      const first = await runSessionStart({ ...input, source: "startup" }, env);
+      assert.match(first.output.hookSpecificOutput.additionalContext, /Works on OpenViking integrations/);
+
+      const resumed = await runSessionStart({ ...input, source: "resume" }, env);
+      assert.doesNotMatch(resumed.output.hookSpecificOutput?.additionalContext || "", /Works on OpenViking integrations/);
+    });
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
 test("OPENVIKING_SKILL_CATALOG=false leaves the skill catalog out of the startup block", async () => {
   const stateDir = await mkdtemp(join(tmpdir(), "ov-codex-session-start-"));
   const requests = [];

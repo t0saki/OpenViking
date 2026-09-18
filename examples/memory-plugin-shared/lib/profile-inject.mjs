@@ -17,6 +17,10 @@
  * alongside in a single context envelope.
  */
 
+import { createHash } from "node:crypto";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
+
 const USER_RESERVED_DIRS = new Set(["memories"]);
 let _userSpaceCache = null;
 
@@ -359,7 +363,14 @@ function formatSkillCatalog(groups, budgetTokens) {
  * }>}
  */
 export async function buildProfileBlock(fetchJSON, totalBudgetTokens, actorPeerId = "", options = {}) {
-  const { skillCatalog = false, skillCatalogTokenBudget = 0 } = options;
+  const { skillCatalog = false, skillCatalogTokenBudget = 0, sessionStartMaxBytes = 0 } = options;
+  // Hosts that spill (Claude Code, Codex) or drop (ZCode) oversized hook output
+  // get a byte cap. An estimated token is about 4 UTF-8 bytes at most, so the
+  // token budgets shrink to fit under it.
+  const capTokens = sessionStartMaxBytes > 0
+    ? Math.max(0, Math.floor(sessionStartMaxBytes / 4) - 50)
+    : Infinity;
+  const skillBudget = Math.min(skillCatalogTokenBudget, Math.floor(capTokens / 4));
   const space = await resolveUserSpace(fetchJSON, actorPeerId);
   const profileUri = `viking://user/${space}/memories/profile.md`;
   const prefUri = `viking://user/${space}/memories/preferences`;
@@ -369,43 +380,50 @@ export async function buildProfileBlock(fetchJSON, totalBudgetTokens, actorPeerI
     readProfile(fetchJSON, profileUri, actorPeerId),
     lsDir(fetchJSON, prefUri, actorPeerId),
     lsDir(fetchJSON, entUri, actorPeerId),
-    skillCatalog && skillCatalogTokenBudget > 0
+    skillCatalog && skillBudget > 0
       ? fetchSkillCatalog(fetchJSON, actorPeerId)
       : [],
   ]);
-  const skills = formatSkillCatalog(skillGroups, skillCatalogTokenBudget);
+  const skills = formatSkillCatalog(skillGroups, skillBudget);
 
   if (!profile && prefs.length === 0 && ents.length === 0 && skills.lines.length === 0) {
     return null;
   }
 
+  const memoryBudget = Math.min(totalBudgetTokens, Math.max(0, capTokens - skills.used));
   // Profile gets up to half the total budget; listings split the rest.
   // Sub-cap protects against a runaway profile blowing the listing budget.
-  const profileBudget = Math.floor(totalBudgetTokens / 2);
+  const profileBudget = Math.floor(memoryBudget / 2);
   const profileTrunc = profile ? elideProfile(profile, profileBudget) : null;
   const profileTokens = estimateTokens(profileTrunc || "");
 
-  const listingBudget = Math.max(0, totalBudgetTokens - profileTokens);
+  const listingBudget = Math.max(0, memoryBudget - profileTokens);
   const halfListing = Math.floor(listingBudget / 2);
   const prefBlock = formatListing(prefUri, prefs, halfListing);
   const entBudget = Math.max(0, listingBudget - prefBlock.used);
   const entBlock = formatListing(entUri, ents, entBudget);
 
-  const lines = [];
-  if (profileTrunc) {
-    lines.push(`<user-profile uri="${profileUri}">`);
-    lines.push(profileTrunc);
-    lines.push(`</user-profile>`);
+  const profileLines = profileTrunc
+    ? [`<user-profile uri="${profileUri}">`, profileTrunc, `</user-profile>`]
+    : [];
+  let memoryLines = prefBlock.lines.length > 0 || entBlock.lines.length > 0
+    ? [`<available-memories>`, ...prefBlock.lines, ...entBlock.lines, `</available-memories>`]
+    : [];
+  let skillLines = skills.lines;
+  const render = () => [...profileLines, ...memoryLines, ...skillLines].join("\n");
+  let block = render();
+  // The estimate can still run over on multi-byte punctuation; the index goes
+  // first, then the catalog.
+  if (sessionStartMaxBytes > 0 && utf8Bytes(block) > sessionStartMaxBytes) {
+    memoryLines = [];
+    block = render();
   }
-  if (prefBlock.lines.length > 0 || entBlock.lines.length > 0) {
-    lines.push(`<available-memories>`);
-    lines.push(...prefBlock.lines);
-    lines.push(...entBlock.lines);
-    lines.push(`</available-memories>`);
+  if (sessionStartMaxBytes > 0 && utf8Bytes(block) > sessionStartMaxBytes) {
+    skillLines = [];
+    block = render();
   }
-  lines.push(...skills.lines);
+  if (!block) return null;
 
-  const block = lines.join("\n");
   return {
     block,
     chars: block.length,
@@ -414,10 +432,58 @@ export async function buildProfileBlock(fetchJSON, totalBudgetTokens, actorPeerI
     profileChars: profile?.length ?? 0,
     prefCount: prefs.length,
     entCount: ents.length,
-    droppedPref: prefBlock.dropped,
-    droppedEnt: entBlock.dropped,
+    droppedPref: memoryLines.length ? prefBlock.dropped : prefs.length,
+    droppedEnt: memoryLines.length ? entBlock.dropped : ents.length,
     skillCount: skills.count,
-    droppedSkill: skills.dropped,
-    skillTokens: skills.used,
+    droppedSkill: skillLines.length ? skills.dropped : skills.count,
+    skillTokens: skillLines.length ? skills.used : 0,
   };
+}
+
+function utf8Bytes(text) {
+  return Buffer.byteLength(String(text || ""), "utf8");
+}
+
+/**
+ * Cut `text` to at most `maxBytes` UTF-8 bytes on a line boundary, marking the
+ * cut. A non-positive cap returns the text unchanged.
+ */
+export function truncateToBytes(text, maxBytes) {
+  const value = String(text || "");
+  if (!(maxBytes > 0) || utf8Bytes(value) <= maxBytes) return value;
+  const marker = "\n… [truncated]";
+  const lines = value.split("\n");
+  const kept = [];
+  let used = utf8Bytes(marker);
+  for (const line of lines) {
+    const cost = utf8Bytes(line) + 1;
+    if (used + cost > maxBytes) break;
+    kept.push(line);
+    used += cost;
+  }
+  return `${kept.join("\n")}${marker}`;
+}
+
+/**
+ * Whether `block` is what this session was last given, recording it either
+ * way. Resume reuses history that already holds the earlier injection, so an
+ * unchanged block need not be sent again.
+ */
+export function isRepeatInjection(statePath, sessionId, block) {
+  if (!statePath || !sessionId) return false;
+  const digest = createHash("sha256").update(String(block || "")).digest("hex");
+  let seen = {};
+  try {
+    seen = JSON.parse(readFileSync(statePath, "utf-8")) || {};
+  } catch { /* first injection */ }
+  const repeat = seen[sessionId] === digest;
+  delete seen[sessionId];
+  seen[sessionId] = digest;
+  const ids = Object.keys(seen);
+  for (const id of ids.slice(0, Math.max(0, ids.length - 200))) delete seen[id];
+  try {
+    mkdirSync(dirname(statePath), { recursive: true });
+    writeFileSync(statePath, JSON.stringify(seen));
+  } catch { /* best effort: a lost record only means one more injection */ }
+  return repeat;
 }

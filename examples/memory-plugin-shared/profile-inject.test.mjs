@@ -1,10 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildProfileBlock, estimateTokens } from "./lib/profile-inject.mjs";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { buildProfileBlock, estimateTokens, isRepeatInjection, truncateToBytes } from "./lib/profile-inject.mjs";
 
 const CATALOG = { skillCatalog: true, skillCatalogTokenBudget: 1200 };
 
-function fakeServer({ profile = "", skills = [], skillsResponse } = {}) {
+function fakeServer({ profile = "", skills = [], skillsResponse, memories = [] } = {}) {
   const calls = [];
   const fetchJSON = async (path) => {
     calls.push(path);
@@ -15,6 +18,7 @@ function fakeServer({ profile = "", skills = [], skillsResponse } = {}) {
     if (path.startsWith("/api/v1/content/read")) {
       return profile ? { ok: true, result: profile } : { ok: false, status: 404 };
     }
+    if (path.startsWith("/api/v1/fs/ls") && path.includes("preferences")) return { ok: true, result: memories };
     return { ok: true, result: [] };
   };
   return { calls, fetchJSON };
@@ -166,4 +170,44 @@ test("a budget too small for even the one-line count injects nothing", async () 
   const { fetchJSON } = fakeServer({ skills: [skill(OWN, "pr-review")] });
   const result = await buildProfileBlock(fetchJSON, 2000, "", { skillCatalog: true, skillCatalogTokenBudget: 5 });
   assert.equal(result, null);
+});
+
+const HEAVY_PROFILE = Array.from({ length: 40 }, (_, i) => `- 2026-09-${String(i % 28 + 1).padStart(2, "0")} 在分支 feat/x-${i} 上完成插件重构与测试 — 涉及 recall、capture 两条路径`).join("\n");
+const HEAVY_MEMORIES = Array.from({ length: 300 }, (_, i) => ({ name: `owner/pref-${i}.md`, rel_path: `owner/pref-${i}.md`, isDir: false, abstract: "" }));
+const HEAVY_SKILLS = Array.from({ length: 150 }, (_, i) => skill(i % 3 ? OWN : SHARED, `skill-${i}`, "按团队清单审查 PR — 检查测试与迁移。"));
+
+test("a byte cap keeps the whole block under it with profile, index and catalog", async () => {
+  const { fetchJSON } = fakeServer({ profile: HEAVY_PROFILE, memories: HEAVY_MEMORIES, skills: HEAVY_SKILLS });
+  for (const cap of [9500, 20000]) {
+    const result = await buildProfileBlock(fetchJSON, 10000, "", { ...CATALOG, sessionStartMaxBytes: cap });
+    assert.ok(Buffer.byteLength(result.block) <= cap, `${cap}: ${Buffer.byteLength(result.block)} bytes`);
+    for (const tag of ["<user-profile", "<available-memories>", "<available-skills>"]) assert.ok(result.block.includes(tag), `${cap}: ${tag}`);
+  }
+  const uncapped = await buildProfileBlock(fetchJSON, 10000, "", CATALOG);
+  assert.ok(Buffer.byteLength(uncapped.block) > 9500);
+});
+
+test("when the cap cannot hold everything, the memory index goes before the catalog", async () => {
+  const { fetchJSON } = fakeServer({ profile: HEAVY_PROFILE, memories: HEAVY_MEMORIES, skills: HEAVY_SKILLS });
+  const result = await buildProfileBlock(fetchJSON, 10000, "", { ...CATALOG, sessionStartMaxBytes: 1000 });
+  assert.ok(Buffer.byteLength(result.block) <= 1000 || !result.block.includes("<available-"), result.block);
+  assert.doesNotMatch(result.block, /<available-memories>/);
+});
+
+test("truncateToBytes cuts on a line boundary and marks the cut", () => {
+  const text = ["第一行", "second line", "第三行内容"].join("\n");
+  assert.equal(truncateToBytes(text, 0), text);
+  assert.equal(truncateToBytes(text, 1000), text);
+  const cut = truncateToBytes(text, 30);
+  assert.ok(Buffer.byteLength(cut) <= 30, cut);
+  assert.equal(cut, "第一行\n… [truncated]");
+});
+
+test("isRepeatInjection reports an unchanged block for the same session only", () => {
+  const path = join(mkdtempSync(join(tmpdir(), "ov-profile-seen-")), "profile-injections.json");
+  assert.equal(isRepeatInjection(path, "s1", "block A"), false);
+  assert.equal(isRepeatInjection(path, "s1", "block A"), true);
+  assert.equal(isRepeatInjection(path, "s2", "block A"), false);
+  assert.equal(isRepeatInjection(path, "s1", "block B"), false);
+  assert.equal(isRepeatInjection(path, "s1", "block B"), true);
 });

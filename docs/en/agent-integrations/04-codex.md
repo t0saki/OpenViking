@@ -80,6 +80,7 @@ Credential source: env vars win by default — when any `OPENVIKING_*` credentia
 | `OPENVIKING_PROFILE_TOKEN_BUDGET` | `10000` | CJK-aware token budget for `profile.md` plus `preferences/` and `entities/` indexes |
 | `OPENVIKING_SKILL_CATALOG` | `true` | Add the `<available-skills>` catalog to the session-start block; `false` leaves it out |
 | `OPENVIKING_SKILL_CATALOG_TOKEN_BUDGET` | `1200` | CJK-aware token budget for the `<available-skills>` catalog, separate from `OPENVIKING_PROFILE_TOKEN_BUDGET`; `0` also leaves the catalog out |
+| `OPENVIKING_SESSION_START_MAX_BYTES` | `9500` | Byte cap on the whole SessionStart context, kept under Codex's default hook-output limit (about 10,000 bytes) so the model sees it in full rather than a truncated preview; on resume the session archive takes up to half. `0` removes the cap |
 | `OPENVIKING_CODEX_IDLE_TTL_MS` | `1800000` | SessionStart idle-TTL sweep threshold |
 | `OPENVIKING_CODEX_LOCK_WAIT_MS` | `120000` (SessionEnd), `40000` (PreCompact) | How long a capture hook waits for the per-session state lock |
 | `OPENVIKING_CODEX_COMMITTED_TTL_MS` | `2592000000` | How long a committed session's transcript cursor is kept before its state file is retired |

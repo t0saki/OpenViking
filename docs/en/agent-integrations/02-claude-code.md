@@ -90,6 +90,7 @@ Configuration priority: Environment variables > `ovcli.conf` > `ov.conf` > Built
 | `OPENVIKING_AUTO_CAPTURE` | `true` | Auto-capture after each turn |
 | `OPENVIKING_SKILL_CATALOG` | `true` | Inject the `<available-skills>` catalog at session start |
 | `OPENVIKING_SKILL_CATALOG_TOKEN_BUDGET` | `1200` | Token budget for `<available-skills>`, separate from the profile budget; `0` turns the catalog off |
+| `OPENVIKING_SESSION_START_MAX_BYTES` | `9500` | Byte cap on the whole SessionStart context, kept under Claude Code's 10,000-character limit so the block stays inline instead of being saved to a file; on resume or compact the session archive takes up to half. `0` removes the cap |
 | `OPENVIKING_BYPASS_SESSION` | `false` | Skip all hooks for this session |
 | `OPENVIKING_BYPASS_SESSION_PATTERNS` | `""` | CSV glob patterns to auto-bypass |
 | `OPENVIKING_RECALL_QUERY_FILTERS` | `""` | CSV of sed-style regex rules applied to the prompt before it becomes a query ([grammar and examples](https://github.com/volcengine/OpenViking/blob/main/examples/claude-code-memory-plugin/README.md#input-filters)) |

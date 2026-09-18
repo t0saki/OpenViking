@@ -300,6 +300,7 @@ skill 也走这条链路：context face 把 skill 作为 `type="skills"` 的条�
 - **skill 清单**（`<available-skills>`）：由 `buildProfileBlock()` 追加在同一个 `<openviking-context>` 信封里，排在 `<user-profile>` 和 `<available-memories>` 之后，所以上面每个 harness 都会随 profile 一起注入它（codex 覆盖 trae-cli）。数据来自一次 `GET /api/v1/skills?node_limit=200`，包含用户自己的 skill 和账户共享的 `viking://agent/skills`：自己的排在前面，和自己某个 skill 同名的共享 skill 不再列出。每条描述按同一套 CJK 感知估算截到约 40 token，描述里出现的信封标签会被转义。
   - **预算与开关**：`skillCatalogTokenBudget`（默认 1200 token，取值 0-20000，env `OPENVIKING_SKILL_CATALOG_TOKEN_BUDGET`）是这一块自己的预算，不占 `profileTokenBudget`。`skillCatalog`（默认 true，env `OPENVIKING_SKILL_CATALOG`）控制开关，预算设为 0 同样关闭。两者都在 `config-schema.mjs` 中声明，因此和其他旋钮一样，也能在 ovcli.conf 的 `plugin` / `plugin.<harness>` 段里设置。
   - **降级**：放得下时每条都带描述；放不下就只列名称，名称也列不全时以 `... +N more, search OpenViking skills to find the rest` 收尾；连一个名称都放不下时，只剩一行 `<available-skills>N OpenViking skills; search OpenViking skills to find them.</available-skills>`。没有任何 skill，或服务端没有 `GET /api/v1/skills` 时，整块省略。
+  - **总量上限**：`sessionStartMaxBytes`（env `OPENVIKING_SESSION_START_MAX_BYTES`）按 UTF-8 字节限制整个会话开场注入：claude-code 和 codex 为 9500，因为这两个宿主会把超过约 10,000 字符或字节的 hook 上下文存成文件、只给模型看预览；zcode 为 20000，因为它会丢弃超过 32 KB 的 stdout；其余不设上限。在上限内各项预算相应收缩，仍放不下时先去掉记忆索引，再去掉 skill 清单。resume/compact 时会话归档最多占一半，截断处附 `viking://~/sessions/<id>/history/` 指针；resume 时 claude-code 和 codex 若 profile 块与本会话上次注入的相同就不再重复注入。
   - **示例**（claude-code，`source="startup"`）：
     ```text
     <openviking-context source="startup">
