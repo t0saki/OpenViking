@@ -701,6 +701,8 @@ curl -X POST http://localhost:1933/api/v1/skills/find \
 
 更新的文件、隐私配置和任务准备完成后才启动后台。需要恢复旧包时，包括 `wait=true` 超时，先取消本次摘要和索引任务，确认已开始的写入退出，再恢复原文件、索引及隐私配置；恢复失败会明确报告。超时响应可能晚于 `timeout`，但只等待取消收尾，不继续处理完整包。`wait=false` 已成功返回后的后台失败不自动恢复；新增 Skill 的等待超时仍只结束等待。
 
+只改 `SKILL.md` 时，可以用 `POST /api/v1/content/write`（或 MCP `write`/`edit`）直接写 `<root>/<name>/SKILL.md`。这次写入走与 `add_skill` 相同的安装流程，并保留 Skill 的其他文件，见 [内容](12-content.md#write)。
+
 **Python SDK**：
 
 ```python

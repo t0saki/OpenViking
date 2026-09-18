@@ -699,6 +699,8 @@ Supply new content/an upload, or set `from_source=true`. The new name must match
 
 Background processing starts after the update's files, privacy configuration, and task setup are ready. When an update needs restoration, including a `wait=true` timeout, it cancels that update's summary and indexing work, waits for started writes to exit, and restores the original files, index, and privacy configuration. Restoration failures are reported. The timeout response may arrive after `timeout` while cancellation settles; it does not wait for the entire package to finish processing. Background failures after a successful `wait=false` response do not trigger restoration. A timeout when adding a new Skill still only ends the wait.
 
+To change only `SKILL.md`, write it in place with `POST /api/v1/content/write` (or MCP `write`/`edit`) at `<root>/<name>/SKILL.md`. The write runs the same installer as `add_skill` and keeps the Skill's other files; see [Content](12-content.md#write).
+
 **Python SDK**
 
 ```python

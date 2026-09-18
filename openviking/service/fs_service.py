@@ -67,6 +67,7 @@ if TYPE_CHECKING:
     from openviking.resource.watch_scheduler import WatchScheduler
     from openviking.service.resource_memory_link_service import ResourceMemoryLinkService
     from openviking.storage import VikingDBManager
+    from openviking.utils.skill_processor import SkillProcessor
 
 
 class FSService:
@@ -80,6 +81,7 @@ class FSService:
         resource_memory_link_service: Optional["ResourceMemoryLinkService"] = None,
         watch_scheduler: Optional["WatchScheduler"] = None,
         uri_mutation_coordinator: Optional[UriMutationCoordinator] = None,
+        skill_processor: Optional["SkillProcessor"] = None,
     ):
         self._viking_fs = viking_fs
         self._vikingdb = vikingdb
@@ -87,6 +89,7 @@ class FSService:
         self._resource_memory_link_service = resource_memory_link_service
         self._watch_scheduler = watch_scheduler
         self._uri_mutation_coordinator = uri_mutation_coordinator or UriMutationCoordinator()
+        self._skill_processor = skill_processor
 
     def set_dependencies(
         self,
@@ -96,6 +99,7 @@ class FSService:
         resource_memory_link_service: Optional["ResourceMemoryLinkService"] = None,
         watch_scheduler: Optional["WatchScheduler"] = None,
         uri_mutation_coordinator: Optional[UriMutationCoordinator] = None,
+        skill_processor: Optional["SkillProcessor"] = None,
     ) -> None:
         """Set service dependencies (for deferred initialization)."""
         self._viking_fs = viking_fs
@@ -105,6 +109,7 @@ class FSService:
         self._watch_scheduler = watch_scheduler
         if uri_mutation_coordinator is not None:
             self._uri_mutation_coordinator = uri_mutation_coordinator
+        self._skill_processor = skill_processor
 
     def _ensure_initialized(self) -> VikingFS:
         """Ensure VikingFS is initialized."""
@@ -1127,7 +1132,9 @@ class FSService:
     ) -> Dict[str, Any]:
         """Write to an existing file and refresh semantics/vectors."""
         viking_fs = self._ensure_initialized()
-        coordinator = ContentWriteCoordinator(viking_fs=viking_fs, vikingdb=self._vikingdb)
+        coordinator = ContentWriteCoordinator(
+            viking_fs=viking_fs, vikingdb=self._vikingdb, skill_processor=self._skill_processor
+        )
         return await coordinator.write(
             uri=uri,
             content=content,

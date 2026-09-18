@@ -44,6 +44,7 @@ from openviking.server.mcp_endpoint import (
     write,
 )
 from openviking.server.mcp_endpoint import ls as list_tool
+from openviking.server.routers.skills import _list_skills_from_root
 from openviking_cli.exceptions import (
     AlreadyExistsError,
     FailedPreconditionError,
@@ -1887,8 +1888,76 @@ async def test_edit_user_root_file_via_canonical_uri(service):
 async def test_write_user_managed_subtree_rejected(service):
     with pytest.raises(InvalidArgumentError, match="user root"):
         await write(uri="viking://user/test_user/sessions/fake-session.md", content="x")
-    with pytest.raises(InvalidArgumentError, match="user root"):
+    with pytest.raises(InvalidArgumentError, match="frontmatter"):
         await write(uri="viking://user/test_user/skills/demo/SKILL.md", content="x")
+
+
+@pytest.mark.parametrize("root", ["viking://user/test_user/skills", "viking://agent/skills"])
+async def test_write_skill_md_installs_like_add_skill(service, root):
+    result = await write(uri=f"{root}/demo/SKILL.md", content=_skill_md("demo"), wait=True)
+
+    assert "semantic=skipped" in result
+    skills = await _list_skills_from_root(service, DEFAULT_CTX, root)
+    assert [skill["description"] for skill in skills if skill["name"] == "demo"] == [
+        "Review a PR diff before approving"
+    ]
+    overview = await service.fs.overview(f"{root}/demo", ctx=DEFAULT_CTX)
+    assert "# demo" in overview and "Steps." in overview
+
+
+async def test_edit_skill_description_updates_catalog_and_keeps_files(service):
+    root = "viking://user/test_user/skills"
+    await write(uri=f"{root}/demo/SKILL.md", content=_skill_md("demo"))
+    await write(uri=f"{root}/demo/scripts/run.sh", content="echo hi\n")
+
+    await edit(
+        uri=f"{root}/demo/SKILL.md",
+        old_string="description: Review a PR diff before approving",
+        new_string="description: Check a diff against the merge checklist",
+    )
+
+    skills = await _list_skills_from_root(service, DEFAULT_CTX, root)
+    assert [skill["description"] for skill in skills if skill["name"] == "demo"] == [
+        "Check a diff against the merge checklist"
+    ]
+    assert await service.fs.read(f"{root}/demo/scripts/run.sh", ctx=DEFAULT_CTX) == "echo hi\n"
+
+
+async def test_edit_skill_md_keeps_privacy_values_out_of_storage(service, monkeypatch):
+    async def fake_extract(*, skill_name, skill_description, content):
+        return SimpleNamespace(
+            values={"token": "secret-xyz"} if "secret-xyz" in content else {},
+            sanitized_content=content.replace(
+                "secret-xyz", f"{{{{ov_privacy:skill:{skill_name}:token}}}}"
+            ),
+        )
+
+    monkeypatch.setattr(
+        "openviking.utils.skill_processor.extract_skill_privacy_values", fake_extract
+    )
+    uri = "viking://user/test_user/skills/demo/SKILL.md"
+    await write(uri=uri, content=_skill_md("demo").replace("Steps.", "Use token secret-xyz."))
+
+    await edit(uri=uri, old_string="Use token", new_string="Always use token")
+
+    assert "secret-xyz" not in await service.viking_fs.read_file(uri, ctx=DEFAULT_CTX)
+    assert "Always use token secret-xyz." in await read(uris=uri)
+
+    await edit(uri=uri, old_string="Always use token secret-xyz.", new_string="No token needed.")
+
+    assert "secret-xyz" not in await read(uris=uri)
+
+
+async def test_write_skill_md_rejects_name_mismatch_and_append(service):
+    uri = "viking://user/test_user/skills/demo/SKILL.md"
+    with pytest.raises(InvalidArgumentError, match="name mismatch"):
+        await write(uri=uri, content=_skill_md("other"))
+    with pytest.raises(InvalidArgumentError, match="invalid SKILL.md"):
+        await write(uri=uri, content="---\nname: [demo\ndescription: x\n---\n\nbody\n")
+
+    await write(uri=uri, content=_skill_md("demo"))
+    with pytest.raises(InvalidArgumentError, match="append"):
+        await write(uri=uri, content="more\n", mode="append")
 
 
 async def test_write_tool_schema_is_portable():

@@ -444,6 +444,7 @@ class OpenVikingService:
             resource_memory_link_service=self._resource_memory_link_service,
             watch_scheduler=self._watch_scheduler,
             uri_mutation_coordinator=self._uri_mutation_coordinator,
+            skill_processor=self._skill_processor,
         )
         self._pack_service.set_dependencies(
             viking_fs=self._viking_fs,
