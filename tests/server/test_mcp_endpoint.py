@@ -336,6 +336,32 @@ async def test_find_tool_skill_only_searches_both_skill_roots(
     assert captured["target_uri"] == expected_targets
 
 
+async def test_find_tool_points_skill_hits_at_their_skill_md(service, monkeypatch):
+    hit = SimpleNamespace(
+        uri="viking://agent/skills/deploy-runbook/.abstract.md",
+        abstract="name: deploy-runbook\ndescription: Shared runbook",
+        score=0.61,
+    )
+    read_uris = []
+
+    async def fake_find(**kwargs):
+        return SimpleNamespace(memories=[], resources=[], skills=[hit])
+
+    async def fake_read_visible(uri, ctx):
+        read_uris.append(uri)
+        return "# Deploy runbook"
+
+    monkeypatch.setattr(service.search, "find", fake_find)
+    monkeypatch.setattr(service.fs, "read_visible", fake_read_visible)
+
+    result = await mcp_endpoint.find(query="roll back", context_type="skill", read_content=True)
+
+    assert "- [skill 61%] viking://agent/skills/deploy-runbook/SKILL.md" in result
+    assert ".abstract.md" not in result
+    assert "# Deploy runbook" in result
+    assert read_uris == ["viking://agent/skills/deploy-runbook/SKILL.md"]
+
+
 async def test_find_tool_inlines_visible_content_when_requested(service, monkeypatch):
     async def fake_find(**kwargs):
         del kwargs

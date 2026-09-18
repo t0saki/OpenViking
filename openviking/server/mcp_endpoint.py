@@ -431,6 +431,22 @@ async def search(
     return await _format_search_result(result, service=service, ctx=ctx, read_content=read_content)
 
 
+_SKILL_INDEX_SIDECARS = ("/.abstract.md", "/.overview.md")
+
+
+def _hit_uri(ctx_type: str, uri: str) -> str:
+    """The URI an agent should read for a hit.
+
+    A skill is indexed through its directory's .abstract.md, whose body is only the
+    frontmatter; the skill itself is the SKILL.md beside it.
+    """
+    if ctx_type == "skill":
+        for sidecar in _SKILL_INDEX_SIDECARS:
+            if uri.endswith(sidecar):
+                return f"{uri[: -len(sidecar)]}/SKILL.md"
+    return uri
+
+
 async def _format_search_result(result, *, service, ctx, read_content: bool = False) -> str:
     items = []
     for ctx_type, contexts in [
@@ -439,7 +455,7 @@ async def _format_search_result(result, *, service, ctx, read_content: bool = Fa
         ("skill", result.skills),
     ]:
         for m in contexts:
-            items.append((ctx_type, m))
+            items.append((ctx_type, m, _hit_uri(ctx_type, m.uri)))
 
     if not items:
         return "No matching context found."
@@ -457,17 +473,17 @@ async def _format_search_result(result, *, service, ctx, read_content: bool = Fa
                 except Exception:
                     pass
 
-        await asyncio.gather(*(_read(m.uri) for _, m in items))
+        await asyncio.gather(*(_read(uri) for _, _, uri in items))
 
     lines = []
-    for ctx_type, m in items:
+    for ctx_type, m, uri in items:
         abstract = (
             getattr(m, "abstract", "") or getattr(m, "overview", "") or "(no abstract)"
         ).strip()
         score = getattr(m, "score", 0.0)
-        line = f"- [{ctx_type} {score * 100:.0f}%] {m.uri}\n    {abstract}"
-        if m.uri in contents:
-            line += f"\n\n    {contents[m.uri]}"
+        line = f"- [{ctx_type} {score * 100:.0f}%] {uri}\n    {abstract}"
+        if uri in contents:
+            line += f"\n\n    {contents[uri]}"
         lines.append(line)
 
     return (
