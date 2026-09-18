@@ -1,7 +1,7 @@
 import { boundContextSummary } from "@deepseek-ai/dsh-llm";
 import { pluginMessage } from "./capture.mjs";
 import { MCP_SERVER_NAME } from "./config.mjs";
-import { evaluateUriGuard, evaluateUriNotice, isSkillUri } from "./shared/uri-guard.mjs";
+import { addSkillExample, evaluateUriGuard, evaluateUriNotice, isSkillUri } from "./shared/uri-guard.mjs";
 
 /** Model-facing name of a bridged OpenViking MCP tool. */
 const mcp = rawName => `mcp__${MCP_SERVER_NAME}__${rawName}`;
@@ -28,14 +28,14 @@ const GUARDED_TOOLS = {
     tool: uri => (isSkillUri(uri) ? mcp("add_skill") : mcp("edit")),
     example: uri =>
       isSkillUri(uri)
-        ? `${mcp("add_skill")}(data="<the full edited SKILL.md text>")`
+        ? addSkillExample(uri, { call: mcp("add_skill"), edited: true })
         : `${mcp("edit")}(uri="${uri}", old_string="...", new_string="...")`,
   },
   write: {
     tool: uri => (isSkillUri(uri) ? mcp("add_skill") : mcp("write")),
     example: uri =>
       isSkillUri(uri)
-        ? `${mcp("add_skill")}(data="<the full SKILL.md text>")`
+        ? addSkillExample(uri, { call: mcp("add_skill") })
         : `${mcp("write")}(uri="${uri}", content="...")`,
   },
   str_replace_editor: {

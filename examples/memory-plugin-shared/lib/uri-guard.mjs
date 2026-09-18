@@ -91,13 +91,30 @@ export function buildGuardNotice(uri, hint = {}) {
 }
 
 const SKILL_URI_RE = /^viking:\/\/(?:~|user\/[^/]+|agent)\/skills(?:\/|$)/i;
+const SHARED_SKILL_URI_RE = /^viking:\/\/agent\/skills(?:\/|$)/i;
+// The skills root, a skill directory, or its SKILL.md; anything deeper is a helper file.
+const SKILL_MD_URI_RE = /^viking:\/\/(?:~|user\/[^/]+|agent)\/skills(?:\/[^/]+(?:\/SKILL\.md)?)?\/?$/i;
 
 /**
- * Skills sit in a subtree the generic write/edit tools refuse; the MCP
- * add_skill tool is the only way to create or change one.
+ * Skills are installed through the MCP add_skill tool: write and edit refuse
+ * the user's own skills subtree, and under the shared root they would bypass
+ * installation.
  */
 export function isSkillUri(uri) {
   return SKILL_URI_RE.test(String(uri || ""));
+}
+
+/**
+ * The add_skill call that replaces a write or edit aimed at `uri`. A shared
+ * skill goes back to the shared root: without target_uri, add_skill makes a
+ * private copy that then shadows it.
+ */
+export function addSkillExample(uri, { call = "add_skill", edited = false } = {}) {
+  const value = String(uri || "");
+  const shared = SHARED_SKILL_URI_RE.test(value) ? ', target_uri="viking://agent/skills"' : "";
+  return SKILL_MD_URI_RE.test(value)
+    ? `${call}(data="<the full ${edited ? "edited " : ""}SKILL.md text>"${shared})`
+    : `${call}(path="<local skill folder or .zip with the changed files>"${shared})`;
 }
 
 /** The hints a host gets when it names no table of its own. */
@@ -122,14 +139,14 @@ export const DEFAULT_TOOL_HINTS = {
     tool: (uri) => (isSkillUri(uri) ? "OpenViking MCP add_skill" : "OpenViking MCP edit"),
     example: (uri) => (
       isSkillUri(uri)
-        ? 'add_skill(data="<the full edited SKILL.md text>")'
+        ? addSkillExample(uri, { edited: true })
         : `edit(uri="${uri}", old_string="...", new_string="...")`
     ),
   },
   write: {
     tool: (uri) => (isSkillUri(uri) ? "OpenViking MCP add_skill" : "OpenViking MCP write"),
     example: (uri) => (
-      isSkillUri(uri) ? 'add_skill(data="<the full SKILL.md text>")' : `write(uri="${uri}", content="...")`
+      isSkillUri(uri) ? addSkillExample(uri) : `write(uri="${uri}", content="...")`
     ),
   },
   bash: {
