@@ -756,6 +756,9 @@ async def ls(
 
 # -- tree ------------------------------------------------------------------
 
+# Long enough to keep a full skill description (the Agent Skills limit is 1024 chars).
+_TREE_ABSTRACT_LIMIT = 1024
+
 
 @mcp.tool()
 async def tree(
@@ -772,7 +775,8 @@ async def tree(
         uri: Directory URI to traverse.
         level_limit: Maximum traversal depth.
         node_limit: Existing default result limit.
-        include_abstract: Whether to include file summaries.
+        include_abstract: Whether to include directory summaries (a skill directory's
+            summary is its name and description).
         offset: Number of visible nodes to skip.
         limit: Optional result limit that overrides node_limit.
 
@@ -794,6 +798,7 @@ async def tree(
             resolved_uri,
             ctx=ctx,
             output=output,
+            abs_limit=_TREE_ABSTRACT_LIMIT,
             node_limit=effective_limit,
             level_limit=level_limit,
             offset=offset,
@@ -813,9 +818,9 @@ async def tree(
         indent = "  " * max(0, depth - 1)
         if e.get("isDir"):
             lines.append(f"{indent}{name}/")
-            continue
-        lines.append(f"{indent}{name} ({e.get('size', 0)} B)")
-        abstract = (e.get("abstract") or "").strip().replace("\n", " ")
+        else:
+            lines.append(f"{indent}{name} ({e.get('size', 0)} B)")
+        abstract = " ".join((e.get("abstract") or "").split())
         if include_abstract and abstract:
             lines.append(f"{indent}  - {abstract}")
     if len(entries) >= effective_limit:

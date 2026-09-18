@@ -2032,6 +2032,30 @@ async def test_tree_node_limit_adds_truncation_note(service):
     assert "(truncated at node_limit=1" in result
 
 
+async def test_tree_include_abstract_renders_directory_abstracts(service, monkeypatch):
+    captured = {}
+
+    async def fake_tree(uri, **kwargs):
+        captured.update(kwargs)
+        return [
+            {
+                "rel_path": "pr-review",
+                "isDir": True,
+                "abstract": "name: pr-review\ndescription: Review a PR diff",
+            },
+            {"rel_path": "pr-review/SKILL.md", "isDir": False, "size": 42, "abstract": ""},
+        ]
+
+    monkeypatch.setattr(service.fs, "tree", fake_tree)
+
+    result = await tree(uri="viking://user/test_user/skills", include_abstract=True)
+
+    assert "\npr-review/\n  - name: pr-review description: Review a PR diff\n" in result
+    assert "\n  SKILL.md (42 B)" in result
+    assert captured["output"] == "agent"
+    assert captured["abs_limit"] == 1024
+
+
 async def test_tree_include_abstract_still_renders(service):
     await write(uri="viking://resources/test_tree_abs/note.md", content="hello tree\n")
 
