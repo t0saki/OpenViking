@@ -278,7 +278,8 @@ async def find(
     elif skill_only:
         # The generic default targets stop at the user root and miss viking://agent/skills.
         target_uri = default_target_directories(ctx, context_type=ContextType.SKILL)
-    if skill_only:
+    # A query-less call is a filter-only listing, which package retrieval does not serve.
+    if skill_only and query.strip():
         # A skill is indexed as a whole package, so an item-level find returns one hit per
         # file. find_skills collapses those to the best hit per package.
         result = await service.search.find_skills(
@@ -461,8 +462,33 @@ def _hit_uri(ctx_type: str, uri: str) -> str:
     return uri
 
 
+async def _describe_skills_by_package(items: List[Dict[str, Any]], *, service, ctx) -> None:
+    """Describe a skill by its own abstract, not by whichever file inside it matched."""
+    import asyncio
+
+    pending = {}
+    for item in items:
+        if item["type"] != "skill" or not item["uri"].endswith("/SKILL.md"):
+            continue
+        root = item["uri"][: -len("/SKILL.md")]
+        if item["hit_uri"] in (f"{root}/.abstract.md", f"{root}/.overview.md", item["uri"]):
+            continue
+        pending.setdefault(root, []).append(item)
+
+    async def _describe(root: str) -> None:
+        try:
+            abstract = (await service.fs.abstract(root, ctx=ctx) or "").strip()
+        except Exception:
+            return
+        if abstract:
+            for item in pending[root]:
+                item["abstract"] = abstract
+
+    await asyncio.gather(*(_describe(root) for root in pending))
+
+
 async def _format_search_result(result, *, service, ctx, read_content: bool = False) -> str:
-    items = []
+    items: List[Dict[str, Any]] = []
     seen: dict[str, int] = {}
     for ctx_type, contexts in [
         ("memory", result.memories),
@@ -471,17 +497,26 @@ async def _format_search_result(result, *, service, ctx, read_content: bool = Fa
     ]:
         for m in contexts:
             uri = _hit_uri(ctx_type, m.uri)
+            item = {
+                "type": ctx_type,
+                "uri": uri,
+                "hit_uri": m.uri,
+                "score": getattr(m, "score", 0.0),
+                "abstract": getattr(m, "abstract", "") or getattr(m, "overview", ""),
+            }
             # Several files of one skill package can match; keep the best-scored hit.
             previous = seen.get(uri)
             if previous is not None:
-                if getattr(m, "score", 0.0) > getattr(items[previous][1], "score", 0.0):
-                    items[previous] = (ctx_type, m, uri)
+                if item["score"] > items[previous]["score"]:
+                    items[previous] = item
                 continue
             seen[uri] = len(items)
-            items.append((ctx_type, m, uri))
+            items.append(item)
 
     if not items:
         return "No matching context found."
+
+    await _describe_skills_by_package(items, service=service, ctx=ctx)
 
     contents: dict[str, str] = {}
     if read_content:
@@ -496,15 +531,13 @@ async def _format_search_result(result, *, service, ctx, read_content: bool = Fa
                 except Exception:
                     pass
 
-        await asyncio.gather(*(_read(uri) for _, _, uri in items))
+        await asyncio.gather(*(_read(item["uri"]) for item in items))
 
     lines = []
-    for ctx_type, m, uri in items:
-        abstract = (
-            getattr(m, "abstract", "") or getattr(m, "overview", "") or "(no abstract)"
-        ).strip()
-        score = getattr(m, "score", 0.0)
-        line = f"- [{ctx_type} {score * 100:.0f}%] {uri}\n    {abstract}"
+    for item in items:
+        abstract = (item["abstract"] or "(no abstract)").strip()
+        uri = item["uri"]
+        line = f"- [{item['type']} {item['score'] * 100:.0f}%] {uri}\n    {abstract}"
         if uri in contents:
             line += f"\n\n    {contents[uri]}"
         lines.append(line)
