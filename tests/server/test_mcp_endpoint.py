@@ -576,17 +576,22 @@ async def test_find_tool_keeps_the_package_abstract_of_a_sidecar_hit(service, mo
         score=0.52,
     )
 
+    abstract_uris = []
+
     async def fake_find_skills(**kwargs):
         return SimpleNamespace(memories=[], resources=[], skills=[hit])
 
-    async def fail_abstract(uri, ctx):
-        raise AssertionError("A package-level hit already carries the skill's abstract")
+    async def fake_abstract(uri, ctx):
+        abstract_uris.append(uri)
+        return ""
 
     monkeypatch.setattr(service.search, "find_skills", fake_find_skills)
-    monkeypatch.setattr(service.fs, "abstract", fail_abstract)
+    monkeypatch.setattr(service.fs, "abstract", fake_abstract)
 
     result = await mcp_endpoint.find(query="fill a pdf", context_type="skill")
 
+    # A package-level hit already carries the skill's abstract.
+    assert abstract_uris == []
     assert "description: Fill in a PDF form" in result
 
 

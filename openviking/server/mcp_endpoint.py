@@ -465,11 +465,7 @@ def _hit_uri(ctx_type: str, uri: str) -> str:
 def _package_abstract(uri: str, abstract: str) -> str:
     """The skill's own frontmatter, or "" when the package has no usable abstract."""
     text = (abstract or "").strip()
-    placeholders = (
-        "[.abstract.md is not ready]",
-        f"# {uri} [Directory abstract is not ready]",
-    )
-    return "" if text in placeholders else text
+    return "" if text == f"# {uri} [Directory abstract is not ready]" else text
 
 
 async def _describe_skills_by_package(items: List[Dict[str, Any]], *, service, ctx) -> None:
@@ -483,7 +479,7 @@ async def _describe_skills_by_package(items: List[Dict[str, Any]], *, service, c
         root = item["uri"][: -len("/SKILL.md")]
         if item["hit_uri"] in (f"{root}/.abstract.md", f"{root}/.overview.md", item["uri"]):
             continue
-        pending.setdefault(root, []).append(item)
+        pending[root] = item
 
     semaphore = asyncio.Semaphore(10)
 
@@ -494,8 +490,7 @@ async def _describe_skills_by_package(items: List[Dict[str, Any]], *, service, c
             except Exception:
                 return
         if abstract:
-            for item in pending[root]:
-                item["abstract"] = abstract
+            pending[root]["abstract"] = abstract
 
     await asyncio.gather(*(_describe(root) for root in pending))
 
@@ -1422,26 +1417,18 @@ async def add_resource(
 # -- add_skill -------------------------------------------------------------
 
 
-def _format_skill_install_result(result: Any, *, list_only: bool) -> str:
-    if not isinstance(result, dict):
-        return "Skill added."
+def _format_skill_install_result(result: Dict[str, Any], *, list_only: bool) -> str:
     if result.get("status") == "error":
         return f"Error adding skill: {result.get('message') or 'skill processing failed'}"
     if list_only:
         found = result.get("skills") or []
-        if not found:
-            return "No skills found in the source."
         lines = [f"Skills in the source ({len(found)}); nothing was installed:"]
         for item in found:
             description = " ".join(str(item.get("description") or "").split())
             lines.append(f"- {item.get('name', '?')} ({item.get('path', '')}): {description}")
         return "\n".join(lines)
     installed = result.get("installed") if "installed" in result else [result]
-    uris = [item.get("root_uri") or item.get("uri") for item in installed if isinstance(item, dict)]
-    uris = [uri for uri in uris if uri]
-    if not uris:
-        return "Skill added (processing in background)."
-    lines = [f"Skill added: {uri}" for uri in uris]
+    lines = [f"Skill added: {item['root_uri']}" for item in installed]
     lines.append(
         "Read <uri>/SKILL.md to use it now; semantic search finds it once indexing completes."
     )
@@ -1457,10 +1444,6 @@ async def add_skill(
     list_only: bool = False,
 ) -> str:
     """Create, install, or replace an agent skill in OpenViking.
-
-    Skills are stored as viking://~/skills/<name>/ (the caller's own) or
-    viking://agent/skills/<name>/ (shared with the whole account) and are used by reading
-    <uri>/SKILL.md with the read tool.
 
     New skill: pass the full SKILL.md text (YAML frontmatter with ``name`` and
     ``description``, then the Markdown body) as ``data``.
@@ -1481,8 +1464,8 @@ async def add_skill(
     SKILL.md, revise the whole text, and call add_skill again with the same name and the same
     ``target_uri``; do not use the write or edit tools on files inside a skill package, and do
     not use forget or a directory move to delete or rename one -- remove a skill with
-    ``ov skills remove <name>``, with ``DELETE /api/v1/skills/{name}``, or in OpenViking
-    Studio, and rename it by installing it under the new name and removing the old one.
+    ``ov skills remove <name>`` or ``DELETE /api/v1/skills/{name}``, and rename it by
+    installing it under the new name and removing the old one.
 
     Args:
         data: Full SKILL.md text of a skill to create or replace.
@@ -1791,9 +1774,8 @@ async def glob(pattern: str, uri: str = "viking://", node_limit: int = 100) -> s
 async def forget(uri: str, recursive: bool = False) -> str:
     """Permanently delete a viking:// URI from OpenViking. Irreversible — confirm with user before calling.
 
-    Deleting a skill directory this way leaves the skill's stored privacy values behind, and
-    moving one does not rename it. Remove a skill with ``ov skills remove <name>``, with
-    ``DELETE /api/v1/skills/{name}``, or in OpenViking Studio."""
+    Deleting a skill directory this way leaves the skill's stored privacy values behind:
+    remove a skill with ``ov skills remove <name>`` or ``DELETE /api/v1/skills/{name}``."""
     service = get_service()
     ctx = _get_ctx()
     resolved_uri = _resolve_mcp_workspace_uri(uri, ctx)
