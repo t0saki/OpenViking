@@ -36,7 +36,7 @@ The server reads the file at startup. Restart the server after changing models, 
 }
 ```
 
-Optional sections use their defaults when omitted. Unknown fields are rejected.
+Optional sections use their defaults when omitted. Unknown fields in `ov.conf` and persisted account settings are ignored for upgrade compatibility. Known fields still validate types and values; misspelled field names are also ignored.
 
 ## Top-Level Settings
 
@@ -331,9 +331,7 @@ See [Encryption](../guides/08-encryption.md) for provider and key-management set
     "prefetch_search_topn": 5,
     "extraction_enabled": true,
     "session_skill_extraction_enabled": false,
-    "link_enabled": false,
-    "v2_lock_retry_interval_seconds": 0.2,
-    "v2_lock_max_retries": 0
+    "link_enabled": false
   }
 }
 ```
@@ -349,8 +347,6 @@ See [Encryption](../guides/08-encryption.md) for provider and key-management set
 | `extraction_enabled` | boolean | `true` | Extract long-term memories on session commit |
 | `session_skill_extraction_enabled` | boolean | `false` | Also extract reusable skills |
 | `link_enabled` | boolean | `false` | Generate and resolve memory links |
-| `v2_lock_retry_interval_seconds` | number, `>= 0` | `0.2` | Memory-lock retry interval |
-| `v2_lock_max_retries` | integer, `>= 0` | `0` | Retry limit; `0` means unlimited |
 
 ## Parser Settings
 
@@ -377,7 +373,7 @@ Parsers live under `parsers`:
     "text": {},
     "directory": {
       "preserve_structure": true,
-      "max_files": 1000,
+      "max_files": null,
       "max_depth": 10,
       "max_concurrent": 4
     },
@@ -391,6 +387,9 @@ Parsers live under `parsers`:
   }
 }
 ```
+
+`parsers.directory.max_files` defaults to `null`, meaning no file-count limit.
+Set it to a positive integer to limit the number of files per directory import.
 
 `parsers.directory.max_concurrent` is shared by all directory imports in the
 server event loop. With the default value `4`, one directory can run four

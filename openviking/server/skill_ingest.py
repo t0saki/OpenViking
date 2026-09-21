@@ -16,7 +16,6 @@ from typing import Any, Optional
 
 from openviking.server.dependencies import get_service
 from openviking.server.identity import RequestContext
-from openviking.server.skill_source_metadata import persist_skill_source_metadata
 from openviking.server.telemetry import run_operation
 from openviking.server.temp_upload_store import TempUploadStore
 from openviking.service.skill_sources import describe_skill_sources, resolve_skill_source
@@ -63,8 +62,8 @@ async def install_skills(
                     allow_local_path_resolution=isinstance(skill_data, Path),
                     source_path_hint=source_path_hint,
                     target_uri=target_uri,
+                    source_metadata=skill_source,
                 )
-                await persist_skill_source_metadata(service, ctx, result, skill_source)
                 return result
 
             # Each skill owns its own queue wait tracker and task ID.
