@@ -734,3 +734,21 @@ test("a turn queued during an outage is replayed at the next SessionStart", asyn
     await rm(stateDir, { recursive: true, force: true });
   }
 });
+
+test("resume reads the last committed legacy archive after readable IDs become eligible", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "ov-codex-resume-identity-"));
+  const id = "01a0c6e3-6400-7000-8000-00009e3a1c07";
+  const legacy = "cx-" + id;
+  const calls = [];
+  try {
+    await writeFile(join(dir, id + ".json"), JSON.stringify({ codexSessionId: id, ovSessionId: null, lastCommittedOvSessionId: legacy }));
+    await withMockOpenViking(profileHandler(calls, { archiveOverview: "Archived before format transition" }), async (url) => {
+      const { output } = await runSessionStart({ session_id: id, source: "resume", cwd: dir }, {
+        ...baseEnv(url, dir), OPENVIKING_HOME: dir, OPENVIKING_NO_AUTO_INJECT: "1", OPENVIKING_RESUME_ARCHIVE_INJECT: "1",
+      });
+      assert.match(JSON.stringify(output), /Archived before format transition/);
+    });
+    assert.ok(calls.some((call) => call.path === "/api/v1/sessions/" + legacy + "/context"));
+    assert.equal(calls.some((call) => call.path.includes("codex-20260922")), false);
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});

@@ -30,7 +30,7 @@ bash examples/memory-plugin-shared/install.sh --harness zcode
 ## 各宿主差异
 
 - **Cursor** — 六个事件，其中 `preCompact` 与 `sessionEnd` 是本插件里独有的。Stop 时 `capturedSinceCommit` 达到阈值才 commit，压缩前无条件 commit。会话前缀 `cu-`。见 [Cursor 接入文档](../../docs/zh/agent-integrations/12-cursor.md)。
-- **TRAE / TRAE CN** — 采集直接读 Stop 事件的 `prompt`、`text_content`、`last_assistant_message`，不解析 transcript；每次带内容的 Stop 都 commit。会话前缀 `tr-` 与 `trcn-`。见 [TRAE 接入文档](../../docs/zh/agent-integrations/13-trae.md)。
+- **TRAE / TRAE CN** — 采集直接读 Stop 事件的 `prompt`、`text_content`、`last_assistant_message`，不解析 transcript；每次带内容的 Stop 都 commit。新会话使用 `trae-` 与 `traecn-` 可读 ID，已有映射保留。见 [TRAE 接入文档](../../docs/zh/agent-integrations/13-trae.md)。
 - **ZCode** — rollout 文件是权威增量对话源：稳定的 host `turnId` 用于去重，也让后续 Stop 能补回漏掉的回合，hook stdin 只是兜底。ZCode 不支持 `PreCompact` 与 `SessionEnd`，因此每次 Stop 都 commit 来补足这两个信号。它的输出 schema 是严格的，所以放行时不写任何内容。会话前缀 `zc-`。已验证的扩展面记录在 [DESIGN.md](./DESIGN.md)。
 
 ## 体检
@@ -46,3 +46,9 @@ client 默认取这份副本安装时对应的那个；传 `cursor`、`trae`、`
 ```bash
 node --test examples/agent-hook-plugin/tests/*.test.mjs
 ```
+
+## 会话 ID
+
+新会话使用 `<harness>-<YYYYMMDD>-<HHMMSS>-<tail8>`，harness 为 `cursor`、`trae`、`traecn` 或 `zcode`。时间为 UTC，优先从 UUIDv7 解码，否则取首次命名时间；尾部取原生 ID 最后八个字母数字字符并转小写。ID 在会话锁内保存到 `~/.openviking/hook-state/<client>/<native>.json`，再执行召回、捕获或提前返回，后续 hook 使用同一映射。
+
+已有活动痕迹的状态保留旧 `cu-`/`tr-`/`trcn-`/`zc-` ID。`cwd-<hash>` 回退可能被同目录的不同会话共用，因此也保留旧格式。重新运行安装器才能更新复制的运行库；升级时保留 hook 状态，中途删除状态或降级会让活动会话分裂。新旧服务端 ID 并存，不迁移旧会话。

@@ -1138,3 +1138,28 @@ test("a failed local compressor is not relaunched for another peer in the same h
     }, { exitCode: 1 });
   } finally { await rm(stateDir, { recursive: true, force: true }); }
 });
+
+test("recall uses the persisted live ID during an upgrade and derives only after release", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "ov-codex-recall-identity-"));
+  const id = "01a0c6e3-6400-7000-8000-00009e3a1c07";
+  const calls = [];
+  try {
+    await withMockOpenViking(async (req, res) => {
+      if (req.url === "/health") return writeJson(res, { status: "ok", result: {} });
+      if (req.method === "POST" && req.url === "/api/v1/search/search") {
+        calls.push(await readRequestBody(req));
+        return writeJson(res, { status: "ok", result: { context: "Remembered context" } });
+      }
+      writeJson(res, { status: "error" }, 404);
+    }, async (url) => {
+      const env = { OPENVIKING_URL: url, OPENVIKING_CREDENTIAL_SOURCE: "env", OPENVIKING_CODEX_STATE_DIR: dir,
+        OPENVIKING_HOME: dir, OPENVIKING_STATE_DIR: dir, OPENVIKING_AUTO_RECALL: "1", OPENVIKING_RECALL_COMPRESS: "off",
+        OPENVIKING_CONFIG_FILE: join(dir, "missing"), OPENVIKING_CLI_CONFIG_FILE: join(dir, "missing-cli") };
+      for (const live of ["cx-" + id, null]) {
+        await writeFile(join(dir, id + ".json"), JSON.stringify({ codexSessionId: id, ovSessionId: live }));
+        await runAutoRecall({ session_id: id, prompt: "Recall the session identity design" }, env);
+      }
+    });
+    assert.deepEqual(calls.map((body) => body.session_id), ["cx-" + id, "codex-20260922-021306-9e3a1c07"]);
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
