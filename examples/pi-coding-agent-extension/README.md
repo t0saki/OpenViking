@@ -106,7 +106,7 @@ Recall defaults to the broad mode: global memory, the current workspace, and oth
 pi
 ```
 
-The extension shows an `[OpenViking]` status line on startup. Tools (`viking_search`, `viking_remember`, etc.) are registered automatically. Memories persist across sessions — no additional setup.
+The extension shows an `[OpenViking]` status line on startup. The server's own MCP tools (`openviking_search`, `openviking_remember`, and the rest of whatever it exposes) are registered automatically. Memories persist across sessions — no additional setup.
 
 ## Configuration Reference
 
@@ -167,7 +167,7 @@ integrations should configure category `quotas` when they need exact ceilings.
 | `captureMode`            | `"semantic"` | `"semantic"` (always capture) or `"keyword"` (trigger-based)           |
 | `captureMaxLength`       | `24000`    | Max sanitized text length for the capture decision                       |
 | `captureAssistantTurns`  | `true`     | Include assistant turns (text + tool USE inputs)                         |
-| `captureToolResults`     | `false`    | Include tool result output (noisy — off by default)                      |
+| `captureToolResults`     | `false`    | Declared in the shared schema, but this extension never reads it: `lib/capture-adapter.mjs` keeps every structured tool part, so tool results are captured either way, bounded by `captureToolMaxChars` |
 | `captureToolMaxChars`    | `1000000`  | Guard cap on one tool part's `tool_output`; the server externalizes oversized output |
 | `commitTokenThreshold`   | `20000`    | Pending-token threshold for client-driven commit                         |
 | `commitKeepRecentCount`  | `10`       | Live tail kept after commit                                              |
@@ -216,17 +216,19 @@ Bypass now runs through the same matcher every other OpenViking harness uses, so
 └────────┬──────────────────┬───────────┬──────────────┘
          │                  │           │
          │  ┌───────────────▼───────────▼────────┐
-         │  │   extension modules (.ts)           │
-         │  │   client / sync / recall / tools    │──────►  OpenViking
-         │  └─────────────────────────────────────┘        Server
-         │                                                (HTTP API)
+         │  │   extension modules (.ts)           │        OpenViking
+         │  │   client / sync / recall / takeover │──────►  REST API
+         │  └─────────────────────────────────────┘        (recall, session
+         │                                                  sync, takeover,
+         │                                                  health)
          │  ┌──────────────────────────────────────┐
-         └──►  7 registered LLM tools              │
-            │  viking_search / viking_read / …     │
+         └──►  tools.ts + lib/mcp-bridge.mjs       │──────►  OpenViking
+            │  the server's own tools/list,        │         /mcp endpoint
+            │  prefixed openviking_                │         (model tools)
             └──────────────────────────────────────┘
 ```
 
-The extension is a single directory of TypeScript files loaded by pi's `jiti` transpiler — no build step, no npm dependencies, no MCP server. All communication goes over HTTP to the OpenViking REST API.
+The extension is a single directory of TypeScript files loaded by pi's `jiti` transpiler — no build step and no npm dependencies. Recall, session sync, context takeover and the startup health check go over HTTP to the OpenViking REST API. The model-facing tools do not: `lib/mcp-bridge.mjs` drives the shared stdio→HTTP MCP proxy core inside pi's own process — no subprocess, no MCP client library — and registers whatever the server's `/mcp` endpoint lists.
 
 ### Event Flow
 
@@ -262,19 +264,47 @@ Tool capture preserves structured tool parts with bounded inputs and outputs. Th
 
 ## LLM Tools
 
-The extension registers 7 tools that pi's model can invoke on demand:
+The extension keeps no tool catalogue of its own. At session start it asks the server's `/mcp` endpoint for `tools/list` and registers one pi tool per descriptor it gets back, named `openviking_` + the server's own name, with the server's description and argument schema. A server that gains, drops or re-documents a tool changes pi's tool surface at the next session, with no extension release.
 
-| Tool                     | Description                                                |
-|--------------------------|------------------------------------------------------------|
-| `viking_search`          | Semantic search across memories, resources, and skills     |
-| `viking_read`            | Read a `viking://` URI at abstract / overview / full level |
-| `viking_browse`          | List directory contents or stat a `viking://` URI          |
-| `viking_remember`        | Store a fact or preference into long-term memory           |
-| `viking_forget`          | Delete a memory by URI or search query                     |
-| `viking_add_resource`    | Ingest a URL into OpenViking for indexed retrieval         |
-| `viking_archive_expand`  | Expand an archived session back into raw conversation      |
+Against a current server, that is these 15:
 
-The canonical `/viking` command (type `/viking` in pi's chat) displays connection status, session info, and accepts `commit` for manual synchronous commit.
+| Tool                        | Description                                                             |
+|-----------------------------|-------------------------------------------------------------------------|
+| `openviking_find`           | Fast ranked retrieval across memories, resources and skills             |
+| `openviking_search`         | Deep retrieval with session context and intent analysis; `mode="context"` returns an assembled block |
+| `openviking_read`           | Read one or more `viking://` file URIs, with line-based `offset`/`limit` |
+| `openviking_list`           | List one sorted page under a `viking://` directory                      |
+| `openviking_tree`           | Show a recursive directory tree, optionally with abstracts              |
+| `openviking_remember`       | Store messages as long-term memory and commit them for extraction       |
+| `openviking_write`          | Write text to a `viking://` file                                        |
+| `openviking_edit`           | Replace an exact string in an existing `viking://` file                 |
+| `openviking_add_resource`   | Ingest a URL, repository or local file as a resource                    |
+| `openviking_list_watches`   | List the auto-refresh watch tasks visible to this user                  |
+| `openviking_cancel_watch`   | Cancel a watch task by its target URI                                   |
+| `openviking_grep`           | Regex search inside `viking://` files                                   |
+| `openviking_glob`           | Find `viking://` files matching a glob pattern                          |
+| `openviking_forget`         | Permanently delete a `viking://` URI                                    |
+| `openviking_health`         | Check that the OpenViking server is healthy                             |
+
+That table is a snapshot of one server, not a contract; `/viking` reports how many tools registered against your own.
+
+The canonical `/viking` command (type `/viking` in pi's chat) displays connection status, session info, how many tools registered — or the handshake error when none did — and accepts `commit` for manual synchronous commit.
+
+## Upgrading from 0.3.x
+
+0.4.0 replaces the seven hand-written `viking_*` REST tools with the server's own MCP tool surface. There is no alias period: the old names are gone.
+
+- **Tool names.** Every tool is now `openviking_` + the server's own name: `viking_search` → `openviking_search`, `viking_read` → `openviking_read`, `viking_remember` → `openviking_remember`, `viking_forget` → `openviking_forget`, `viking_add_resource` → `openviking_add_resource`. `viking_browse` is covered by `openviking_list`, `openviking_tree` and `openviking_glob`; its stat mode and `viking_archive_expand` have no successor.
+- **`--tools` / `--exclude-tools` allowlists.** pi matches those by exact name, so an allowlist that still says `viking_search` drops the tool silently instead of erroring. Rename the entries by hand.
+- **`remember` is its own session.** It used to append a message to the live pi session and wait for that session's commit. The MCP tool opens a dedicated `mcp-store-*` session, writes the messages and commits it immediately, so what you asked to remember goes into extraction on the spot.
+- **`read` returns full text only.** The `level="abstract"` and `level="overview"` tiers are gone, and MCP `read` cannot read a directory's overview — `.overview.md` does not appear in `list` either. Use `openviking_search(mode="context", detail="overview")` or `openviking_tree(include_abstract=true)` instead. Context takeover is unaffected: the extension still fetches the archive overview itself over REST.
+- **`forget` is URI-only.** It deletes the URI it is handed. The old deletion-by-query path, with its score > 0.8 guard and its `recursive=false` default, went with the tool that had it.
+- **`add_resource` and local files.** For a filesystem path the server answers with a one-time upload URL, and the model has to POST the file there with `bash`. Remote URLs still ingest directly. This is how every other MCP harness behaves.
+- **A ROOT api key now leaves the session with no tools.** Root keys are refused on `/mcp` with 403. Before, the REST tools registered and every call came back empty; now nothing registers, the status line shows `tools ✗`, and `/viking` names the 403. Create a user or admin key and put that in `ovcli.conf`.
+- **`mcpEnabled: false` now applies to pi.** The shared key in `ovcli.conf`'s `plugin` section already turned the MCP surface off for other harnesses. Set for pi it means no handshake and no tools — and that is not reported as a failure; recall, capture and takeover carry on.
+- **Already running pi-mcp-adapter?** Do not also point it at OpenViking. The same tools would then appear twice in one session under two different names.
+
+A failed handshake never fails startup: recall, session sync and takeover keep working, the session simply has no OpenViking tools. The bridge retries on a later turn, so a server started after pi is picked up without restarting pi.
 
 ## Compared to Pi's Built-in Memory
 
@@ -297,7 +327,7 @@ Both plugins share the same core design (informed by each other):
 |---------------------|----------------------------------------|----------------------------------------|
 | Architecture        | Hook scripts (.mjs) + MCP delegation   | Native TypeScript extension            |
 | Recall timing       | Synchronous (UserPromptSubmit hook)     | Synchronous (context event)            |
-| Tool delivery       | OV server's MCP endpoint (16 tools)     | pi.registerTool() (7 tools)            |
+| Tool delivery       | OV server's MCP endpoint (count follows the server) | Same MCP endpoint, bridged in process and published through pi.registerTool() (same count) |
 | Write path          | Detached worker (async)                 | Async promise (pi's event loop)        |
 | Installation        | `claude plugin install` + setup script  | Copy directory → auto-discovered       |
 | Memory index        | None (flashlight search model)          | Built (map model — model sees what OV knows) |
@@ -314,16 +344,19 @@ pi-coding-agent-extension/
 ├── sync.ts              # Turn capture, write queue, session lifecycle
 ├── recall.ts            # Synchronous recall with ranking + budget
 ├── takeover.ts          # Thin pi binding around lib/takeover-core.mjs
-├── tools.ts             # 7 registered LLM tools + /viking command
+├── tools.ts             # Publishes the server's MCP tools as pi tools
+├── lib/mcp-bridge.mjs   # In-process MCP client over the shared proxy core
+├── lib/mcp-bridge-config.mjs # OVConfig → proxy config
+├── lib/mcp-arg-repair.mjs    # Schema-driven repair of model-emitted arguments
 ├── lib/takeover-core.mjs # Pure context-takeover state machine
 ├── lib/recall-ledger.mjs # Injected recall blocks, replayed to keep prompt caches warm
-├── index.ts             # Extension entry point (event handlers)
+├── index.ts             # Extension entry point (event handlers + /viking command)
 ├── package.json         # Name and version (the User-Agent's, and the release gate's)
 ├── DESIGN.md            # Module-by-module design, including context takeover
 └── README.md
 ```
 
-All TypeScript files are loaded directly by pi's built-in `jiti` transpiler — zero dependencies beyond Node.js.
+All TypeScript files are loaded directly by pi's built-in `jiti` transpiler — zero dependencies beyond Node.js. That holds for the MCP bridge too: it reuses the proxy core already vendored into `shared/`, so reaching `/mcp` costs no npm package and no child process.
 
 ## Troubleshooting
 

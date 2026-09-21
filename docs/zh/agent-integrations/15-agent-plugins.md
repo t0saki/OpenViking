@@ -89,7 +89,7 @@ bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/memory-plugin-shar
 | OpenCode | [OpenCode 插件](./10-opencode.md) |
 | Cursor | [Cursor 记忆集成](./12-cursor.md) |
 | TRAE / TRAE CN | [TRAE 记忆集成](./13-trae.md) |
-| pi | [pi Coding Agent 扩展](./11-pi.md) |
+| pi | [pi Coding Agent 扩展](./11-pi.md) — pi 没有 MCP 客户端，扩展在进程内桥接 `/mcp`，把同一批工具注册为原生工具 |
 | OpenClaw | [OpenClaw 插件](./03-openclaw.md) — 独立安装流程 |
 | ZCode | [社区集成](./08-community-plugins.md) |
 

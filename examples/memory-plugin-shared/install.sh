@@ -2326,7 +2326,9 @@ install_pi() {
     return 0
   }
   sync_shared_runtime
-  if [ ! -f "$plugin_dir/shared/credentials.mjs" ]; then
+  if [ ! -f "$plugin_dir/shared/credentials.mjs" ] \
+    || [ ! -f "$plugin_dir/shared/mcp-proxy-core.mjs" ] \
+    || [ ! -f "$plugin_dir/shared/mcp-proxy-config.mjs" ]; then
     warn "$(t 'pi extension shared runtime is missing; run node examples/memory-plugin-shared/sync.mjs and retry.' '未找到 pi 扩展的共享运行时；请先运行 node examples/memory-plugin-shared/sync.mjs 再重试。')"
     return 0
   fi
@@ -2581,6 +2583,12 @@ EOF
     fi
     if [ -f "$HOME/.pi/agent/extensions/openviking/shared/recall-core.mjs" ]; then
       node --check "$HOME/.pi/agent/extensions/openviking/shared/recall-core.mjs" || ok=0
+    fi
+    if [ -f "$HOME/.pi/agent/extensions/openviking/shared/mcp-proxy-core.mjs" ]; then
+      node --check "$HOME/.pi/agent/extensions/openviking/shared/mcp-proxy-core.mjs" || ok=0
+    fi
+    if [ -f "$HOME/.pi/agent/extensions/openviking/shared/mcp-proxy-config.mjs" ]; then
+      node --check "$HOME/.pi/agent/extensions/openviking/shared/mcp-proxy-config.mjs" || ok=0
     fi
   fi
   if contains_harness dsh && command -v dsh >/dev/null 2>&1; then
