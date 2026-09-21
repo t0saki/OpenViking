@@ -44,7 +44,7 @@ async def install_skills(
     service = get_service()
     async with resolve_skill_source(
         data,
-        names=names or [],
+        names=names,
         allow_local_path_resolution=allow_local_path_resolution,
         source_metadata=source_metadata,
     ) as targets:
