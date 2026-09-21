@@ -2,9 +2,10 @@
 name: openviking-skills
 description: >
   Find, use, create, install, share, update, and migrate agent skills stored in
-  OpenViking (viking://~/skills and viking://agent/skills). Use it when the
-  session's <available-skills> list or a search result names a skill that fits
-  the task; when the user asks to write, save, install, or share a skill from
+  OpenViking (viking://~/skills and viking://agent/skills). Use it when a
+  search result, or the session's <available-skills> list where the harness
+  injects one, names a skill that fits the task; when a task looks like one a
+  stored skill would cover; when the user asks to write, save, install, or share a skill from
   text, a Git repository, or a local folder; when a skill should work in every
   harness and on every machine; or when the user wants to move local skills
   (~/.claude/skills, ~/.agents/skills, ~/.cursor/skills) into OpenViking —
@@ -30,12 +31,14 @@ paths: never pass them to local file tools or shell commands.
 
 ## Find a skill
 
-1. Check the `<available-skills>` block injected at session start: the user's
-   own skills first, then shared ones. It is a snapshot from session start,
-   and with many skills it drops descriptions or ends with a "+N more" line,
-   so a name missing from it does not prove the skill is absent.
-2. `find(query="<what the task needs>", context_type="skill")` ranks skills
-   from both roots against the task.
+1. `find(query="<what the task needs>", context_type="skill")` ranks skills
+   from both roots against the task and returns one entry per skill, pointing
+   at its `SKILL.md`. This works in every harness; start here.
+2. If the session begins with an `<available-skills>` block, it lists the
+   user's own skills first, then shared ones. Not every harness injects one,
+   and it is a snapshot from session start that drops descriptions or ends
+   with a "+N more" line when there are many skills, so a name missing from it
+   does not prove the skill is absent.
 3. `search(query=..., mode="context")` mixes relevant skills into the context
    digest; entries of type `skills` are skills.
 4. `tree(uri="viking://~/skills", level_limit=1, include_abstract=true)`, and
@@ -131,6 +134,10 @@ skill's stored privacy values. `forget(uri="<skill uri>", recursive=true)`
 removes the directory but leaves those values behind, so use it only after the
 user confirms the exact URI.
 
+To rename a skill, install it under the new name with `add_skill` and remove
+the old one. Moving or copying the directory does not rename it: the skill's
+own metadata still carries the old name.
+
 ## Move local skills into OpenViking
 
 Run this only when the user asks. Nothing is uploaded without their approval
@@ -186,5 +193,6 @@ of that skill.
 - Memory search and writing are covered by the `openviking-memory` skill.
 - If the server has no `add_skill` tool (an older OpenViking), use
   `ov skills add` when the CLI is installed; otherwise tell the user the server
-  needs an upgrade. `write` and `add_resource` reject skill paths, so do not
-  try them.
+  needs an upgrade. Do not fall back to `write`, `edit`, or `add_resource`:
+  under the user's own root they are refused, and under `viking://agent/skills`
+  a write lands as an ordinary file that never goes through installation.
