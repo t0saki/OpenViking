@@ -194,6 +194,24 @@ test("when the cap cannot hold everything, the memory index goes before the cata
   assert.doesNotMatch(result.block, /<available-memories>/);
 });
 
+test("the two roots share no client-side cap, so shared skills survive a full private root", async () => {
+  const skills = [
+    ...Array.from({ length: 200 }, (_, i) => skill(OWN, `own-${String(i).padStart(3, "0")}`)),
+    skill(SHARED, "deploy-runbook", "Shared deployment runbook"),
+  ];
+  const { calls, fetchJSON } = fakeServer({ skills });
+  const result = await buildProfileBlock(fetchJSON, 2000, "", {
+    skillCatalog: true,
+    skillCatalogTokenBudget: 100000,
+  });
+
+  // The server already caps each root; a second cap here would drop the
+  // shared root whole and still report nothing dropped.
+  assert.ok(calls.some((path) => path.includes("node_limit=200")), calls.join("\n"));
+  assert.match(result.block, /viking:\/\/agent\/skills/);
+  assert.match(result.block, /deploy-runbook/);
+});
+
 test("truncateToBytes cuts on a line boundary and marks the cut", () => {
   const text = ["第一行", "second line", "第三行内容"].join("\n");
   assert.equal(truncateToBytes(text, 0), text);

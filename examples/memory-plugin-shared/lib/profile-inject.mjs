@@ -241,7 +241,9 @@ function formatListing(headerUri, entries, budgetTokens, moreHint = MEMORY_MORE_
 }
 
 const AGENT_SKILLS_ROOT = "viking://agent/skills";
-const SKILL_CATALOG_MAX = 200;
+// The server caps each skill root at node_limit, so the two roots together
+// can return twice this many; the token budget below decides what fits.
+const SKILL_CATALOG_NODE_LIMIT = 200;
 const SKILL_DESCRIPTION_TOKENS = 40;
 const SKILL_MORE_HINT = "search OpenViking skills to find the rest";
 const SKILL_USAGE_LINE =
@@ -269,11 +271,15 @@ function truncateToTokens(text, maxTokens) {
  * the endpoint, or any failure, yield no catalog.
  */
 async function fetchSkillCatalog(fetchJSON, actorPeerId = "") {
-  const res = await fetchJSON(`/api/v1/skills?node_limit=${SKILL_CATALOG_MAX}`, {}, { actorPeerId });
+  const res = await fetchJSON(
+    `/api/v1/skills?node_limit=${SKILL_CATALOG_NODE_LIMIT}`,
+    {},
+    { actorPeerId },
+  );
   const skills = res.ok && Array.isArray(res.result?.skills) ? res.result.skills : [];
   const own = [];
   const shared = [];
-  for (const skill of skills.slice(0, SKILL_CATALOG_MAX)) {
+  for (const skill of skills) {
     const name = typeof skill?.name === "string" ? skill.name.trim() : "";
     const uri = typeof skill?.uri === "string" ? skill.uri.replace(/\/+$/, "") : "";
     if (!name || !uri.includes("/")) continue;
