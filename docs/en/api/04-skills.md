@@ -624,7 +624,7 @@ Search and `get_skill` return content and manifests without executing scripts or
 
 Package hits are grouped by their full Skill root URI, ranked by their highest final score, then limited to `limit` Skills. Same-named Skills in different scopes remain distinct. `total` is the returned array length, not a count of all possible matches.
 
-Each Skill is represented by its highest-scoring package hit. The existing `uri`, `level`, `score`, and `abstract` fields come directly from that hit, without additional response fields. Package grouping and pagination apply to the dedicated `skills/find` endpoint and to the MCP `find` tool called with `context_type="skill"` alone; REST `find` / `search` and MCP `search` continue to return individual hits.
+Each Skill is represented by its highest-scoring package hit. The existing `uri`, `level`, `score`, and `abstract` fields come directly from that hit, without additional response fields. Package grouping and pagination apply to the dedicated `skills/find` endpoint and to the MCP `find` tool called with `context_type="skill"` alone; REST `find` / `search` continue to return individual hits. MCP `search` retrieves individual hits too, and only collapses them per package when rendering its answer.
 
 | Response field | Meaning |
 | --- | --- |
@@ -638,7 +638,7 @@ The dedicated `skills/find` endpoint now returns the actual hit URI instead of r
 
 General search with `read_content=true` continues to read the returned URI — for MCP `find` with `context_type="skill"` that URI is the package's `SKILL.md`, not the file that matched. The dedicated `skills/find` endpoint does not accept this option.
 
-The URI rules above apply to semantic search. A filter-only general `find` retains the stored record URI and returns `score=0`, without adding summary-file suffixes for L0 or L1; MCP `find` keeps such a query on that generic path, since package retrieval requires query text.
+The URI rules above apply to semantic search. A filter-only general `find` retains the stored record URI and returns `score=0`, without adding summary-file suffixes for L0 or L1; MCP `find` keeps such a query on that generic path, since package retrieval requires query text, but still rewrites each skill hit to its `SKILL.md`.
 
 Scope, level, and permission filters apply before grouping; the Skill root must also be accessible.
 

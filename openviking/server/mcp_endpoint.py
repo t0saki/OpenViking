@@ -462,6 +462,16 @@ def _hit_uri(ctx_type: str, uri: str) -> str:
     return uri
 
 
+def _package_abstract(uri: str, abstract: str) -> str:
+    """The skill's own frontmatter, or "" when the package has no usable abstract."""
+    text = (abstract or "").strip()
+    placeholders = (
+        "[.abstract.md is not ready]",
+        f"# {uri} [Directory abstract is not ready]",
+    )
+    return "" if text in placeholders else text
+
+
 async def _describe_skills_by_package(items: List[Dict[str, Any]], *, service, ctx) -> None:
     """Describe a skill by its own abstract, not by whichever file inside it matched."""
     import asyncio
@@ -475,11 +485,14 @@ async def _describe_skills_by_package(items: List[Dict[str, Any]], *, service, c
             continue
         pending.setdefault(root, []).append(item)
 
+    semaphore = asyncio.Semaphore(10)
+
     async def _describe(root: str) -> None:
-        try:
-            abstract = (await service.fs.abstract(root, ctx=ctx) or "").strip()
-        except Exception:
-            return
+        async with semaphore:
+            try:
+                abstract = _package_abstract(root, await service.fs.abstract(root, ctx=ctx))
+            except Exception:
+                return
         if abstract:
             for item in pending[root]:
                 item["abstract"] = abstract
@@ -1160,6 +1173,9 @@ async def add_resource(
 ) -> str:
     """Add a resource to OpenViking. Asynchronous — processing happens in the background.
 
+    For an agent skill, use add_skill instead: a skill added here is stored as an ordinary
+    resource and never becomes an installed skill.
+
     Remote URL: pass ``path`` as an http(s)://, git@, ssh://, or git:// URL. A sitemap /
     RSS / Atom URL ingests the WHOLE site as one resource tree; pass ``args={"site": true}``
     to force whole-site ingestion from a bare domain.
@@ -1461,12 +1477,12 @@ async def add_skill(
     files the new version no longer has are kept. Ask the user before installing from a
     source they did not name.
 
-    This tool is the only way to create or change a skill. To update one, read its SKILL.md,
-    revise the whole text, and call add_skill again with the same name and the same
+    This is the only MCP tool that creates or changes a skill. To update one, read its
+    SKILL.md, revise the whole text, and call add_skill again with the same name and the same
     ``target_uri``; do not use the write or edit tools on files inside a skill package, and do
     not use forget or a directory move to delete or rename one -- remove a skill with
-    ``ov skills remove <name>`` or in OpenViking Studio, and rename it by installing it under
-    the new name and removing the old one.
+    ``ov skills remove <name>``, with ``DELETE /api/v1/skills/{name}``, or in OpenViking
+    Studio, and rename it by installing it under the new name and removing the old one.
 
     Args:
         data: Full SKILL.md text of a skill to create or replace.
@@ -1773,7 +1789,11 @@ async def glob(pattern: str, uri: str = "viking://", node_limit: int = 100) -> s
 
 @mcp.tool()
 async def forget(uri: str, recursive: bool = False) -> str:
-    """Permanently delete a viking:// URI from OpenViking. Irreversible — confirm with user before calling."""
+    """Permanently delete a viking:// URI from OpenViking. Irreversible — confirm with user before calling.
+
+    Deleting a skill directory this way leaves the skill's stored privacy values behind, and
+    moving one does not rename it. Remove a skill with ``ov skills remove <name>``, with
+    ``DELETE /api/v1/skills/{name}``, or in OpenViking Studio."""
     service = get_service()
     ctx = _get_ctx()
     resolved_uri = _resolve_mcp_workspace_uri(uri, ctx)
