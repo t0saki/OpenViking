@@ -30,7 +30,7 @@
 
 **TRAE / TRAE CN**：在「设置 → MCP → 已配置的 MCP Servers」中确认能够看到 `openviking` 条目即表示接入成功。
 
-**TraeCode CLI 2.0**：它用的是 Codex 插件格式，Hook 要先信任才会运行。启动 `trae-cli`，在信任确认上选 **Trust all and continue**：
+**TraeCode CLI 2.0**：Hook 要先信任才会运行。启动 `trae-cli`，在信任确认上选 **Trust all and continue**：
 
 ```text
 Hooks need review

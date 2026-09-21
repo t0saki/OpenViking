@@ -30,7 +30,7 @@
 
 **TRAE / TRAE CN**: open **Settings → MCP → Configured MCP Servers** and confirm that the `openviking` entry is visible.
 
-**TraeCode CLI 2.0**: it uses the Codex plugin format, where hooks only run once you trust them. Start `trae-cli` and pick **Trust all and continue** at the prompt:
+**TraeCode CLI 2.0**: hooks only run once you trust them. Start `trae-cli` and pick **Trust all and continue** at the prompt:
 
 ```text
 Hooks need review
