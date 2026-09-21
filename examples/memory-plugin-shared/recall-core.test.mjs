@@ -13,6 +13,7 @@ import {
   isContextFaceLegacy,
   postRecall,
   readPeerScopeDowngrade,
+  skillHitUri,
 } from "./lib/recall-core.mjs";
 
 async function tempPath(name) {
@@ -552,4 +553,56 @@ test("a skill hit competes with memory leaves on equal footing in the fallback",
   });
   const picked = events.find((e) => e.event === "recall_picked").data.items.map((item) => item.uri);
   assert.ok(picked.includes("viking://user/alice/skills/pr-review"), picked.join("\n"));
+});
+
+test("a skill hit names its package, whichever file inside it matched", () => {
+  const cases = [
+    ["viking://agent/skills/deploy/.abstract.md", "viking://agent/skills/deploy"],
+    ["viking://agent/skills/deploy/.overview.md", "viking://agent/skills/deploy"],
+    ["viking://agent/skills/deploy/SKILL.md", "viking://agent/skills/deploy"],
+    ["viking://agent/skills/deploy/scripts/rollback.sh", "viking://agent/skills/deploy"],
+    ["viking://agent/skills/deploy/refs/.abstract.md", "viking://agent/skills/deploy"],
+    ["viking://user/alice/skills/pr-review/SKILL.md", "viking://user/alice/skills/pr-review"],
+    ["viking://user/alice/skills/pr-review/", "viking://user/alice/skills/pr-review"],
+    // An internal update backup is not an installed skill, nor is a bare root.
+    ["viking://user/alice/skills/.pr-review.update-backup-ab12/SKILL.md", ""],
+    ["viking://agent/skills", ""],
+    // Anything outside a skills root is left alone.
+    ["viking://user/alice/memories/events/e0.md", "viking://user/alice/memories/events/e0.md"],
+  ];
+  for (const [uri, expected] of cases) assert.equal(skillHitUri(uri), expected, uri);
+});
+
+test("several hits in one skill package become one entry at the best score", async () => {
+  const legacyCachePath = await tempPath("context-face.json");
+  const fetchJSON = async (path, init) => {
+    if (path === "/api/v1/search/search") return { ok: false, status: 503 };
+    if (path === "/api/v1/search/recall") return { ok: false, status: 404 };
+    if (path === "/api/v1/search/find") {
+      const body = JSON.parse(init.body);
+      const skills = body.target_uri === "viking://agent/skills"
+        ? [
+          { uri: "viking://agent/skills/deploy/scripts/rollback.sh", score: 0.44, abstract: "roll back", level: 2 },
+          { uri: "viking://agent/skills/deploy/.abstract.md", score: 0.81, abstract: "name: deploy", level: 0 },
+          { uri: "viking://agent/skills/.deploy.update-backup-ab12/SKILL.md", score: 0.9, abstract: "stale", level: 2 },
+        ]
+        : [];
+      return { ok: true, result: { memories: [], skills } };
+    }
+    return { ok: false, status: 404 };
+  };
+
+  const events = [];
+  await buildRecallBlock(fetchJSON, {
+    recallLimit: 5,
+    recallPreferAbstract: true,
+    scoreThreshold: 0.35,
+  }, "how do we roll back a deploy", {
+    legacyCachePath,
+    log: (event, data) => events.push({ event, data }),
+  });
+
+  const picked = events.find((e) => e.event === "recall_picked").data.items;
+  assert.deepEqual(picked.map((item) => item.uri), ["viking://agent/skills/deploy"]);
+  assert.equal(picked[0].score, 0.81);
 });

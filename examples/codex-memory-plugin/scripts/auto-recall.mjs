@@ -28,6 +28,7 @@ import {
 import { deriveOvSessionId, getStateDir } from "./session-state.mjs";
 import {
   buildRecallEndpointBody,
+  dedupeSkillHits,
   fetchAssembledContext,
   normalizeContextEntry,
   postRecall,
@@ -279,11 +280,11 @@ async function searchAll(query, limit, sessionId = null) {
   log("search_complete", { scope: "user", rawCount: userMems.length, topScores: userMems.slice(0, 3).map((m) => m.score) });
   log("search_complete", { scope: "skills", rawCount: userSkills.length, topScores: userSkills.slice(0, 3).map((m) => m.score) });
   log("search_complete", { scope: "shared_skills", rawCount: sharedSkills.length, topScores: sharedSkills.slice(0, 3).map((m) => m.score) });
-  const skills = [...userSkills, ...sharedSkills].map((m) => ({
-    ...m,
-    uri: skillHitUri(m.uri),
-    category: "skills",
-  }));
+  const skills = dedupeSkillHits(
+    [...userSkills, ...sharedSkills]
+      .map((m) => ({ ...m, uri: skillHitUri(m.uri), category: "skills" }))
+      .filter((m) => m.uri),
+  );
   const all = [...userMems, ...skills];
   const seen = new Set();
   return all.filter((m) => {

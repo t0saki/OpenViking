@@ -30,13 +30,39 @@ export function skillEntryHint(text) {
   return /\btype="skills"/.test(value) || SKILL_URI_IN_TEXT_RE.test(value) ? SKILL_ENTRY_HINT : null;
 }
 
+const SKILLS_ROOT_RE = /^viking:\/\/(?:~|user\/[^/]+|agent)\/skills(?:\/|$)/i;
+const SKILL_PACKAGE_RE = /^(viking:\/\/(?:~|user\/[^/]+|agent)\/skills\/([^/]+))(?:\/|$)/i;
+
 /**
- * A skill search hit is its directory's .abstract.md (or .overview.md); name
- * the skill directory instead, as the context face and the session-start
- * catalog do.
+ * A skill is indexed as a whole package, so a hit can be its .abstract.md, its
+ * SKILL.md, or any file inside the directory. Name the package directory, the
+ * way the server's skill_root_uri does, as the context face and the
+ * session-start catalog do. A hit at a bare skills root, or under a package
+ * whose name starts with "." (an internal update backup), is not an installed
+ * skill and yields "". A URI outside a skills root is left alone.
  */
 export function skillHitUri(uri) {
-  return String(uri || "").replace(/\/\.(?:abstract|overview)\.md$/, "");
+  const value = String(uri || "").replace(/\/+$/, "");
+  const match = SKILL_PACKAGE_RE.exec(value);
+  if (match) return match[2].startsWith(".") ? "" : match[1];
+  return SKILLS_ROOT_RE.test(value) ? "" : value;
+}
+
+/** One entry per skill package, keeping each package's highest-scoring hit. */
+export function dedupeSkillHits(items) {
+  const best = new Map();
+  const kept = [];
+  for (const item of items) {
+    const uri = item?.uri || "";
+    const index = best.get(uri);
+    if (index === undefined) {
+      best.set(uri, kept.length);
+      kept.push(item);
+    } else if ((item?.score || 0) > (kept[index]?.score || 0)) {
+      kept[index] = item;
+    }
+  }
+  return kept;
 }
 const DEFAULT_CONTEXT_LIMIT = 10;
 const DEFAULT_CONTEXT_MAX_TOKENS = 1600;
@@ -340,11 +366,15 @@ async function searchOneSource(fetchJSON, query, source, limit, actorPeerId = ""
   }, { actorPeerId });
   if (!res.ok) return [];
   const items = res.result?.[source.bucket] || [];
-  return items.map((item) => ({
-    ...item,
-    ...(source.type === "skill" ? { uri: skillHitUri(item.uri) } : {}),
-    _sourceType: source.type,
-  }));
+  if (source.type !== "skill") {
+    return items.map((item) => ({ ...item, _sourceType: source.type }));
+  }
+  const hits = [];
+  for (const item of items) {
+    const uri = skillHitUri(item.uri);
+    if (uri) hits.push({ ...item, uri, _sourceType: source.type });
+  }
+  return dedupeSkillHits(hits);
 }
 
 async function searchAllSources(fetchJSON, query, perSourceLimit, actorPeerId = "", log = () => {}) {
