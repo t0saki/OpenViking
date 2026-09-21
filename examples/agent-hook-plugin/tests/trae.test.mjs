@@ -133,7 +133,9 @@ test("TRAE prompt hook injects recall and Stop captures dedicated event fields",
     ]);
     assert.equal(messages.length, 2);
     assert.equal(commits.length, 1, "the completed TRAE turn must be committed immediately");
-    assert.ok(messages.every((item) => item.url.includes("trcn-same-session")));
+    const state = JSON.parse(readFileSync(join(root, "state", "trae-cn", "same-session.json"), "utf8"));
+    assert.match(state.ovSessionId, /^traecn-\d{8}-\d{6}-esession$/);
+    assert.ok(messages.every((item) => item.url.includes(state.ovSessionId)));
 
     await runHook("user-prompt-submit", "trae-cn", { ...base, prompt: "remember this", generation_id: "prompt-2" }, env);
     await runHook("stop", "trae-cn", { ...base, last_assistant_message: "the retry budget is three attempts" }, env);

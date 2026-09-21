@@ -48,6 +48,7 @@ async function captureTranscript(ctx, state) {
 
 export const cursor = {
   prefix: "cu-",
+  harness: "cursor",
   stages: {
     sessionStart: "start",
     beforeSubmitPrompt: "prompt",

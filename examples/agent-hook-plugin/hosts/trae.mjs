@@ -9,6 +9,7 @@ import { buildTraeTurns, cleanTraeText } from "./trae-turns.mjs";
 
 export const trae = {
   prefix: "tr-",
+  harness: "trae",
   tracksPendingPrompt: true,
   capturesOnlyWhenEnabled: true,
   stages: { "session-start": "start", "user-prompt-submit": "prompt", stop: "capture" },
@@ -61,4 +62,4 @@ export const trae = {
 };
 
 // TRAE CN is the same host with its own configuration key and session prefix.
-export const traeCn = { ...trae, prefix: "trcn-" };
+export const traeCn = { ...trae, prefix: "trcn-", harness: "traecn" };

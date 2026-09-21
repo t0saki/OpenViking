@@ -110,7 +110,9 @@ test("Stop returns before slow writes while detached worker finishes capture", a
   });
 
   const statePath = join(home, ".openviking", "hook-state", "zcode", `${sessionId}.json`);
-  await waitFor(() => existsSync(statePath), WORKER_WAIT_MS);
+  await waitFor(() => {
+    try { return JSON.parse(readFileSync(statePath, "utf8")).lastTurnId === "turn-001"; } catch { return false; }
+  }, WORKER_WAIT_MS);
   const state = JSON.parse(readFileSync(statePath, "utf8"));
   assert.equal(state.lastTurnId, "turn-001");
   assert.deepEqual(state.capturedTurnIds, [

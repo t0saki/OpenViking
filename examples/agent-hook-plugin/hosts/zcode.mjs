@@ -14,6 +14,7 @@ import { buildZcodeTurns, cleanZcodeText } from "./zcode-turns.mjs";
 
 export const zcode = {
   prefix: "zc-",
+  harness: "zcode",
   tracksPendingPrompt: true,
   capturesOnlyWhenEnabled: true,
   detachesCapture: true,

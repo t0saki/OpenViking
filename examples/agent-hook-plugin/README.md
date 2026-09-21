@@ -46,3 +46,9 @@ The client defaults to the one this copy was installed for; pass `cursor`, `trae
 ```bash
 node --test examples/agent-hook-plugin/tests/*.test.mjs
 ```
+
+## Session IDs
+
+New sessions use `<harness>-<YYYYMMDD>-<HHMMSS>-<tail8>` with harness `cursor`, `trae`, `traecn` or `zcode`. Time is UTC (UUIDv7 creation time when available, otherwise first naming time), and tail8 is the native ID's last eight alphanumeric characters in lowercase. The ID is saved in `~/.openviking/hook-state/<client>/<native>.json` while holding the session lock, before any recall/capture request or early return. Subsequent hooks use that mapping.
+
+Existing state with activity retains its legacy `cu-`/`tr-`/`trcn-`/`zc-` ID. The directory-based `cwd-<hash>` fallback also stays legacy because it can be shared by unrelated native sessions. Re-run the installer to update copied runtimes. Keep hook state across upgrades; deleting it or downgrading during an active session can split that session. New and old server IDs coexist without migration.
