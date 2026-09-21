@@ -21,7 +21,6 @@ from openviking.retrieve.context_assembler.params import (
     OTHER_PEER_OVERFETCH,
     READ_CONCURRENCY,
     REPORTED_CATEGORY_KEYS,
-    SKILL_PACKAGE_OVERFETCH,
 )
 from openviking.retrieve.skill_results import package_abstract, skill_root_uri
 from openviking.server.identity import RequestContext
@@ -182,7 +181,7 @@ def dedupe_keep_best(items: Sequence[Any]) -> List[Any]:
     return out
 
 
-async def _safe_find(service: Any, errors: List[str], **kwargs: Any) -> Any:
+async def _safe_find(service: Any, errors: List[str], method: str, **kwargs: Any) -> Any:
     """Retrieval must never fail the whole assembly for one scope.
 
     Failures are counted into stats rather than swallowed silently, so an empty
@@ -193,7 +192,7 @@ async def _safe_find(service: Any, errors: List[str], **kwargs: Any) -> Any:
     the same 400 ``mode="list"`` returns.
     """
     try:
-        return await service.search.find(**kwargs)
+        return await getattr(service.search, method)(**kwargs)
     except InvalidArgumentError:
         raise
     except Exception as exc:
@@ -293,6 +292,7 @@ async def gather_candidates(
         return _safe_find(
             service,
             retrieval_errors,
+            "find",
             query=query,
             ctx=find_ctx,
             target_uri=target_uri,
@@ -310,18 +310,52 @@ async def gather_candidates(
             "skills": ContextType.SKILL,
         }.get(bucket, ContextType.MEMORY)
         bucket_filter = merge_context_type_filter(filter, context_type)
-        want = quota * SKILL_PACKAGE_OVERFETCH if bucket == "skills" else quota
-        searches = [
-            _find(
-                query=query,
-                find_ctx=ctx,
-                target_uri=target,
-                find_limit=_overfetch(want),
-                find_filter=bucket_filter,
-            )
-            for query in planned
-            for target in targets
-        ]
+        if bucket == "skills":
+            # Package retrieval pages until it holds `limit` distinct packages
+            # and spans every root in one call, so one search per query is
+            # enough. It is a vector search though, so it needs query text. A
+            # filter-only request stays on the generic path, which answers it
+            # by scanning scalars rather than embedding an empty string, and an
+            # image-only one has nothing either path can use for this bucket.
+            searches = []
+            for query in planned:
+                if query.strip():
+                    searches.append(
+                        _safe_find(
+                            service,
+                            retrieval_errors,
+                            "find_skills",
+                            query=query,
+                            ctx=ctx,
+                            target_uri=targets,
+                            limit=_overfetch(quota),
+                            score_threshold=score_threshold,
+                            filter=bucket_filter,
+                        )
+                    )
+                elif filter:
+                    searches.extend(
+                        _find(
+                            query=query,
+                            find_ctx=ctx,
+                            target_uri=target,
+                            find_limit=_overfetch(quota),
+                            find_filter=bucket_filter,
+                        )
+                        for target in targets
+                    )
+        else:
+            searches = [
+                _find(
+                    query=query,
+                    find_ctx=ctx,
+                    target_uri=target,
+                    find_limit=_overfetch(quota),
+                    find_filter=bucket_filter,
+                )
+                for query in planned
+                for target in targets
+            ]
         peer_offset = len(searches)
         if peer_scope == "all" and bucket in MEMORY_CATEGORIES:
             searches.extend(
