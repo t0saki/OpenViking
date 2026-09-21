@@ -62,7 +62,7 @@ TraeCode CLI 2.0 用户启动 `trae-cli`，并可用 `trae-cli plugin list` 确�
 
 `<available-skills>` 清单先列你自己的 skill，再列 `viking://agent/skills` 下共享给整个账号的 skill；共享 skill 与你自己的某个 skill 同名时不再列出。清单有独立的 token 预算，不占 profile 预算：放不下描述时只列名称，连一个名称都放不下时缩成一行总数。清单第一行提示模型：按某个 skill 操作前，先用 OpenViking `read` 工具读取它的 `SKILL.md`。插件在 `openviking-memory`、`ov-experience-memory` 之外还自带 `openviking-skills` skill，告诉模型如何查找 skill、用 MCP `add_skill` 工具新建或替换 skill、从 Git 或本地文件夹安装 skill、把 skill 共享给整个账号，以及在你要求时把本地 skill 迁移到 OpenViking。
 
-工具调用和结果会作为独立的 `tool` part 捕获，`tool_output` 原样上报。截断由服务端负责：超过 `tool_output_externalization.threshold_chars`（默认 `20000`）的输出会写入 session 的 tool-result 存储，part 中只保留 synopsis stub 和 `tool_output_ref`，原文仍可通过 [`/api/v1/sessions/{id}/tool-results`](../api/05-sessions.md#read_tool_result) 读回。
+工具调用和结果会作为独立的 `tool` part 捕获，`tool_output` 原样上报。截断由服务端负责：超过 `tool_output_externalization.threshold_chars`（默认 `20000`）的输出会写入 session 的 tool-result 存储，part 中只保留 synopsis stub 和 `tool_output_ref`，原文仍可通过 [`/api/v1/sessions/{id}/tool-results`](../api/05-sessions.md#read-tool-result) 读回。
 
 <details>
 <summary><b>配置</b></summary>

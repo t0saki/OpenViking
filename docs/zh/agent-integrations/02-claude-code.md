@@ -75,7 +75,7 @@ bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/memory-plugin-shar
 
 skill 清单就是 `<available-skills>` 块，列出存放在 OpenViking 中的 skill：先列你自己在 `viking://~/skills` 下的，再列账号内共享在 `viking://agent/skills` 下的，每个附一句简短描述。无论是清单里的 skill，还是逐 prompt 召回带出的 skill，Claude 都会先用 OpenViking 的 `read` 工具读取它的 `SKILL.md`，再按其中的步骤执行。清单有独立的 Token 预算：放不下描述时只列名称，连一个名称都放不下时缩成一行总数。插件自带的 `openviking-skills` skill 告诉 Claude 如何查找和使用 OpenViking 中的 skill，如何用 `add_skill` MCP 工具创建、安装和共享 skill，如何删除 skill，以及在你要求时如何把 `~/.claude/skills` 等本地 skill 迁入 OpenViking。
 
-工具调用和结果会作为独立的 `tool` part 捕获，`tool_output` 原样上报。截断由服务端负责：超过 `tool_output_externalization.threshold_chars`（默认 `20000`）的输出会写入 session 的 tool-result 存储，part 中只保留 synopsis stub 和 `tool_output_ref`，原文仍可通过 [`/api/v1/sessions/{id}/tool-results`](../api/05-sessions.md#read_tool_result) 读回。
+工具调用和结果会作为独立的 `tool` part 捕获，`tool_output` 原样上报。截断由服务端负责：超过 `tool_output_externalization.threshold_chars`（默认 `20000`）的输出会写入 session 的 tool-result 存储，part 中只保留 synopsis stub 和 `tool_output_ref`，原文仍可通过 [`/api/v1/sessions/{id}/tool-results`](../api/05-sessions.md#read-tool-result) 读回。
 
 <details>
 <summary><b>配置</b></summary>

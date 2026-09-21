@@ -52,6 +52,7 @@ from openviking.retrieve.context_assembler import (
     AssembleParams,
     assemble_context,
 )
+from openviking.retrieve.skill_results import skill_root_uri
 from openviking.server.auth import (
     _build_request_context,
     _extract_api_key,
@@ -267,24 +268,38 @@ async def find(
     context_type: Optional[Union[str, List[str]]] = None,
     read_content: bool = False,
 ) -> str:
-    """Fast semantic retrieval without session context. Returns ranked memories, resources, and skills with URI, abstract, and score. context_type="skill" without target_uri searches both the user's own and the account-shared skills."""
+    """Fast semantic retrieval without session context. Returns ranked memories, resources, and skills with URI, abstract, and score. context_type="skill" returns one hit per skill package, pointing at its SKILL.md, and without target_uri searches both the user's own and the account-shared skills."""
     service = get_service()
     ctx = _get_ctx()
     context_filter = _resolve_context_type_filter(context_type)
+    skill_only = resolve_context_types(context_type) == [ContextType.SKILL.value]
     if target_uri:
         target_uri = _resolve_mcp_workspace_uri(target_uri, ctx)
-    elif resolve_context_types(context_type) == [ContextType.SKILL.value]:
+    elif skill_only:
         # The generic default targets stop at the user root and miss viking://agent/skills.
         target_uri = default_target_directories(ctx, context_type=ContextType.SKILL)
-    result = await service.search.find(
-        query=query,
-        ctx=ctx,
-        target_uri=target_uri,
-        limit=limit,
-        score_threshold=min_score,
-        filter=context_filter,
-        level=level,
-    )
+    # A query-less call is a filter-only listing, which package retrieval does not serve.
+    if skill_only and query.strip():
+        # A skill is indexed as a whole package, so an item-level find returns one hit per
+        # file. find_skills collapses those to the best hit per package.
+        result = await service.search.find_skills(
+            query=query,
+            ctx=ctx,
+            target_uri=target_uri,
+            limit=limit,
+            score_threshold=min_score,
+            level=level,
+        )
+    else:
+        result = await service.search.find(
+            query=query,
+            ctx=ctx,
+            target_uri=target_uri,
+            limit=limit,
+            score_threshold=min_score,
+            filter=context_filter,
+            level=level,
+        )
     return await _format_search_result(result, service=service, ctx=ctx, read_content=read_content)
 
 
@@ -433,34 +448,75 @@ async def search(
     return await _format_search_result(result, service=service, ctx=ctx, read_content=read_content)
 
 
-_SKILL_INDEX_SIDECARS = ("/.abstract.md", "/.overview.md")
-
-
 def _hit_uri(ctx_type: str, uri: str) -> str:
     """The URI an agent should read for a hit.
 
-    A skill is indexed through its directory's .abstract.md, whose body is only the
-    frontmatter; the skill itself is the SKILL.md beside it.
+    A skill is indexed as a whole package: the hit may be its .abstract.md, its
+    .overview.md, or any file inside the directory. The skill itself is the
+    package's SKILL.md.
     """
     if ctx_type == "skill":
-        for sidecar in _SKILL_INDEX_SIDECARS:
-            if uri.endswith(sidecar):
-                return f"{uri[: -len(sidecar)]}/SKILL.md"
+        root = skill_root_uri(uri)
+        if root:
+            return f"{root}/SKILL.md"
     return uri
 
 
+async def _describe_skills_by_package(items: List[Dict[str, Any]], *, service, ctx) -> None:
+    """Describe a skill by its own abstract, not by whichever file inside it matched."""
+    import asyncio
+
+    pending = {}
+    for item in items:
+        if item["type"] != "skill" or not item["uri"].endswith("/SKILL.md"):
+            continue
+        root = item["uri"][: -len("/SKILL.md")]
+        if item["hit_uri"] in (f"{root}/.abstract.md", f"{root}/.overview.md", item["uri"]):
+            continue
+        pending.setdefault(root, []).append(item)
+
+    async def _describe(root: str) -> None:
+        try:
+            abstract = (await service.fs.abstract(root, ctx=ctx) or "").strip()
+        except Exception:
+            return
+        if abstract:
+            for item in pending[root]:
+                item["abstract"] = abstract
+
+    await asyncio.gather(*(_describe(root) for root in pending))
+
+
 async def _format_search_result(result, *, service, ctx, read_content: bool = False) -> str:
-    items = []
+    items: List[Dict[str, Any]] = []
+    seen: dict[str, int] = {}
     for ctx_type, contexts in [
         ("memory", result.memories),
         ("resource", result.resources),
         ("skill", result.skills),
     ]:
         for m in contexts:
-            items.append((ctx_type, m, _hit_uri(ctx_type, m.uri)))
+            uri = _hit_uri(ctx_type, m.uri)
+            item = {
+                "type": ctx_type,
+                "uri": uri,
+                "hit_uri": m.uri,
+                "score": getattr(m, "score", 0.0),
+                "abstract": getattr(m, "abstract", "") or getattr(m, "overview", ""),
+            }
+            # Several files of one skill package can match; keep the best-scored hit.
+            previous = seen.get(uri)
+            if previous is not None:
+                if item["score"] > items[previous]["score"]:
+                    items[previous] = item
+                continue
+            seen[uri] = len(items)
+            items.append(item)
 
     if not items:
         return "No matching context found."
+
+    await _describe_skills_by_package(items, service=service, ctx=ctx)
 
     contents: dict[str, str] = {}
     if read_content:
@@ -475,15 +531,13 @@ async def _format_search_result(result, *, service, ctx, read_content: bool = Fa
                 except Exception:
                     pass
 
-        await asyncio.gather(*(_read(uri) for _, _, uri in items))
+        await asyncio.gather(*(_read(item["uri"]) for item in items))
 
     lines = []
-    for ctx_type, m, uri in items:
-        abstract = (
-            getattr(m, "abstract", "") or getattr(m, "overview", "") or "(no abstract)"
-        ).strip()
-        score = getattr(m, "score", 0.0)
-        line = f"- [{ctx_type} {score * 100:.0f}%] {uri}\n    {abstract}"
+    for item in items:
+        abstract = (item["abstract"] or "(no abstract)").strip()
+        uri = item["uri"]
+        line = f"- [{item['type']} {item['score'] * 100:.0f}%] {uri}\n    {abstract}"
         if uri in contents:
             line += f"\n\n    {contents[uri]}"
         lines.append(line)
@@ -909,7 +963,7 @@ async def write(
     - Any new file (whether created by "replace" or "create") must end in one of: .md .txt .json .yaml .yml .toml .py .js .ts
     - mode="append": append to the end of an existing file; fails if the file does not exist.
 
-    Writable scopes: viking://resources/, viking://user/{user_id}/, viking://agent/. The viking://~ home alias expands to the caller's user root. The managed user subtrees skills/, peers/, privacy/ and sessions/ are read-only. After a write, semantic search indexes refresh in the background; pass wait=true to block until search reflects the change."""
+    Writable scopes: viking://resources/, viking://user/{user_id}/, viking://agent/. The viking://~ home alias expands to the caller's user root. The managed user subtrees skills/, peers/, privacy/ and sessions/ are read-only. Do not write inside a skill package under viking://agent/skills/ either: a plain write skips installation, so the skill's abstract, overview and source metadata go stale. Change a skill with the add_skill tool. After a write, semantic search indexes refresh in the background; pass wait=true to block until search reflects the change."""
     service = get_service()
     ctx = _get_ctx()
     uri = _resolve_mcp_workspace_uri(uri, ctx)
@@ -945,7 +999,9 @@ async def edit(
 ) -> str:
     """Replace an exact string with new text in an existing viking:// file. Use this for targeted changes instead of rewriting the whole file with the write tool. old_string must match the file's current content exactly, including indentation and newlines; use the read tool first to see it. The edit fails and the file is left unchanged if old_string is not found, or if it matches more than once and replace_all is false (pass more surrounding context to make it unique, or set replace_all=true to replace every occurrence). Pass new_string="" to delete old_string.
 
-    Editing a memory file preserves its metadata; after an edit, search indexes refresh in the background (pass wait=true to block until search reflects the change)."""
+    Editing a memory file preserves its metadata; after an edit, search indexes refresh in the background (pass wait=true to block until search reflects the change).
+
+    Do not edit files inside a skill package (.../skills/<name>/): read the skill's SKILL.md, revise the whole text, and install it again with the add_skill tool."""
     service = get_service()
     ctx = _get_ctx()
     uri = _resolve_mcp_workspace_uri(uri, ctx)
@@ -1404,6 +1460,13 @@ async def add_skill(
     Installing under an existing name replaces that skill's SKILL.md and adds the new files;
     files the new version no longer has are kept. Ask the user before installing from a
     source they did not name.
+
+    This tool is the only way to create or change a skill. To update one, read its SKILL.md,
+    revise the whole text, and call add_skill again with the same name and the same
+    ``target_uri``; do not use the write or edit tools on files inside a skill package, and do
+    not use forget or a directory move to delete or rename one -- remove a skill with
+    ``ov skills remove <name>`` or in OpenViking Studio, and rename it by installing it under
+    the new name and removing the old one.
 
     Args:
         data: Full SKILL.md text of a skill to create or replace.

@@ -90,21 +90,21 @@ per-harness 章节（档案卡）只写差异；所有共享事实均在本章�
 
 | # | 工具名 | 功能 | 参数要点（定义行号） |
 |---|---|---|---|
-| 1 | `find` | 不依赖会话上下文的快速语义检索 | `query, target_uri="", limit=10, min_score=0.35, level, context_type`；`context_type="skill"` 且不传 `target_uri` 时同时检索 `viking://~/skills` 与 `viking://agent/skills`（`:259`） |
-| 2 | `search` | 深检索，可带 `session_id` + 意图分析 | `session_id` 仅在服务端 `retrieval.enable_intent`（默认 true）开启时才会加载会话（`:285`，`:302-304`） |
+| 1 | `find` | 不依赖会话上下文的快速语义检索 | `query, target_uri="", limit=10, min_score=0.35, level, context_type, read_content`；只传 `context_type="skill"` 时改调 `SearchService.find_skills`（包级检索，`skill_package_retriever.py`）：一个 skill 包一条命中，URI 改写为 `<包根>/SKILL.md`，摘要取包自身的 abstract，`read_content` 也读这个文件；不传 `target_uri` 时同时检索 `viking://~/skills` 与 `viking://agent/skills`。其它 `context_type` 组合，以及不带 query 只给 filter 的调用，仍走通用条目级路径（`:262`） |
+| 2 | `search` | 深检索，可带 `session_id` + 意图分析 | `session_id` 仅在服务端 `retrieval.enable_intent`（默认 true）开启时才会加载会话（`:315`）。这里的 skill 命中仍是条目级，同一个包可能返回多条，但每条的 URI 同样改写为 `<包根>/SKILL.md` |
 | 3 | `read` | 读取单个或多个 `viking://` 文件全文 | 并发信号量 10；单条失败返回 `(nothing found at <uri>)` 不抛错（`:389`） |
 | 4 | `list` | 列目录（函数名 `ls`，注册名显式改写为 `list`） | `recursive=False`（`:423`） |
 | 5 | `tree` | 递归目录树 | `level_limit=3, node_limit=1000, include_abstract=False`；`include_abstract=true` 时打印每个目录的 abstract（最长 1024 字符），因此 `tree(uri="viking://~/skills", level_limit=1, include_abstract=true)` 能列出全部 skill 及其描述（`:764`） |
 | 6 | `remember` | 写长期记忆 | 内部建一次性会话 `mcp-store-<uuid12>` 并立即 `commit_async`（`:504-523`）——这是 MCP 面唯一的 commit 入口；MCP 没有显式 commit 工具 |
-| 7 | `write` | 写 `viking://` 文件 | `mode=replace\|append\|create`：replace 覆盖或在缺失时创建，append 追加或在缺失时创建，create 仅创建缺失文件且已存在时返回冲突；显式 create 的文件扩展名白名单为 `.md .txt .json .yaml .yml .toml .py .js .ts`；可写域 `resources/user/agent`；用户根下 `skills/ peers/ privacy/ sessions/` 只读；已存在的 `.abstract.md/.overview.md` sidecar 可改正文，但公共 API 不能创建（`:529`；`content_write.py:60-81`） |
-| 8 | `edit` | 精确字符串替换 | `old_string` 空/0 命中/多命中且非 replace_all 均报错，且文件内容不变（`:569`） |
+| 7 | `write` | 写 `viking://` 文件 | `mode=replace\|append\|create`：replace 覆盖或在缺失时创建，append 追加或在缺失时创建，create 仅创建缺失文件且已存在时返回冲突；显式 create 的文件扩展名白名单为 `.md .txt .json .yaml .yml .toml .py .js .ts`；可写域 `resources/user/agent`；用户根下 `skills/ peers/ privacy/ sessions/` 只读；已存在的 `.abstract.md/.overview.md` sidecar 可改正文，但公共 API 不能创建；写 `viking://agent/skills` 不会被拒绝，但会绕过 skill 安装流程，skill 请改用 `add_skill`，详见 [§3.5](#_3-5-写入与删除的类型边界)（`:952`；`content_write.py:60-81`） |
+| 8 | `edit` | 精确字符串替换 | `old_string` 空/0 命中/多命中且非 replace_all 均报错，且文件内容不变；编辑 skill 包内的文件不会重新触发 skill 安装流程，详见 [§3.5](#_3-5-写入与删除的类型边界)（`:992`） |
 | 9 | `add_resource` | 资源摄取（远程 URL / 本地文件签名上传 / Connector） | `watch_interval` 单位为分钟（0=不 watch）；本地路径分支返回签名上传 URL（TTL 默认 600s），上传后自动入库，无需二次调用（`:723-947`） |
-| 10 | `add_skill` | 新建、安装或替换 skill | `data`（完整 SKILL.md 文本）或 `path`（Git URL / GitHub tree URL，或本地 SKILL.md、目录、zip——本地分支和 `add_resource` 一样返回签名上传 URL）；`skills=[...]` 从多 skill 源里挑选，`list_only=true` 只预览；`target_uri="viking://agent/skills"` 表示账户共享。与 REST `POST /api/v1/skills` 共用安装代码（`:1349`） |
+| 10 | `add_skill` | 新建、安装或替换 skill | `data`（完整 SKILL.md 文本）或 `path`（Git URL / GitHub tree URL，或本地 SKILL.md、目录、zip——本地分支和 `add_resource` 一样返回签名上传 URL）；`skills=[...]` 从多 skill 源里挑选，`list_only=true` 只预览；`target_uri="viking://agent/skills"` 表示账户共享。与 REST `POST /api/v1/skills` 共用安装代码。工具描述里写明它是新建和更新 skill 的唯一入口，删除请走 `ov skills remove` 或 Studio（`:1436`） |
 | 11 | `list_watches` | 列 watch 订阅，商业版尚未支持 | scheduler 未运行时返回错误串（`:958`） |
 | 12 | `cancel_watch` | 按 `to_uri` 取消，商业版尚未支持 | 刻意不暴露 pause/resume/trigger/update（`:990`） |
 | 13 | `grep` | 正则内容检索 | 多 pattern 并发（信号量 10），`node_limit=10`（`:1032`） |
 | 14 | `glob` | 文件名 glob | `node_limit=100`（`:1084`） |
-| 15 | `forget` | 删除 URI（不可恢复） | 默认 `recursive=False`；类型边界详见 [§3.5](#_3-5-写入与删除的类型边界)（`:1110-1117`） |
+| 15 | `forget` | 删除 URI（不可恢复） | 默认 `recursive=False`；类型边界详见 [§3.5](#_3-5-写入与删除的类型边界)（`:1775`） |
 | 16 | `health` | 健康检查 | 无参（`:1123`） |
 
 配套机制：
@@ -150,12 +150,12 @@ per-harness 章节（档案卡）只写差异；所有共享事实均在本章�
 
 - **会话隐式创建**：插件普遍不显式调用 `POST /sessions`（dsh 例外，它会发一个只含 `session_id` 的 create）；首次 `POST /sessions/{id}/messages(/batch)` 时由服务端 `auto_create=True` 建会话。召回侧 `mode="context"` 的 `_load_session(auto_create=True)` 也会建（第一次召回即在服务端创建会话）。
 - **commit 两阶段**：`POST /sessions/{id}/commit` 的 Phase 1（归档 archive）同步完成后才返回，Phase 2（记忆抽取）作为后台任务返回 `task_id`。`keep_recent_count` 服务端默认 **0**（全量归档，不留 live tail）。
-- **服务端自动 commit 默认关闭，且插件建会话的路径不会打开它**：
+- **服务端自动 commit 默认关闭，除非显式策略或部署级默认策略将其启用**：
   - `memory.session_auto_commit.default_enabled = false`、`idle_enabled = false`（`memory_config.py:15-16`）；无存储 policy 的会话自动 commit 关闭（`session_service.py:637-638`）；idle 扫描器在 `idle_enabled=false` 时根本不创建（`core.py:440-448`），构成双重门控。
-  - `POST /messages` 的 auto_create 不接受 policy 参数；只有 `POST /sessions`（create）与 `PATCH /sessions/{id}/config` 能设 `auto_commit_policy`。
+  - `POST /messages` 的 auto_create 不接受 policy 参数，但配置后会继承 `server.user_config_defaults.auto_commit_policy`；`POST /sessions`（create）与 `PATCH /sessions/{id}/config` 仍是显式的 Session 级控制面。
   - 当前没有插件下发 `auto_commit_policy`；第一方客户端中会下发该字段的是 **ov CLI**（`ov session new --auto-commit-policy-json` / `--no-auto-commit`、`ov session config set`）。
   - policy 显式启用时，服务端默认阈值是 `pending_token_threshold=150000（严格大于）/ message_count_threshold=100 / idle_timeout_seconds=86400 / keep_recent_count=0 / min_commit_interval_seconds=0`。注意这组服务端默认值与各插件客户端的 20000/10 是相互独立的两层配置。
-- **由此**：现状下所有自动 commit 都是客户端各自实现的阈值逻辑（[§3.3](#_3-3-会话与-commit-生命周期)），服务端不做兜底；进程异常终止后遗留的 pending 消息，需在同一会话后续再触发 commit 才会归档与抽取。
+- **由此**：插件可通过 `server.user_config_defaults.auto_commit_policy` 继承新 Session 的 token/message 阈值；idle timeout 兜底还需开启 `memory.session_auto_commit.idle_enabled=true`。未配置该 fallback 时，客户端仍需自行安排 commit 路径（[§3.3](#_3-3-会话与-commit-生命周期)）。
 - **tool output 外置**：服务端 `tool_output_externalization.enabled=True`、`threshold_chars=20000`（`server/config.py:257-258`）——客户端普遍把 `captureToolMaxChars` 设到 1000000 仅作兜底，真正的截断/外置在服务端做，externalized 结果通过 `tool_output_ref` 引用（openclaw 有三个专门工具读它）。
 - **服务端召回相关熔断**：`retrieval.recall_intent_timeout_s=5.0`（query expansion）、`recall_rewrite_timeout_s=30.0`（digest，[§3.2.5](#_3-2-5-召回再摘要)）、`enable_intent=true`。客户端超时预算按这两条推导（[§3.2.4](#_3-2-4-超时与预算链)）。
 
@@ -704,7 +704,7 @@ MCP `write` / REST `content/write` 的三道 guard（`content_write.py`）：可
 
 ## 6.3 路径②：程序化接入
 
-- **直连 REST**：召回用 `POST /api/v1/search/search`（必须 `mode:"context"` + `session_id` 才有 expansion/去重，[§3.2.1](#_3-2-1-机制底座-一条共享管线-两条服务端路径)；可传 `rewrite` 获得服务端 digest，[§3.2.5](#_3-2-5-召回再摘要)）；写入用 `POST /api/v1/sessions/{id}/messages/batch`（≤100 条/批，auto_create）；提交用 `POST /api/v1/sessions/{id}/commit`；读取用 `GET /api/v1/content/read` 等。要用服务端自动 commit，需在 `POST /api/v1/sessions` 时显式带 `auto_commit_policy`，或通过 `PATCH /{id}/config` 修改（[§2.3](#_2-3-服务端会话与-commit-语义)）。
+- **直连 REST**：召回用 `POST /api/v1/search/search`（必须 `mode:"context"` + `session_id` 才有 expansion/去重，[§3.2.1](#_3-2-1-机制底座-一条共享管线-两条服务端路径)；可传 `rewrite` 获得服务端 digest，[§3.2.5](#_3-2-5-召回再摘要)）；写入用 `POST /api/v1/sessions/{id}/messages/batch`（≤100 条/批，auto_create）；提交用 `POST /api/v1/sessions/{id}/commit`；读取用 `GET /api/v1/content/read` 等。自动 commit policy 可来自 `server.user_config_defaults.auto_commit_policy`、`POST /api/v1/sessions` 或 `PATCH /{id}/config`（[§2.3](#_2-3-服务端会话与-commit-语义)）。
 - **LangChain / LangGraph SDK**（`pip install langchain-openviking`）：`OpenVikingContextMiddleware` 提供 `wrap_model_call`（把召回内容注入 `<openviking_context>`）与 `after_agent`（捕获 + 按 `CommitPolicy` 提交，默认 `never`）。这是本组唯一带 session + token 预算的现成自动召回；容错是"只读方法重试一次、写方法不重试"，部分成功时抛 `OpenVikingPartialWriteError`（可按 `input_messages_consumed` 切片重试）。参考 [§7](#_7-附录-非-coding-集成速览) B。
 - **Open WebUI**（OpenAPI 工具服务器）：`python -m openviking_openwebui` 起独立进程，在 Open WebUI 里添加 Tool Server URL，即可得 7 个工具（无删除、无 hook）。参考 [§7](#_7-附录-非-coding-集成速览) A。
 ## 6.4 路径③：要自动 hook 面时复用参考实现
@@ -714,7 +714,7 @@ MCP `write` / REST `content/write` 的三道 guard（`content_write.py`）：可
 - **`examples/memory-plugin-shared/lib/`**（Node）：包含完整的核心功能模块，例如 `recall-core`（三级降级召回）、`profile-inject`、`capture-utils`（消息归一 + 注入回流防护）、`pending-queue`（离线重放）、`batch-send`、`mcp-proxy-core`（stdio↔HTTP 代理）、`session-model`（会话 id 派生）以及 `credentials`。构建瘦 harness 时，只需实现一个适配层，把宿主生命周期事件映射到这些模块即可（例如 `agent-hook-runtime.mjs` 就是 cursor、trae、zcode 共用的现成一体化运行时，接新宿主时的主要工作只是解析其 stdin JSON 字段名）。
 - **Agent Plugins 1.0 便携包**（位于 `agent-plugins/`）：采用 `plugin.json` + `skills/` + `mcp.json`（stdio→HTTP 代理）的规范化便携格式。该方案刻意不含 hooks（召回/沉淀靠 skill 教模型自调工具），非常适合符合 Agent Plugins 规范的客户端直接加载；此外，`plugin.test.mjs` 定义了规范一致性校验（schema URL、name 规则、静态 headers 不含机密、`mcp.json` 引用不逃逸插件根等），可作为自行打包的 lint 依据。
 
-**接入时务必对齐的三个约定**（与现有 harness 保持一致的行为）：① 召回调用点必须转发 `session_id`，这样才有服务端 expansion + 跨轮去重（详见 [§3.2.1](#_3-2-1-机制底座-一条共享管线-两条服务端路径)）；② 适配器不要用自己的超时压过 helper 下发的 deadline；③ 关闭时要安排一条 commit 路径，否则未达阈值的尾部对话需等待后续触发才能归档（详见 [§3.3.3](#_3-3-3-关闭方式-×-harness-终局矩阵)）——若宿主不提供关闭事件，可依赖服务端 idle 兜底（在服务端开 `memory.session_auto_commit.idle_enabled` 并下发 per-session policy）。这三条正是 `recall-session-wiring.test.mjs` 用跨插件正则钉死的。
+**接入时务必对齐的三个约定**（与现有 harness 保持一致的行为）：① 召回调用点必须转发 `session_id`，这样才有服务端 expansion + 跨轮去重（详见 [§3.2.1](#_3-2-1-机制底座-一条共享管线-两条服务端路径)）；② 适配器不要用自己的超时压过 helper 下发的 deadline；③ 关闭时要安排一条 commit 路径，否则未达阈值的尾部对话需等待后续触发才能归档（详见 [§3.3.3](#_3-3-3-关闭方式-×-harness-终局矩阵)）——若宿主没有关闭事件，需开启 `memory.session_auto_commit.idle_enabled`，并提供 Session 级或部署级默认 policy。这三条正是 `recall-session-wiring.test.mjs` 用跨插件正则钉死的。
 
 ---
 

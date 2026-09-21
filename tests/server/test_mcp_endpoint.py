@@ -309,30 +309,36 @@ async def test_find_tool_calls_lightweight_find(service, monkeypatch):
 
 
 @pytest.mark.parametrize(
-    ("context_type", "expected_targets"),
+    ("context_type", "expected_targets", "expected_route"),
     [
-        ("skill", ["viking://user/test_user/skills", "viking://agent/skills"]),
-        (["skill"], ["viking://user/test_user/skills", "viking://agent/skills"]),
-        (["skill", "memory"], ""),
-        (None, ""),
+        ("skill", ["viking://user/test_user/skills", "viking://agent/skills"], "find_skills"),
+        (["skill"], ["viking://user/test_user/skills", "viking://agent/skills"], "find_skills"),
+        (["skill", "memory"], "", "find"),
+        (None, "", "find"),
     ],
 )
 async def test_find_tool_skill_only_searches_both_skill_roots(
-    service, monkeypatch, context_type, expected_targets
+    service, monkeypatch, context_type, expected_targets, expected_route
 ):
     captured = {}
 
-    async def fake_find(**kwargs):
-        captured.update(kwargs)
-        return SimpleNamespace(memories=[], resources=[], skills=[])
+    def _record(route):
+        async def fake(**kwargs):
+            captured["route"] = route
+            captured.update(kwargs)
+            return SimpleNamespace(memories=[], resources=[], skills=[])
 
-    monkeypatch.setattr(service.search, "find", fake_find)
+        return fake
+
+    monkeypatch.setattr(service.search, "find", _record("find"))
+    monkeypatch.setattr(service.search, "find_skills", _record("find_skills"))
     token = _mcp_ctx.set(RequestContext(DEFAULT_CTX.user, Role.USER))
     try:
         await mcp_endpoint.find(query="review a PR", context_type=context_type)
     finally:
         _mcp_ctx.reset(token)
 
+    assert captured["route"] == expected_route
     assert captured["target_uri"] == expected_targets
 
 
@@ -344,14 +350,14 @@ async def test_find_tool_points_skill_hits_at_their_skill_md(service, monkeypatc
     )
     read_uris = []
 
-    async def fake_find(**kwargs):
+    async def fake_find_skills(**kwargs):
         return SimpleNamespace(memories=[], resources=[], skills=[hit])
 
     async def fake_read_visible(uri, ctx):
         read_uris.append(uri)
         return "# Deploy runbook"
 
-    monkeypatch.setattr(service.search, "find", fake_find)
+    monkeypatch.setattr(service.search, "find_skills", fake_find_skills)
     monkeypatch.setattr(service.fs, "read_visible", fake_read_visible)
 
     result = await mcp_endpoint.find(query="roll back", context_type="skill", read_content=True)
@@ -360,6 +366,231 @@ async def test_find_tool_points_skill_hits_at_their_skill_md(service, monkeypatc
     assert ".abstract.md" not in result
     assert "# Deploy runbook" in result
     assert read_uris == ["viking://agent/skills/deploy-runbook/SKILL.md"]
+
+
+async def test_find_tool_points_an_auxiliary_file_hit_at_the_skill_md(service, monkeypatch):
+    hit = SimpleNamespace(
+        uri="viking://user/test_user/skills/pdf-forms/scripts/fill.py",
+        abstract="Fill a PDF form field by field",
+        score=0.52,
+    )
+
+    async def fake_find_skills(**kwargs):
+        return SimpleNamespace(memories=[], resources=[], skills=[hit])
+
+    monkeypatch.setattr(service.search, "find_skills", fake_find_skills)
+
+    result = await mcp_endpoint.find(query="fill a pdf", context_type="skill")
+
+    assert "- [skill 52%] viking://user/test_user/skills/pdf-forms/SKILL.md" in result
+    assert "scripts/fill.py" not in result
+
+
+async def test_find_tool_keeps_same_named_skills_from_both_roots(service, monkeypatch):
+    hits = [
+        SimpleNamespace(
+            uri="viking://user/test_user/skills/review/.abstract.md",
+            abstract="My own review skill",
+            score=0.70,
+        ),
+        SimpleNamespace(
+            uri="viking://agent/skills/review/.abstract.md",
+            abstract="The shared review skill",
+            score=0.60,
+        ),
+    ]
+
+    async def fake_find_skills(**kwargs):
+        return SimpleNamespace(memories=[], resources=[], skills=hits)
+
+    monkeypatch.setattr(service.search, "find_skills", fake_find_skills)
+
+    result = await mcp_endpoint.find(query="review", context_type="skill")
+
+    assert "Found 2 item(s)" in result
+    assert "viking://user/test_user/skills/review/SKILL.md" in result
+    assert "viking://agent/skills/review/SKILL.md" in result
+
+
+async def test_find_tool_collapses_several_hits_from_one_skill_package(service, monkeypatch):
+    hits = [
+        SimpleNamespace(
+            uri="viking://agent/skills/deploy/scripts/rollback.sh",
+            abstract="Roll back the last release",
+            score=0.44,
+        ),
+        SimpleNamespace(
+            uri="viking://agent/skills/deploy/.overview.md",
+            abstract="How the deploy skill works",
+            score=0.71,
+        ),
+    ]
+
+    async def fake_find(**kwargs):
+        return SimpleNamespace(memories=[], resources=[], skills=hits)
+
+    monkeypatch.setattr(service.search, "find", fake_find)
+
+    result = await mcp_endpoint.find(query="roll back", context_type=["skill", "memory"])
+
+    assert "Found 1 item(s)" in result
+    assert "- [skill 71%] viking://agent/skills/deploy/SKILL.md" in result
+    assert "How the deploy skill works" in result
+
+
+async def test_find_tool_forwards_its_bounds_to_find_skills(service, monkeypatch):
+    captured = {}
+
+    async def fake_find_skills(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(memories=[], resources=[], skills=[])
+
+    async def fail_find(**kwargs):
+        raise AssertionError("A skill-only find should call find_skills, not find")
+
+    monkeypatch.setattr(service.search, "find_skills", fake_find_skills)
+    monkeypatch.setattr(service.search, "find", fail_find)
+
+    await mcp_endpoint.find(
+        query="review a PR", limit=3, min_score=0.5, level=[0], context_type="skill"
+    )
+
+    assert captured["query"] == "review a PR"
+    assert captured["ctx"] == DEFAULT_CTX
+    assert captured["limit"] == 3
+    assert captured["score_threshold"] == 0.5
+    assert captured["level"] == [0]
+    # find_skills restricts by context type itself and takes no filter.
+    assert "filter" not in captured
+
+
+async def test_find_tool_forwards_an_explicit_skill_target_to_find_skills(service, monkeypatch):
+    captured = {}
+
+    async def fake_find_skills(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(memories=[], resources=[], skills=[])
+
+    monkeypatch.setattr(service.search, "find_skills", fake_find_skills)
+    token = _mcp_ctx.set(RequestContext(DEFAULT_CTX.user, Role.USER))
+    try:
+        await mcp_endpoint.find(
+            query="review a PR", target_uri="viking://~/skills", context_type="skill"
+        )
+    finally:
+        _mcp_ctx.reset(token)
+
+    assert captured["target_uri"] == "viking://user/test_user/skills"
+
+
+async def test_find_tool_keeps_a_filter_only_skill_query_on_the_generic_find(service, monkeypatch):
+    captured = {}
+
+    async def fake_find(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(memories=[], resources=[], skills=[])
+
+    async def fail_find_skills(**kwargs):
+        raise AssertionError("find_skills rejects an empty query")
+
+    monkeypatch.setattr(service.search, "find", fake_find)
+    monkeypatch.setattr(service.search, "find_skills", fail_find_skills)
+
+    await mcp_endpoint.find(query="", context_type="skill")
+
+    assert captured["filter"] == {"op": "must", "field": "context_type", "conds": ["skill"]}
+
+
+@pytest.mark.parametrize(
+    "hit_uri",
+    [
+        "viking://user/test_user/skills/.review.update-backup-ab12/SKILL.md",
+        "viking://agent/skills",
+    ],
+)
+async def test_find_tool_leaves_a_uri_outside_a_skill_package_alone(service, monkeypatch, hit_uri):
+    hit = SimpleNamespace(uri=hit_uri, abstract="Not an installed skill", score=0.4)
+
+    async def fake_find_skills(**kwargs):
+        return SimpleNamespace(memories=[], resources=[], skills=[hit])
+
+    monkeypatch.setattr(service.search, "find_skills", fake_find_skills)
+
+    result = await mcp_endpoint.find(query="review", context_type="skill")
+
+    assert f"- [skill 40%] {hit_uri}\n" in result
+    assert "SKILL.md/SKILL.md" not in result
+
+
+async def test_find_tool_describes_a_package_file_hit_with_the_skill_abstract(service, monkeypatch):
+    hit = SimpleNamespace(
+        uri="viking://agent/skills/pdf-forms/scripts/fill.py",
+        abstract="Iterate the AcroForm fields and write each value",
+        score=0.52,
+    )
+    abstract_uris = []
+
+    async def fake_find_skills(**kwargs):
+        return SimpleNamespace(memories=[], resources=[], skills=[hit])
+
+    async def fake_abstract(uri, ctx):
+        abstract_uris.append(uri)
+        return "name: pdf-forms\ndescription: Fill in a PDF form"
+
+    monkeypatch.setattr(service.search, "find_skills", fake_find_skills)
+    monkeypatch.setattr(service.fs, "abstract", fake_abstract)
+
+    result = await mcp_endpoint.find(query="fill a pdf", context_type="skill")
+
+    assert abstract_uris == ["viking://agent/skills/pdf-forms"]
+    assert "description: Fill in a PDF form" in result
+    assert "AcroForm" not in result
+
+
+async def test_find_tool_keeps_the_package_abstract_of_a_sidecar_hit(service, monkeypatch):
+    hit = SimpleNamespace(
+        uri="viking://agent/skills/pdf-forms/.abstract.md",
+        abstract="name: pdf-forms\ndescription: Fill in a PDF form",
+        score=0.52,
+    )
+
+    async def fake_find_skills(**kwargs):
+        return SimpleNamespace(memories=[], resources=[], skills=[hit])
+
+    async def fail_abstract(uri, ctx):
+        raise AssertionError("A package-level hit already carries the skill's abstract")
+
+    monkeypatch.setattr(service.search, "find_skills", fake_find_skills)
+    monkeypatch.setattr(service.fs, "abstract", fail_abstract)
+
+    result = await mcp_endpoint.find(query="fill a pdf", context_type="skill")
+
+    assert "description: Fill in a PDF form" in result
+
+
+async def test_search_tool_collapses_skill_package_hits(service, monkeypatch):
+    hits = [
+        SimpleNamespace(
+            uri="viking://agent/skills/deploy/scripts/rollback.sh",
+            abstract="Roll back the last release",
+            score=0.44,
+        ),
+        SimpleNamespace(
+            uri="viking://agent/skills/deploy/.overview.md",
+            abstract="How the deploy skill works",
+            score=0.71,
+        ),
+    ]
+
+    async def fake_search(**kwargs):
+        return SimpleNamespace(memories=[], resources=[], skills=hits)
+
+    monkeypatch.setattr(service.search, "search", fake_search)
+
+    result = await search(query="roll back", context_type="skill")
+
+    assert "Found 1 item(s)" in result
+    assert "- [skill 71%] viking://agent/skills/deploy/SKILL.md" in result
 
 
 async def test_find_tool_inlines_visible_content_when_requested(service, monkeypatch):

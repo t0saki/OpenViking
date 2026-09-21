@@ -81,9 +81,10 @@ export const GENERATED_HEADER = "// GENERATED FROM examples/memory-plugin-shared
 // here is.
 export const SKILLS_DIR = join(ROOT, "examples", "skills");
 export const SKILL_TARGETS = [
-  // Not shipped to openclaw-plugin: its REST tool surface has its own operator
-  // skill (openviking-context-database) with different tool names. Nor to
-  // agent-plugins, whose copy is a deliberately different hook-free variant.
+  // openviking-memory is not shipped to openclaw-plugin: its REST tool surface
+  // has its own operator skill (openviking-context-database) with different
+  // tool names. Nor to agent-plugins, whose copy of this one skill is a
+  // deliberately different hook-free variant.
   {
     skill: "openviking-memory",
     dir: join(ROOT, "examples", "codex-memory-plugin", "skills"),
@@ -104,7 +105,9 @@ export const SKILL_TARGETS = [
     dir: join(ROOT, "examples", "dsh-memory-plugin", "skills"),
     committed: true,
   },
-  // The MCP harnesses that bundle skills, where add_skill is a real tool.
+  // The harnesses that bundle skills. agent-plugins has no hooks, so no
+  // session-start catalog: there the skill is the only way the model learns
+  // that the skills in OpenViking exist.
   {
     skill: "openviking-skills",
     dir: join(ROOT, "examples", "codex-memory-plugin", "skills"),
@@ -125,7 +128,14 @@ export const SKILL_TARGETS = [
     dir: join(ROOT, "examples", "dsh-memory-plugin", "skills"),
     committed: true,
   },
-  // Only the two harnesses that ship the experience workflow today.
+  {
+    skill: "openviking-skills",
+    dir: join(ROOT, "agent-plugins", "skills"),
+    committed: true,
+  },
+  // The harnesses that ship the experience workflow today. agent-plugins has
+  // no hooks and so no session capture: its copy only retrieves and applies
+  // Experience, and its reads feed no trajectory back to the server.
   {
     skill: "ov-experience-memory",
     dir: join(ROOT, "examples", "codex-memory-plugin", "skills"),
@@ -134,6 +144,11 @@ export const SKILL_TARGETS = [
   {
     skill: "ov-experience-memory",
     dir: join(ROOT, "examples", "claude-code-memory-plugin", "skills"),
+    committed: true,
+  },
+  {
+    skill: "ov-experience-memory",
+    dir: join(ROOT, "agent-plugins", "skills"),
     committed: true,
   },
 ];
