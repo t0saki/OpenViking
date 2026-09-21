@@ -28,7 +28,7 @@ Zero npm dependencies — the proxy and the tests run on the Node.js standard li
 2. Point your Agent-Plugins-conforming client at the `agent-plugins/` directory. Each client has its own install command or plugin directory — consult its docs. On load the client will:
    - register the `openviking` MCP server from `mcp.json`, running `node <plugin>/servers/mcp-proxy.mjs` over stdio;
    - discover the `openviking-memory`, `ov-experience-memory`, `ov-memory-troubleshoot`, and `openviking-skills` skills from `skills/`.
-3. Configure credentials (below) and start a session. The model gains `find` / `search` / `read` / `list` / `grep` / `glob` / `remember` / `add_resource` / `forget` / `health`, plus `tree` / `write` / `edit` on recent servers.
+3. Configure credentials (below) and start a session. The model gains `find` / `search` / `read` / `list` / `grep` / `glob` / `remember` / `add_resource` / `forget` / `health`, plus `tree` / `write` / `edit` / `add_skill` on recent servers.
 
 ## Why a stdio proxy instead of a `streamable-http` entry
 
