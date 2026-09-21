@@ -27,7 +27,7 @@ const mcpEndpointPath = join(repoRoot, "openviking", "server", "mcp_endpoint.py"
 const canonicalExperienceSkillPath = join(repoRoot, "examples", "skills", "ov-experience-memory", "SKILL.md");
 const packagedExperienceSkillPath = join(pluginDir, "skills", "ov-experience-memory", "SKILL.md");
 
-const PLUGIN_NAME = "openviking-memory";
+const PLUGIN_NAME = "openviking";
 const REAL_MCP_TOOLS = [
   "find", "search", "read", "list", "tree", "remember", "write", "edit",
   "add_resource", "list_watches", "cancel_watch", "grep", "glob", "forget", "health",
@@ -52,7 +52,7 @@ test("repo-root marketplace catalog exists and is valid JSON", () => {
   assert.ok(Array.isArray(catalog.plugins) && catalog.plugins.length > 0, "catalog.plugins must be a non-empty array");
 });
 
-test("catalog lists openviking-memory and its source points at this plugin dir", () => {
+test("catalog lists openviking and its source points at this plugin dir", () => {
   const catalog = readJson(catalogPath);
   const entry = catalog.plugins.find((p) => p && p.name === PLUGIN_NAME);
   assert.ok(entry, `catalog must contain a plugin named "${PLUGIN_NAME}"`);
@@ -105,7 +105,7 @@ test("examples/.agents catalog backs the directory-marketplace install path", ()
   // The shared installer registers examples/ itself as a local marketplace in
   // dev/archive mode, so a Codex catalog must exist there too and stay
   // consistent with the repo-root one (same marketplace name -> same plugin id
-  // openviking-memory@openviking across all install modes).
+  // openviking@openviking across all install modes).
   const localCatalogPath = join(repoRoot, "examples", ".agents", "plugins", "marketplace.json");
   assert.ok(existsSync(localCatalogPath), `missing catalog at ${localCatalogPath}`);
   const localCatalog = readJson(localCatalogPath);

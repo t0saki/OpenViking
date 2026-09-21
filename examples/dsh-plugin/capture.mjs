@@ -5,7 +5,11 @@ import {
   shouldCaptureText,
 } from "./shared/capture-utils.mjs";
 
-export const OPENVIKING_PLUGIN_SOURCE = "openviking-memory";
+export const OPENVIKING_PLUGIN_SOURCE = "openviking";
+// Legacy sessions carry source.plugin = "openviking-memory"; the read-side
+// filters below treat both as self-owned injections so they are excluded from
+// recall queries and startup-profile detection.
+export const SELF_SOURCE_IDS = new Set(["openviking", "openviking-memory"]);
 
 export function pluginMessage(content, source) {
   // dsh's own constructor: identity, normalization, and any future Message
@@ -87,7 +91,7 @@ export function promptText(messages) {
   return (messages || [])
     .filter(message => !(
       message?.source?.kind === "plugin"
-      && message.source.plugin === OPENVIKING_PLUGIN_SOURCE
+      && SELF_SOURCE_IDS.has(message.source.plugin)
     ))
     .map(message => extractTextFromPayload(message))
     .filter(Boolean)

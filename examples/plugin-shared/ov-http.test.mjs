@@ -15,7 +15,7 @@ const CFG = {
   account: "acct-a",
   user: "user-a",
   sendIdentityHeaders: true,
-  userAgent: "openviking-memory-test/9.9.9",
+  userAgent: "openviking-test/9.9.9",
 };
 
 const originalFetch = globalThis.fetch;
@@ -187,7 +187,7 @@ test("a trusted server is told who the operator is; an untrusted one only gets t
     "X-OpenViking-Account": "acct-a",
     "X-OpenViking-User": "user-a",
     "X-OpenViking-Actor-Peer": "peer-a",
-    "User-Agent": "openviking-memory-test/9.9.9",
+    "User-Agent": "openviking-test/9.9.9",
   });
 
   const apiKeyOnly = respond(200, { status: "ok", result: {} });
@@ -199,7 +199,7 @@ test("a trusted server is told who the operator is; an untrusted one only gets t
     "Content-Type": "application/json",
     "Authorization": "Bearer secret",
     "X-OpenViking-Actor-Peer": "peer-a",
-    "User-Agent": "openviking-memory-test/9.9.9",
+    "User-Agent": "openviking-test/9.9.9",
   });
 });
 

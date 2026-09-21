@@ -22,7 +22,7 @@ function run(command, args, options = {}) {
 test("release marketplace archive supports a ZCode TOS install", () => {
   const tmp = mkdtempSync(join(tmpdir(), "openviking-zcode-release-"));
   try {
-    const stage = join(tmp, "memory-plugin-marketplace");
+    const stage = join(tmp, "plugin-marketplace");
     const staged = run("bash", [stageScript, stage]);
     assert.equal(staged.status, 0, `${staged.stdout}\n${staged.stderr}`);
 
@@ -31,7 +31,7 @@ test("release marketplace archive supports a ZCode TOS install", () => {
     );
     assert.deepEqual(bundled.slice(0, 3), [], "marketplace archive carries development dependencies");
 
-    const zipped = run("zip", ["-rq", join(tmp, "memory-plugin-marketplace.zip"), "memory-plugin-marketplace"], {
+    const zipped = run("zip", ["-rq", join(tmp, "plugin-marketplace.zip"), "plugin-marketplace"], {
       cwd: tmp,
     });
     assert.equal(zipped.status, 0, `${zipped.stdout}\n${zipped.stderr}`);
@@ -52,7 +52,7 @@ test("release marketplace archive supports a ZCode TOS install", () => {
         ...process.env,
         HOME: home,
         OPENVIKING_HOME: join(home, ".openviking"),
-        OPENVIKING_MARKETPLACE_ARCHIVE_URL: `file://${join(tmp, "memory-plugin-marketplace.zip")}`,
+        OPENVIKING_MARKETPLACE_ARCHIVE_URL: `file://${join(tmp, "plugin-marketplace.zip")}`,
       },
     });
     assert.equal(installed.status, 0, `${installed.stdout}\n${installed.stderr}`);
@@ -90,7 +90,7 @@ test("release marketplace archive supports a ZCode TOS install", () => {
     // carry is a hooks.json naming a script that is not there.
     const commands = JSON.stringify(config.hooks.events)
       .split(/"/u)
-      .filter((part) => part.includes("# openviking-memory"));
+      .filter((part) => part.includes("# openviking"));
     assert.ok(commands.length > 0, "no OpenViking hook commands were installed");
     for (const command of commands) {
       const script = /'([^']*\.mjs)'/u.exec(command)?.[1];
@@ -109,7 +109,7 @@ test("release marketplace archive supports a ZCode TOS install", () => {
 test("staging rejects an archive missing a generated shared copy", () => {
   const tmp = mkdtempSync(join(tmpdir(), "openviking-marketplace-check-"));
   try {
-    const stage = join(tmp, "memory-plugin-marketplace");
+    const stage = join(tmp, "plugin-marketplace");
     const staged = run("bash", [stageScript, stage]);
     assert.equal(staged.status, 0, `${staged.stdout}\n${staged.stderr}`);
     const stagedDirs = readdirSync(stage, { withFileTypes: true })

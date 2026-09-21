@@ -34,7 +34,7 @@ const CFG = {
   account: "acct-a",
   user: "user-a",
   peerId: "peer-a",
-  userAgent: "openviking-memory-test/9.9.9",
+  userAgent: "openviking-test/9.9.9",
   timeoutMs: 2000,
   captureTimeoutMs: 2000,
   requestTimeoutMs: 2000,
@@ -48,14 +48,14 @@ const TRUSTED = {
   "X-OpenViking-Account": "acct-a",
   "X-OpenViking-User": "user-a",
   "X-OpenViking-Actor-Peer": "peer-a",
-  "User-Agent": "openviking-memory-test/9.9.9",
+  "User-Agent": "openviking-test/9.9.9",
 };
 
 const API_KEY_ONLY = {
   "Content-Type": "application/json",
   "Authorization": "Bearer secret",
   "X-OpenViking-Actor-Peer": "peer-a",
-  "User-Agent": "openviking-memory-test/9.9.9",
+  "User-Agent": "openviking-test/9.9.9",
 };
 
 const STACKS = [

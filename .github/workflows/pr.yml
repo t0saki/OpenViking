@@ -78,6 +78,7 @@ jobs:
         run: |
           bash -n .github/scripts/stage-plugin-marketplace.sh
           bash -n examples/plugin-shared/install.sh
+          bash -n examples/memory-plugin-shared/install.sh
           bash -n examples/claude-code-plugin/setup-helper/install.sh
           bash -n examples/claude-code-plugin/setup-helper/tos-install.sh
           bash -n examples/codex-plugin/setup-helper/install.sh

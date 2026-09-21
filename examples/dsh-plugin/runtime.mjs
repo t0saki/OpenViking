@@ -12,7 +12,7 @@ import { isRetryableFailure } from "./shared/retryable.mjs";
 import { resolveEffectivePeerId } from "./shared/workspace-peer.mjs";
 import {
   captureEvent,
-  OPENVIKING_PLUGIN_SOURCE,
+  SELF_SOURCE_IDS,
   pluginMessage,
   promptText,
 } from "./capture.mjs";
@@ -420,6 +420,6 @@ function hasStartupProfile(agent) {
 
 function isStartupProfile(message) {
   return message?.source?.kind === "plugin"
-    && message.source.plugin === OPENVIKING_PLUGIN_SOURCE
+    && SELF_SOURCE_IDS.has(message.source.plugin)
     && message.source.form === "instructions";
 }

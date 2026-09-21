@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# OpenViking Memory Plugin for Codex — TOS bootstrap (China-friendly).
+# OpenViking Plugin for Codex — TOS bootstrap (China-friendly).
 #
 # For users who can't reach github.com / raw.githubusercontent.com. Pulls the
 # shared installer from Volcengine TOS and runs it with the TOS distribution

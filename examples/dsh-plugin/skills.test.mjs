@@ -35,7 +35,7 @@ test("the bundled skill stays readable without watching the installed package", 
   try {
     const candidates = await provider.list({ cwd: "/workspace" });
     assert.equal(candidates.length, 1);
-    assert.equal(candidates[0].name, "openviking-memory");
+    assert.equal(candidates[0].name, "openviking");
     assert.equal(candidates[0].source, "bundled");
     assert.equal(candidates[0].provider, "openviking");
     const skill = await provider.get(candidates[0], {});
@@ -47,9 +47,9 @@ test("the bundled skill stays readable without watching the installed package", 
 });
 
 test("the vendored skill ships at the served path", () => {
-  const skill = readFileSync(join(SKILLS_DIR, "openviking-memory", "SKILL.md"), "utf8");
+  const skill = readFileSync(join(SKILLS_DIR, "openviking", "SKILL.md"), "utf8");
 
-  assert.match(skill, /^---\nname: openviking-memory\n/);
+  assert.match(skill, /^---\nname: openviking\n/);
   // The skill text must stay harness-neutral: dsh publishes the tools under an
   // `mcp__openviking__` prefix, which is one of the forms it already names.
   assert.match(skill, /mcp__openviking__/);

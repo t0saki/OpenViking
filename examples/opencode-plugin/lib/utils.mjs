@@ -7,7 +7,7 @@ let logFilePath = null
 
 export function initLogger(dataDir) {
   fs.mkdirSync(dataDir, { recursive: true })
-  logFilePath = path.join(dataDir, "openviking-memory.log")
+  logFilePath = path.join(dataDir, "openviking.log")
 }
 
 export function safeStringify(value) {

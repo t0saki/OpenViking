@@ -45,8 +45,10 @@ import {
 import { describeInputFilters } from "./shared/input-filters.mjs";
 
 const PLUGIN_ROOT = resolvePath(dirname(fileURLToPath(import.meta.url)), "..");
-const PLUGIN_ID = "openviking-memory@openviking";
-const PLUGIN_NAME = "openviking-memory";
+const PLUGIN_ID = "openviking@openviking";
+const PLUGIN_NAME = "openviking";
+const LEGACY_PLUGIN_ID = "openviking-memory@openviking";
+const LEGACY_PLUGIN_NAME = "openviking-memory";
 const MARKETPLACE = "openviking";
 const LEGACY_MARKETPLACE = "openviking-plugins-local";
 const CODEX_DIR = join(homedir(), ".codex");
@@ -198,22 +200,32 @@ function checkInstall(report, { cliOnPath }) {
     if (list.ok) {
       const rows = tryJsonText(list.stdout)?.installed || [];
       const mine = rows.filter((r) => r?.pluginId === PLUGIN_ID);
-      const others = rows.filter((r) => r?.pluginId !== PLUGIN_ID && r?.name === PLUGIN_NAME && r?.installed);
-      if (!mine.length) report.fail(`codex plugin list does not show ${PLUGIN_ID}`, others.length ? `found: ${others.map((r) => r.pluginId).join(", ")}` : "",
-        "bash <(curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/main/examples/plugin-shared/install.sh) --harness codex");
-      else {
-        listed = mine[0];
+      const legacyMine = rows.filter((r) => r?.pluginId === LEGACY_PLUGIN_ID);
+      const others = rows.filter((r) => r?.pluginId !== PLUGIN_ID && r?.pluginId !== LEGACY_PLUGIN_ID && r?.name === PLUGIN_NAME && r?.installed);
+      if (!mine.length && !legacyMine.length) {
+        report.fail(`codex plugin list does not show ${PLUGIN_ID}`, others.length ? `found: ${others.map((r) => r.pluginId).join(", ")}` : "",
+          "bash <(curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/main/examples/plugin-shared/install.sh) --harness codex");
+      } else {
+        if (legacyMine.length && !mine.length) {
+          report.warn(`plugin is registered under the old id ${LEGACY_PLUGIN_ID}, not ${PLUGIN_ID}`, "the plugin was renamed; re-run the installer", `codex plugin remove ${LEGACY_PLUGIN_ID} && re-run the installer`);
+          listed = legacyMine[0];
+        } else {
+          listed = mine[0];
+        }
+        if (mine.length && legacyMine.length) {
+          report.warn(`both ${PLUGIN_ID} and ${LEGACY_PLUGIN_ID} are installed — hooks fire twice`, "", `codex plugin remove ${LEGACY_PLUGIN_ID}`);
+        }
         const path = listed.source?.path || "";
-        if (listed.installed === false) report.fail(`${PLUGIN_ID} is known to the marketplace but not installed`, "", `codex plugin add ${PLUGIN_ID}`);
-        else if (listed.enabled === false) report.fail(`${PLUGIN_ID} is installed but disabled`, "", `set [plugins."${PLUGIN_ID}"] enabled = true in ${homeShort(CODEX_CONFIG)}`);
-        else report.ok(`codex plugin list: ${PLUGIN_ID} ${listed.version || ""} installed, enabled`);
+        if (listed.installed === false) report.fail(`${listed.pluginId} is known to the marketplace but not installed`, "", `codex plugin add ${PLUGIN_ID}`);
+        else if (listed.enabled === false) report.fail(`${listed.pluginId} is installed but disabled`, "", `set [plugins."${listed.pluginId}"] enabled = true in ${homeShort(CODEX_CONFIG)}`);
+        else report.ok(`codex plugin list: ${listed.pluginId} ${listed.version || ""} installed, enabled`);
         if (path) {
           report.info(`marketplace copy: ${homeShort(path)}`);
           if (!existsPath(join(path, ".codex-plugin", "plugin.json"))) report.fail("marketplace copy no longer exists on disk", homeShort(path), "re-run the installer");
         }
         if (listed.version && listed.version !== version && inCache) report.info(`marketplace lists ${listed.version}; this cache copy is ${version}`);
       }
-      if (others.length) report.warn("more than one copy of openviking-memory is installed", others.map((r) => `${r.pluginId} (${r.enabled ? "enabled" : "disabled"})`).join(", "), "remove the stale one or hooks fire twice");
+      if (others.length) report.warn("more than one copy of openviking is installed", others.map((r) => `${r.pluginId} (${r.enabled ? "enabled" : "disabled"})`).join(", "), "remove the stale one or hooks fire twice");
     } else {
       report.info(`codex plugin list --json failed (${list.error || list.stderr.split("\n")[0]})`);
     }
@@ -259,9 +271,18 @@ function checkInstall(report, { cliOnPath }) {
       );
     }
     const pluginSection = toml[`plugins."${PLUGIN_ID}"`];
-    if (!pluginSection) report.warn(`no [plugins."${PLUGIN_ID}"] section`, "the installer normally writes enabled = true here");
-    else if (pluginSection.enabled === false) report.fail(`[plugins."${PLUGIN_ID}"] enabled = false`, "", "set enabled = true");
-    else report.ok(`[plugins."${PLUGIN_ID}"] enabled = ${pluginSection.enabled ?? "(unset)"}`);
+    const legacyPluginSection = toml[`plugins."${LEGACY_PLUGIN_ID}"`];
+    if (!pluginSection && !legacyPluginSection) report.warn(`no [plugins."${PLUGIN_ID}"] section`, "the installer normally writes enabled = true here");
+    else if (pluginSection && legacyPluginSection) {
+      if (pluginSection.enabled === false) report.fail(`[plugins."${PLUGIN_ID}"] enabled = false`, "", "set enabled = true");
+      else report.ok(`[plugins."${PLUGIN_ID}"] enabled = ${pluginSection.enabled ?? "(unset)"}`);
+      report.warn(`both [plugins."${PLUGIN_ID}"] and [plugins."${LEGACY_PLUGIN_ID}"] sections exist — plugins may fire twice`, "", `remove the legacy [plugins."${LEGACY_PLUGIN_ID}"] section from ${homeShort(CODEX_CONFIG)}`);
+    } else if (legacyPluginSection && !pluginSection) {
+      report.warn(`[plugins."${LEGACY_PLUGIN_ID}"] found under old id, not ${PLUGIN_ID}`, "the plugin was renamed; re-run the installer", `codex plugin remove ${LEGACY_PLUGIN_ID} && re-run the installer`);
+    } else if (pluginSection) {
+      if (pluginSection.enabled === false) report.fail(`[plugins."${PLUGIN_ID}"] enabled = false`, "", "set enabled = true");
+      else report.ok(`[plugins."${PLUGIN_ID}"] enabled = ${pluginSection.enabled ?? "(unset)"}`);
+    }
     const mktSection = toml[`marketplaces.${MARKETPLACE}`];
     if (mktSection?.source) report.info(`[marketplaces.${MARKETPLACE}] ${mktSection.source_type || ""} ${mktSection.source} ref=${mktSection.ref || "?"}`);
 
@@ -277,8 +298,25 @@ function checkInstall(report, { cliOnPath }) {
     if (disabled.length) report.fail(`hooks disabled in [hooks.state]: ${disabled.join(", ")}`, "", `remove enabled = false from those [hooks.state] sections in ${homeShort(CODEX_CONFIG)}`);
     if (untrusted.length) report.info(`hooks without a trust record yet: ${untrusted.join(", ")} (Codex records trusted_hash the first time a hook is approved; a changed hooks.json — including a newly added event such as pre_tool_use — needs re-approval)`);
     if (trusted.length === HOOK_EVENTS.length) report.ok(`all ${HOOK_EVENTS.length} hooks have trust records in config.toml`);
-    const legacyKeys = Object.keys(toml).filter((k) => k.includes(LEGACY_MARKETPLACE));
-    if (legacyKeys.length) report.info(`config.toml still has ${legacyKeys.length} section(s) for the legacy id ${LEGACY_MARKETPLACE} (harmless)`);
+    const legacyKeys = Object.keys(toml).filter((k) => k.includes(LEGACY_MARKETPLACE) || k.includes(LEGACY_PLUGIN_NAME));
+    if (legacyKeys.length) report.info(`config.toml still has ${legacyKeys.length} section(s) referencing the legacy id or marketplace (review the migration warnings below)`);
+    // Detect legacy MCP server config: the MCP server key was renamed from
+    // "openviking-memory" to "openviking". The TOML section can appear as the
+    // bare key [mcp_servers.openviking-memory], the quoted key
+    // [mcp_servers."openviking-memory"] (readToml preserves quotes in section
+    // headers), or a subtable like [mcp_servers.openviking-memory.env].
+    const mcpLegacyKeys = Object.keys(toml).filter((k) => {
+      const bare = /^mcp_servers\.openviking-memory(?:\..*)?$/.test(k);
+      const quoted = /^mcp_servers\."openviking-memory"(?:\..*)?$/.test(k);
+      return bare || quoted;
+    });
+    if (mcpLegacyKeys.length) {
+      report.warn(
+        "config.toml has a legacy [mcp_servers.openviking-memory] section" + (mcpLegacyKeys.length > 1 ? " and subtable(s)" : ""),
+        "the MCP server key was renamed to 'openviking'; the old key still works and can cause duplicate MCP tool listings",
+        `remove ${mcpLegacyKeys.length > 1 ? "those sections" : "the [mcp_servers.openviking-memory] section"} from ${homeShort(CODEX_CONFIG)} (the plugin now registers under the 'openviking' key)`,
+      );
+    }
   }
 
   // Legacy artifacts
@@ -432,7 +470,7 @@ function isDirectRun() {
 
 if (isDirectRun()) {
   runDoctor(HOST).catch((err) => {
-    console.error("ov-memory-doctor failed:", err?.stack || err?.message || err);
+    console.error("ov-plugin-doctor failed:", err?.stack || err?.message || err);
     process.exit(2);
   });
 }

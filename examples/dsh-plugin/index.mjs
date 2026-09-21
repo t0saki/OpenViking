@@ -6,7 +6,7 @@ import { OpenVikingRuntime } from "./runtime.mjs";
 import { mountOpenVikingSkills } from "./skills.mjs";
 import { guardVikingUri, noticeVikingUri } from "./uri-guard.mjs";
 
-export const name = "openviking-memory";
+export const name = "openviking";
 export const inject = ["agents", "sessions", "tools"];
 
 export function apply(ctx, input = {}) {
@@ -16,10 +16,10 @@ export function apply(ctx, input = {}) {
   const skipMemory = session => (
     config.skipSubagentSessions && session?.header?.origin === "subagent"
   );
-  ctx.provide("openvikingMemory", runtime);
+  ctx.provide("openviking", runtime);
   ctx.effect(
     () => () => runtime.disposeAll(),
-    "openvikingMemory.disposeAll()",
+    "openviking.disposeAll()",
   );
   // The pending-queue drainer is the in-process recovery path: without it a
   // single transient write failure latches capture/commit until the next dsh
@@ -27,14 +27,14 @@ export function apply(ctx, input = {}) {
   runtime.startDrainer();
   ctx.effect(
     () => () => runtime.stopDrainer(),
-    "openvikingMemory.stopDrainer()",
+    "openviking.stopDrainer()",
   );
 
   ctx.on("agent/session-start", ({ agent }) => {
     if (skipMemory(agent.session)) return false;
     agent.ctx.effect(
       () => () => runtime.dispose(agent.session),
-      "openvikingMemory.disposeSession()",
+      "openviking.disposeSession()",
     );
     return injectStartupProfile(agent, runtime);
   });

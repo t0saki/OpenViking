@@ -57,8 +57,8 @@ const CLIENTS = {
     hooks: () => join(homedir(), ".cursor", "hooks.json"),
     mcp: () => join(homedir(), ".cursor", "mcp.json"),
     extras: () => [
-      join(homedir(), ".cursor", "rules", "openviking-memory.mdc"),
-      join(homedir(), ".cursor", "skills", "openviking-memory", "SKILL.md"),
+      join(homedir(), ".cursor", "rules", "openviking.mdc"),
+      join(homedir(), ".cursor", "skills", "openviking", "SKILL.md"),
     ],
     timeoutBudgets: { beforeSubmitPrompt: "recallTimeoutMs", stop: "captureTimeoutMs" },
   },
@@ -168,6 +168,28 @@ function checkInstall(report) {
   for (const extra of SPEC.extras?.() || []) {
     if (!existsPath(extra)) report.warn(`${homeShort(extra)} is missing`, "", `re-run the installer with --harness ${CLIENT}`);
   }
+  // Detect duplicate old/new Cursor rules and skill files
+  if (CLIENT === "cursor") {
+    const oldRule = join(homedir(), ".cursor", "rules", "openviking-memory.mdc");
+    const newRule = join(homedir(), ".cursor", "rules", "openviking.mdc");
+    if (existsPath(oldRule) && existsPath(newRule)) {
+      report.warn("both openviking-memory.mdc and openviking.mdc exist in Cursor rules", "duplicate rules may fire twice", `rm ${homeShort(oldRule)} to remove the legacy file`);
+    }
+    const oldSkill = join(homedir(), ".cursor", "skills", "openviking-memory", "SKILL.md");
+    const newSkill = join(homedir(), ".cursor", "skills", "openviking", "SKILL.md");
+    if (existsPath(oldSkill) && existsPath(newSkill)) {
+      report.warn("both openviking-memory/ and openviking/ skill directories exist", "duplicate skills may load twice", `rm -r ${homeShort(join(homedir(), ".cursor", "skills", "openviking-memory"))} to remove the legacy dir`);
+    }
+  }
+
+  const agentDir = join(process.env.OPENVIKING_HOME || join(homedir(), ".openviking"), "agent-integrations");
+  if (existsPath(join(agentDir, "memory-plugin-shared")) && existsPath(join(agentDir, "plugin-shared"))) {
+    report.warn(
+      "both old and new shared runtime directories exist",
+      "an integration not yet upgraded may still import memory-plugin-shared",
+      "re-run the installer for the remaining hosts; it removes the old runtime after its last reference is migrated",
+    );
+  }
 }
 
 function checkConfig(report, cfg, host) {
@@ -251,7 +273,7 @@ function isDirectRun() {
 
 if (isDirectRun()) {
   runDoctor(HOST).catch((err) => {
-    console.error("ov-memory-doctor failed:", err?.stack || err?.message || err);
+    console.error("ov-plugin-doctor failed:", err?.stack || err?.message || err);
     process.exit(2);
   });
 }

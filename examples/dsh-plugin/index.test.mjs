@@ -8,7 +8,7 @@ test("session filtering skips subagents without changing main-session recall", a
   const ctx = {
     logger: { debug() {} },
     provide(name, value) {
-      if (name === "openvikingMemory") memoryRuntime = value;
+      if (name === "openviking") memoryRuntime = value;
     },
     effect(execute) {
       execute();

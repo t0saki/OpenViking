@@ -1,6 +1,6 @@
 name: Plugin npm Release
 
-# Publishes the memory plugins that ship as npm packages. One push filter covers
+# Publishes the OpenViking plugins that ship as npm packages. One push filter covers
 # every package in the matrix, so a change to one of them also starts the other
 # legs; those legs stop at the already-published check instead of republishing.
 
@@ -30,7 +30,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - package: "@openviking/dsh-memory-plugin"
+          - package: "@openviking/dsh-plugin"
             directory: examples/dsh-plugin
             install: npm ci
           - package: "@openviking/opencode-plugin"

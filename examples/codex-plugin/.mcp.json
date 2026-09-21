@@ -1,6 +1,6 @@
 {
   "mcpServers": {
-    "openviking-memory": {
+    "openviking": {
       "command": "node",
       "args": [
         "servers/mcp-proxy.mjs"

@@ -304,7 +304,7 @@ test("profile delivery uses current DSH session-owned history on resume and fork
     data: {
       role: "user",
       content: [{ type: "text", text: "stored profile" }],
-      source: { kind: "plugin", plugin: "openviking-memory", form: "instructions" },
+      source: { kind: "plugin", plugin: "openviking", form: "instructions" },
     },
   };
   for (const [id, ownEvents, expected] of [
@@ -333,6 +333,32 @@ test("profile delivery uses current DSH session-owned history on resume and fork
     assert.equal(state.profileDelivered, true, id);
     assert.equal(await runtime.profileMessage({ session }), null, id);
   }
+});
+
+test("startup profile detection is compatible with legacy openviking-memory source", async () => {
+  const profile = {
+    type: "user/message",
+    data: {
+      role: "user",
+      content: [{ type: "text", text: "stored profile" }],
+      source: { kind: "plugin", plugin: "openviking-memory", form: "instructions" },
+    },
+  };
+  const runtime = new OpenVikingRuntime({}, config(), { debug() {} });
+  const session = {
+    id: "legacy-profile",
+    header: { cwd: "/workspace" },
+    events: [profile],
+  };
+  const state = runtime.stateFor(session);
+  state.ready = true;
+  state.profileBlock = "current profile";
+
+  // Legacy source.plugin = "openviking-memory" should still be recognized as a
+  // delivered startup profile, preventing a duplicate injection.
+  const message = await runtime.profileMessage({ session });
+  assert.equal(message, null);
+  assert.equal(state.profileDelivered, true);
 });
 
 test("disposeAll drains every live session", async () => {

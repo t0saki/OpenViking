@@ -51,8 +51,10 @@ import { describeInputFilters } from "./shared/input-filters.mjs";
 import { isBypassed } from "./shared/session-model.mjs";
 
 const PLUGIN_ROOT = resolvePath(dirname(fileURLToPath(import.meta.url)), "..");
-const PLUGIN_ID = "openviking-memory@openviking";
-const PLUGIN_NAME = "openviking-memory";
+const PLUGIN_ID = "openviking@openviking";
+const PLUGIN_NAME = "openviking";
+const LEGACY_PLUGIN_ID = "openviking-memory@openviking";
+const LEGACY_PLUGIN_NAME = "openviking-memory";
 const MARKETPLACE = "openviking";
 const LEGACY_MARKETPLACE = "openviking-plugins-local";
 const CLAUDE_DIR = join(homedir(), ".claude");
@@ -80,11 +82,11 @@ function checkInstall(report, { cliOnPath }) {
   report.info(`running from ${homeShort(PLUGIN_ROOT)} (version ${version}, ${inCache ? "marketplace cache" : "directory install / dev checkout"})`);
 
   const missing = REQUIRED_PLUGIN_FILES.filter((rel) => !existsPath(join(PLUGIN_ROOT, rel)));
-  if (missing.length) report.fail("plugin files missing", missing.join(", "), "reinstall: claude plugin uninstall openviking-memory@openviking && claude plugin install openviking-memory@openviking");
+  if (missing.length) report.fail("plugin files missing", missing.join(", "), `reinstall: claude plugin uninstall ${PLUGIN_ID} && claude plugin install ${PLUGIN_ID}`);
   else report.ok("plugin files present (hooks, MCP proxy, scripts)");
   if (!existsPath(join(PLUGIN_ROOT, "skills"))) {
     report.warn("no skills/ directory in this plugin copy", "the installed copy predates the bundled skills; Claude Code caches by version, so `claude plugin update` is a no-op until the version changes",
-      "claude plugin marketplace update openviking && claude plugin uninstall openviking-memory@openviking && claude plugin install openviking-memory@openviking");
+      `claude plugin marketplace update openviking && claude plugin uninstall ${PLUGIN_ID} && claude plugin install ${PLUGIN_ID}`);
   }
 
   // Registry: installed_plugins.json
@@ -96,11 +98,18 @@ function checkInstall(report, { cliOnPath }) {
     report.fail("~/.claude/plugins/installed_plugins.json is unreadable", installed.error);
   } else {
     const plugins = installed.data.plugins || {};
-    const ids = Object.keys(plugins).filter((id) => id.startsWith(`${PLUGIN_NAME}@`) || id.startsWith("claude-code-plugin@"));
+    const ids = Object.keys(plugins).filter((id) => id.startsWith(`${PLUGIN_NAME}@`) || id.startsWith(`${LEGACY_PLUGIN_NAME}@`) || id.startsWith("claude-code-plugin@"));
     const entries = Array.isArray(plugins[PLUGIN_ID]) ? plugins[PLUGIN_ID] : (plugins[PLUGIN_ID] ? [plugins[PLUGIN_ID]] : []);
     if (!entries.length) {
-      report.fail(`${PLUGIN_ID} is not registered in installed_plugins.json`, ids.length ? `found instead: ${ids.join(", ")}` : "",
-        "bash <(curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/main/examples/plugin-shared/install.sh) --harness claude");
+      // Check the legacy id
+      const legacyEntries = Array.isArray(plugins[LEGACY_PLUGIN_ID]) ? plugins[LEGACY_PLUGIN_ID] : (plugins[LEGACY_PLUGIN_ID] ? [plugins[LEGACY_PLUGIN_ID]] : []);
+      if (legacyEntries.length) {
+        report.warn(`${LEGACY_PLUGIN_ID} is registered under the old id, not ${PLUGIN_ID}`, "the plugin was renamed; the old id still works but should be updated",
+          `claude plugin uninstall ${LEGACY_PLUGIN_ID} && re-run the installer (bash <(curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/main/examples/plugin-shared/install.sh) --harness claude)`);
+      } else {
+        report.fail(`${PLUGIN_ID} is not registered in installed_plugins.json`, ids.length ? `found instead: ${ids.join(", ")}` : "",
+          "bash <(curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/main/examples/plugin-shared/install.sh) --harness claude");
+      }
     } else {
       const entry = entries[0];
       installPath = entry.installPath || "";
@@ -117,7 +126,14 @@ function checkInstall(report, { cliOnPath }) {
       }
       if (entries.length > 1) report.warn(`${PLUGIN_ID} has ${entries.length} install records`, entries.map((e) => `${e.scope}: ${homeShort(e.installPath || "")}`).join("\n"));
     }
-    const extra = ids.filter((id) => id !== PLUGIN_ID);
+    // Detect both old and new ids enabled simultaneously
+    const newEnabled = plugins[PLUGIN_ID];
+    const legacyEnabled = plugins[LEGACY_PLUGIN_ID];
+    if (newEnabled && legacyEnabled) {
+      report.warn(`${PLUGIN_ID} and ${LEGACY_PLUGIN_ID} are both installed in the registry — settings.json decides which one actually runs`, "",
+        `claude plugin uninstall ${LEGACY_PLUGIN_ID}`);
+    }
+    const extra = ids.filter((id) => id !== PLUGIN_ID && id !== LEGACY_PLUGIN_ID);
     if (extra.length) {
       report.warn("additional openviking plugin ids are installed", extra.join(", "), `claude plugin uninstall <id> for each stale copy (legacy marketplace ${LEGACY_MARKETPLACE})`);
     }
@@ -165,11 +181,17 @@ function checkInstall(report, { cliOnPath }) {
   if (settings.exists && !settings.ok) {
     report.fail("~/.claude/settings.json is not valid JSON", settings.error, "fix the JSON — Claude Code ignores the whole file otherwise");
   } else if (settings.ok) {
-    const enabled = settings.data.enabledPlugins?.[PLUGIN_ID];
-    if (enabled === true) report.ok(`enabledPlugins["${PLUGIN_ID}"] = true`);
-    else if (enabled === false) report.fail(`plugin is disabled in ~/.claude/settings.json`, "", `claude plugin enable ${PLUGIN_ID}`);
+    const newEnabled = settings.data.enabledPlugins?.[PLUGIN_ID];
+    const legacyEnabled = settings.data.enabledPlugins?.[LEGACY_PLUGIN_ID];
+    if (newEnabled === true) report.ok(`enabledPlugins["${PLUGIN_ID}"] = true`);
+    else if (legacyEnabled === true) {
+      report.warn(`enabledPlugins["${LEGACY_PLUGIN_ID}"] = true (old id)`, `the plugin id was renamed to ${PLUGIN_ID}`, `claude plugin enable ${PLUGIN_ID} && claude plugin disable ${LEGACY_PLUGIN_ID}`);
+    } else if (newEnabled === false) report.fail(`plugin is disabled in ~/.claude/settings.json`, "", `claude plugin enable ${PLUGIN_ID}`);
     else report.warn(`enabledPlugins has no entry for ${PLUGIN_ID}`, "installed but never enabled (or enabled at another scope)", `claude plugin enable ${PLUGIN_ID}`);
-    const otherEnabled = Object.entries(settings.data.enabledPlugins || {}).filter(([id, on]) => on && id !== PLUGIN_ID && /openviking|claude-code-plugin/.test(id));
+    if (newEnabled === true && legacyEnabled === true) {
+      report.warn(`both ${PLUGIN_ID} and ${LEGACY_PLUGIN_ID} are enabled in settings.json — every hook fires twice`, "", `claude plugin disable ${LEGACY_PLUGIN_ID}`);
+    }
+    const otherEnabled = Object.entries(settings.data.enabledPlugins || {}).filter(([id, on]) => on && id !== PLUGIN_ID && id !== LEGACY_PLUGIN_ID && /openviking|claude-code-plugin/.test(id));
     if (otherEnabled.length) report.warn("more than one openviking plugin is enabled", otherEnabled.map(([id]) => id).join(", "), "disable/uninstall the stale one or hooks fire twice");
 
     const hooksText = JSON.stringify(settings.data.hooks || {});
@@ -191,6 +213,20 @@ function checkInstall(report, { cliOnPath }) {
     const envBlock = settings.data.env || {};
     const envKeys = Object.keys(envBlock).filter((k) => k.startsWith("OPENVIKING_"));
     if (envKeys.length) report.info(`~/.claude/settings.json env block sets ${envKeys.join(", ")}`);
+
+    // Old MCP tool permissions: permissions.allow entries with
+    // "mcp__plugin_openviking-memory_*" are stale — the plugin id was renamed
+    // and permissions granted for the old id don't carry over.
+    const perms = settings.data.permissions?.allow || settings.data.permissions?.deny || {};
+    const permEntries = Array.isArray(perms) ? perms : Object.keys(perms).filter((k) => perms[k] !== false);
+    const oldPerms = permEntries.filter((e) => typeof e === "string" && e.includes("openviking-memory"));
+    if (oldPerms.length) {
+      report.warn(
+        "settings.json has MCP tool permissions referencing the old plugin id 'openviking-memory'",
+        `the plugin was renamed to 'openviking'; ${oldPerms.length} permission entry(s) refer to the stale id and won't apply`,
+        "remove the old permission entries from ~/.claude/settings.json (the user will be re-prompted for the new id)",
+      );
+    }
   } else {
     report.warn("~/.claude/settings.json not found", "no enabledPlugins entry can exist without it");
   }
@@ -228,7 +264,7 @@ function checkInstall(report, { cliOnPath }) {
       report.info(`claude plugin list --json failed (${list.error || list.stderr.split("\n")[0]})`);
     }
   }
-  report.info("MCP wiring: `claude mcp list` shows the plugin server as plugin:openviking-memory:openviking (slow; run it when MCP tools are missing)");
+  report.info("MCP wiring: `claude mcp list` shows the plugin server as plugin:openviking:openviking (slow; run it when MCP tools are missing)");
 }
 
 function checkConfig(report, cfg, host) {
@@ -375,7 +411,7 @@ function isDirectRun() {
 
 if (isDirectRun()) {
   runDoctor(HOST).catch((err) => {
-    console.error("ov-memory-doctor failed:", err?.stack || err?.message || err);
+    console.error("ov-plugin-doctor failed:", err?.stack || err?.message || err);
     process.exit(2);
   });
 }

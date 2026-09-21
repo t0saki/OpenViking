@@ -217,7 +217,7 @@ test("keeps outer exec and captures its nested MCP tool by the nested call id", 
           type: "custom_tool_call",
           call_id: "call-outer",
           name: "exec",
-          input: "await tools.mcp__openviking_memory__read(...)",
+          input: "await tools.mcp__openviking__read(...)",
         },
       },
       {
@@ -234,7 +234,7 @@ test("keeps outer exec and captures its nested MCP tool by the nested call id", 
           type: "mcp_tool_call_end",
           call_id: "code-mode-nested:7:call-outer:exec-read",
           invocation: {
-            server: "openviking-memory",
+            server: "openviking",
             tool: "read",
             arguments: { uris: [uri] },
           },
@@ -280,7 +280,7 @@ test("keeps outer exec when a nested tool reuses its call id", () => {
           type: "custom_tool_call",
           call_id: "shared-call-id",
           name: "exec",
-          input: "await tools.mcp__openviking_memory__find(...)",
+          input: "await tools.mcp__openviking__find(...)",
         },
       },
       {
@@ -297,7 +297,7 @@ test("keeps outer exec when a nested tool reuses its call id", () => {
           type: "mcp_tool_call_end",
           call_id: "shared-call-id",
           invocation: {
-            server: "openviking-memory",
+            server: "openviking",
             tool: "find",
             arguments: { query: "refund" },
           },
@@ -464,7 +464,7 @@ test("captures completed paginated tools without duplicating legacy events", () 
           item: {
             type: "McpToolCall",
             id: "nested-find",
-            server: "openviking-memory",
+            server: "openviking",
             tool: "find",
             arguments: { query: "refund" },
             status: "completed",
@@ -478,7 +478,7 @@ test("captures completed paginated tools without duplicating legacy events", () 
           type: "mcp_tool_call_end",
           call_id: "nested-find",
           invocation: {
-            server: "openviking-memory",
+            server: "openviking",
             tool: "find",
             arguments: { query: "refund" },
           },
@@ -492,7 +492,7 @@ test("captures completed paginated tools without duplicating legacy events", () 
           item: {
             type: "McpToolCall",
             id: "nested-read",
-            server: "openviking-memory",
+            server: "openviking",
             tool: "read",
             arguments: { uris: [experienceUri] },
             status: "completed",
@@ -785,7 +785,7 @@ test("captures generic OpenViking MCP calls as standard tool parts", () => {
           type: "mcp_tool_call_end",
           call_id: "exec-search-1",
           invocation: {
-            server: "openviking-memory",
+            server: "openviking",
             tool: "find",
             arguments: {
               query: "无订单号换货",
@@ -846,7 +846,7 @@ test("keeps MCP tool-level errors out of completed generic read tool parts", () 
           type: "mcp_tool_call_end",
           call_id: "exec-read-error",
           invocation: {
-            server: "openviking-memory",
+            server: "openviking",
             tool: "read",
             arguments: { uri },
           },
@@ -877,7 +877,7 @@ test("marks paginated MCP errors as failed tool parts", () => {
           item: {
             type: "McpToolCall",
             id: "nested-read-error",
-            server: "openviking-memory",
+            server: "openviking",
             tool: "read",
             arguments: { uris: ["viking://user/test/memories/experiences/a.md"] },
             status: "failed",
@@ -906,7 +906,7 @@ test("preserves generic read input when Codex truncates a long MCP result", () =
           type: "mcp_tool_call_end",
           call_id: "exec-read-long",
           invocation: {
-            server: "openviking-memory",
+            server: "openviking",
             tool: "read",
             arguments: { uri },
           },
@@ -942,7 +942,7 @@ test("keeps search Experience results parseable when snippets are long", () => {
           type: "mcp_tool_call_end",
           call_id: "exec-search-long",
           invocation: {
-            server: "openviking-memory",
+            server: "openviking",
             tool: "find",
             arguments: { query: "换货" },
           },

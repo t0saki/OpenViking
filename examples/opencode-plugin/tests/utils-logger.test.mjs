@@ -10,7 +10,7 @@ test("initLogger creates the OpenViking log file path and log writes JSONL", asy
   try {
     initLogger(dir)
     log("INFO", "test", "hello", { ok: true })
-    const raw = await readFile(join(dir, "openviking-memory.log"), "utf8")
+    const raw = await readFile(join(dir, "openviking.log"), "utf8")
     assert.match(raw, /"tool":"test"/)
     assert.match(raw, /"message":"hello"/)
   } finally {

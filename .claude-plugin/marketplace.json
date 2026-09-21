@@ -4,10 +4,13 @@
   "owner": {
     "name": "OpenViking"
   },
+  "renames": {
+    "openviking-memory": "openviking"
+  },
   "plugins": [
     {
-      "name": "openviking-memory",
-      "description": "Long-term semantic memory for Claude Code, powered by OpenViking",
+      "name": "openviking",
+      "description": "OpenViking context database for Claude Code",
       "source": {
         "source": "git-subdir",
         "url": "https://github.com/volcengine/OpenViking.git",

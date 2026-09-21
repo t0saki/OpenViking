@@ -14,7 +14,7 @@ const manifestPath = join(pluginDir, ".claude-plugin", "plugin.json");
 const canonicalExperienceSkillPath = join(repoRoot, "examples", "skills", "ov-experience-memory", "SKILL.md");
 const packagedExperienceSkillPath = join(pluginDir, "skills", "ov-experience-memory", "SKILL.md");
 
-const PLUGIN_NAME = "openviking-memory";
+const PLUGIN_NAME = "openviking";
 
 function readJson(path) {
   return JSON.parse(readFileSync(path, "utf-8"));
@@ -32,18 +32,20 @@ test("repo-root Claude marketplace catalog uses git-subdir source", () => {
     path: "examples/claude-code-plugin",
     ref: "main",
   });
+  assert.deepEqual(catalog.renames, { "openviking-memory": "openviking" });
 });
 
 test("local Claude marketplace entry name matches plugin manifest", () => {
   const catalog = readJson(localCatalogPath);
   const manifest = readJson(manifestPath);
   // Same marketplace name in remote and directory mode keeps the plugin id
-  // (openviking-memory@openviking) stable across install modes.
+  // (openviking@openviking) stable across install modes.
   assert.equal(catalog.name, "openviking");
   const entry = catalog.plugins?.find((p) => p?.name === PLUGIN_NAME);
   assert.ok(entry, `local catalog must contain ${PLUGIN_NAME}`);
   assert.equal(entry.name, manifest.name);
   assert.equal(entry.source, "./claude-code-plugin");
+  assert.deepEqual(catalog.renames, { "openviking-memory": "openviking" });
 });
 
 test("marketplace package ships the canonical Experience skill", () => {
@@ -93,10 +95,10 @@ test("Claude hooks include PreToolUse URI guard for file and shell tools", () =>
 });
 
 test("Claude plugin ships the memory doctor skill and script", () => {
-  const skill = join(pluginDir, "skills", "ov-memory-doctor", "SKILL.md");
+  const skill = join(pluginDir, "skills", "ov-plugin-doctor", "SKILL.md");
   assert.ok(existsSync(skill), "missing skills/ov-plugin-doctor/SKILL.md");
-  assert.match(readFileSync(skill, "utf-8"), /node \$\{CLAUDE_PLUGIN_ROOT\}\/scripts\/ov-memory-doctor\.mjs/);
-  assert.ok(existsSync(join(pluginDir, "skills", "ov-memory-doctor", "reference.md")));
+  assert.match(readFileSync(skill, "utf-8"), /node \$\{CLAUDE_PLUGIN_ROOT\}\/scripts\/ov-plugin-doctor\.mjs/);
+  assert.ok(existsSync(join(pluginDir, "skills", "ov-plugin-doctor", "reference.md")));
   execFileSync("node", ["--check", join(pluginDir, "scripts", "ov-plugin-doctor.mjs")], { stdio: "pipe" });
   execFileSync("node", ["--check", join(pluginDir, "scripts", "shared", "doctor-core.mjs")], { stdio: "pipe" });
 });

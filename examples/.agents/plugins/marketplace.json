@@ -6,7 +6,7 @@
   },
   "plugins": [
     {
-      "name": "openviking-memory",
+      "name": "openviking",
       "source": {
         "source": "local",
         "path": "./codex-plugin"

@@ -72,10 +72,16 @@ def test_external_discovery_preserves_profile_config_and_relative_setup(external
     assert module_a._setup._ov() is module_a
     assert module_b._setup._ov() is module_b
     assert provider_again.get_tool_schemas() == provider_a.get_tool_schemas()
+    # New canonical tool names are returned by get_tool_schemas.
+    schema_names = {s["name"] for s in provider_a.get_tool_schemas()}
+    assert schema_names == {
+        "openviking_search", "openviking_read", "openviking_browse",
+        "openviking_remember", "openviking_forget", "openviking_add_resource",
+    }
     assert (home_a / "config.yaml").read_bytes() == before
 
 
-def test_external_provider_dispatches_search_over_http(external_provider):
+def test_external_provider_dispatches_search_over_http_canonical_and_legacy(external_provider):
     _, provider, module, _ = external_provider("search")
     requests = []
 
@@ -111,13 +117,28 @@ def test_external_provider_dispatches_search_over_http(external_provider):
     client = module._VikingClient(f"http://127.0.0.1:{server.server_port}", agent="existing-peer")
     provider._client = client
     try:
-        result = json.loads(
+        # Primary: canonical openviking_search
+        result_new = json.loads(
+            provider.handle_tool_call(
+                "openviking_search", {"query": "reply preference", "mode": "fast"}
+            )
+        )
+        assert "Use concise replies." in json.dumps(result_new)
+
+        # Legacy alias: viking_search resolves to same handler
+        result_legacy = json.loads(
             provider.handle_tool_call(
                 "viking_search", {"query": "reply preference", "mode": "fast"}
             )
         )
-        assert requests == [("/api/v1/search/find", {"query": "reply preference"}, "existing-peer")]
-        assert "Use concise replies." in json.dumps(result)
+        assert "Use concise replies." in json.dumps(result_legacy)
+
+        # Both dispatched correctly
+        assert len(requests) == 2
+        for path, body, peer in requests:
+            assert path == "/api/v1/search/find"
+            assert body == {"query": "reply preference"}
+            assert peer == "existing-peer"
     finally:
         server.shutdown()
         server.server_close()
@@ -410,3 +431,33 @@ def test_external_provider_does_not_cache_unbound_client_identity(external_provi
     assert provider._user_space() == "bob"
     assert provider._user_space(unbound) == "alice"
     assert provider._user_space() == "bob"
+
+
+@pytest.mark.parametrize(
+    "tool_name,expected",
+    [
+        # Canonical recall tools
+        ("openviking_search", True),
+        ("openviking_read", True),
+        ("openviking_browse", True),
+        # Legacy aliases — recall tools
+        ("viking_search", True),
+        ("viking_read", True),
+        ("viking_browse", True),
+        # Write tools — not recall
+        ("openviking_remember", False),
+        ("openviking_forget", False),
+        ("openviking_add_resource", False),
+        ("viking_remember", False),
+        ("viking_forget", False),
+        ("viking_add_resource", False),
+        # Case-insensitive and whitespace
+        ("  Viking_Search  ", True),
+        # Non-OpenViking tools
+        ("bash", False),
+        ("read_file", False),
+    ],
+)
+def test_recall_tool_filtering_accepts_canonical_and_legacy(tool_name, expected, external_provider):
+    _, _, module, _ = external_provider("recall-filter")
+    assert module._is_openviking_recall_tool_name(tool_name) is expected

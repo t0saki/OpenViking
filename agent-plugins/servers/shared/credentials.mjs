@@ -35,7 +35,10 @@ function tryLoadJson(path) {
  * Shape is `name/semver` so downstream stats layers can parse it as one token.
  */
 export function buildUserAgent(harness, version) {
-  return `openviking-memory-${harness}/${str(version, "") || "0.0.0"}`;
+  const name = str(harness, "").toLowerCase() === "pi"
+    ? "openviking-memory-pi"
+    : `openviking-${harness}`;
+  return `${name}/${str(version, "") || "0.0.0"}`;
 }
 
 /**

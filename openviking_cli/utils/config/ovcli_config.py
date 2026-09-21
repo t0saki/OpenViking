@@ -47,7 +47,7 @@ class OVCLIConfig(BaseModel):
     upload: Optional[OVCLIUploadConfig] = None
     extra_headers: Optional[Dict[str, str]] = None
     gateway_token: Optional[str] = None
-    # Client-side harness plugin settings, owned by the memory plugins. Kept
+    # Client-side harness plugin settings, owned by the harness plugins. Kept
     # opaque so a harness can add its own knobs without touching this schema.
     plugin: Optional[Dict[str, Any]] = None
 

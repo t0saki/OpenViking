@@ -131,7 +131,7 @@ test("shell commands carrying a viking URI run and get a notice", async () => {
   const [context] = decision.additionalContexts;
   assert.equal(context.role, "user");
   assert.equal(context.source.kind, "plugin");
-  assert.equal(context.source.plugin, "openviking-memory");
+  assert.equal(context.source.plugin, "openviking");
   assert.equal(context.source.form, "notice");
   assert.match(context.source.summary, /viking:\/\/user\/default\/memories\/profile\.md/);
   assert.match(context.content[0].text, /ignore this notice/);

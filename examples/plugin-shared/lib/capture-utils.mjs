@@ -622,7 +622,7 @@ export function shouldCaptureText(text, role, cfg = {}, { filters = true } = {})
   if (!isToolSummary && !hasEnoughSignal(compact)) {
     return { shouldCapture: false, reason: "too_short", text: "" };
   }
-  if (/^\[openviking-memory\]/i.test(compact)) {
+  if (/^\[openviking(?:-memory)?\]/i.test(compact)) {
     return { shouldCapture: false, reason: "plugin_status", text: "" };
   }
 

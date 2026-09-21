@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# OpenViking Memory Plugin shared installer for Claude Code, Codex, Cursor,
+# OpenViking Plugin shared installer for Claude Code, Codex, Cursor,
 # TRAE / TRAE CN, TraeCode CLI 2.0, ZCode, OpenCode, and pi.
 #
 # One-liner (GitHub):
@@ -51,23 +51,24 @@ REPO_ARCHIVE_URL="${OPENVIKING_REPO_ARCHIVE_URL:-}"
 MKT_ARCHIVE_URL="${OPENVIKING_MARKETPLACE_ARCHIVE_URL:-}"
 TOS_BASE="${OPENVIKING_TOS_BASE:-https://ovrelease.tos-cn-beijing.volces.com}"
 TOS_BASE="${TOS_BASE%/}"
-CODEX_TOS_GIT_URL="${OPENVIKING_CODEX_TOS_GIT_URL:-$TOS_BASE/plugins/memory-plugins.git}"
+CODEX_TOS_GIT_URL="${OPENVIKING_CODEX_TOS_GIT_URL:-$TOS_BASE/plugins/openviking-plugins.git}"
 ARCHIVE_MARKER='.openviking-archive-source'
 OVCLI_CONF="${OPENVIKING_CLI_CONFIG_FILE:-$OV_HOME/ovcli.conf}"
 
 # One marketplace name everywhere. Claude Code and Codex keep separate
 # registries, and within one harness the source modes are alternative channels
 # for the same plugin — a single name keeps the plugin id
-# (openviking-memory@openviking) and its per-id config stable across modes.
+# (openviking@openviking) and its per-id config stable across modes.
 MARKETPLACE_NAME="${OPENVIKING_MARKETPLACE_NAME:-openviking}"
-PLUGIN_NAME="openviking-memory"
-DSH_PACKAGE="@openviking/dsh-memory-plugin"
+PLUGIN_NAME="openviking"
+DSH_PACKAGE="@openviking/dsh-plugin"
 PLUGIN_ID="${PLUGIN_NAME}@${MARKETPLACE_NAME}"
+LEGACY_PLUGIN_IDS=("openviking-memory@${MARKETPLACE_NAME}")
 
-CODEX_CONFIG="${CODEX_CONFIG_FILE:-$HOME/.codex/config.toml}"
+CODEX_CONFIG="${CODEX_CONFIG_FILE:-${CODEX_HOME:-$HOME/.codex}/config.toml}"
 CC_SETTINGS="$HOME/.claude/settings.json"
 CC_KNOWN_MARKETPLACES="$HOME/.claude/plugins/known_marketplaces.json"
-MKT_DIR_ARCHIVE="$OV_HOME/memory-plugin-marketplace"
+MKT_DIR_ARCHIVE="$OV_HOME/plugin-marketplace"
 # Directory-shaped on purpose: Claude Code's file-type marketplaces
 # mis-derive installLocation and fail `marketplace update` with EISDIR.
 CC_REMOTE_MKT_DIR="$OV_HOME/marketplaces/openviking-claude"
@@ -1015,6 +1016,7 @@ install_dsh() {
       dsh plugin --profile "$profile" rm "$DSH_PACKAGE" >/dev/null 2>&1 || true
     fi
   fi
+  dsh plugin --profile "$profile" rm @openviking/dsh-memory-plugin >/dev/null 2>&1 || true
   if dsh plugin --profile "$profile" add "$spec" >/dev/null 2>&1; then
     info "$(t 'DeepSeek Harness bundle installed into profile:' 'DeepSeek Harness 插件已安装到 profile：') $profile ($(t 'source' '来源'): $origin)"
   else
@@ -1429,6 +1431,7 @@ install_lib_dir() {
   for candidate in \
     "${self:+$self/lib/install}" \
     "$OV_HOME/agent-integrations/plugin-shared/lib/install" \
+    "$OV_HOME/agent-integrations/memory-plugin-shared/lib/install" \
     "${MKT_DIR:+$MKT_DIR/plugin-shared/lib/install}" \
     "${SRC_ROOT:+$SRC_ROOT/examples/plugin-shared/lib/install}"; do
     [ -n "$candidate" ] && [ -d "$candidate" ] || continue
@@ -1451,7 +1454,7 @@ prepare_marketplace_dir() {
       ;;
     archive)
       heading "$(t '3. Marketplace archive' '3. Marketplace 归档')"
-      [ -z "$MKT_ARCHIVE_URL" ] && [ "$DIST" = "tos" ] && MKT_ARCHIVE_URL="$TOS_BASE/releases/latest/memory-plugin-marketplace.zip"
+      [ -z "$MKT_ARCHIVE_URL" ] && [ "$DIST" = "tos" ] && MKT_ARCHIVE_URL="$TOS_BASE/releases/latest/plugin-marketplace.zip"
       [ -z "$REPO_ARCHIVE_URL" ] && [ "$DIST" = "tos" ] && REPO_ARCHIVE_URL="$TOS_BASE/releases/latest/openviking-source.zip"
       if [ -n "$MKT_ARCHIVE_URL" ] && fetch_archive "$MKT_ARCHIVE_URL" "$MKT_DIR_ARCHIVE" ".claude-plugin/marketplace.json"; then
         MKT_DIR="$MKT_DIR_ARCHIVE"
@@ -1531,10 +1534,11 @@ const manifest = {
   name,
   description: `OpenViking plugins for Claude Code (remote: ${url} @ ${ref}).`,
   owner: { name: "OpenViking" },
+  renames: { "openviking-memory": "openviking" },
   plugins: [
     {
-      name: "openviking-memory",
-      description: "Long-term semantic memory for Claude Code, powered by OpenViking",
+      name: "openviking",
+      description: "OpenViking context database for Claude Code",
       source: { source: "git-subdir", url, path: "examples/claude-code-plugin", ref },
       category: "productivity",
     },
@@ -1569,6 +1573,10 @@ claude_marketplace_sync() { # claude_marketplace_sync <add-target> <expected-sou
 }
 
 install_claude_modern() {
+  local legacy_id
+  for legacy_id in "${LEGACY_PLUGIN_IDS[@]}"; do
+    claude_cmd plugin uninstall "$legacy_id" >/dev/null 2>&1 || true
+  done
   case "$SOURCE_MODE" in
     remote)
       write_claude_remote_manifest
@@ -1629,8 +1637,17 @@ NODE
 
 register_statusline() {
   [ "$STATUSLINE_ARG" = "no" ] && return 0
-  local plugin_dir cmd existing reply ts
-  if [ "$STATUSLINE_ARG" != "yes" ]; then
+  local plugin_dir cmd existing reply ts own_statusline=0
+  existing=$(node -e '
+    try {
+      const s = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
+      if (s.statusLine?.command) process.stdout.write(String(s.statusLine.command));
+    } catch {}
+  ' "$CC_SETTINGS" 2>/dev/null || true)
+  if printf '%s' "$existing" | grep -Eq '(claude-code-memory-plugin|claude-code-plugin)/scripts/statusline\.mjs'; then
+    own_statusline=1
+  fi
+  if [ "$STATUSLINE_ARG" != "yes" ] && [ "$own_statusline" -eq 0 ]; then
     [ "$INTERACTIVE" -eq 1 ] || return 0
     heading "$(t 'Statusline (optional)' 'Statusline 状态栏（可选）')"
     info "$(t 'OpenViking can show a one-line server/recall status under the input box.' 'OpenViking 可以在输入框下方显示一行服务/召回状态。')"
@@ -1650,17 +1667,11 @@ register_statusline() {
   cmd="node \"$plugin_dir/scripts/statusline.mjs\""
   mkdir -p "$HOME/.claude"
   [ -f "$CC_SETTINGS" ] || echo '{}' > "$CC_SETTINGS"
-  existing=$(node -e '
-    try {
-      const s = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
-      if (s.statusLine && s.statusLine.command) process.stdout.write(String(s.statusLine.command));
-    } catch {}
-  ' "$CC_SETTINGS" 2>/dev/null || true)
   if [ "$existing" = "$cmd" ]; then
     info "$(t 'Statusline already registered.' 'Statusline 已注册。')"
     return 0
   fi
-  if [ -n "$existing" ] && [ "$STATUSLINE_ARG" != "yes" ]; then
+  if [ -n "$existing" ] && [ "$STATUSLINE_ARG" != "yes" ] && [ "$own_statusline" -eq 0 ]; then
     warn "$(t 'Existing statusline detected:' '检测到已有 statusline：') $existing"
     tui_menu "$(t 'Replace it with the OpenViking statusline?' '替换为 OpenViking statusline？')" 1 \
       "$(t 'Replace' '替换')" \
@@ -1744,7 +1755,7 @@ remove_legacy_trae_cli_integration() {
   local trae_cli_home="${TRAECLI_HOME:-$trae_home/cli}"
   if grep -qi 'openviking' "$trae_cli_home/hooks.json" 2>/dev/null \
     || [ -d "$OV_HOME/agent-integrations/trae-cli" ] \
-    || grep -qF '[mcp_servers."openviking-memory"]' "$trae_home/traecli.toml" 2>/dev/null; then
+    || grep -Eq '^\[mcp_servers\."?openviking(-memory)?"?\]' "$trae_home/traecli.toml" 2>/dev/null; then
     agent_remove_trae_cli_configs "$trae_cli_home/hooks.json" "$trae_home/traecli.toml"
     rm -rf "$OV_HOME/agent-integrations/trae-cli"
     info "$(t 'Removed the deprecated TRAE CLI Hooks integration after installing the TraeCode CLI 2.0 plugin.' 'TraeCode CLI 2.0 插件安装成功后，已移除弃用的 TRAE CLI Hooks 集成。')"
@@ -1754,7 +1765,7 @@ remove_legacy_trae_cli_integration() {
     && [ ! -d "$OV_HOME/agent-integrations/trae-cn" ] \
     && [ ! -d "$OV_HOME/agent-integrations/trae-cli" ] \
     && [ ! -d "$OV_HOME/agent-integrations/zcode" ]; then
-    rm -rf "$OV_HOME/agent-integrations/plugin-shared"
+    rm -rf "$OV_HOME/agent-integrations/plugin-shared" "$OV_HOME/agent-integrations/memory-plugin-shared"
   fi
 }
 
@@ -1810,6 +1821,19 @@ const path = process.argv[2];
 const pluginId = process.argv[3];
 let text = "";
 try { text = fs.readFileSync(path, "utf8"); } catch {}
+if (fs.existsSync(path)) {
+  fs.copyFileSync(path, `${path}.bak.${Date.now()}`);
+}
+// Plugin enablement and hook trust belong to the old identity. Keep all
+// unrelated tables (including per-tool MCP approvals) for manual migration.
+let skipLegacy = false;
+text = text.split(/\n/).filter((line) => {
+  const header = /^\s*\[([^\]]+)\]\s*(?:#.*)?$/.exec(line);
+  if (/^\s*\[/.test(line)) {
+    skipLegacy = !!header && /^(?:plugins|hooks\.state)\.(["'])openviking-memory@[^"']+\1$/.test(header[1].trim());
+  }
+  return !skipLegacy;
+}).join("\n");
 function ensureSectionLine(src, section, key, value) {
   const lines = src.split(/\n/);
   const header = `[${section}]`;
@@ -1837,7 +1861,7 @@ NODE
 }
 
 install_codex() {
-  local plugin_installed=0
+  local plugin_installed=0 legacy_id
   if is_native_codex_bin; then
     heading "$(t '4. Codex plugin' '4. Codex 插件')"
   else
@@ -1847,6 +1871,13 @@ install_codex() {
     warn "$(t 'Codex-format CLI not found; skipping:' '未找到 Codex 格式 CLI，跳过：') $CODEX_BIN"
     return 0
   }
+  if is_native_codex_bin && [ -f "$CODEX_CONFIG" ]; then
+    cp -p "$CODEX_CONFIG" "$CODEX_CONFIG.bak.$(date +%Y%m%d-%H%M%S)"
+  fi
+  for legacy_id in "${LEGACY_PLUGIN_IDS[@]}"; do
+    codex_cmd plugin remove "$legacy_id" >/dev/null 2>&1 ||
+      codex_cmd plugin uninstall "$legacy_id" >/dev/null 2>&1 || true
+  done
   case "$SOURCE_MODE" in
     remote)
       # Codex doesn't expose which --ref a registered git marketplace is
@@ -2016,13 +2047,12 @@ agent_remove_trae_cli_configs() { # agent_remove_trae_cli_configs <hooks> <traec
   agent_remove_json_configs "$hooks_path"
   [ -f "$config_path" ] || return 0
   local stripped tmp="$config_path.$$.tmp"
-  stripped="$(awk -v target='mcp_servers."openviking-memory"' '
-    BEGIN { prefix = target "." }
-    /^[[:space:]]*\[[^]]+\][[:space:]]*$/ {
+  stripped="$(awk '
+    /^[[:space:]]*\[/ {
       name = $0
       sub(/^[[:space:]]*\[/, "", name)
-      sub(/\][[:space:]]*$/, "", name)
-      skip = (name == target || index(name, prefix) == 1)
+      sub(/\][[:space:]]*(#.*)?$/, "", name)
+      skip = (name ~ /^mcp_servers\.("openviking(-memory)?"|openviking(-memory)?)(\.|$)/)
     }
     skip { next }
     /^[[:space:]]*$/ { blank = 1; next }
@@ -2035,8 +2065,8 @@ agent_remove_trae_cli_configs() { # agent_remove_trae_cli_configs <hooks> <traec
 uninstall_agent_integrations() {
   if contains_harness cursor; then
     agent_remove_json_configs "$HOME/.cursor/hooks.json" "$(cursor_mcp_path)"
-    rm -f "$HOME/.cursor/rules/openviking.mdc"
-    rm -rf "$HOME/.cursor/skills/openviking"
+    rm -f "$HOME/.cursor/rules/openviking.mdc" "$HOME/.cursor/rules/openviking-memory.mdc"
+    rm -rf "$HOME/.cursor/skills/openviking" "$HOME/.cursor/skills/openviking-memory"
     rm -rf "$OV_HOME/agent-integrations/cursor"
     info "$(t 'Removed the Cursor OpenViking integration.' '已移除 Cursor OpenViking 集成。')"
   fi
@@ -2058,43 +2088,35 @@ uninstall_agent_integrations() {
     info "$(t 'Removed TRAE CLI OpenViking hooks and MCP config.' '已移除 TRAE CLI OpenViking hooks 与 MCP 配置。')"
   fi
   if contains_harness zcode; then
-    # ZCode reads hooks/MCP from config.json, not standalone files.
-    # Use a node script to strip openviking entries from config.json.
-    # Safe read: ENOENT → skip; parse error → skip (do NOT overwrite user data).
-    "$NODE_BIN" - "$HOME/.zcode/cli/config.json" <<'CLEAN_NODE' 2>/dev/null || true
-const fs = require("node:fs");
-const configPath = process.argv[2];
-if (!fs.existsSync(configPath)) process.exit(0);
-let config;
-try {
-  config = JSON.parse(fs.readFileSync(configPath, "utf8"));
-} catch {
-  // Malformed config — do NOT overwrite; skip cleanup silently.
-  process.exit(0);
-}
-if (typeof config !== "object" || config === null || Array.isArray(config)) process.exit(0);
-// Remove openviking hooks from each event
-if (config.hooks?.events) {
-  for (const [event, handlers] of Object.entries(config.hooks.events)) {
-    config.hooks.events[event] = (Array.isArray(handlers) ? handlers : []).filter(
-      (group) => !JSON.stringify(group).includes("openviking-memory"),
-    );
-    if (config.hooks.events[event].length === 0) delete config.hooks.events[event];
+    # Use the same ownership checks as install so unrelated config survives.
+    local lib
+    if lib="$(install_lib_dir)"; then
+      "$NODE_BIN" --input-type=module - "$lib/host-json-config.mjs" "$HOME/.zcode/cli/config.json" <<'NODE' || return 1
+import fs from "node:fs";
+import { pathToFileURL } from "node:url";
+const [helper, configPath] = process.argv.slice(2);
+const { ownsHook, removeZcodeConfig } = await import(pathToFileURL(helper));
+if (removeZcodeConfig) {
+  removeZcodeConfig({ configPath });
+} else if (fs.existsSync(configPath)) {
+  // A downloaded uninstall may find only the pre-rename helper on disk.
+  const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+  for (const [event, groups] of Object.entries(config.hooks?.events || {})) {
+    if (!Array.isArray(groups)) continue;
+    config.hooks.events[event] = groups.filter((group) => !ownsHook(group));
+    if (!config.hooks.events[event].length) delete config.hooks.events[event];
   }
-  if (Object.keys(config.hooks.events).length === 0) delete config.hooks.events;
+  const id = config.mcp?.servers?.openviking?.env?.OPENVIKING_INTEGRATION_ID;
+  if (["openviking", "openviking-memory"].includes(id)) delete config.mcp.servers.openviking;
+  const tmp = `${configPath}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(config, null, 2) + "\n");
+  fs.renameSync(tmp, configPath);
 }
-// Remove openviking MCP server — ONLY if it's managed by us (contains openviking-memory tag)
-if (config.mcp?.servers?.openviking) {
-  if (JSON.stringify(config.mcp.servers.openviking).includes("openviking-memory")) {
-    delete config.mcp.servers.openviking;
-    if (Object.keys(config.mcp.servers).length === 0) delete config.mcp.servers;
-    if (Object.keys(config.mcp).length === 0) delete config.mcp;
-  }
-}
-const tmp = `${configPath}.${process.pid}.tmp`;
-fs.writeFileSync(tmp, JSON.stringify(config, null, 2) + "\n");
-fs.renameSync(tmp, configPath);
-CLEAN_NODE
+NODE
+    else
+      warn "Installer runtime not found; remove OpenViking entries from ~/.zcode/cli/config.json by hand."
+      return 1
+    fi
     # Clean up intermediate files generated by agent_write_json_configs
     rm -f "$HOME/.zcode/hooks.json" "$HOME/.zcode/mcp.json" 2>/dev/null
     rm -rf "$OV_HOME/agent-integrations/zcode"
@@ -2105,7 +2127,7 @@ CLEAN_NODE
     && [ ! -d "$OV_HOME/agent-integrations/trae-cn" ] \
     && [ ! -d "$OV_HOME/agent-integrations/trae-cli" ] \
     && [ ! -d "$OV_HOME/agent-integrations/zcode" ]; then
-    rm -rf "$OV_HOME/agent-integrations/plugin-shared"
+    rm -rf "$OV_HOME/agent-integrations/plugin-shared" "$OV_HOME/agent-integrations/memory-plugin-shared"
   fi
 }
 
@@ -2154,6 +2176,8 @@ install_cursor() {
   cp -R "$root/hosts/cursor/skills/openviking" "$skill_tmp"
   rm -rf "$HOME/.cursor/skills/openviking"
   mv "$skill_tmp" "$HOME/.cursor/skills/openviking"
+  rm -f "$HOME/.cursor/rules/openviking-memory.mdc"
+  rm -rf "$HOME/.cursor/skills/openviking-memory"
   info "$(t 'Cursor hooks installed:' 'Cursor hooks 已安装：') $hooks_path"
   info "$(t 'Cursor MCP installed:' 'Cursor MCP 已安装：') $mcp_path"
   info "$(t 'Cursor Rule and Skill installed under ~/.cursor.' 'Cursor Rule 与 Skill 已安装到 ~/.cursor。')"
@@ -2350,6 +2374,73 @@ install_pi() {
   info "$(t 'pi extension installed (auto-discovered):' 'pi 扩展已安装（自动发现）：') $dest"
 }
 
+cleanup_legacy_plugin_dirs() {
+  # An unselected host can still import the old runtime. Reclaim directories
+  # only after checking the configs and installed adapters that reference them.
+  "$NODE_BIN" - "$OV_HOME" "$CODEX_CONFIG" <<'NODE'
+const fs = require("node:fs");
+const path = require("node:path");
+const [ovHome, codexConfig] = process.argv.slice(2);
+const home = require("node:os").homedir();
+function read(file) {
+  try { return fs.readFileSync(file, "utf8"); } catch (error) {
+    return error.code === "ENOENT" ? "" : 'import "memory-plugin-shared/unreadable"; memory-plugin-marketplace dsh-memory-plugin';
+  }
+}
+function adapterSources(dir) {
+  if (!fs.existsSync(dir)) return "";
+  let result = "";
+  let entries;
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch {
+    return 'import "memory-plugin-shared/unreadable";';
+  }
+  for (const entry of entries) {
+    if (["node_modules", "plugin-shared", "memory-plugin-shared"].includes(entry.name)) continue;
+    const file = path.join(dir, entry.name);
+    if (entry.isDirectory()) result += adapterSources(file);
+    else if (/\.(?:mjs|json)$/.test(entry.name)) result += read(file);
+  }
+  return result;
+}
+const registryFiles = [
+  path.join(home, ".claude", "settings.json"),
+  path.join(home, ".claude", "plugins", "known_marketplaces.json"),
+  path.join(home, ".claude", "plugins", "installed_plugins.json"),
+  codexConfig,
+  path.join(process.env.TRAE_HOME || path.join(home, ".trae"), "traecli.toml"),
+];
+const registries = registryFiles.map(read).join("\n");
+const runtime = path.join(ovHome, "agent-integrations", "memory-plugin-shared");
+if (!/(?:from|import)\s*(?:\(\s*)?["'][^"']*memory-plugin-shared\//.test(adapterSources(path.dirname(runtime)))) {
+  fs.rmSync(runtime, { recursive: true, force: true });
+}
+const marketplace = path.join(ovHome, "memory-plugin-marketplace");
+// The marker distinguishes an installer download from a user-created folder.
+if (fs.existsSync(path.join(marketplace, ".openviking-archive-source"))
+    && !registries.includes("memory-plugin-marketplace")) {
+  fs.rmSync(marketplace, { recursive: true, force: true });
+}
+// A different dsh profile can still depend on an old file: tarball.
+let dshHome = process.env.DSH_HOME || path.join(home, ".dsh");
+if (dshHome === "~" || dshHome.startsWith("~/")) dshHome = path.join(home, dshHome.slice(2));
+let profileRefs = "";
+try {
+  const profiles = path.join(dshHome, "profiles");
+  for (const entry of fs.readdirSync(profiles, { withFileTypes: true })) {
+    if (!entry.isDirectory() || entry.name === "node_modules") continue;
+    for (const file of ["package.json", "pnpm-lock.yaml", "cordis.patch.yml"]) {
+      profileRefs += read(path.join(profiles, entry.name, file));
+    }
+  }
+} catch (error) {
+  if (error.code !== "ENOENT") profileRefs = "dsh-memory-plugin";
+}
+if (!profileRefs.includes("dsh-memory-plugin")) {
+  fs.rmSync(path.join(ovHome, "dsh-memory-plugin"), { recursive: true, force: true });
+}
+NODE
+}
+
 # ---------------------------------------------------------------------------
 # Validation
 # ---------------------------------------------------------------------------
@@ -2489,7 +2580,7 @@ EOF
       && grep -q 'scripts/auto-capture.mjs' "$trae_cli_hooks" 2>/dev/null \
       && grep -q 'scripts/uri-guard.mjs' "$trae_cli_hooks" 2>/dev/null \
       && grep -q 'OPENVIKING_INTEGRATION_ID' "$trae_cli_hooks" 2>/dev/null \
-      && grep -q '\[mcp_servers."openviking-memory"\]' "$trae_cli_config" 2>/dev/null \
+      && grep -Eq '^\[mcp_servers\."?openviking(-memory)?"?\]' "$trae_cli_config" 2>/dev/null \
       && grep -q 'mcp-proxy.mjs' "$trae_cli_config" 2>/dev/null \
       && [ -f "$OV_HOME/agent-integrations/trae-cli/scripts/trae-cli-hook.mjs" ] \
       && [ -f "$OV_HOME/agent-integrations/trae-cli/scripts/uri-guard.mjs" ] \
@@ -2591,7 +2682,7 @@ EOF
       warn "dsh: $DSH_PACKAGE $(t 'not found in profile' '未在 profile 中找到') $dsh_profile"
       ok=0
     fi
-    if dsh --profile "$dsh_profile" --dump-config 2>/dev/null | grep -q 'openviking-memory'; then
+    if dsh --profile "$dsh_profile" --dump-config 2>/dev/null | grep -q 'openviking'; then
       info "dsh: $(t 'plugin group composed into the profile' '插件组已合入 profile')"
     else
       warn "dsh: $(t 'plugin group not present in the composed profile' '合成后的 profile 中没有插件组')"
@@ -2674,6 +2765,7 @@ if contains_harness opencode; then install_opencode; fi
 if contains_harness pi; then install_pi; fi
 if contains_harness dsh; then install_dsh; fi
 validate_install
+cleanup_legacy_plugin_dirs
 
 heading "$(t 'Done' '完成')"
 info "$(t 'Credentials:' '凭据：') $OVCLI_CONF"

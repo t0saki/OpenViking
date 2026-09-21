@@ -406,7 +406,7 @@ test("explicit commit writes the response trace_id to the plugin log", async () 
       const result = await manager.commitSession("oc-explicit-trace")
       assert.equal(result.traceId, "trace-opencode-commit")
       assert.equal(requests[0].url, "/api/v1/sessions/oc-explicit-trace/commit")
-      const raw = await fs.promises.readFile(join(dir, "openviking-memory.log"), "utf8")
+      const raw = await fs.promises.readFile(join(dir, "openviking.log"), "utf8")
       assert.match(raw, /"trace_id":"trace-opencode-commit"/)
     })
   } finally {

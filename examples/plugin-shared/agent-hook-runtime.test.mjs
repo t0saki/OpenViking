@@ -185,13 +185,14 @@ test("the shared capture filter drops the turns no harness wants to remember", (
     { role: "user", content: "/compact" },
     { role: "assistant", content: "ok" },
     { role: "user", content: "..." },
-    { role: "assistant", content: "[openviking-memory] recalled 3 items" },
+    { role: "assistant", content: "[openviking] recalled 3 items" },
+    { role: "assistant", content: "[openviking-memory] recalled 3 historical items" },
     { role: "user", content: "the retry budget is three attempts" },
   ], { captureMaxLength: 24000 });
 
   assert.deepEqual(kept.map((turn) => turn.content), ["the retry budget is three attempts"]);
   assert.deepEqual(dropped.map((turn) => turn.reason), [
-    "slash_command", "ack", "punctuation", "plugin_status",
+    "slash_command", "ack", "punctuation", "plugin_status", "plugin_status",
   ]);
 });
 

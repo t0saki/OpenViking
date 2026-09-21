@@ -84,8 +84,8 @@ def test_collect_read_experience_uris_supports_generic_openviking_reads():
 @pytest.mark.parametrize(
     "tool_name",
     [
-        "mcp__plugin_openviking-memory_openviking__read",
-        "mcp__PLUGIN_openviking-memory_OpenViking__READ",
+        "mcp__plugin_openviking_openviking__read",
+        "mcp__PLUGIN_openviking_OpenViking__READ",
     ],
 )
 def test_collect_read_experience_uris_supports_plugin_namespaced_reads(tool_name):
@@ -113,8 +113,8 @@ def test_collect_read_experience_uris_supports_plugin_namespaced_reads(tool_name
     [
         "multi_read",
         "openviking_multi_read",
-        "mcp__plugin_openviking-memory_openviking__multi_read",
-        "mcp__PLUGIN_openviking-memory_OpenViking__MULTI_READ",
+        "mcp__plugin_openviking_openviking__multi_read",
+        "mcp__PLUGIN_openviking_OpenViking__MULTI_READ",
     ],
 )
 def test_collect_read_experience_uris_filters_failed_multi_read_results(tool_name):

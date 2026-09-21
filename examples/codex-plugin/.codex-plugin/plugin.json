@@ -1,6 +1,6 @@
 {
-  "name": "openviking-memory",
-  "version": "0.9.3",
+  "name": "openviking",
+  "version": "0.10.0",
   "description": "Long-term semantic memory for Codex, powered by OpenViking. Recall on UserPromptSubmit, incremental add_message on Stop (per turn), commit on SessionEnd (Codex >= 0.145) and on PreCompact, with an idle/ended sweep on SessionStart as the fallback for signals, crashes and older Codex builds. Includes a local stdio MCP proxy that reads OpenViking credentials from env/ovcli.conf.",
   "author": {
     "name": "OpenViking",
@@ -20,9 +20,9 @@
   "mcpServers": "./.mcp.json",
   "skills": "./skills/",
   "interface": {
-    "displayName": "OpenViking Memory",
-    "shortDescription": "Long-term semantic memory for Codex",
-    "longDescription": "Hooks Codex's lifecycle to keep an external semantic memory: recall relevant memories on each UserPromptSubmit; on every Stop (turn end) append the new user/assistant turns to a long-lived OpenViking session keyed by codex session_id; on SessionEnd (Codex >= 0.145) catch up any turns Stop missed and commit the session so OV's extractor produces durable memories when the thread finishes; on PreCompact commit before context is summarized; on SessionStart(source=startup|clear) sweep sessions that ended without a SessionEnd or went idle. Also exposes OpenViking's native MCP tools through a local stdio proxy to the streamable-HTTP /mcp endpoint for manual use.",
+    "displayName": "OpenViking",
+    "shortDescription": "OpenViking context database for Codex",
+    "longDescription": "Hooks Codex's lifecycle to keep an external semantic context: recall relevant memories on each UserPromptSubmit; on every Stop (turn end) append the new user/assistant turns to a long-lived OpenViking session keyed by codex session_id; on SessionEnd (Codex >= 0.145) catch up any turns Stop missed and commit the session so OV's extractor produces durable memories when the thread finishes; on PreCompact commit before context is summarized; on SessionStart(source=startup|clear) sweep sessions that ended without a SessionEnd or went idle. Also exposes OpenViking's native MCP tools through a local stdio proxy to the streamable-HTTP /mcp endpoint for manual use.",
     "developerName": "OpenViking",
     "category": "Productivity",
     "capabilities": [

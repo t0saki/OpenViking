@@ -177,7 +177,7 @@ test("the shared mapper carries every connection field a loader resolved", () =>
     sendIdentityHeaders: true,
     peerId: "workspace-a",
     recallPeerScope: "all",
-    userAgent: "openviking-memory-codex/1.0.0",
+    userAgent: "openviking-codex/1.0.0",
     timeoutMs: 30000,
     debug: true,
     debugLogPath: "/tmp/codex.log",
@@ -196,7 +196,7 @@ test("the shared mapper carries every connection field a loader resolved", () =>
       user: "alice",
       sendIdentityHeaders: true,
       peerId: "",
-      userAgent: "openviking-memory-codex/1.0.0",
+      userAgent: "openviking-codex/1.0.0",
       timeoutMs: 30000,
       debug: true,
       debugLogPath: "/tmp/codex.log",
@@ -353,7 +353,7 @@ test("a portable proxy reports the auth mode, its own log path, and the files to
     assert.equal(cfg.apiKeySource, "ovcli");
     assert.equal(cfg.authMode, "trusted", "a credential layer supplied an identity");
     assert.equal(cfg.sendIdentityHeaders, true);
-    assert.equal(cfg.userAgent, "openviking-memory-agent-plugins/1.2.3");
+    assert.equal(cfg.userAgent, "openviking-agent-plugins/1.2.3");
     assert.equal(cfg.timeoutMs, DEFAULT_PROXY_TIMEOUT_MS);
     assert.equal(cfg.debug, false);
     assert.equal(

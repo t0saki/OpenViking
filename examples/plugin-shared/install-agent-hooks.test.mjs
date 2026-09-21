@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmodSync, cpSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -46,6 +46,8 @@ function runInstaller(home, args, extraEnv = {}, script = installer) {
     env: {
       ...process.env,
       HOME: home,
+      CODEX_HOME: join(home, ".codex"),
+      CODEX_CONFIG_FILE: join(home, ".codex", "config.toml"),
       OPENVIKING_HOME: join(home, ".openviking"),
       ...extraEnv,
     },
@@ -86,7 +88,7 @@ printf '%s\n' "$*" >> "$TRAE_CLI_TEST_LOG"
 case "$*" in
   "plugin marketplace list --json") printf '{"marketplaces":[]}\n' ;;
   "plugin marketplace list") printf 'Marketplaces:\n' ;;
-  "plugin list") printf 'openviking-memory\n' ;;
+  "plugin list") printf 'openviking\n' ;;
   "plugin add "*) exit 2 ;;
 esac
 exit 0
@@ -119,6 +121,10 @@ exit 0
       '[mcp_servers."openviking-memory"]',
       'command = "node"',
       'args = ["/tmp/agent-integrations/trae-cli/servers/mcp-proxy.mjs"]',
+      '[mcp_servers."openviking".env] # current spelling',
+      'OPENVIKING_INTEGRATION_ID = "openviking"',
+      '[mcp_servers.openviking_custom]',
+      'url = "https://custom.example/mcp"',
       "",
     ].join("\n"));
     const integrationRoot = join(home, ".openviking", "agent-integrations", "trae-cli");
@@ -152,13 +158,15 @@ exit 0
     assert.match(config, /model = "test-model"/);
     assert.match(config, /\[mcp_servers\.third_party\]/);
     assert.doesNotMatch(config, /openviking-memory/);
+    assert.doesNotMatch(config, /OPENVIKING_INTEGRATION_ID/);
+    assert.match(config, /openviking_custom/);
     assert.equal(existsSync(integrationRoot), false);
     assert.equal(existsSync(sharedRoot), false);
 
     const commands = readFileSync(cliLog, "utf8");
     assert.match(commands, /plugin marketplace add .*\/examples/mu);
-    assert.match(commands, /plugin install openviking-memory@openviking/mu);
-    assert.match(commands, /plugin enable openviking-memory@openviking/mu);
+    assert.match(commands, /plugin install openviking@openviking/mu);
+    assert.match(commands, /plugin enable openviking@openviking/mu);
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
@@ -266,6 +274,20 @@ test("combined hook-host install preserves unrelated hooks and is idempotent", (
     const traeCnHooks = join(home, ".trae-cn", "hooks.json");
     const zcodeConfig = join(home, ".zcode", "cli", "config.json");
     const thirdPartyShellHook = { command: "third-party shell audit" };
+    const legacyRule = join(home, ".cursor", "rules", "openviking-memory.mdc");
+    const legacySkill = join(home, ".cursor", "skills", "openviking-memory");
+    mkdirSync(dirname(legacyRule), { recursive: true });
+    mkdirSync(legacySkill, { recursive: true });
+    writeFileSync(legacyRule, "Old OpenViking rule");
+    writeFileSync(join(legacySkill, "SKILL.md"), "Old OpenViking skill");
+    writeJson(zcodeConfig, {
+      hooks: { events: { RetiredEvent: [{ hooks: [{
+        command: "OPENVIKING_INTEGRATION_ID=openviking-memory node /tmp/old/scripts/hook.mjs",
+      }] }] } },
+      mcp: { servers: { openviking: {
+        command: "old-node", env: { OPENVIKING_INTEGRATION_ID: "openviking-memory" },
+      } } },
+    });
     writeJson(cursorHooks, { version: 1, hooks: {
       stop: [{ command: "third-party stop" }],
       postToolUse: [{ command: "node /tmp/openviking/cursor-hook.mjs postToolUse # openviking-memory" }],
@@ -295,6 +317,8 @@ test("combined hook-host install preserves unrelated hooks and is idempotent", (
     } });
 
     runInstall(home);
+    assert.equal(existsSync(legacyRule), false);
+    assert.equal(existsSync(legacySkill), false);
     const firstInstallTimes = Object.fromEntries(["cursor", "trae", "trae-cn"].map((client) => {
       const manifest = JSON.parse(readFileSync(join(home, ".openviking", "agent-integrations", client, "integration.json"), "utf8"));
       return [client, { installedAt: manifest.installedAt, updatedAt: manifest.updatedAt }];
@@ -305,7 +329,7 @@ test("combined hook-host install preserves unrelated hooks and is idempotent", (
     assert.equal(cursor.hooks.stop.filter((entry) => entry.command.includes("scripts/hook.mjs")).length, 1);
     assert.ok(cursor.hooks.stop.some((entry) => entry.command === "third-party stop"));
     assert.ok(cursor.hooks.stop.some((entry) => entry.command.includes(installedNode)));
-    assert.ok(cursor.hooks.stop.some((entry) => entry.command.includes("OPENVIKING_INTEGRATION_ID='openviking-memory'")));
+    assert.ok(cursor.hooks.stop.some((entry) => entry.command.includes("OPENVIKING_INTEGRATION_ID='openviking'")));
     assert.ok(cursor.hooks.stop.some((entry) => entry.command.includes("OPENVIKING_HOOK_SOURCE='cursor'")));
     assert.equal(cursor.hooks.beforeReadFile.filter((entry) => entry.command.includes("uri-guard.mjs")).length, 1);
     assert.deepEqual(cursor.hooks.beforeShellExecution, [thirdPartyShellHook]);
@@ -324,6 +348,8 @@ test("combined hook-host install preserves unrelated hooks and is idempotent", (
       );
     }
     const zcodeEvents = JSON.parse(readFileSync(zcodeConfig, "utf8")).hooks.events;
+    assert.equal(zcodeEvents.RetiredEvent, undefined);
+    assert.equal(JSON.parse(readFileSync(zcodeConfig, "utf8")).mcp.servers.openviking.env.OPENVIKING_INTEGRATION_ID, "openviking");
     assert.equal(
       zcodeEvents.PreToolUse.filter((entry) => JSON.stringify(entry).includes("uri-guard.mjs")).length,
       1,
@@ -332,12 +358,12 @@ test("combined hook-host install preserves unrelated hooks and is idempotent", (
     const cursorServers = JSON.parse(readFileSync(cursorMcpPath, "utf8")).mcpServers;
     const cursorMcp = cursorServers.openviking;
     assert.equal(cursorMcp.command, installedNode);
-    assert.equal(cursorMcp.env.OPENVIKING_INTEGRATION_ID, "openviking-memory");
+    assert.equal(cursorMcp.env.OPENVIKING_INTEGRATION_ID, "openviking");
     assert.equal(cursorMcp.env.OPENVIKING_HOOK_SOURCE, "cursor");
     assert.ok(cursorServers["ov-mcp-server"], "unknown legacy aliases must be preserved");
     assert.ok(cursorServers["third-party"]);
-    assert.match(readFileSync(join(home, ".cursor", "rules", "openviking-memory.mdc"), "utf8"), /OpenViking/);
-    assert.match(readFileSync(join(home, ".cursor", "skills", "openviking-memory", "SKILL.md"), "utf8"), /OpenViking Memory/);
+    assert.match(readFileSync(join(home, ".cursor", "rules", "openviking.mdc"), "utf8"), /OpenViking/);
+    assert.match(readFileSync(join(home, ".cursor", "skills", "openviking", "SKILL.md"), "utf8"), /OpenViking/);
     const shared = join(home, ".openviking", "agent-integrations", "plugin-shared", "lib");
     assert.ok(existsSync(join(shared, "agent-hook-runtime.mjs")));
     assert.ok(existsSync(join(shared, "batch-send.mjs")));
@@ -348,7 +374,7 @@ test("combined hook-host install preserves unrelated hooks and is idempotent", (
       assert.ok(existsSync(join(root, "plugin.json")), `${client}: host-neutral plugin manifest is missing`);
       assert.equal(existsSync(join(root, ".claude-plugin")), false, `${client}: stale Claude manifest directory`);
       const manifest = JSON.parse(readFileSync(join(home, ".openviking", "agent-integrations", client, "integration.json"), "utf8"));
-      assert.equal(manifest.id, "openviking-memory");
+      assert.equal(manifest.id, "openviking");
       assert.equal(manifest.client, client);
       assert.equal(manifest.installMode, "managed-native");
       assert.equal(manifest.source, "dev");
@@ -370,7 +396,7 @@ test("combined hook-host install preserves unrelated hooks and is idempotent", (
     // checked against the tree they were rendered for.
     for (const [file, label] of [[cursorHooks, "cursor"], [traeHooks, "trae"], [traeCnHooks, "trae-cn"]]) {
       const commands = hookCommands(JSON.parse(readFileSync(file, "utf8")))
-        .filter((command) => command.includes("# openviking-memory"));
+        .filter((command) => command.includes("# openviking"));
       assert.ok(commands.length > 0, `${label}: no OpenViking hook commands were installed`);
       for (const command of commands) {
         const script = /'([^']*\.mjs)'/u.exec(command)?.[1];
@@ -426,8 +452,8 @@ test("combined hook-host install preserves unrelated hooks and is idempotent", (
     assert.ok(cursorServersAfterUninstall["ov-mcp-server"]);
     assert.ok(cursorServersAfterUninstall["third-party"]);
     assert.equal(Boolean(cursorServersAfterUninstall.openviking), false);
-    assert.equal(existsSync(join(home, ".cursor", "rules", "openviking-memory.mdc")), false);
-    assert.equal(existsSync(join(home, ".cursor", "skills", "openviking-memory")), false);
+    assert.equal(existsSync(join(home, ".cursor", "rules", "openviking.mdc")), false);
+    assert.equal(existsSync(join(home, ".cursor", "skills", "openviking")), false);
     assert.equal(Boolean(JSON.parse(readFileSync(traeMcp, "utf8")).mcpServers.openviking), false);
     assert.equal(Boolean(JSON.parse(readFileSync(traeCnMcp, "utf8")).mcpServers.openviking), false);
     assert.ok(JSON.parse(readFileSync(traeCnMcp, "utf8")).mcpServers["third-party"]);
@@ -502,7 +528,7 @@ test("uninstall with no installer runtime on disk removes what it can and fetche
     assert.doesNotMatch(output, /Cloning|Refreshing checkout/u, output);
     assert.equal(existsSync(join(home, "openviking-repo")), false);
     assert.equal(existsSync(join(home, ".openviking", "agent-integrations", "cursor")), false);
-    assert.equal(existsSync(join(home, ".cursor", "rules", "openviking-memory.mdc")), false);
+    assert.equal(existsSync(join(home, ".cursor", "rules", "openviking.mdc")), false);
     // The host's own files could not be edited, so the uninstall has to name them.
     assert.match(result.stdout, /by hand from:.*\.cursor\/hooks\.json/u, output);
   } finally {
@@ -527,6 +553,101 @@ test("malformed existing agent JSON fails without overwriting user configuration
     ]);
     assert.notEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
     assert.equal(readFileSync(hooks, "utf8"), original);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("Codex rename removes old enablement and trust while preserving unrelated TOML", () => {
+  const home = mkdtempSync(join(tmpdir(), "openviking-codex-rename-"));
+  try {
+    const binDir = join(home, "bin");
+    mkdirSync(binDir);
+    const cli = join(binDir, "codex");
+    writeFileSync(cli, '#!/bin/sh\ncase "$*" in\n"plugin marketplace list --json") echo \'{"marketplaces":[]}\';;\n"plugin list") echo openviking;;\nesac\nexit 0\n');
+    chmodSync(cli, 0o755);
+    const config = join(home, ".codex", "config.toml");
+    mkdirSync(dirname(config));
+    const original = [
+      'model = "test-model"',
+      '[plugins."openviking-memory@openviking"]',
+      'enabled = true',
+      '[hooks.state."openviking-memory@openviking"]',
+      'trusted = true',
+      '[[custom.servers]]',
+      'name = "keep-array-table"',
+      '[plugins."unrelated@openviking"]',
+      'enabled = false',
+      '[mcp_servers."openviking-memory".tools.search]',
+      'approval = "ask"',
+      '',
+    ].join("\n");
+    writeFileSync(config, original);
+    const args = ["--harness", "codex", "--source", "dev", "--lang", "en", "--url", "http://127.0.0.1:1933", "--api-key", "", "--yes"];
+    const env = { PATH: binDir + ":" + dirname(installedNode) + ":/usr/bin:/bin" };
+    const installed = runInstaller(home, args, env);
+    assert.equal(installed.status, 0, installed.stdout + installed.stderr);
+    const migrated = readFileSync(config, "utf8");
+    assert.doesNotMatch(migrated, /\[(?:plugins|hooks\.state)\."openviking-memory@/);
+    assert.match(migrated, /\[plugins\."openviking@openviking"\]\nenabled = true/);
+    assert.match(migrated, /\[\[custom\.servers\]\]\nname = "keep-array-table"/);
+    assert.match(migrated, /\[plugins\."unrelated@openviking"\]\nenabled = false/);
+    assert.match(migrated, /\[mcp_servers\."openviking-memory"\.tools\.search\]\napproval = "ask"/);
+    assert.ok(readdirSync(dirname(config)).filter((name) => name.startsWith("config.toml.bak.")).some((name) => readFileSync(join(dirname(config), name), "utf8") === original));
+    const repeated = runInstaller(home, args, env);
+    assert.equal(repeated.status, 0, repeated.stdout + repeated.stderr);
+    assert.equal(readFileSync(config, "utf8"), migrated);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("partial host upgrades keep the shared runtime still imported by another host", () => {
+  const home = mkdtempSync(join(tmpdir(), "openviking-partial-rename-"));
+  try {
+    const integrations = join(home, ".openviking", "agent-integrations");
+    const oldShared = join(integrations, "memory-plugin-shared", "lib");
+    const oldAdapter = join(integrations, "trae", "scripts", "hook.mjs");
+    mkdirSync(oldShared, { recursive: true });
+    mkdirSync(dirname(oldAdapter), { recursive: true });
+    writeFileSync(join(oldShared, "agent-hook-runtime.mjs"), "export {};\n");
+    writeFileSync(oldAdapter, 'import "../../memory-plugin-shared/lib/agent-hook-runtime.mjs";\n');
+    runInstall(home, "cursor");
+    assert.equal(existsSync(oldShared), true);
+    runInstall(home, "trae");
+    assert.equal(existsSync(oldShared), false);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("Claude rename upgrades its old statusline without prompting or replacing custom settings", () => {
+  const home = mkdtempSync(join(tmpdir(), "openviking-claude-rename-"));
+  try {
+    const binDir = join(home, "bin");
+    mkdirSync(binDir);
+    const cli = join(binDir, "claude");
+    const cliLog = join(home, "commands.log");
+    writeFileSync(cli, '#!/bin/sh\nprintf \'%s\\n\' "$*" >> "$OV_RENAME_CLI_LOG"\ncase "$*" in\n"plugin marketplace list --json") echo \'[]\';;\n"plugin list") echo openviking@openviking;;\nesac\nexit 0\n');
+    chmodSync(cli, 0o755);
+    const settings = join(home, ".claude", "settings.json");
+    writeJson(settings, {
+      statusLine: { type: "command", command: 'node "/old/claude-code-memory-plugin/scripts/statusline.mjs"' },
+      permissions: { allow: ["custom-rule"] },
+    });
+    const args = ["--harness", "claude", "--source", "dev", "--lang", "en", "--url", "http://127.0.0.1:1933", "--api-key", "", "--yes"];
+    const env = { PATH: binDir + ":" + dirname(installedNode) + ":/usr/bin:/bin", OV_RENAME_CLI_LOG: cliLog };
+    const installed = runInstaller(home, args, env);
+    assert.equal(installed.status, 0, installed.stdout + installed.stderr);
+    const updated = JSON.parse(readFileSync(settings, "utf8"));
+    assert.match(updated.statusLine.command, /claude-code-plugin\/scripts\/statusline\.mjs/);
+    assert.deepEqual(updated.permissions.allow, ["custom-rule"]);
+    assert.match(readFileSync(cliLog, "utf8"), /plugin uninstall openviking-memory@openviking/);
+    updated.statusLine.command = "custom-statusline";
+    writeJson(settings, updated);
+    const repeated = runInstaller(home, args, env);
+    assert.equal(repeated.status, 0, repeated.stdout + repeated.stderr);
+    assert.equal(JSON.parse(readFileSync(settings, "utf8")).statusLine.command, "custom-statusline");
   } finally {
     rmSync(home, { recursive: true, force: true });
   }

@@ -63,7 +63,7 @@ function makeProxy({ url, fetchImpl, configOverrides = {}, localToolProvider, re
       user: "zeus",
       sendIdentityHeaders: true,
       peerId: "peer-a",
-      userAgent: "openviking-memory-test/9.9.9",
+      userAgent: "openviking-test/9.9.9",
       timeoutMs: 5000,
       debug: false,
       debugLogPath: "",
@@ -92,7 +92,7 @@ test("captures initialize session id and forwards SSE JSON-RPC response", async 
     assert.equal(entry.headers["x-openviking-account"], "default");
     assert.equal(entry.headers["x-openviking-user"], "zeus");
     assert.equal(entry.headers["x-openviking-actor-peer"], "peer-a");
-    assert.equal(entry.headers["user-agent"], "openviking-memory-test/9.9.9");
+    assert.equal(entry.headers["user-agent"], "openviking-test/9.9.9");
     assert.equal(entry.headers["mcp-protocol-version"], "2025-06-18");
     assert.equal(entry.headers["mcp-session-id"], undefined);
     res.writeHead(200, {

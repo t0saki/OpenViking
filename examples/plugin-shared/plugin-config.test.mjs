@@ -244,7 +244,7 @@ test("the assembler reports the client version it stamps on the User-Agent", () 
       env: { OPENVIKING_HOME: join(dir, "home") },
     });
     assert.equal(cfg.clientVersion, "1.2.3");
-    assert.equal(cfg.userAgent, "openviking-memory-codex/1.2.3");
+    assert.equal(cfg.userAgent, "openviking-codex/1.2.3");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

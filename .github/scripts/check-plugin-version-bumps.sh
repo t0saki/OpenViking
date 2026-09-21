@@ -19,13 +19,13 @@ fi
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
-# <plugin directory>:<manifest holding the version>
+# <plugin directory>:<manifest holding the version>[:<legacy manifest path at BASE_REF>]
 PLUGINS=(
-  "examples/claude-code-plugin:examples/claude-code-plugin/.claude-plugin/plugin.json"
-  "examples/codex-plugin:examples/codex-plugin/.codex-plugin/plugin.json"
+  "examples/claude-code-plugin:examples/claude-code-plugin/.claude-plugin/plugin.json:examples/claude-code-memory-plugin/.claude-plugin/plugin.json"
+  "examples/codex-plugin:examples/codex-plugin/.codex-plugin/plugin.json:examples/codex-memory-plugin/.codex-plugin/plugin.json"
   "examples/agent-hook-plugin:examples/agent-hook-plugin/plugin.json"
   "examples/opencode-plugin:examples/opencode-plugin/package.json"
-  "examples/dsh-plugin:examples/dsh-plugin/package.json"
+  "examples/dsh-plugin:examples/dsh-plugin/package.json:examples/dsh-memory-plugin/package.json"
   "examples/pi-coding-agent-extension:examples/pi-coding-agent-extension/package.json"
 )
 
@@ -33,7 +33,8 @@ PLUGINS=(
 # them through a vendored copy inside their directory: the config-driven hook
 # hosts have the runtime assembled at install time, and the packaged plugins
 # build their copies at pack time. So the library counts as a change to all.
-SHARED_LIB="examples/plugin-shared/lib"
+# Both paths are listed so the gate fires on changes to either name.
+SHARED_LIB="examples/plugin-shared/lib examples/memory-plugin-shared/lib"
 
 read_version() { # read_version <ref-or-empty> <path>
   local ref="$1" path="$2" json
@@ -77,13 +78,20 @@ done
 
 for entry in "${PLUGINS[@]}"; do
   dir="${entry%%:*}"
-  manifest="${entry#*:}"
+  rest="${entry#*:}"
+  manifest="${rest%%:*}"
+  base_manifest="${rest#*:}"
+  [ "$base_manifest" = "$manifest" ] && base_manifest=""
 
-  changed="$(git diff --name-only "$BASE_REF...HEAD" -- "$dir" "$SHARED_LIB" | grep -v '/node_modules/' || true)"
+  changed="$(git diff --name-only "$BASE_REF...HEAD" -- "$dir" $SHARED_LIB | grep -v '/node_modules/' || true)"
   [ -n "$changed" ] || continue
 
-  # A plugin added in this branch has no baseline version to compare against.
-  before="$(read_version "$BASE_REF" "$manifest")" || continue
+  # Try the current manifest first, then the legacy path as fallback for
+  # renamed plugin directories whose baseline only exists under the old name.
+  before="$(read_version "$BASE_REF" "$manifest")" || before="$([ -n "$base_manifest" ] && read_version "$BASE_REF" "$base_manifest")" || {
+    echo "::notice file=$manifest::$dir changed but no baseline version found at $manifest${base_manifest:+ or $base_manifest} — cannot verify version bump."
+    continue
+  }
   after="$(read_version "" "$manifest")"
 
   if [ "$before" = "$after" ]; then

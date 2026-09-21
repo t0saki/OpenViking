@@ -37,7 +37,7 @@ const wire = (cfg) => Object.fromEntries(WIRE.map((field) => [field, cfg[field]]
 const pick = (env, names) => Object.fromEntries(names.filter((name) => name in env).map((name) => [name, env[name]]));
 
 const CODEX_ENV_VARS = JSON.parse(readFileSync(join(ROOT, "examples", "codex-plugin", ".mcp.json"), "utf-8"))
-  .mcpServers["openviking-memory"].env_vars;
+  .mcpServers["openviking"].env_vars;
 
 // What a DSH child inherits: the parent's environment minus the names
 // `@deepseek-ai/dsh-subprocess` treats as credentials.

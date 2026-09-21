@@ -95,6 +95,7 @@ export function ownsHook(value) {
 function isKnownLegacyOpenVikingServer(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   if (value.env?.OPENVIKING_INTEGRATION_ID === "openviking-memory") return true;
+  if (value.env?.OPENVIKING_INTEGRATION_ID === "openviking") return true;
   if (typeof value.url !== "string") return false;
   try {
     const url = new URL(value.url);
@@ -114,7 +115,7 @@ export function writeHostJsonConfigs({ kind, hooksPath, mcpPath, root, clientId,
   // this client's configuration templates live in.
   const hostDir = path.join(root, "hosts", kind);
   const packageManifest = readJson(path.join(hostDir, "openviking.integration.json"));
-  if (packageManifest.id !== "openviking-memory" || !Array.isArray(packageManifest.clients)
+  if ((packageManifest.id !== "openviking-memory" && packageManifest.id !== "openviking") || !Array.isArray(packageManifest.clients)
     || !packageManifest.clients.includes(clientId)) {
     throw new Error(`Invalid OpenViking integration manifest for ${clientId}`);
   }
@@ -132,7 +133,7 @@ export function writeHostJsonConfigs({ kind, hooksPath, mcpPath, root, clientId,
     if (!match) throw new Error(`Unsupported ${clientId} hook command template: ${command}`);
     const args = (match[2] || "").replaceAll("__OPENVIKING_CLIENT_ID__", clientId);
     const rendered = `${shellArg(nodeBin)} ${shellArg(path.join(root, match[1]))}${args}`;
-    return `${envPrefix} ${rendered} # openviking-memory`;
+    return `${envPrefix} ${rendered} # openviking`;
   }
 
   function renderHookValue(value) {
@@ -213,6 +214,17 @@ export function writeHostJsonConfigs({ kind, hooksPath, mcpPath, root, clientId,
 }
 
 /**
+ * Whether an MCP server entry is one this installer owns.
+ *
+ * The integration env var (`OPENVIKING_INTEGRATION_ID`) is the canonical marker;
+ * it covers every MCP entry this installer ever wrote.
+ */
+export function isOwnedMcpServer(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  return JSON.stringify(value).includes("OPENVIKING_INTEGRATION_ID");
+}
+
+/**
  * Drop this installer's hook entries and MCP server from the user's config files.
  *
  * The one caller with nothing to protect: a backup taken here would hold the
@@ -253,6 +265,17 @@ export function removeHostJsonConfigs({ hooksPath, mcpPath }) {
 export function mergeZcodeConfig({ configPath, hooksPath, mcpPath }) {
   const config = readJson(configPath);
 
+  // Prune our managed hook groups from every event before merging in the
+  // template, so a retired event that the templates no longer name does not
+  // leave stale entries behind.
+  if (config.hooks?.events && typeof config.hooks.events === "object") {
+    for (const event of Object.keys(config.hooks.events)) {
+      if (!Array.isArray(config.hooks.events[event])) continue;
+      config.hooks.events[event] = config.hooks.events[event].filter((item) => !ownsHook(item));
+      if (config.hooks.events[event].length === 0) delete config.hooks.events[event];
+    }
+  }
+
   if (fs.existsSync(hooksPath)) {
     const hooks = readJson(hooksPath);
     config.hooks = config.hooks || {};
@@ -273,7 +296,7 @@ export function mergeZcodeConfig({ configPath, hooksPath, mcpPath }) {
     for (const [name, server] of Object.entries(incoming)) {
       const existing = config.mcp.servers[name];
       // Only replace an entry that does not exist yet or is already ours.
-      if (existing && !JSON.stringify(existing).includes("openviking-memory")) {
+      if (existing && !JSON.stringify(existing).includes("OPENVIKING_INTEGRATION_ID")) {
         process.stderr.write(`Skipping ${name} MCP server: already exists and is not managed by OpenViking\n`);
         continue;
       }
@@ -284,11 +307,42 @@ export function mergeZcodeConfig({ configPath, hooksPath, mcpPath }) {
   atomicWrite(configPath, config);
 }
 
+/**
+ * Remove this installer's hook groups and MCP servers from zcode's config.json.
+ *
+ * ZCode keeps both hooks and MCP servers in one file, so the uninstall needs to
+ * scan the merged result rather than intermediate hook/mcp artifacts that may
+ * not exist on disk or may be stale.
+ */
+export function removeZcodeConfig({ configPath }) {
+  if (!fs.existsSync(configPath)) return;
+  const config = readJson(configPath);
+
+  if (config.hooks?.events && typeof config.hooks.events === "object") {
+    for (const event of Object.keys(config.hooks.events)) {
+      if (!Array.isArray(config.hooks.events[event])) continue;
+      config.hooks.events[event] = config.hooks.events[event].filter((item) => !ownsHook(item));
+      if (config.hooks.events[event].length === 0) delete config.hooks.events[event];
+    }
+  }
+
+  if (config.mcp?.servers && typeof config.mcp.servers === "object") {
+    for (const name of Object.keys(config.mcp.servers)) {
+      if (isOwnedMcpServer(config.mcp.servers[name])) {
+        delete config.mcp.servers[name];
+      }
+    }
+  }
+
+  atomicWrite(configPath, config, { backup: false });
+}
+
 const COMMANDS = {
   write: ([kind, hooksPath, mcpPath, root, clientId, nodeBin, sourceMode]) =>
     writeHostJsonConfigs({ kind, hooksPath, mcpPath, root, clientId, nodeBin, sourceMode }),
   remove: ([hooksPath, mcpPath]) => removeHostJsonConfigs({ hooksPath, mcpPath }),
   "merge-zcode": ([configPath, hooksPath, mcpPath]) => mergeZcodeConfig({ configPath, hooksPath, mcpPath }),
+  "remove-zcode": ([configPath]) => removeZcodeConfig({ configPath }),
 };
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {

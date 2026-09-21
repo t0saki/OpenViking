@@ -26,15 +26,25 @@ test("captures DSH message events without recapturing injected context", () => {
     peer_id: "workspace-a",
   });
 
-  const injected = captureEvent({
+  const injectedNew = captureEvent({
     type: "user/message",
     data: {
       role: "user",
       content: [{ type: "text", text: "<openviking-context>blue</openviking-context>" }],
+      source: { kind: "plugin", plugin: "openviking", form: "recall" },
+    },
+  }, CONFIG);
+  assert.equal(injectedNew, null);
+
+  const injectedLegacy = captureEvent({
+    type: "user/message",
+    data: {
+      role: "user",
+      content: [{ type: "text", text: "<openviking-context>legacy</openviking-context>" }],
       source: { kind: "plugin", plugin: "openviking-memory", form: "recall" },
     },
   }, CONFIG);
-  assert.equal(injected, null);
+  assert.equal(injectedLegacy, null);
 
   // Every plugin's injections stay out of memory, not just this plugin's:
   // synthetic context mirrored as human input would poison extraction.
@@ -157,8 +167,8 @@ test("builds recall queries from current input while excluding its own context",
     },
     {
       role: "user",
-      content: [{ type: "text", text: "old recall" }],
-      source: { kind: "plugin", plugin: "openviking-memory" },
+      content: [{ type: "text", text: "new recall" }],
+      source: { kind: "plugin", plugin: "openviking" },
     },
     {
       role: "user",
@@ -166,4 +176,19 @@ test("builds recall queries from current input while excluding its own context",
       source: { kind: "plugin", plugin: "job-controller", form: "notice", summary: "done" },
     },
   ]), "Current question\n\nbackground job completed");
+});
+
+test("excludes legacy openviking-memory source from promptText queries", () => {
+  assert.equal(promptText([
+    {
+      role: "user",
+      content: [{ type: "text", text: "Current question" }],
+      source: { kind: "user" },
+    },
+    {
+      role: "user",
+      content: [{ type: "text", text: "old recall" }],
+      source: { kind: "plugin", plugin: "openviking-memory" },
+    },
+  ]), "Current question");
 });
