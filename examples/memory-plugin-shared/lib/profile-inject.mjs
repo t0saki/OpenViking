@@ -218,8 +218,7 @@ function formatListing(headerUri, entries, budgetTokens, moreHint = MEMORY_MORE_
       let remaining = entries.length - i;
       const tailFor = (n) => `    ... +${n} more, ${moreHint}`;
       // A listing that stops without the tail hides that anything was cut, so
-      // give entries back until it fits. Only when even the header plus the
-      // tail bust the cap does the listing close silently.
+      // give entries back until it fits.
       while (used + estimateTokens(tailFor(remaining)) > budgetTokens && lines.length > 1) {
         used -= estimateTokens(lines.pop());
         remaining++;
@@ -357,7 +356,7 @@ function formatSkillCatalog(groups, budgetTokens) {
  * @param {Function} fetchJSON  ov-session.mjs:makeFetchJSON closure
  * @param {number} totalBudgetTokens  budget for the profile and memory listings
  * @param {string} [actorPeerId]
- * @param {{ skillCatalog?: boolean, skillCatalogTokenBudget?: number }} [options]
+ * @param {{ skillCatalog?: boolean, skillCatalogTokenBudget?: number, sessionStartMaxBytes?: number }} [options]
  *   callers pass their resolved plugin config: its skillCatalog knob adds
  *   <available-skills>, budgeted separately by skillCatalogTokenBudget.
  *   Without it the block is unchanged.
