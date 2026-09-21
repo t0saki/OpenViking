@@ -214,17 +214,17 @@ function checkInstall(report, { cliOnPath }) {
     const envKeys = Object.keys(envBlock).filter((k) => k.startsWith("OPENVIKING_"));
     if (envKeys.length) report.info(`~/.claude/settings.json env block sets ${envKeys.join(", ")}`);
 
-    // Old MCP tool permissions: permissions.allow entries with
-    // "mcp__plugin_openviking-memory_*" are stale — the plugin id was renamed
-    // and permissions granted for the old id don't carry over.
-    const perms = settings.data.permissions?.allow || settings.data.permissions?.deny || {};
-    const permEntries = Array.isArray(perms) ? perms : Object.keys(perms).filter((k) => perms[k] !== false);
+    // Permission rules use the full tool prefix, including deny/ask rules.
+    const permEntries = ["allow", "deny", "ask"].flatMap((kind) => {
+      const rules = settings.data.permissions?.[kind];
+      return Array.isArray(rules) ? rules : [];
+    });
     const oldPerms = permEntries.filter((e) => typeof e === "string" && e.includes("openviking-memory"));
     if (oldPerms.length) {
       report.warn(
         "settings.json has MCP tool permissions referencing the old plugin id 'openviking-memory'",
         `the plugin was renamed to 'openviking'; ${oldPerms.length} permission entry(s) refer to the stale id and won't apply`,
-        "remove the old permission entries from ~/.claude/settings.json (the user will be re-prompted for the new id)",
+        "update the old tool prefix in each allow/deny/ask rule; preserve the rule type so existing restrictions still apply",
       );
     }
   } else {
