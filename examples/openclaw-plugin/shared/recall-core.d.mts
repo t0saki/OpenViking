@@ -1,4 +1,4 @@
-// GENERATED FROM examples/memory-plugin-shared/lib. DO NOT EDIT.
+// GENERATED FROM examples/plugin-shared/lib. DO NOT EDIT.
 import type { OvHttpRequestOptions } from "./ov-http.mjs";
 
 export type ContextSearchBody = {

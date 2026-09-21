@@ -5,19 +5,19 @@
    **Trae 国际版**
 
    ```bash
-   bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/memory-plugin-shared/install.sh) --harness trae --dist tos
+   bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/plugin-shared/install.sh) --harness trae --dist tos
    ```
 
    **Trae 中国版**
 
    ```bash
-   bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/memory-plugin-shared/install.sh) --harness trae-cn --dist tos
+   bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/plugin-shared/install.sh) --harness trae-cn --dist tos
    ```
 
    **TraeCode CLI 2.0**
 
    ```bash
-   bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/memory-plugin-shared/install.sh) --harness trae-cli --dist tos
+   bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/plugin-shared/install.sh) --harness trae-cli --dist tos
    ```
 
 2. 安装器会依次询问以下信息：语言（English / 中文）、OpenViking 凭据。在 OpenViking 凭据配置中，选择连接至「火山引擎 OpenViking 云服务 [api.vikingdb.cn-beijing.volces.com]」，并填入 API KEY：
@@ -56,4 +56,4 @@ Hooks can run outside the sandbox after you trust them.
 ## 参考
 
 - 手动配置文档：[TRAE](https://docs.openviking.net/zh/agent-integrations/13-trae)
-- 源码：[examples/agent-hook-plugin](https://github.com/volcengine/OpenViking/tree/main/examples/agent-hook-plugin)（TRAE / TRAE CN）、[examples/codex-memory-plugin](https://github.com/volcengine/OpenViking/tree/main/examples/codex-memory-plugin)（TraeCode CLI 2.0）
+- 源码：[examples/agent-hook-plugin](https://github.com/volcengine/OpenViking/tree/main/examples/agent-hook-plugin)（TRAE / TRAE CN）、[examples/codex-plugin](https://github.com/volcengine/OpenViking/tree/main/examples/codex-plugin)（TraeCode CLI 2.0）

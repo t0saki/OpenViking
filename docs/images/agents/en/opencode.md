@@ -3,7 +3,7 @@
 1. Run the installer in your terminal:
 
    ```bash
-   bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/memory-plugin-shared/install.sh) --harness opencode --dist tos
+   bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/plugin-shared/install.sh) --harness opencode --dist tos
    ```
 
 2. The installer will ask for language (English / Chinese) and OpenViking credentials. In the OpenViking credential step, choose **VolcEngine OpenViking Cloud Service [api.vikingdb.cn-beijing.volces.com]** and enter the API KEY:

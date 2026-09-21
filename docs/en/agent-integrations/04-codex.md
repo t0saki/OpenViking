@@ -2,28 +2,28 @@
 
 Equip [Codex](https://developers.openai.com/codex) with persistent memory across sessions. Install it once, and your OpenViking profile and memory index are loaded at session start, relevant memories are recalled with every prompt, new turns are captured after each response, and sessions are committed before compaction. The plugin also connects Codex to OpenViking's `/mcp` endpoint, enabling the model to call tools such as `find`, `search`, `read`, and `remember` directly.
 
-Source: [examples/codex-memory-plugin](https://github.com/volcengine/OpenViking/tree/main/examples/codex-memory-plugin) | [Blog: Motivation & demo](https://blog.openviking.ai/post/openviking-coding-agent/)
+Source: [examples/codex-plugin](https://github.com/volcengine/OpenViking/tree/main/examples/codex-plugin) | [Blog: Motivation & demo](https://blog.openviking.ai/post/openviking-coding-agent/)
 
 ## Install
 
 Claude Code and Codex share one installer. It asks for your language (English/中文), which harnesses to install, the download source, and your OpenViking credentials; every step is idempotent.
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/main/examples/memory-plugin-shared/install.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/main/examples/plugin-shared/install.sh)
 ```
 
 TraeCode CLI 2.0 accepts this Codex-format plugin directly. Its default
 installer entry is `--harness trae-cli`:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/main/examples/memory-plugin-shared/install.sh) \
+bash <(curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/main/examples/plugin-shared/install.sh) \
   --harness trae-cli
 ```
 
 In regions where GitHub is hard to reach, run the same installer from the Volcengine TOS mirror (or pick "TOS mirror" at the download-source prompt). Codex installs from a TOS-hosted git repo and keeps remote update support:
 
 ```bash
-bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/memory-plugin-shared/install.sh)
+bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/plugin-shared/install.sh)
 ```
 
 No shell wrapper is needed anymore — the plugin ships a stdio MCP proxy that reads `~/.openviking/ovcli.conf` (or `OPENVIKING_*` env vars) at runtime, same as the hooks. After installing, launch Codex (`trae-cli` for TraeCode CLI 2.0):
@@ -102,7 +102,7 @@ Credential source: env vars win by default — when any `OPENVIKING_*` credentia
 | `OPENVIKING_CODEX_IDLE_TTL_MS` | `1800000` | SessionStart idle-TTL sweep threshold |
 | `OPENVIKING_CODEX_LOCK_WAIT_MS` | `120000` (SessionEnd), `40000` (PreCompact) | How long a capture hook waits for the per-session state lock |
 | `OPENVIKING_CODEX_COMMITTED_TTL_MS` | `2592000000` | How long a committed session's transcript cursor is kept before its state file is retired |
-| `OPENVIKING_RECALL_QUERY_FILTERS` | `""` | CSV of sed-style regex rules applied to the prompt before it becomes a query ([grammar and examples](https://github.com/volcengine/OpenViking/blob/main/examples/codex-memory-plugin/README.md#input-filters)) |
+| `OPENVIKING_RECALL_QUERY_FILTERS` | `""` | CSV of sed-style regex rules applied to the prompt before it becomes a query ([grammar and examples](https://github.com/volcengine/OpenViking/blob/main/examples/codex-plugin/README.md#input-filters)) |
 | `OPENVIKING_CAPTURE_FILTERS` | `""` | CSV of sed-style regex rules applied to every captured turn (same grammar) |
 | `OPENVIKING_DEBUG` | `false` | Write logs to `~/.openviking/logs/codex-hooks.log` |
 
@@ -110,7 +110,7 @@ Most of these knobs can also live in `ovcli.conf` under `plugin` — see [Plugin
 
 If recall latency matters most, see [Low-latency recall](./01-overview.md#low-latency-recall) for the environment-variable and `ovcli.conf` settings that disable query expansion and Codex's local result compression.
 
-Additional tuning options (e.g., `OPENVIKING_RECALL_LIMIT`, `OPENVIKING_CAPTURE_ASSISTANT_TURNS`) are documented in the [plugin README](https://github.com/volcengine/OpenViking/blob/main/examples/codex-memory-plugin/README.md#tuning-the-plugin).
+Additional tuning options (e.g., `OPENVIKING_RECALL_LIMIT`, `OPENVIKING_CAPTURE_ASSISTANT_TURNS`) are documented in the [plugin README](https://github.com/volcengine/OpenViking/blob/main/examples/codex-plugin/README.md#tuning-the-plugin).
 
 </details>
 
@@ -134,8 +134,8 @@ Change it with `OPENVIKING_PEER_SOURCE`, with `plugin.peerSource` in `ovcli.conf
 
 - [Capability Reference](./16-capability-reference.md)
 - [Blog: OpenViking in Claude Code / Codex](https://blog.openviking.ai/post/openviking-coding-agent/) — Motivation, architecture overview, and demo.
-- [Plugin README](https://github.com/volcengine/OpenViking/blob/main/examples/codex-memory-plugin/README.md) — Full environment variable list and architecture diagram.
-- [DESIGN.md](https://github.com/volcengine/OpenViking/blob/main/examples/codex-memory-plugin/DESIGN.md) — Commit decision tree.
+- [Plugin README](https://github.com/volcengine/OpenViking/blob/main/examples/codex-plugin/README.md) — Full environment variable list and architecture diagram.
+- [DESIGN.md](https://github.com/volcengine/OpenViking/blob/main/examples/codex-plugin/DESIGN.md) — Commit decision tree.
 - [MCP Clients](./06-mcp-clients.md) — MCP protocol, tools, and other clients.
 - [Deployment Guide → CLI](../guides/03-deployment.md#cli) — `ovcli.conf` setup instructions.
 
@@ -143,4 +143,4 @@ Change it with `OPENVIKING_PEER_SOURCE`, with `plugin.peerSource` in `ovcli.conf
 
 Set `OPENVIKING_RECALL_COMPRESS=server` to compress recalled context on the OpenViking server without launching a local Codex compressor. `client` uses local compression only; `auto` (the default) uses the server when the local compressor is unavailable; `off` disables compression. Existing server digests are used directly, and an explicit no-relevant result injects nothing.
 
-Codex calls the shared `buildRecallBlockDetailed()` pipeline for retrieval, ranking, budgets and old-server fallback. Only session mapping, model execution and hook output remain host-specific. Local compression failures preserve bounded retrieved context. Without local compression, raw fallback now honors `recallPreferAbstract` instead of always reading every leaf in full. Budgets include body text, URIs and wrapper text. See the [shared plugin configuration](https://github.com/volcengine/OpenViking/blob/main/examples/memory-plugin-shared/README.md#cloud-recall-compression).
+Codex calls the shared `buildRecallBlockDetailed()` pipeline for retrieval, ranking, budgets and old-server fallback. Only session mapping, model execution and hook output remain host-specific. Local compression failures preserve bounded retrieved context. Without local compression, raw fallback now honors `recallPreferAbstract` instead of always reading every leaf in full. Budgets include body text, URIs and wrapper text. See the [shared plugin configuration](https://github.com/volcengine/OpenViking/blob/main/examples/plugin-shared/README.md#cloud-recall-compression).

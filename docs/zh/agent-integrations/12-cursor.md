@@ -9,14 +9,14 @@
 安装器询问连接方式时，火山引擎云服务用户请选择 **火山引擎 OpenViking 云服务** 并填写 API Key。只有本机已运行 OpenViking 服务时才选择 **自建 / 本地**。
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/main/examples/memory-plugin-shared/install.sh) \
+bash <(curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/main/examples/plugin-shared/install.sh) \
   --harness cursor
 ```
 
 GitHub 访问受限时使用 TOS 镜像：
 
 ```bash
-bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/memory-plugin-shared/install.sh) \
+bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/plugin-shared/install.sh) \
   --harness cursor --dist tos
 ```
 
@@ -52,11 +52,11 @@ bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/memory-plugin-shar
 
 ```bash
 # GitHub
-bash <(curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/main/examples/memory-plugin-shared/install.sh) \
+bash <(curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/main/examples/plugin-shared/install.sh) \
   --harness cursor --uninstall --yes
 
 # TOS
-bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/memory-plugin-shared/install.sh) \
+bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/plugin-shared/install.sh) \
   --harness cursor --uninstall --yes
 ```
 

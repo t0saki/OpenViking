@@ -2,20 +2,20 @@
 
 为 [Claude Code](https://docs.claude.com/zh-CN/docs/claude-code/overview) 添加跨项目、跨会话（session）的长期记忆功能。安装完成后，每轮对话均会自动召回相关记忆并捕获新内容，无需模型主动调用任何工具。
 
-源码：[examples/claude-code-memory-plugin](https://github.com/volcengine/OpenViking/tree/main/examples/claude-code-memory-plugin) | [博客：动机与效果展示](https://blog.openviking.ai/post/openviking-coding-agent/)
+源码：[examples/claude-code-plugin](https://github.com/volcengine/OpenViking/tree/main/examples/claude-code-plugin) | [博客：动机与效果展示](https://blog.openviking.ai/post/openviking-coding-agent/)
 
 ## 安装
 
 Claude Code 和 Codex 共用同一个安装脚本。它会依次询问界面语言（English/中文）、要安装的 harness、下载源和 OpenViking 凭据；所有步骤幂等，重复运行安全。
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/main/examples/memory-plugin-shared/install.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/main/examples/plugin-shared/install.sh)
 ```
 
 GitHub 访问受限的地区，从火山引擎 TOS 镜像运行同一个安装脚本（或在下载源提问时选择「TOS 镜像」）：
 
 ```bash
-bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/memory-plugin-shared/install.sh)
+bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/plugin-shared/install.sh)
 ```
 
 > **Claude Code 走 TOS 的注意事项**：TOS 渠道注册的是本地目录 marketplace，**无法自动更新**——更新请重跑安装脚本。（Codex 走 TOS 时安装自 TOS 托管的 git 仓库，保留远程更新能力。）
@@ -46,7 +46,7 @@ bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/memory-plugin-shar
 >
 > 使用纯本地模式（`http://127.0.0.1:1933`，无鉴权）？您可以跳过第 1 步，插件将直接使用本地默认值。
 >
-> 使用 Claude Code < 2.0 版本？安装脚本会自动识别并回退到 `claude mcp add` + hooks 合并；详见 [插件 README 的兼容模式章节](https://github.com/volcengine/OpenViking/blob/main/examples/claude-code-memory-plugin/README_CN.md#兼容模式claude-code--20)。
+> 使用 Claude Code < 2.0 版本？安装脚本会自动识别并回退到 `claude mcp add` + hooks 合并；详见 [插件 README 的兼容模式章节](https://github.com/volcengine/OpenViking/blob/main/examples/claude-code-plugin/README_CN.md#兼容模式claude-code--20)。
 
 </details>
 
@@ -87,7 +87,7 @@ bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/memory-plugin-shar
 | `OPENVIKING_AUTO_CAPTURE` | `true` | 每轮对话结束后自动捕获新记忆 |
 | `OPENVIKING_BYPASS_SESSION` | `false` | 禁用当前会话的所有 Hook |
 | `OPENVIKING_BYPASS_SESSION_PATTERNS` | `""` | 通过 CSV 格式的 glob 模式匹配并自动跳过特定会话 |
-| `OPENVIKING_RECALL_QUERY_FILTERS` | `""` | CSV 格式的 sed 风格正则规则，在 prompt 变成检索 query 前生效（[语法与示例](https://github.com/volcengine/OpenViking/blob/main/examples/claude-code-memory-plugin/README.md#input-filters)） |
+| `OPENVIKING_RECALL_QUERY_FILTERS` | `""` | CSV 格式的 sed 风格正则规则，在 prompt 变成检索 query 前生效（[语法与示例](https://github.com/volcengine/OpenViking/blob/main/examples/claude-code-plugin/README.md#input-filters)） |
 | `OPENVIKING_CAPTURE_FILTERS` | `""` | CSV 格式的 sed 风格正则规则，作用于每个被捕获的回合（同一套语法） |
 | `OPENVIKING_MEMORY_ENABLED` | (auto) | 强制开启或关闭插件 |
 | `OPENVIKING_DEBUG` | `false` | 将调试日志输出至 `~/.openviking/logs/cc-hooks.log` |
@@ -96,7 +96,7 @@ bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/memory-plugin-shar
 
 如果更看重召回响应速度，请参阅[低延迟召回](./01-overview.md#低延迟召回)，其中说明了如何通过环境变量或 `ovcli.conf` 关闭查询扩展与结果压缩。
 
-在多租户场景下，请额外配置 `OPENVIKING_ACCOUNT` 和 `OPENVIKING_USER`。完整的环境变量列表请参阅 [插件 README](https://github.com/volcengine/OpenViking/blob/main/examples/claude-code-memory-plugin/README.md#configuration)。
+在多租户场景下，请额外配置 `OPENVIKING_ACCOUNT` 和 `OPENVIKING_USER`。完整的环境变量列表请参阅 [插件 README](https://github.com/volcengine/OpenViking/blob/main/examples/claude-code-plugin/README.md#configuration)。
 
 </details>
 
@@ -108,7 +108,7 @@ bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/memory-plugin-shar
 
 ## 状态行
 
-插件会在 Claude Code 的输入框下方显示一行 OpenViking 状态栏，用于指示：连接状态、召回条数、捕获进度以及当前会话状态。关于状态栏各部分的详细含义与自定义配置方法，请参阅 [STATUSLINE.md](https://github.com/volcengine/OpenViking/blob/main/examples/claude-code-memory-plugin/STATUSLINE.md)。
+插件会在 Claude Code 的输入框下方显示一行 OpenViking 状态栏，用于指示：连接状态、召回条数、捕获进度以及当前会话状态。关于状态栏各部分的详细含义与自定义配置方法，请参阅 [STATUSLINE.md](https://github.com/volcengine/OpenViking/blob/main/examples/claude-code-plugin/STATUSLINE.md)。
 
 ## 故障排查
 
@@ -124,6 +124,6 @@ bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/memory-plugin-shar
 
 - [集成能力参考](./16-capability-reference.md)
 - [博客：在 Claude Code / Codex 中接入 OpenViking](https://blog.openviking.ai/post/openviking-coding-agent/) — 探讨为 Coding Agent 添加长期记忆的动机与实际效果。
-- [插件 README](https://github.com/volcengine/OpenViking/blob/main/examples/claude-code-memory-plugin/README.md) — 查看完整的环境变量列表、Hook 运行细节及系统架构图。
+- [插件 README](https://github.com/volcengine/OpenViking/blob/main/examples/claude-code-plugin/README.md) — 查看完整的环境变量列表、Hook 运行细节及系统架构图。
 - [MCP 客户端](./06-mcp-clients.md) — 了解 MCP 工具参数及其他客户端集成指南。
 - [部署指南 → CLI](../guides/03-deployment.md#cli) — 学习 `ovcli.conf` 的具体配置方法。

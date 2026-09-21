@@ -83,7 +83,7 @@ npm view @openviking/opencode-plugin version
 For development or PR testing, copy the package into OpenCode's plugin directory with a top-level wrapper:
 
 ```bash
-node examples/memory-plugin-shared/sync.mjs
+node examples/plugin-shared/sync.mjs
 mkdir -p ~/.config/opencode/plugins/openviking
 cp examples/opencode-plugin/wrappers/openviking.js ~/.config/opencode/plugins/openviking.js
 cp examples/opencode-plugin/index.mjs examples/opencode-plugin/package.json ~/.config/opencode/plugins/openviking/
@@ -145,7 +145,7 @@ Behaviour knobs live in `~/.openviking/ovcli.conf` beside the connection fields,
 }
 ```
 
-Keys in `plugin` apply to every harness; keys in `plugin.opencode` apply to this one and override them. Resolution is `OPENVIKING_*` environment variables → the workspace's `.openviking/config.json`, `.openviking/config.local.json` and machine registry entry → `plugin.opencode` → `plugin` → built-in defaults. Every knob, with its type, default, range, environment variable and accepted older spellings, is declared in [`examples/memory-plugin-shared/lib/config-schema.mjs`](../memory-plugin-shared/lib/config-schema.mjs).
+Keys in `plugin` apply to every harness; keys in `plugin.opencode` apply to this one and override them. Resolution is `OPENVIKING_*` environment variables → the workspace's `.openviking/config.json`, `.openviking/config.local.json` and machine registry entry → `plugin.opencode` → `plugin` → built-in defaults. Every knob, with its type, default, range, environment variable and accepted older spellings, is declared in [`examples/plugin-shared/lib/config-schema.mjs`](../plugin-shared/lib/config-schema.mjs).
 
 `recallLimit` is a legacy quota-scaling input, not a final result cap.
 Explicit values from 1 through 5 produce an effective total quota of 6 because

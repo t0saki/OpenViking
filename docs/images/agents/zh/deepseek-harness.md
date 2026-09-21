@@ -3,13 +3,13 @@
 运行安装器：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/main/examples/memory-plugin-shared/install.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/main/examples/plugin-shared/install.sh)
 ```
 
 若 GitHub 访问受限，可改用火山引擎 TOS 镜像：
 
 ```bash
-bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/memory-plugin-shared/install.sh)
+bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/plugin-shared/install.sh)
 ```
 
 安装器会依次询问语言、Harness、下载源和 OpenViking 凭据：
@@ -40,4 +40,4 @@ bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/memory-plugin-shar
 ## 参考
 
 - 完整文档：[DeepSeek Harness](https://docs.openviking.net/zh/agent-integrations/17-dsh)
-- 源码：[examples/dsh-memory-plugin](https://github.com/volcengine/OpenViking/tree/main/examples/dsh-memory-plugin)
+- 源码：[examples/dsh-plugin](https://github.com/volcengine/OpenViking/tree/main/examples/dsh-plugin)

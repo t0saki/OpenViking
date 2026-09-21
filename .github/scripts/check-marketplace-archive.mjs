@@ -17,7 +17,7 @@ import {
   assembledClosure,
   importSpecifiers,
   resolveTargets,
-} from "../../examples/memory-plugin-shared/sync.mjs";
+} from "../../examples/plugin-shared/sync.mjs";
 
 const EXAMPLES = join(ROOT, "examples");
 
@@ -168,7 +168,7 @@ export async function requiredArchiveFiles(stagedNames) {
   };
 
   for (const name of staged) {
-    if (name === "memory-plugin-shared") continue;
+    if (name === "plugin-shared") continue;
     const root = join(EXAMPLES, name);
     if (!(await isDirectory(root))) continue;
     // `.claude-plugin/` and `.agents/` are the marketplace manifests the
@@ -188,7 +188,7 @@ export async function requiredArchiveFiles(stagedNames) {
     if (dir.startsWith("..") || !staged.has(dir.split(sep)[0])) continue;
     for (const file of target.files) required.add(join(dir, file));
   }
-  if (staged.has("memory-plugin-shared")) {
+  if (staged.has("plugin-shared")) {
     addIfStaged(MANIFEST_PATH);
     for (const file of await assembledClosure()) addIfStaged(join(dirname(MANIFEST_PATH), file));
   }

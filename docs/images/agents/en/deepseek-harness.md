@@ -3,13 +3,13 @@
 Run the installer:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/main/examples/memory-plugin-shared/install.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/main/examples/plugin-shared/install.sh)
 ```
 
 If GitHub is difficult to reach, use the Volcengine TOS mirror:
 
 ```bash
-bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/memory-plugin-shared/install.sh)
+bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/plugin-shared/install.sh)
 ```
 
 The installer asks for the language, harness, download source, and OpenViking credentials:
@@ -40,4 +40,4 @@ The installer asks for the language, harness, download source, and OpenViking cr
 ## References
 
 - Full guide: [DeepSeek Harness](https://docs.openviking.net/en/agent-integrations/17-dsh)
-- Source: [examples/dsh-memory-plugin](https://github.com/volcengine/OpenViking/tree/main/examples/dsh-memory-plugin)
+- Source: [examples/dsh-plugin](https://github.com/volcengine/OpenViking/tree/main/examples/dsh-plugin)

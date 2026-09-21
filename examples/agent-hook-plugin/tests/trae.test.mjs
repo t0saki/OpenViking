@@ -6,7 +6,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
-import { expectExit, runHookScript } from "../../memory-plugin-shared/testing/support.mjs";
+import { expectExit, runHookScript } from "../../plugin-shared/testing/support.mjs";
 import { buildTraeTurns, cleanTraeText } from "../hosts/trae-turns.mjs";
 import { evaluateHostUriGuard } from "../scripts/uri-guard.mjs";
 

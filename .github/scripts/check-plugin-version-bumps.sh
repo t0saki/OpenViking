@@ -21,11 +21,11 @@ cd "$ROOT"
 
 # <plugin directory>:<manifest holding the version>
 PLUGINS=(
-  "examples/claude-code-memory-plugin:examples/claude-code-memory-plugin/.claude-plugin/plugin.json"
-  "examples/codex-memory-plugin:examples/codex-memory-plugin/.codex-plugin/plugin.json"
+  "examples/claude-code-plugin:examples/claude-code-plugin/.claude-plugin/plugin.json"
+  "examples/codex-plugin:examples/codex-plugin/.codex-plugin/plugin.json"
   "examples/agent-hook-plugin:examples/agent-hook-plugin/plugin.json"
   "examples/opencode-plugin:examples/opencode-plugin/package.json"
-  "examples/dsh-memory-plugin:examples/dsh-memory-plugin/package.json"
+  "examples/dsh-plugin:examples/dsh-plugin/package.json"
   "examples/pi-coding-agent-extension:examples/pi-coding-agent-extension/package.json"
 )
 
@@ -33,7 +33,7 @@ PLUGINS=(
 # them through a vendored copy inside their directory: the config-driven hook
 # hosts have the runtime assembled at install time, and the packaged plugins
 # build their copies at pack time. So the library counts as a change to all.
-SHARED_LIB="examples/memory-plugin-shared/lib"
+SHARED_LIB="examples/plugin-shared/lib"
 
 read_version() { # read_version <ref-or-empty> <path>
   local ref="$1" path="$2" json

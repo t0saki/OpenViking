@@ -5,7 +5,7 @@ import { OVClient } from "../client.ts";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { withMockOpenViking, writeJson } from "../../memory-plugin-shared/testing/support.mjs";
+import { withMockOpenViking, writeJson } from "../../plugin-shared/testing/support.mjs";
 
 let testHome;
 const savedHome = process.env.OPENVIKING_STATE_DIR;

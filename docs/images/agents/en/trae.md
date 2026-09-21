@@ -5,19 +5,19 @@
    **Trae International**
 
    ```bash
-   bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/memory-plugin-shared/install.sh) --harness trae --dist tos
+   bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/plugin-shared/install.sh) --harness trae --dist tos
    ```
 
    **Trae China**
 
    ```bash
-   bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/memory-plugin-shared/install.sh) --harness trae-cn --dist tos
+   bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/plugin-shared/install.sh) --harness trae-cn --dist tos
    ```
 
    **TraeCode CLI 2.0**
 
    ```bash
-   bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/memory-plugin-shared/install.sh) --harness trae-cli --dist tos
+   bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/plugin-shared/install.sh) --harness trae-cli --dist tos
    ```
 
 2. The installer will ask for language (English / Chinese) and OpenViking credentials. In the OpenViking credential step, choose **VolcEngine OpenViking Cloud Service [api.vikingdb.cn-beijing.volces.com]** and enter the API KEY:
@@ -56,4 +56,4 @@ Then run `trae-cli plugin list` and confirm that `openviking-memory` is enabled.
 ## Reference
 
 - Docs on Manual Settings: [TRAE](https://docs.openviking.net/en/agent-integrations/13-trae)
-- Code: [examples/agent-hook-plugin](https://github.com/volcengine/OpenViking/tree/main/examples/agent-hook-plugin) (TRAE / TRAE CN), [examples/codex-memory-plugin](https://github.com/volcengine/OpenViking/tree/main/examples/codex-memory-plugin) (TraeCode CLI 2.0)
+- Code: [examples/agent-hook-plugin](https://github.com/volcengine/OpenViking/tree/main/examples/agent-hook-plugin) (TRAE / TRAE CN), [examples/codex-plugin](https://github.com/volcengine/OpenViking/tree/main/examples/codex-plugin) (TraeCode CLI 2.0)

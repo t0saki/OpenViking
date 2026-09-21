@@ -3,9 +3,9 @@
 Cursor, TRAE, TRAE CN and ZCode all install the same way: the shared installer writes lifecycle hooks and an MCP server entry into the host's own configuration files, and assembles the OpenViking runtime beside the integration. None of them has a marketplace listing to register or a separate MCP setup to do.
 
 ```bash
-bash examples/memory-plugin-shared/install.sh --harness cursor
-bash examples/memory-plugin-shared/install.sh --harness trae,trae-cn
-bash examples/memory-plugin-shared/install.sh --harness zcode
+bash examples/plugin-shared/install.sh --harness cursor
+bash examples/plugin-shared/install.sh --harness trae,trae-cn
+bash examples/plugin-shared/install.sh --harness zcode
 ```
 
 > **Requires an OpenViking server with `viking://~` home-alias support.** Recall targets the caller's own context space through `viking://~/memories` and `viking://~/skills`; the uid-less `viking://user/memories` shorthand is rejected by newer servers.
@@ -23,9 +23,9 @@ bash examples/memory-plugin-shared/install.sh --harness zcode
 
 The root `plugin.json` is host-neutral package metadata used for version checks and diagnostics. It is not a Claude Code, Cursor, TRAE, or ZCode native plugin manifest.
 
-`hosts/<host>/` holds only what a host reads as configuration — `hooks.json`, `.mcp.json`, `openviking.integration.json`, plus Cursor's rule and skill. Everything executable stays one level up, because `../../memory-plugin-shared/lib` is the path that resolves both in this repository and in an installed `~/.openviking/agent-integrations/<client>/`.
+`hosts/<host>/` holds only what a host reads as configuration — `hooks.json`, `.mcp.json`, `openviking.integration.json`, plus Cursor's rule and skill. Everything executable stays one level up, because `../../plugin-shared/lib` is the path that resolves both in this repository and in an installed `~/.openviking/agent-integrations/<client>/`.
 
-The memory logic itself is not here: recall, batching, the pending queue, credential resolution and the MCP proxy all come from `examples/memory-plugin-shared/lib`, which the installer copies to `~/.openviking/agent-integrations/memory-plugin-shared/lib`.
+The memory logic itself is not here: recall, batching, the pending queue, credential resolution and the MCP proxy all come from `examples/plugin-shared/lib`, which the installer copies to `~/.openviking/agent-integrations/plugin-shared/lib`.
 
 ## Host notes
 
@@ -36,7 +36,7 @@ The memory logic itself is not here: recall, batching, the pending queue, creden
 ## Diagnostics
 
 ```bash
-node ~/.openviking/agent-integrations/<client>/scripts/ov-memory-doctor.mjs --offline
+node ~/.openviking/agent-integrations/<client>/scripts/ov-plugin-doctor.mjs --offline
 ```
 
 The client defaults to the one this copy was installed for; pass `cursor`, `trae`, `trae-cn` or `zcode` as an argument to override it, drop `--offline` to probe the server as well, and add `--json` for a machine-readable report.

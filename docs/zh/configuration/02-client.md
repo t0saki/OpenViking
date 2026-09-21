@@ -149,7 +149,7 @@ export OPENVIKING_CLI_CONFIG_FILE=/path/to/ovcli.conf
 }
 ```
 
-每个键都是某个 `OPENVIKING_*` 调优变量的 camelCase 对应写法——`OPENVIKING_RECALL_LIMIT` 对应 `recallLimit`，`OPENVIKING_CAPTURE_ASSISTANT_TURNS` 对应 `captureAssistantTurns`。反过来不成立：少数变量刻意只认环境变量，比如一次性的 `OPENVIKING_BYPASS_SESSION`。完整列表在插件 README 里：[Claude Code](https://github.com/volcengine/OpenViking/blob/main/examples/claude-code-memory-plugin/README.md#configuration)、[Codex](https://github.com/volcengine/OpenViking/blob/main/examples/codex-memory-plugin/README.md#tuning-the-plugin)。取列表值的旋钮（`bypassSessionPatterns`、`recallQueryFilters`、`captureFilters`）在这里是 JSON 数组，而它们的环境变量对应物是逗号分隔的字符串，所以值里带字面逗号的只能写进数组。
+每个键都是某个 `OPENVIKING_*` 调优变量的 camelCase 对应写法——`OPENVIKING_RECALL_LIMIT` 对应 `recallLimit`，`OPENVIKING_CAPTURE_ASSISTANT_TURNS` 对应 `captureAssistantTurns`。反过来不成立：少数变量刻意只认环境变量，比如一次性的 `OPENVIKING_BYPASS_SESSION`。完整列表在插件 README 里：[Claude Code](https://github.com/volcengine/OpenViking/blob/main/examples/claude-code-plugin/README.md#configuration)、[Codex](https://github.com/volcengine/OpenViking/blob/main/examples/codex-plugin/README.md#tuning-the-plugin)。取列表值的旋钮（`bypassSessionPatterns`、`recallQueryFilters`、`captureFilters`）在这里是 JSON 数组，而它们的环境变量对应物是逗号分隔的字符串，所以值里带字面逗号的只能写进数组。
 
 优先级从高到低：环境变量 → [工作区各层](#工作区配置) → `plugin.<harness>` → `plugin` → `ov.conf` 里遗留的按 harness 分块 → 内置默认值。hook 每次触发都会重新读文件，所以改完下一轮就生效；改 `OPENVIKING_*` 变量则需要重启 agent，因为 hook 继承的是它的环境。
 
@@ -256,7 +256,7 @@ peer 是用户空间下的一段路径前缀——`viking://user/<you>/peers/<pe
 | `{dir}` | 工作区根目录的目录名：仓库根，或放着 `.openviking/config.json` 的那个目录 | 该目录不是工作区 |
 | `{harness}` | 当前 agent 的名字（`claude-code`、`codex`、`dsh`、`opencode`、`pi`、`cursor`、`trae`、`trae-cn`、`zcode`） | 从不为空——但 MCP proxy 不参与推导，所以只走 proxy 的读路径解析不出它 |
 
-在 `/Users/x/Dev/OpenViking/examples/codex-memory-plugin` 目录下、`origin` 为 `git@github.com:volcengine/OpenViking.git` 时，peer 是 `github.com-volcengine-openviking`——无论从哪个子目录、哪个 worktree、哪台机器、哪份 clone 得到的都是同一个值。因此同一仓库的所有 clone 共享一个 peer，而 fork 的 `origin` 不同，默认就是独立的 peer。推导过程直接读取仓库文件而不调用 `git`，因此 `PATH` 中没有 `git` 时同样可用；URL 会先归一化，使同一仓库的 ssh 与 https 写法收敛到同一个值，URL 中内嵌的 token 也不会进入 peer id。
+在 `/Users/x/Dev/OpenViking/examples/codex-plugin` 目录下、`origin` 为 `git@github.com:volcengine/OpenViking.git` 时，peer 是 `github.com-volcengine-openviking`——无论从哪个子目录、哪个 worktree、哪台机器、哪份 clone 得到的都是同一个值。因此同一仓库的所有 clone 共享一个 peer，而 fork 的 `origin` 不同，默认就是独立的 peer。推导过程直接读取仓库文件而不调用 `git`，因此 `PATH` 中没有 `git` 时同样可用；URL 会先归一化，使同一仓库的 ssh 与 https 写法收敛到同一个值，URL 中内嵌的 token 也不会进入 peer id。
 
 #### 按场景选择
 

@@ -20,14 +20,14 @@ ZCode 不提供 `PreCompact`、`SessionEnd` 和 subagent 生命周期 Hook。因
 前置条件：Node.js 18+、正在运行的 OpenViking 服务，以及 ZCode。
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/main/examples/memory-plugin-shared/install.sh) \
+bash <(curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/main/examples/plugin-shared/install.sh) \
   --harness zcode
 ```
 
 GitHub 不可用的地区可使用 TOS 镜像：
 
 ```bash
-bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/memory-plugin-shared/install.sh) \
+bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/plugin-shared/install.sh) \
   --harness zcode --dist tos
 ```
 

@@ -2,20 +2,20 @@
 
 Give [DeepSeek Harness](https://www.npmjs.com/package/@deepseek-ai/dsh) (`dsh`) cross-project and cross-session long-term memory. Once installed, every conversation automatically recalls relevant memories and captures new content, and the model gets the OpenViking tools and the `openviking-memory` skill without any extra setup.
 
-Source: [examples/dsh-memory-plugin](https://github.com/volcengine/OpenViking/tree/main/examples/dsh-memory-plugin)
+Source: [examples/dsh-plugin](https://github.com/volcengine/OpenViking/tree/main/examples/dsh-plugin)
 
 ## Install
 
 DSH shares the installer with the other memory plugins. It asks for your language (English/中文), which harnesses to install, the download source, and your OpenViking credentials; every step is idempotent—re-running it is entirely safe.
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/main/examples/memory-plugin-shared/install.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/main/examples/plugin-shared/install.sh)
 ```
 
 In regions where GitHub is hard to reach, run the same installer from the Volcengine TOS mirror (or pick "TOS mirror" at the download-source prompt):
 
 ```bash
-bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/memory-plugin-shared/install.sh)
+bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/plugin-shared/install.sh)
 ```
 
 When DSH is selected, the installer asks which profile to install into and defaults to `web`. Pass `--dsh-profile <name>` to answer it up front.
@@ -103,7 +103,7 @@ Behavior knobs live in the profile's Cordis patch entry:
 
 `peerSource`, in that same `config` block, decides how the workspace peer is derived. The default `"git"` uses the repository's normalized `origin` URL (`git@github.com:volcengine/OpenViking.git` becomes `github.com-volcengine-openviking`), falling back to the repository root path, so every clone, worktree, and subdirectory of one repository shares a single peer; outside a repository no peer is sent at all, and what is remembered there goes to your user-level space at `viking://user/<you>/memories`. `"cwd"` restores the earlier behavior — the working directory with every non-alphanumeric character replaced by `-` — and `"none"` sends no peer at all. To give a directory outside a repository its own memory, set `OPENVIKING_PEER_ID` for it ([Give a Directory Its Own Peer](../configuration/02-client.md#give-a-directory-its-own-peer)).
 
-Credentials given in the patch win over the environment. Behavior knobs resolve highest priority first: `OPENVIKING_*` environment variables, the workspace's `.openviking/config.json` and `config.local.json`, `ovcli.conf`'s `plugin.dsh`, `ovcli.conf`'s `plugin`, then this patch block. The full list is documented in the [bundle README](https://github.com/volcengine/OpenViking/tree/main/examples/dsh-memory-plugin).
+Credentials given in the patch win over the environment. Behavior knobs resolve highest priority first: `OPENVIKING_*` environment variables, the workspace's `.openviking/config.json` and `config.local.json`, `ovcli.conf`'s `plugin.dsh`, `ovcli.conf`'s `plugin`, then this patch block. The full list is documented in the [bundle README](https://github.com/volcengine/OpenViking/tree/main/examples/dsh-plugin).
 
 </details>
 

@@ -5,7 +5,7 @@ Because Claude Code may block installation scripts from unknown sources, automat
 1. Run the installer in your terminal:
 
    ```bash
-   bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/memory-plugin-shared/install.sh) --harness claude --dist tos
+   bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/plugin-shared/install.sh) --harness claude --dist tos
    ```
 
 2. The installer will ask for language (English / Chinese), OpenViking credentials, and whether to enable the Statusline.
@@ -59,4 +59,4 @@ Because Claude Code may block installation scripts from unknown sources, automat
 
 - Docs on Manual Settings: [Claude Code](https://docs.openviking.net/en/agent-integrations/02-claude-code)
 - Blog about how it works: [OpenViking for coding agents](https://blog.openviking.ai/post/openviking-coding-agent/)
-- Code: [examples/claude-code-memory-plugin](https://github.com/volcengine/OpenViking/tree/main/examples/claude-code-memory-plugin)
+- Code: [examples/claude-code-plugin](https://github.com/volcengine/OpenViking/tree/main/examples/claude-code-plugin)

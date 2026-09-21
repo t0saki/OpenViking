@@ -4,9 +4,9 @@ import {
   addAgentMessages,
   commitAgentSession,
   stableHash,
-} from "../../memory-plugin-shared/lib/agent-hook-runtime.mjs";
-import { filterCaptureTurns, isCaptureEnabled } from "../../memory-plugin-shared/lib/capture-utils.mjs";
-import { denyCursorPermission, evaluateUriGuard } from "../../memory-plugin-shared/lib/uri-guard.mjs";
+} from "../../plugin-shared/lib/agent-hook-runtime.mjs";
+import { filterCaptureTurns, isCaptureEnabled } from "../../plugin-shared/lib/capture-utils.mjs";
+import { denyCursorPermission, evaluateUriGuard } from "../../plugin-shared/lib/uri-guard.mjs";
 import { parseCursorTranscript } from "./cursor-transcript.mjs";
 
 async function captureTranscript(ctx, state) {

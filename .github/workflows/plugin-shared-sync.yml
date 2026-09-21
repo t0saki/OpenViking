@@ -13,11 +13,11 @@ on:
   push:
     branches: [main]
     paths:
-      - "examples/memory-plugin-shared/lib/**"
-      - "examples/memory-plugin-shared/sync.mjs"
+      - "examples/plugin-shared/lib/**"
+      - "examples/plugin-shared/sync.mjs"
       - "examples/skills/**"
-      - "examples/claude-code-memory-plugin/**"
-      - "examples/codex-memory-plugin/**"
+      - "examples/claude-code-plugin/**"
+      - "examples/codex-plugin/**"
       - "examples/openclaw-plugin/**"
       - "agent-plugins/**"
   workflow_dispatch:
@@ -40,7 +40,7 @@ jobs:
         with:
           node-version: "24"
 
-      - run: node examples/memory-plugin-shared/sync.mjs
+      - run: node examples/plugin-shared/sync.mjs
 
       - name: Commit what changed
         run: |

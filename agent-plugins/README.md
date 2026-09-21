@@ -10,8 +10,8 @@ Agent Plugins 1.0 is a vendor-neutral packaging format for extending AI coding a
 plugin.json                          # Agent Plugins 1.0 manifest
 mcp.json                             # stdio MCP server: "openviking"
 servers/mcp-proxy.mjs                # stdio -> streamable-HTTP proxy to the OV server's /mcp
-servers/shared/                      # generated from examples/memory-plugin-shared/lib (do not edit)
-skills/openviking-memory/SKILL.md    # teaches the model the recall + persist loop
+servers/shared/                      # generated from examples/plugin-shared/lib (do not edit)
+skills/openviking/SKILL.md    # teaches the model the recall + persist loop
 skills/ov-memory-troubleshoot/       # read-only extraction troubleshooting
 skills/ov-experience-memory/         # retrieve and apply prior task Experience
 plugin.test.mjs                      # node --test conformance checks
@@ -48,18 +48,18 @@ Config file changes are picked up by the running proxy without a restart. Debugg
 
 ## Scope: what this package does and doesn't do
 
-This package is the portable recall + write surface: skills plus MCP tools, driven by the model. Agent Plugins 1.0 deliberately excludes hooks, commands, and agents, so **automatic conversation capture and automatic pre-prompt recall are out of scope here** — the `skills/openviking-memory` skill instead teaches the model to recall at task start and persist durable facts via `remember`/`write` itself.
+This package is the portable recall + write surface: skills plus MCP tools, driven by the model. Agent Plugins 1.0 deliberately excludes hooks, commands, and agents, so **automatic conversation capture and automatic pre-prompt recall are out of scope here** — the `skills/openviking` skill instead teaches the model to recall at task start and persist durable facts via `remember`/`write` itself.
 
 **If your harness has a hook system, prefer the dedicated plugin** — hook-driven recall and capture cost no tool calls and don't depend on the model choosing to remember. One installer covers Claude Code, Codex, Cursor, TRAE / TRAE CN, ZCode, OpenCode, and pi; it prompts for language, harnesses, download source, and credentials, and is idempotent:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/main/examples/memory-plugin-shared/install.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/main/examples/plugin-shared/install.sh)
 # GitHub hard to reach? Same installer from the Volcengine TOS mirror:
-bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/memory-plugin-shared/install.sh)
+bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/plugin-shared/install.sh)
 ```
 
-- [claude-code-memory-plugin](../examples/claude-code-memory-plugin/) (Claude Code)
-- [codex-memory-plugin](../examples/codex-memory-plugin/) (Codex)
+- [claude-code-plugin](../examples/claude-code-plugin/) (Claude Code)
+- [codex-plugin](../examples/codex-plugin/) (Codex)
 - [opencode-plugin](../examples/opencode-plugin/) (OpenCode)
 - [agent-hook-plugin](../examples/agent-hook-plugin/) (Cursor, TRAE, TRAE CN, ZCode), ...
 
@@ -73,12 +73,12 @@ Per the spec, client-specific integrations may later be embedded in this package
 node --test agent-plugins/plugin.test.mjs
 ```
 
-`servers/shared/*.mjs` are generated, verbatim copies from `examples/memory-plugin-shared/lib` — do not edit them here. This directory is a target of the shared-lib sync script, so refresh them with:
+`servers/shared/*.mjs` are generated, verbatim copies from `examples/plugin-shared/lib` — do not edit them here. This directory is a target of the shared-lib sync script, so refresh them with:
 
 ```bash
-node examples/memory-plugin-shared/sync.mjs
+node examples/plugin-shared/sync.mjs
 ```
 
-`examples/memory-plugin-shared/sync.test.mjs` fails if they drift, and pins this package to the connection half of the shared runtime: `servers/mcp-proxy.mjs` resolves everything through `buildProxyConnection()` in `shared/credentials.mjs` — the same `resolveConnection()` every other plugin's hooks and proxy use — so the hook-tuning knobs — which this spec has no hooks to run — never enter the bundle.
+`examples/plugin-shared/sync.test.mjs` fails if they drift, and pins this package to the connection half of the shared runtime: `servers/mcp-proxy.mjs` resolves everything through `buildProxyConnection()` in `shared/credentials.mjs` — the same `resolveConnection()` every other plugin's hooks and proxy use — so the hook-tuning knobs — which this spec has no hooks to run — never enter the bundle.
 
 Both test files run in CI via `.github/workflows/pr.yml`.

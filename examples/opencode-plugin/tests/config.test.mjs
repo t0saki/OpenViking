@@ -8,7 +8,7 @@ import { loadConfig } from "../lib/config.mjs"
 import { OpenVikingPlugin } from "../index.mjs"
 
 // The layers, the knobs and the peer are the shared loader's, and
-// memory-plugin-shared/plugin-config.test.mjs holds this harness to them. What
+// plugin-shared/plugin-config.test.mjs holds this harness to them. What
 // is left here is hook-only mode, which is this plugin's alone: it is the only
 // harness that registers an MCP server from inside the host's own config.
 

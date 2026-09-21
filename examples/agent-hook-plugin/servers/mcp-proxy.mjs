@@ -3,10 +3,10 @@
 import { fileURLToPath } from "node:url";
 import { resolve as resolvePath } from "node:path";
 
-import { loadAgentHookConfig } from "../../memory-plugin-shared/lib/agent-hook-runtime.mjs";
-import { createLogger } from "../../memory-plugin-shared/lib/debug-log.mjs";
-import { toMcpProxyConfig } from "../../memory-plugin-shared/lib/mcp-proxy-config.mjs";
-import { createOpenVikingMcpProxy } from "../../memory-plugin-shared/lib/mcp-proxy-core.mjs";
+import { loadAgentHookConfig } from "../../plugin-shared/lib/agent-hook-runtime.mjs";
+import { createLogger } from "../../plugin-shared/lib/debug-log.mjs";
+import { toMcpProxyConfig } from "../../plugin-shared/lib/mcp-proxy-config.mjs";
+import { createOpenVikingMcpProxy } from "../../plugin-shared/lib/mcp-proxy-core.mjs";
 import { HOSTS } from "../hosts/index.mjs";
 
 export function readProxyConfig(env = process.env) {

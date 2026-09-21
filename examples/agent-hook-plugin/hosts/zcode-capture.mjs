@@ -1,5 +1,5 @@
-import { stableHash } from "../../memory-plugin-shared/lib/agent-hook-runtime.mjs";
-import { shouldCaptureText } from "../../memory-plugin-shared/lib/capture-utils.mjs";
+import { stableHash } from "../../plugin-shared/lib/agent-hook-runtime.mjs";
+import { shouldCaptureText } from "../../plugin-shared/lib/capture-utils.mjs";
 import { cleanZcodeText } from "./zcode-turns.mjs";
 
 export function zcodeTurnDedupKey(turn) {

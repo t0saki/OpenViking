@@ -3,9 +3,9 @@
 Cursor、TRAE、TRAE CN 与 ZCode 的安装方式相同：共享安装脚本把生命周期 hook 与 MCP server 条目写进宿主自己的配置文件，并在集成目录旁装配 OpenViking 运行时。四家都不需要注册 marketplace，也不需要单独配置 MCP。
 
 ```bash
-bash examples/memory-plugin-shared/install.sh --harness cursor
-bash examples/memory-plugin-shared/install.sh --harness trae,trae-cn
-bash examples/memory-plugin-shared/install.sh --harness zcode
+bash examples/plugin-shared/install.sh --harness cursor
+bash examples/plugin-shared/install.sh --harness trae,trae-cn
+bash examples/plugin-shared/install.sh --harness zcode
 ```
 
 > **需要支持 `viking://~` home alias 的 OpenViking 服务端。** 召回通过 `viking://~/memories` 与 `viking://~/skills` 指向调用者自己的上下文空间；不带 uid 的 `viking://user/memories` 简写会被较新的服务端拒绝。
@@ -23,9 +23,9 @@ bash examples/memory-plugin-shared/install.sh --harness zcode
 
 根目录的 `plugin.json` 是宿主无关的包元数据，只用于版本检查和诊断，不是 Claude Code、Cursor、TRAE 或 ZCode 的原生插件 manifest。
 
-`hosts/<host>/` 只放宿主当作配置读取的东西——`hooks.json`、`.mcp.json`、`openviking.integration.json`，以及 Cursor 的 rule 与 skill。可执行文件一律放在上一层，因为 `../../memory-plugin-shared/lib` 这条相对路径要在本仓库和安装后的 `~/.openviking/agent-integrations/<client>/` 两处同时成立。
+`hosts/<host>/` 只放宿主当作配置读取的东西——`hooks.json`、`.mcp.json`、`openviking.integration.json`，以及 Cursor 的 rule 与 skill。可执行文件一律放在上一层，因为 `../../plugin-shared/lib` 这条相对路径要在本仓库和安装后的 `~/.openviking/agent-integrations/<client>/` 两处同时成立。
 
-记忆逻辑本身不在这里：召回、批量写入、待处理队列、凭据解析与 MCP 代理都来自 `examples/memory-plugin-shared/lib`，由安装脚本复制到 `~/.openviking/agent-integrations/memory-plugin-shared/lib`。
+记忆逻辑本身不在这里：召回、批量写入、待处理队列、凭据解析与 MCP 代理都来自 `examples/plugin-shared/lib`，由安装脚本复制到 `~/.openviking/agent-integrations/plugin-shared/lib`。
 
 ## 各宿主差异
 
@@ -36,7 +36,7 @@ bash examples/memory-plugin-shared/install.sh --harness zcode
 ## 体检
 
 ```bash
-node ~/.openviking/agent-integrations/<client>/scripts/ov-memory-doctor.mjs --offline
+node ~/.openviking/agent-integrations/<client>/scripts/ov-plugin-doctor.mjs --offline
 ```
 
 client 默认取这份副本安装时对应的那个；传 `cursor`、`trae`、`trae-cn` 或 `zcode` 可以覆盖，去掉 `--offline` 会连带探测服务端，加 `--json` 输出机器可读的报告。

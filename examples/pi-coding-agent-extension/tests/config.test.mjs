@@ -7,7 +7,7 @@ import { loadConfig } from "../config.ts";
 import { isBypassed } from "../shared/session-model.mjs";
 
 // The layers, the knobs and the peer order are the shared loader's, and
-// memory-plugin-shared/plugin-config.test.mjs holds this harness to them. What
+// plugin-shared/plugin-config.test.mjs holds this harness to them. What
 // is left here is what this extension answers itself: the takeover knobs, the
 // peer it reports from the workspace resolution, and the two names it kept from
 // before it shared a loader.

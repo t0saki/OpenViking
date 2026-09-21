@@ -9,7 +9,7 @@
       "name": "openviking-memory",
       "source": {
         "source": "local",
-        "path": "./codex-memory-plugin"
+        "path": "./codex-plugin"
       },
       "policy": {
         "installation": "AVAILABLE",

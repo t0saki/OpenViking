@@ -36,7 +36,7 @@ OpenViking 客户端目前仅依赖一份全局配置（`~/.openviking/ovcli.con
 
 客户端将 Peer ID 放置在 `X-OpenViking-Actor-Peer` 请求头（读路径）和 Session 消息体的 `peer_id` 字段（写路径）中。服务端将 Peer 视为**用户边界内的路径前缀**：`viking://user/<user>/peers/<peer_id>/{memories,resources}`。目前服务端没有 Peer 注册表，也没有 Rename、Alias 或 Merge 机制（参考 `openviking/core/retrieval_targets.py:142`）。因此，变更 Peer ID 意味着开启一个全新的空命名空间；旧的命名空间只能通过默认的 broad recall（`peer_scope: "all"`）扫回，且仅覆盖 memory 分类桶，并因 `other_peer_penalty` 被降分垫底；在 `peer_scope: "actor"` 模式下，旧命名空间完全不可见。
 
-当前的推导逻辑集中在共享库 `examples/memory-plugin-shared/lib/workspace-peer.mjs`（15 行代码）中，并通过 `sync.mjs` 复制到 7 个 Harness 目标。显式指定 Peer 的优先级链已经存在：`OPENVIKING_PEER_ID` 环境变量 → `ovcli.conf` 中的 `actor_peer_id` / `peer_id` → 各 Harness 的遗留配置块 → cwd 推导。
+当前的推导逻辑集中在共享库 `examples/plugin-shared/lib/workspace-peer.mjs`（15 行代码）中，并通过 `sync.mjs` 复制到 7 个 Harness 目标。显式指定 Peer 的优先级链已经存在：`OPENVIKING_PEER_ID` 环境变量 → `ovcli.conf` 中的 `actor_peer_id` / `peer_id` → 各 Harness 的遗留配置块 → cwd 推导。
 
 ### 配置读取的当前机制
 
@@ -252,7 +252,7 @@ peer 是路径前缀，不是租户边界；隔离程度由召回参数 `peer_sc
 
 1. 向上查找 `.git` 目录；若 `.git` 为文件，则读取 `gitdir:` 的指向，通过 `commondir` 将 linked worktree 收敛至主仓库；如果 `gitdir` 路径包含 `modules/` 则判定为 Submodule，按独立仓库处理。
 2. 从 `<commondir>/config` 执行纯 INI 解析，读取 `[remote "origin"] url`；不跟随 `include` / `includeIf` 指令（取不到就直接落空，进入下一级回退逻辑）。
-3. 结果写入 `~/.openviking/state/` 下基于 cwd 的短 TTL 缓存中，确保同一个 Turn 内的多个 Hook 进程只需付出一次推导代价（复用现成的 `readJsonState(name, { maxAgeMs })` 状态文件机制，见 `examples/claude-code-memory-plugin/scripts/lib/state.mjs:42`）。
+3. 结果写入 `~/.openviking/state/` 下基于 cwd 的短 TTL 缓存中，确保同一个 Turn 内的多个 Hook 进程只需付出一次推导代价（复用现成的 `readJsonState(name, { maxAgeMs })` 状态文件机制，见 `examples/claude-code-plugin/scripts/lib/state.mjs:42`）。
 
 `{git_remote}` 的归一化规则：
 
@@ -268,7 +268,7 @@ URL 形式    https://user:token@github.com:8443/volcengine/OpenViking.git/
 
 字符清理（Sanitize）存在两套规则，严禁混用：`{git_root}` 与 `{cwd}` 遵循 **Legacy 规则进行逐字节替换**（即 `[^A-Za-z0-9]` → `-`，不折叠连续字符、保留前导 `-`），确保与 `peer.source: "cwd"` 在 Legacy ID 重算时达到字节级完全一致；而 `{git_remote}`、`{dir}` 与 `{harness}` 使用新规则（适配服务端字符集 `^[a-zA-Z0-9_.@-]+$`，详见 `openviking/core/identifiers.py:8`）：非法字符替换为 `-`，折叠连续的 `-`，去除首尾的 `-.`，保留 `.` 使得类似 `github.com` 的域名具备可读性；规避 `__self` 与 `ext-`（实现期核实：二者在服务端校验层并非保留字——`__self` 只是 `session/memory/memory_isolation_handler.py` 的内部哨兵，`ext-` 只是 `ingest/peer.py` 的客户端编码约定；仍然规避，以免与它们撞名）；超过 100 字符时进行截断，并在末尾追加原文哈希的前 12 位（远低于 AGFS 的 255 字节段上限）。
 
-示例：在 `/Users/x/Dev/OpenViking/examples/codex-memory-plugin` 目录下，且 origin 为 `git@github.com:volcengine/OpenViking.git` 时，推导出的 Peer 为 `github.com-volcengine-openviking`——无论是在任何子目录、任何 worktree、任何机器，还是任何一份克隆，身份都保持绝对一致。
+示例：在 `/Users/x/Dev/OpenViking/examples/codex-plugin` 目录下，且 origin 为 `git@github.com:volcengine/OpenViking.git` 时，推导出的 Peer 为 `github.com-volcengine-openviking`——无论是在任何子目录、任何 worktree、任何机器，还是任何一份克隆，身份都保持绝对一致。
 
 由此确立的身份语义：同一仓库的多个本地克隆**共享**同一个 Peer（项目记忆跟着项目走）；Fork 仓库与上游仓库的 origin 不同，因此**默认分开**（通过 `gh pr checkout` 审查外部 PR 时，origin 依然是自己的仓库，身份不受影响；若需合并 Fork 与上游的记忆，在两边写同一个 `peer.id`）。
 
@@ -308,7 +308,7 @@ URL 形式    https://user:token@github.com:8443/volcengine/OpenViking.git/
 - **P1：搭建配置引擎**：新增共享模块 `workspace-config.mjs`（负责发现、纯粹的 parse、安全底线过滤、合并以及 Provenance 溯源）、`workspace-registry.mjs`（负责目录制注册表读写、负证据查找机制）、`workspace-identity.mjs`（负责 Git 身份推导、归一化、Sanitize 字符清理及缓存）；将上述模块加入 `HARNESS_SHARED_FILES` 以同步至 7 个目标端，同时手工同步 `agent-plugins/servers/` 下的副本；接入 `loadPluginSettings`（函数签名增加 cwd 参数；由于 Hook 顶层调用的 `loadConfig()` 早于 stdin 的解析，Workspace 层的配置必须延迟懒加载），并串联各 Harness 的 cfg 组装点；实现插件 doctor 的 Provenance 诊断输出。此阶段系统行为保持不变（因为新层级默认均为空）。
 - **P2：Peer 来源规则与默认策略切换**：确保 `peer.source` 在全链路生效（环境变量 / ovcli 的 `plugin` 字典 / Workspace 文件；为 doctor 增加对 `plugin.*` 内部已知键的拼写检查支持——现有的 `KNOWN_OVCLI_KEYS` 仅校验顶层键，而 `plugin` 自身已经在白名单内）；将默认策略正式切换为 `git` 推导，非 Git 目录默认不派生（根目录查找同时识别 `.openviking/config.json` 标记文件）；上线 Dual-read 兜底机制；在 doctor 中增加对旧 Peer 的检测逻辑；同步更新引用了旧推导规则的 5 处 README 文件、`docs/en/agent-integrations/16-capability-reference.md`、`docs/en/configuration/02-client.md` 以及全部的中文镜像文档，并在 Changelog 中详细说明默认行为的变化与兜底恢复机制。
 - **P3：CLI 命令（后续，本次 PR 不含）**：CLI 面整体推迟，本次以纯插件改动合入；Rust 侧保留的只有 `ov config add|edit` 丢 `plugin` 段的修复（`serde_json::Value` 级合并）。
-- **独立 PR（涉及行为变更，需附带 Release Note）**：Claude Code、OpenCode 及 agent-plugins 这三个 MCP Proxy 停止使用 `process.cwd()` 推导 Peer（此举违反了其共享模块自身的约定，Codex 侧已有测试禁止此行为），改为由父进程在启动时（Launch-time）注入 `OPENVIKING_PEER_ID` 环境变量（仓库内部已有先例：dsh 父进程就是如此注入的，见 `examples/dsh-memory-plugin/mcp.mjs:27`；若父进程未注入，其 Proxy 仍会回退到 `process.cwd()`，本次将一并修正）；当 Actor 作用域下缺乏显式 Peer 时，触发警告并降级处理，而不是在启动时直接抛出异常。
+- **独立 PR（涉及行为变更，需附带 Release Note）**：Claude Code、OpenCode 及 agent-plugins 这三个 MCP Proxy 停止使用 `process.cwd()` 推导 Peer（此举违反了其共享模块自身的约定，Codex 侧已有测试禁止此行为），改为由父进程在启动时（Launch-time）注入 `OPENVIKING_PEER_ID` 环境变量（仓库内部已有先例：dsh 父进程就是如此注入的，见 `examples/dsh-plugin/mcp.mjs:27`；若父进程未注入，其 Proxy 仍会回退到 `process.cwd()`，本次将一并修正）；当 Actor 作用域下缺乏显式 Peer 时，触发警告并降级处理，而不是在启动时直接抛出异常。
 
 ## 备选方案（已否决）
 

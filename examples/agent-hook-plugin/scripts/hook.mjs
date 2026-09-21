@@ -24,9 +24,9 @@ import {
   stableHash,
   withAgentHookLock,
   writeHookState,
-} from "../../memory-plugin-shared/lib/agent-hook-runtime.mjs";
-import { maybeDetach, readHookStdin } from "../../memory-plugin-shared/lib/async-writer.mjs";
-import { isCaptureEnabled } from "../../memory-plugin-shared/lib/capture-utils.mjs";
+} from "../../plugin-shared/lib/agent-hook-runtime.mjs";
+import { maybeDetach, readHookStdin } from "../../plugin-shared/lib/async-writer.mjs";
+import { isCaptureEnabled } from "../../plugin-shared/lib/capture-utils.mjs";
 import { HOSTS } from "../hosts/index.mjs";
 
 // ZCode's detached writer re-enters this file with no arguments at all, so what

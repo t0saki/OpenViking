@@ -20,14 +20,14 @@ ZCode does not expose `PreCompact`, `SessionEnd`, or subagent lifecycle hooks. T
 Prerequisites: Node.js 18+, a running OpenViking server, and ZCode.
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/main/examples/memory-plugin-shared/install.sh) \
+bash <(curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/main/examples/plugin-shared/install.sh) \
   --harness zcode
 ```
 
 Use the TOS mirror where GitHub is unavailable:
 
 ```bash
-bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/memory-plugin-shared/install.sh) \
+bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/plugin-shared/install.sh) \
   --harness zcode --dist tos
 ```
 

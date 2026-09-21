@@ -31,7 +31,7 @@ curl http://localhost:1933/health   # or your remote URL
 Use the shared installer:
 
 ```bash
-bash examples/memory-plugin-shared/install.sh --harness pi
+bash examples/plugin-shared/install.sh --harness pi
 ```
 
 The installer copies the extension to `~/.pi/agent/extensions/openviking`, which is one of pi's auto-discovery roots, so pi loads it on the next `pi` invocation — no `packages` entry is needed. (Registering the same path with `pi install` would load it twice, so the installer avoids that and clears any stale entry left by older versions.)
@@ -75,7 +75,7 @@ Behaviour and peer-scoping knobs live in `~/.openviking/ovcli.conf` beside the c
 }
 ```
 
-Keys in `plugin` apply to every harness; keys in `plugin.pi` apply to this extension and override them. Resolution is `OPENVIKING_*` environment variables → the workspace's `.openviking/config.json`, `.openviking/config.local.json` and machine registry entry → `plugin.pi` → `plugin` → built-in defaults. Every knob, with its type, default, range, environment variable and accepted older spellings, is declared in [`examples/memory-plugin-shared/lib/config-schema.mjs`](../memory-plugin-shared/lib/config-schema.mjs); `syncTurns` still works wherever `autoCapture` is written above.
+Keys in `plugin` apply to every harness; keys in `plugin.pi` apply to this extension and override them. Resolution is `OPENVIKING_*` environment variables → the workspace's `.openviking/config.json`, `.openviking/config.local.json` and machine registry entry → `plugin.pi` → `plugin` → built-in defaults. Every knob, with its type, default, range, environment variable and accepted older spellings, is declared in [`examples/plugin-shared/lib/config-schema.mjs`](../plugin-shared/lib/config-schema.mjs); `syncTurns` still works wherever `autoCapture` is written above.
 
 Credential environment variables:
 

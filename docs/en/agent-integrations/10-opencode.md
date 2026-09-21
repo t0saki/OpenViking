@@ -32,13 +32,13 @@ curl http://localhost:1933/health
 OpenCode shares the unified installer with Claude Code and Codex. It asks for your language (English/中文), which harnesses to install, the download source, and your OpenViking credentials; every step is idempotent—re-running it is entirely safe.
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/main/examples/memory-plugin-shared/install.sh) --harness opencode
+bash <(curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/main/examples/plugin-shared/install.sh) --harness opencode
 ```
 
 In regions where GitHub is hard to reach, run the same installer from the Volcengine TOS mirror (or pick "TOS mirror" at the download-source prompt):
 
 ```bash
-bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/memory-plugin-shared/install.sh)
+bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/plugin-shared/install.sh)
 ```
 
 The installer registers the npm plugin (or a local file plugin on the TOS channel), writes the `openviking` MCP server entry into `~/.config/opencode/opencode.json`, and configures `~/.openviking/ovcli.conf`.
@@ -67,7 +67,7 @@ If package installation is not available in your environment:
 ```bash
 git clone https://github.com/volcengine/OpenViking.git
 cd OpenViking
-node examples/memory-plugin-shared/sync.mjs
+node examples/plugin-shared/sync.mjs
 mkdir -p ~/.config/opencode/plugins/openviking
 cp examples/opencode-plugin/wrappers/openviking.js ~/.config/opencode/plugins/openviking.js
 cp examples/opencode-plugin/index.mjs examples/opencode-plugin/package.json ~/.config/opencode/plugins/openviking/
@@ -97,7 +97,7 @@ Use the `.js` wrapper for source installs; OpenCode's local plugin scanner disco
 Credentials are shared with the Claude Code and Codex memory plugins. Run the setup wizard once from the repository root, or set `OPENVIKING_*` environment variables. The wizard imports `lib/shared/` too, so generate it first:
 
 ```bash
-node examples/memory-plugin-shared/sync.mjs
+node examples/plugin-shared/sync.mjs
 node examples/opencode-plugin/scripts/setup.mjs
 ```
 
@@ -159,7 +159,7 @@ Ask OpenCode to search or browse OpenViking memory. Runtime state and errors are
 | Issue | What to check |
 |-------|---------------|
 | Plugin does not load | Confirm `~/.config/opencode/opencode.json` references `@openviking/opencode-plugin`, or that `~/.config/opencode/plugins/openviking.js` exists for source installs |
-| Load fails with a missing `lib/shared/*.mjs` module | The source copy was made without running `sync.mjs` first. Run `node examples/memory-plugin-shared/sync.mjs` from the repository root and copy `lib/` again |
+| Load fails with a missing `lib/shared/*.mjs` module | The source copy was made without running `sync.mjs` first. Run `node examples/plugin-shared/sync.mjs` from the repository root and copy `lib/` again |
 | MCP tools call the wrong server | Check `~/.openviking/ovcli.conf`, or set `OPENVIKING_*` env vars; `OPENVIKING_CLI_CONFIG_FILE` points the plugin at a different ovcli.conf |
 | 401 / 403 from OpenViking | Verify `OPENVIKING_API_KEY`; for trusted-mode deployments, also verify `OPENVIKING_ACCOUNT` and `OPENVIKING_USER` |
 | Recall is empty | Confirm the OpenViking server has indexed memories/resources and that `autoRecall` is not set to `false` |

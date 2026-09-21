@@ -16,7 +16,7 @@ Three earlier OpenViking integrations shaped this one. OpenClaw contributed sync
 | Capture sanitization | none | its own recall block | every injected block | shared `capture-utils` |
 | Committed history | owned by the agent | replaced by OV archives | owned by the agent | replaced by OV archives (default on) |
 
-What the Claude Code plugin proved is no longer copied here — it is imported. `shared/` is a generated copy of `examples/memory-plugin-shared/lib`, produced by that directory's `sync.mjs`. Recall assembly, capture sanitization, profile building, the disk pending queue, batched sending, credential and settings resolution, and bypass matching all live there and behave identically in every harness. What stays local is the pi-shaped part: how a pi branch becomes capture payloads, how the `context` hook is rewritten, and how state survives `pi -c`.
+What the Claude Code plugin proved is no longer copied here — it is imported. `shared/` is a generated copy of `examples/plugin-shared/lib`, produced by that directory's `sync.mjs`. Recall assembly, capture sanitization, profile building, the disk pending queue, batched sending, credential and settings resolution, and bypass matching all live there and behave identically in every harness. What stays local is the pi-shaped part: how a pi branch becomes capture payloads, how the `context` hook is rewritten, and how state survives `pi -c`.
 
 ## Layout
 
@@ -31,7 +31,7 @@ pi-coding-agent-extension/
 ├── index.ts      # entry point: event handlers and the /viking command
 ├── package.json  # name and version; pi loads index.ts regardless
 ├── lib/          # pi-specific logic kept out of the event handlers
-├── shared/       # generated copy of memory-plugin-shared/lib
+├── shared/       # generated copy of plugin-shared/lib
 ├── scripts/      # live e2e harness
 └── tests/        # node --test suites
 ```

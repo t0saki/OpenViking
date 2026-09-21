@@ -49,7 +49,7 @@ Use this method for development, debugging, or PR testing. OpenCode's recommende
 Run the following commands from the repository root:
 
 ```bash
-node examples/memory-plugin-shared/sync.mjs
+node examples/plugin-shared/sync.mjs
 mkdir -p ~/.config/opencode/plugins/openviking
 cp examples/opencode-plugin/wrappers/openviking.js ~/.config/opencode/plugins/openviking.js
 cp examples/opencode-plugin/index.mjs examples/opencode-plugin/package.json ~/.config/opencode/plugins/openviking/
@@ -119,7 +119,7 @@ Example configuration:
 }
 ```
 
-Keys in `plugin` apply to every harness; keys in `plugin.opencode` apply to this one and override them. Resolution is `OPENVIKING_*` environment variables → the workspace's `.openviking/config.json`, `.openviking/config.local.json` and machine registry entry → `plugin.opencode` → `plugin` → built-in defaults. Every knob, with its type, default, range, environment variable and accepted older spellings, is declared in [`examples/memory-plugin-shared/lib/config-schema.mjs`](../memory-plugin-shared/lib/config-schema.mjs).
+Keys in `plugin` apply to every harness; keys in `plugin.opencode` apply to this one and override them. Resolution is `OPENVIKING_*` environment variables → the workspace's `.openviking/config.json`, `.openviking/config.local.json` and machine registry entry → `plugin.opencode` → `plugin` → built-in defaults. Every knob, with its type, default, range, environment variable and accepted older spellings, is declared in [`examples/plugin-shared/lib/config-schema.mjs`](../plugin-shared/lib/config-schema.mjs).
 
 `recallLimit` is a legacy quota-scaling input, not a final result cap.
 Explicit values from 1 through 5 produce an effective total quota of 6 because
@@ -248,7 +248,7 @@ These are local runtime files and should not be committed to the repository.
 | Issue | What to check |
 |-------|---------------|
 | Plugin does not load | For package installs, confirm `~/.config/opencode/opencode.json` contains `@openviking/opencode-plugin`; for source installs, confirm `~/.config/opencode/plugins/openviking.js` exists |
-| Load fails with a missing `lib/shared/*.mjs` module | The source copy was made without running `sync.mjs` first. Run `node examples/memory-plugin-shared/sync.mjs` from the repository root and copy `lib/` again |
+| Load fails with a missing `lib/shared/*.mjs` module | The source copy was made without running `sync.mjs` first. Run `node examples/plugin-shared/sync.mjs` from the repository root and copy `lib/` again |
 | MCP tools call the wrong server | Check `~/.openviking/ovcli.conf`, or set `OPENVIKING_*` env vars / `OPENVIKING_CLI_CONFIG_FILE` to the intended config path |
 | 401 / 403 from OpenViking | Verify `OPENVIKING_API_KEY`; for trusted-mode deployments, also verify `OPENVIKING_ACCOUNT` and `OPENVIKING_USER` |
 | Recall is empty | Confirm OpenViking has indexed memories/resources and `autoRecall` is `true` |

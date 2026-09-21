@@ -8,10 +8,10 @@ on:
   push:
     branches: [main]
     paths:
-      - "examples/dsh-memory-plugin/**"
+      - "examples/dsh-plugin/**"
       - "examples/opencode-plugin/**"
-      - "examples/memory-plugin-shared/lib/**"
-      - "examples/memory-plugin-shared/sync.mjs"
+      - "examples/plugin-shared/lib/**"
+      - "examples/plugin-shared/sync.mjs"
       - ".github/workflows/plugin-npm-release.yml"
       - ".github/scripts/opencode-release-version*.mjs"
   workflow_dispatch:
@@ -31,7 +31,7 @@ jobs:
       matrix:
         include:
           - package: "@openviking/dsh-memory-plugin"
-            directory: examples/dsh-memory-plugin
+            directory: examples/dsh-plugin
             install: npm ci
           - package: "@openviking/opencode-plugin"
             directory: examples/opencode-plugin
@@ -61,7 +61,7 @@ jobs:
 
       - name: Validate package
         run: |
-          node ../memory-plugin-shared/sync.mjs
+          node ../plugin-shared/sync.mjs
           npm run check
           npm test
           npm pack --dry-run

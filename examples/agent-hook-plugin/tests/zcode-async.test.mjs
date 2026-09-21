@@ -6,7 +6,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { expectExit, runHookScript } from "../../memory-plugin-shared/testing/support.mjs";
+import { expectExit, runHookScript } from "../../plugin-shared/testing/support.mjs";
 
 const hook = fileURLToPath(new URL("../scripts/hook.mjs", import.meta.url));
 

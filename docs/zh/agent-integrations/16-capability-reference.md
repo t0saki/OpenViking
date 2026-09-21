@@ -65,7 +65,7 @@
 
 \* 此列指客户端是否内建了针对召回结果的本地压缩；服务端则在 context 检索面上，统一为所有调用方提供 digest 能力（`rewrite` 参数，[§3.2.5](#_3-2-5-召回再摘要)）。
 
-**session_id 携带现状**：除 openclaw（其调用的 `/find` 接口无该字段）与 hermes 的降级路径外，其余所有 harness 的自动召回均显式携带 session_id，并有跨插件回归测试钉死（`examples/memory-plugin-shared/recall-session-wiring.test.mjs:16-39`）。
+**session_id 携带现状**：除 openclaw（其调用的 `/find` 接口无该字段）与 hermes 的降级路径外，其余所有 harness 的自动召回均显式携带 session_id，并有跨插件回归测试钉死（`examples/plugin-shared/recall-session-wiring.test.mjs:16-39`）。
 
 ## 1.3 形态分组
 
@@ -109,12 +109,12 @@ per-harness 章节（档案卡）只写差异；所有共享事实均在本章�
 - **可移植 schema 重写**（`:1149-1218`）：模块导入时把所有工具的 `anyOf`/`$ref` 折成扁平类型，以兼容 Gemini 等 OpenAPI 3.0 子集客户端；运行时校验仍用原始 Python 签名（例如 `read` 广播的 schema 是 array，但仍接受裸字符串）。所有 MCP 客户端拿到的 schema 都由服务端统一产出，客户端无差异。
 - **身份中间件**（`:149-233`）：与 REST 共用 `resolve_identity`，依次读 `x-api-key` / `authorization` / `x-openviking-account` / `x-openviking-user` / `x-openviking-actor-peer`；account/user 缺省回落 `"default"`。
 
-## 2.2 memory-plugin-shared 共享层
+## 2.2 plugin-shared 共享层
 
-`examples/memory-plugin-shared/lib/` 下共 25 个 `.mjs` 模块，是 JS 系 harness 的唯一事实源。两种消费形态：
+`examples/plugin-shared/lib/` 下共 25 个 `.mjs` 模块，是 JS 系 harness 的唯一事实源。两种消费形态：
 
 1. **Vendoring（复制）**：由 `sync.mjs` 分发到 7 个目标，每个文件首行加 `// GENERATED FROM ... DO NOT EDIT.`（因此 vendored 副本行号 = lib 源行号 + 1）。分发清单不再手写：每个目标拿的是自身代码实际 import 的传递闭包。claude-code、codex、agent-plugins 由宿主直接指向仓库目录安装，openclaw 的 `ov-install` 可以按 git ref 逐个文件下载插件，所以这四个的生成副本提交进 git，并由 main 上的推送重新生成；opencode、dsh 以 npm 包发布，pi 由安装脚本打包，这三个在打包时生成副本，git 中不保留。
-2. **相对路径直接 import（不复制）**：cursor / trae / trae-cn / zcode 直接 `import "../../memory-plugin-shared/lib/..."`；安装器把包与这些 hook 传递 import 到的共享模块一起复制到 `~/.openviking/agent-integrations/{<client>,memory-plugin-shared}/`，保持相对层级。这份安装集合对 import 闭合，包括 hook 运行时所需的 workspace 配置层。运行期几个 harness 共用该目录，任一重装都会整体覆盖。
+2. **相对路径直接 import（不复制）**：cursor / trae / trae-cn / zcode 直接 `import "../../plugin-shared/lib/..."`；安装器把包与这些 hook 传递 import 到的共享模块一起复制到 `~/.openviking/agent-integrations/{<client>,plugin-shared}/`，保持相对层级。这份安装集合对 import 闭合，包括 hook 运行时所需的 workspace 配置层。运行期几个 harness 共用该目录，任一重装都会整体覆盖。
 
 核心模块速览（细节在各维度章展开）：
 
@@ -129,7 +129,7 @@ per-harness 章节（档案卡）只写差异；所有共享事实均在本章�
 | `profile-inject.mjs` | session-start 的 profile + 可用记忆清单注入 | 9 个 harness（openclaw / hermes 除外） |
 | `recall-compress-core.mjs` | 召回压缩 prompt + URI 编辑距离修复 + 缓存 | claude-code |
 | `capture-utils.mjs` | 消息归一 + 注入回流防护 + 内置捕获启发式（应答语、slash 命令、信息量下限） | cc / codex / opencode / dsh / pi / zcode / cursor / trae×2 |
-| `input-filters.mjs` | 编译并执行操作员自己配的 sed 风格规则 —— `s` 替换、`d` 丢弃、`k` 仅保留，可限定角色 —— 作用于召回 query 与每个被捕获的回合；解析失败的规则会被报告并跳过，不抛异常（[语法](https://github.com/volcengine/OpenViking/blob/main/examples/claude-code-memory-plugin/README_CN.md#输入过滤器)） | 所有 hook 插件；`recallQueryFilters` / `captureFilters` 两个 knob 目前由 claude-code / codex 提供 |
+| `input-filters.mjs` | 编译并执行操作员自己配的 sed 风格规则 —— `s` 替换、`d` 丢弃、`k` 仅保留，可限定角色 —— 作用于召回 query 与每个被捕获的回合；解析失败的规则会被报告并跳过，不抛异常（[语法](https://github.com/volcengine/OpenViking/blob/main/examples/claude-code-plugin/README_CN.md#输入过滤器)） | 所有 hook 插件；`recallQueryFilters` / `captureFilters` 两个 knob 目前由 claude-code / codex 提供 |
 | `credentials.mjs` | 凭据解析链（详见 [§3.1.3](#_3-1-3-凭据体系)） | 全部 JS 系 |
 | `session-model.mjs` | 会话 id 前缀派生 + bypass glob | 全部 JS 系 |
 | `async-writer.mjs` | 写路径 detach（drain stdin → spawn → approve → write → unref；spawn 失败回落同步） | cc / codex / zcode |
@@ -181,7 +181,7 @@ per-harness 章节（档案卡）只写差异；所有共享事实均在本章�
 
 ### 3.1.2 统一安装器
 
-统一安装脚本 `examples/memory-plugin-shared/install.sh` 覆盖 10 个 harness id：`claude, codex, cursor, trae, trae-cn, trae-cli, zcode, opencode, pi, dsh`（其中 openclaw 走自有渠道；`trae-cli` 则复用 codex 安装流程，[§3.1.1](#_3-1-1-判定矩阵)）。要点如下：
+统一安装脚本 `examples/plugin-shared/install.sh` 覆盖 10 个 harness id：`claude, codex, cursor, trae, trae-cn, trae-cli, zcode, opencode, pi, dsh`（其中 openclaw 走自有渠道；`trae-cli` 则复用 codex 安装流程，[§3.1.1](#_3-1-1-判定矩阵)）。要点如下：
 
 - 双分发：`--dist github|tos`；三源：`--source remote|archive|dev`。以 `bash <(curl …)` 方式执行时会从 `/dev/tty` 读取输入，从而保留交互。
 - 官方 docs 的规范一键命令是不带 `--harness` 的裸命令（执行后进入 TUI 多选）；而各插件自带的 setup-helper 转发脚本在调用时会自动补 `--harness`。
@@ -212,7 +212,7 @@ per-harness 章节（档案卡）只写差异；所有共享事实均在本章�
 6. 统一请求头：`Authorization: Bearer` + `X-OpenViking-Account/User`（仅 trusted 模式）+ `X-OpenViking-Actor-Peer` + `User-Agent: openviking-memory-<harness>/<version>`。`api_key` 模式的服务端从 key 里取身份、忽略这两个头，所以那里不发，免得把身份报给链路上的每一层代理。模式解析顺序：`OPENVIKING_AUTH_MODE`（任何模式下都读）→ `ovcli` `plugin.<harness>.authMode` → `plugin.authMode` → `ov.conf` `<harness>.authMode` → `ov.conf` `server.auth_mode` → 只要解析出了 account 或 user 就算 trusted。
 7. **hook 与 MCP 共用一份连接**：以上规则都由 `credentials.mjs` 的 `resolveConnection()` 实现。hook 的 loader（`buildPluginConfig()`）和每个 MCP proxy（经各自 harness 的 loader，agent-plugins 经 `buildProxyConnection()`）都调用它，而且它不读当前目录，所以从插件目录启动的 proxy 与 hook 解析结果相同。跨进程边界只有两种做法：Codex 只把 `.mcp.json` `env_vars` 列出的变量交给 MCP 进程，这份名单必须包含 `MCP_PROXY_ENV_VARS`；dsh 直接转发解析好的连接，每个凭据变量都显式写出（空值也写），并带上 `OPENVIKING_CREDENTIAL_SOURCE=env`，所以文件和子进程继承到的变量都改变不了它。`mcp-hook-parity.test.mjs` 断言两边发出的 URL、key 和身份一致。
 
-**workspace peer**（家族 A 各 harness 均适用；agent-plugins 包既不派生 workspace peer，也不转发任何 peer——它没有能把 `recallPeerScope` 设成 `actor` 的旋钮层，代理始终不发这个头）：无显式 peerId 且 `OPENVIKING_WORKSPACE_PEER≠0` 时由 workspace 派生，随 `X-OpenViking-Actor-Peer` 发送（服务端会对该头校验，含 `/` 或 `\` 返回 400）。派生规则由 `peer.source` 决定，**默认 `git`**：先取归一化后的 `origin` URL，取不到回落到仓库根路径；不在仓库中则什么都不发送，在那里记下的内容进入用户级空间 `viking://user/<you>/memories`。例如在 `/Users/x/Dev/OpenViking/examples/codex-memory-plugin` 下、origin 为 `git@github.com:volcengine/OpenViking.git` 时，peer 是 `github.com-volcengine-openviking`——任意子目录、任意 worktree、任意机器、任意 clone 都是同一个值。`peer.source` 的读取层为 env `OPENVIKING_PEER_SOURCE`、ovcli.conf `plugin.peerSource` / `plugin.<harness>.peerSource`、workspace 文件的 `peer.source`；家族 A 的每个 harness 都会读这几层。
+**workspace peer**（家族 A 各 harness 均适用；agent-plugins 包既不派生 workspace peer，也不转发任何 peer——它没有能把 `recallPeerScope` 设成 `actor` 的旋钮层，代理始终不发这个头）：无显式 peerId 且 `OPENVIKING_WORKSPACE_PEER≠0` 时由 workspace 派生，随 `X-OpenViking-Actor-Peer` 发送（服务端会对该头校验，含 `/` 或 `\` 返回 400）。派生规则由 `peer.source` 决定，**默认 `git`**：先取归一化后的 `origin` URL，取不到回落到仓库根路径；不在仓库中则什么都不发送，在那里记下的内容进入用户级空间 `viking://user/<you>/memories`。例如在 `/Users/x/Dev/OpenViking/examples/codex-plugin` 下、origin 为 `git@github.com:volcengine/OpenViking.git` 时，peer 是 `github.com-volcengine-openviking`——任意子目录、任意 worktree、任意机器、任意 clone 都是同一个值。`peer.source` 的读取层为 env `OPENVIKING_PEER_SOURCE`、ovcli.conf `plugin.peerSource` / `plugin.<harness>.peerSource`、workspace 文件的 `peer.source`；家族 A 的每个 harness 都会读这几层。
 
 | `peer.source` | 展开为 | 得到的 peer |
 |---|---|---|
@@ -688,7 +688,7 @@ MCP `write` / REST `content/write` 的三道 guard（`content_write.py`）：可
 
 如果希望实现召回、捕获、commit、pending 的全套自动化，完全不必从零开始编写。建议直接参考并复用以下两个现成的实现：
 
-- **`examples/memory-plugin-shared/lib/`**（Node）：包含完整的核心功能模块，例如 `recall-core`（三级降级召回）、`profile-inject`、`capture-utils`（消息归一 + 注入回流防护）、`pending-queue`（离线重放）、`batch-send`、`mcp-proxy-core`（stdio↔HTTP 代理）、`session-model`（会话 id 派生）以及 `credentials`。构建瘦 harness 时，只需实现一个适配层，把宿主生命周期事件映射到这些模块即可（例如 `agent-hook-runtime.mjs` 就是 cursor、trae、zcode 共用的现成一体化运行时，接新宿主时的主要工作只是解析其 stdin JSON 字段名）。
+- **`examples/plugin-shared/lib/`**（Node）：包含完整的核心功能模块，例如 `recall-core`（三级降级召回）、`profile-inject`、`capture-utils`（消息归一 + 注入回流防护）、`pending-queue`（离线重放）、`batch-send`、`mcp-proxy-core`（stdio↔HTTP 代理）、`session-model`（会话 id 派生）以及 `credentials`。构建瘦 harness 时，只需实现一个适配层，把宿主生命周期事件映射到这些模块即可（例如 `agent-hook-runtime.mjs` 就是 cursor、trae、zcode 共用的现成一体化运行时，接新宿主时的主要工作只是解析其 stdin JSON 字段名）。
 - **Agent Plugins 1.0 便携包**（位于 `agent-plugins/`）：采用 `plugin.json` + `skills/` + `mcp.json`（stdio→HTTP 代理）的规范化便携格式。该方案刻意不含 hooks（召回/沉淀靠 skill 教模型自调工具），非常适合符合 Agent Plugins 规范的客户端直接加载；此外，`plugin.test.mjs` 定义了规范一致性校验（schema URL、name 规则、静态 headers 不含机密、`mcp.json` 引用不逃逸插件根等），可作为自行打包的 lint 依据。
 
 **接入时务必对齐的三个约定**（与现有 harness 保持一致的行为）：① 召回调用点必须转发 `session_id`，这样才有服务端 expansion + 跨轮去重（详见 [§3.2.1](#_3-2-1-机制底座-一条共享管线-两条服务端路径)）；② 适配器不要用自己的超时压过 helper 下发的 deadline；③ 关闭时要安排一条 commit 路径，否则未达阈值的尾部对话需等待后续触发才能归档（详见 [§3.3.3](#_3-3-3-关闭方式-×-harness-终局矩阵)）——若宿主没有关闭事件，需开启 `memory.session_auto_commit.idle_enabled`，并提供 Session 级或部署级默认 policy。这三条正是 `recall-session-wiring.test.mjs` 用跨插件正则钉死的。

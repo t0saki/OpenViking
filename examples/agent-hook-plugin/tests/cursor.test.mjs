@@ -6,7 +6,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
-import { expectExit, runHookScript } from "../../memory-plugin-shared/testing/support.mjs";
+import { expectExit, runHookScript } from "../../plugin-shared/testing/support.mjs";
 import { parseCursorTranscript } from "../hosts/cursor-transcript.mjs";
 import { evaluateHostUriGuard } from "../scripts/uri-guard.mjs";
 
@@ -29,8 +29,8 @@ test("Cursor command-installed integration contains Hook, Rule, Skill, and MCP e
     "scripts/hook.mjs",
     "scripts/uri-guard.mjs",
     "servers/mcp-proxy.mjs",
-    "hosts/cursor/rules/openviking-memory.mdc",
-    "hosts/cursor/skills/openviking-memory/SKILL.md",
+    "hosts/cursor/rules/openviking.mdc",
+    "hosts/cursor/skills/openviking/SKILL.md",
   ]) {
     assert.ok(existsSync(join(pluginRoot, file)), `${file} must exist`);
   }

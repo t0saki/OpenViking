@@ -49,7 +49,7 @@ curl http://localhost:1933/health
 在仓库根目录执行：
 
 ```bash
-node examples/memory-plugin-shared/sync.mjs
+node examples/plugin-shared/sync.mjs
 mkdir -p ~/.config/opencode/plugins/openviking
 cp examples/opencode-plugin/wrappers/openviking.js ~/.config/opencode/plugins/openviking.js
 cp examples/opencode-plugin/index.mjs examples/opencode-plugin/package.json ~/.config/opencode/plugins/openviking/
@@ -119,7 +119,7 @@ export { OpenVikingPlugin, default } from "./openviking/index.mjs"
 }
 ```
 
-`plugin` 里的键对所有 harness 生效；`plugin.opencode` 里的键只对本插件生效，并覆盖前者。解析顺序是 `OPENVIKING_*` 环境变量 → 工作区的 `.openviking/config.json`、`.openviking/config.local.json` 和本机 registry 条目 → `plugin.opencode` → `plugin` → 内置默认值。每个旋钮的类型、默认值、取值范围、环境变量名和兼容的旧拼写都声明在 [`examples/memory-plugin-shared/lib/config-schema.mjs`](../memory-plugin-shared/lib/config-schema.mjs)。
+`plugin` 里的键对所有 harness 生效；`plugin.opencode` 里的键只对本插件生效，并覆盖前者。解析顺序是 `OPENVIKING_*` 环境变量 → 工作区的 `.openviking/config.json`、`.openviking/config.local.json` 和本机 registry 条目 → `plugin.opencode` → `plugin` → 内置默认值。每个旋钮的类型、默认值、取值范围、环境变量名和兼容的旧拼写都声明在 [`examples/plugin-shared/lib/config-schema.mjs`](../plugin-shared/lib/config-schema.mjs)。
 
 `recallLimit` 是遗留的配额缩放输入，不是最终结果上限。显式设置为
 1 到 5 时，有效总配额仍为 6，因为六个 coding 分类会各保留一个检索槽位。
@@ -251,7 +251,7 @@ openviking_add_resource(path="file:///home/alice/project/notes.md", description=
 | 问题 | 排查方向 |
 |------|----------|
 | 插件没有加载 | package 安装检查 `~/.config/opencode/opencode.json` 是否包含 `@openviking/opencode-plugin`；源码安装检查 `~/.config/opencode/plugins/openviking.js` 是否存在 |
-| 加载时报找不到 `lib/shared/*.mjs` | 源码复制前没有运行 `sync.mjs`。在仓库根目录运行 `node examples/memory-plugin-shared/sync.mjs` 后重新复制 `lib/` |
+| 加载时报找不到 `lib/shared/*.mjs` | 源码复制前没有运行 `sync.mjs`。在仓库根目录运行 `node examples/plugin-shared/sync.mjs` 后重新复制 `lib/` |
 | MCP tools 连到了错误的 server | 检查 `~/.openviking/ovcli.conf`，或用 `OPENVIKING_*` 环境变量 / `OPENVIKING_CLI_CONFIG_FILE` 指向正确配置 |
 | OpenViking 返回 401 / 403 | 检查 `OPENVIKING_API_KEY`；trusted-mode 部署还要检查 `OPENVIKING_ACCOUNT` 和 `OPENVIKING_USER` |
 | recall 为空 | 确认 OpenViking 中已有 memories/resources，并且 `autoRecall` 为 `true` |

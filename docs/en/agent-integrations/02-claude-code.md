@@ -2,20 +2,20 @@
 
 Give [Claude Code](https://docs.claude.com/en/docs/claude-code/overview) cross-project and cross-session long-term memory. Once installed, every conversation automatically recalls relevant memories and captures new content without requiring the model to make any tool calls.
 
-Source: [examples/claude-code-memory-plugin](https://github.com/volcengine/OpenViking/tree/main/examples/claude-code-memory-plugin) | [Blog: motivation & demo](https://blog.openviking.ai/post/openviking-coding-agent/)
+Source: [examples/claude-code-plugin](https://github.com/volcengine/OpenViking/tree/main/examples/claude-code-plugin) | [Blog: motivation & demo](https://blog.openviking.ai/post/openviking-coding-agent/)
 
 ## Install
 
 Claude Code and Codex share one installer. It asks for your language (English/中文), which harnesses to install, the download source, and your OpenViking credentials; every step is idempotent—re-running it is entirely safe.
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/main/examples/memory-plugin-shared/install.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/main/examples/plugin-shared/install.sh)
 ```
 
 In regions where GitHub is hard to reach, run the same installer from the Volcengine TOS mirror (or pick "TOS mirror" at the download-source prompt):
 
 ```bash
-bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/memory-plugin-shared/install.sh)
+bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/plugin-shared/install.sh)
 ```
 
 > **TOS caveat for Claude Code**: the TOS channel registers a local directory marketplace, which cannot auto-update — re-run the installer to update. (Codex on TOS installs from a TOS-hosted git repo and keeps remote updates.)
@@ -46,7 +46,7 @@ If you prefer to set it up manually:
 >
 > Using pure local mode (`http://127.0.0.1:1933`, no authentication)? Skip step 1—the plugin automatically defaults to the local setup.
 >
-> Running Claude Code < 2.0? The installer detects it and falls back to `claude mcp add` + a hooks merge automatically; see the [Legacy mode section in the plugin README](https://github.com/volcengine/OpenViking/blob/main/examples/claude-code-memory-plugin/README.md#legacy-mode-claude-code--20).
+> Running Claude Code < 2.0? The installer detects it and falls back to `claude mcp add` + a hooks merge automatically; see the [Legacy mode section in the plugin README](https://github.com/volcengine/OpenViking/blob/main/examples/claude-code-plugin/README.md#legacy-mode-claude-code--20).
 
 </details>
 
@@ -87,7 +87,7 @@ Configuration priority: Environment variables > `ovcli.conf` > `ov.conf` > Built
 | `OPENVIKING_AUTO_CAPTURE` | `true` | Auto-capture after each turn |
 | `OPENVIKING_BYPASS_SESSION` | `false` | Skip all hooks for this session |
 | `OPENVIKING_BYPASS_SESSION_PATTERNS` | `""` | CSV glob patterns to auto-bypass |
-| `OPENVIKING_RECALL_QUERY_FILTERS` | `""` | CSV of sed-style regex rules applied to the prompt before it becomes a query ([grammar and examples](https://github.com/volcengine/OpenViking/blob/main/examples/claude-code-memory-plugin/README.md#input-filters)) |
+| `OPENVIKING_RECALL_QUERY_FILTERS` | `""` | CSV of sed-style regex rules applied to the prompt before it becomes a query ([grammar and examples](https://github.com/volcengine/OpenViking/blob/main/examples/claude-code-plugin/README.md#input-filters)) |
 | `OPENVIKING_CAPTURE_FILTERS` | `""` | CSV of sed-style regex rules applied to every captured turn (same grammar) |
 | `OPENVIKING_MEMORY_ENABLED` | (auto) | Force on/off |
 | `OPENVIKING_DEBUG` | `false` | Write logs to `~/.openviking/logs/cc-hooks.log` |
@@ -96,7 +96,7 @@ Most of these knobs can also live in `ovcli.conf` under `plugin` — see [Plugin
 
 If recall latency matters most, see [Low-latency recall](./01-overview.md#low-latency-recall) for the environment-variable and `ovcli.conf` settings that disable query expansion and result compression.
 
-For multi-tenant deployments, configure `OPENVIKING_ACCOUNT` and `OPENVIKING_USER`. The complete list of environment variables is available in the [plugin README](https://github.com/volcengine/OpenViking/blob/main/examples/claude-code-memory-plugin/README.md#configuration).
+For multi-tenant deployments, configure `OPENVIKING_ACCOUNT` and `OPENVIKING_USER`. The complete list of environment variables is available in the [plugin README](https://github.com/volcengine/OpenViking/blob/main/examples/claude-code-plugin/README.md#configuration).
 
 </details>
 
@@ -108,7 +108,7 @@ Change it with `OPENVIKING_PEER_SOURCE`, with `plugin.peerSource` in `ovcli.conf
 
 ## Statusline
 
-The plugin renders an OpenViking status indicator beneath your Claude Code input box, allowing you to check connection health, recall count, capture progress, and session state at a glance. See [STATUSLINE.md](https://github.com/volcengine/OpenViking/blob/main/examples/claude-code-memory-plugin/STATUSLINE.md) for a complete glossary of segments and personalization recipes.
+The plugin renders an OpenViking status indicator beneath your Claude Code input box, allowing you to check connection health, recall count, capture progress, and session state at a glance. See [STATUSLINE.md](https://github.com/volcengine/OpenViking/blob/main/examples/claude-code-plugin/STATUSLINE.md) for a complete glossary of segments and personalization recipes.
 
 ## Troubleshooting
 
@@ -124,6 +124,6 @@ The plugin renders an OpenViking status indicator beneath your Claude Code input
 
 - [Capability Reference](./16-capability-reference.md)
 - [Blog: OpenViking in Claude Code / Codex](https://blog.openviking.ai/post/openviking-coding-agent/) — Motivation, architecture overview, and demo
-- [Plugin README](https://github.com/volcengine/OpenViking/blob/main/examples/claude-code-memory-plugin/README.md) — Full environment variable tables, hook details, and architecture diagrams
+- [Plugin README](https://github.com/volcengine/OpenViking/blob/main/examples/claude-code-plugin/README.md) — Full environment variable tables, hook details, and architecture diagrams
 - [MCP Clients](./06-mcp-clients.md) — Information on MCP tool parameters and other clients
 - [Deployment Guide → CLI](../guides/03-deployment.md#cli) — `ovcli.conf` setup instructions

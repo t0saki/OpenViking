@@ -25,8 +25,8 @@ jobs:
       # exactly what the parallel run subtracts, so renaming one cannot leave
       # it in both.
       INSTALLER_TESTS: >-
-        examples/memory-plugin-shared/install-agent-hooks.test.mjs
-        examples/memory-plugin-shared/release-marketplace.test.mjs
+        examples/plugin-shared/install-agent-hooks.test.mjs
+        examples/plugin-shared/release-marketplace.test.mjs
     steps:
       - uses: actions/checkout@v6
 
@@ -35,12 +35,12 @@ jobs:
           # 24+: the pi extension tests import .ts glue directly via native type stripping.
           node-version: '24'
 
-      - run: npm ci --prefix examples/dsh-memory-plugin
+      - run: npm ci --prefix examples/dsh-plugin
 
       # The plugins published as packages keep no shared copies in git; they are
       # built on the way out, and the tests import them like the package would.
       - name: Generate the shared runtime copies
-        run: node examples/memory-plugin-shared/sync.mjs
+        run: node examples/plugin-shared/sync.mjs
 
       - name: Committed generator output must be up to date
         run: |
@@ -64,7 +64,7 @@ jobs:
             examples/*/servers/*.test.mjs \
             examples/*/tests/*.test.mjs \
             examples/*-plugin/*.test.mjs \
-            examples/memory-plugin-shared/*.test.mjs \
+            examples/plugin-shared/*.test.mjs \
             agent-plugins/*.test.mjs \
             | grep -vFxf <(printf '%s\n' $INSTALLER_TESTS))
           node --test $files
@@ -76,12 +76,12 @@ jobs:
 
       - name: Check installer scripts parse
         run: |
-          bash -n .github/scripts/stage-memory-plugin-marketplace.sh
-          bash -n examples/memory-plugin-shared/install.sh
-          bash -n examples/claude-code-memory-plugin/setup-helper/install.sh
-          bash -n examples/claude-code-memory-plugin/setup-helper/tos-install.sh
-          bash -n examples/codex-memory-plugin/setup-helper/install.sh
-          bash -n examples/codex-memory-plugin/setup-helper/tos-install.sh
+          bash -n .github/scripts/stage-plugin-marketplace.sh
+          bash -n examples/plugin-shared/install.sh
+          bash -n examples/claude-code-plugin/setup-helper/install.sh
+          bash -n examples/claude-code-plugin/setup-helper/tos-install.sh
+          bash -n examples/codex-plugin/setup-helper/install.sh
+          bash -n examples/codex-plugin/setup-helper/tos-install.sh
 
   openclaw-tests:
     needs: check-deps
@@ -98,7 +98,7 @@ jobs:
           node-version: '24'
 
       - name: Generate the shared runtime copies
-        run: node ../memory-plugin-shared/sync.mjs
+        run: node ../plugin-shared/sync.mjs
 
       - name: Install plugin dependencies
         run: npm ci --ignore-scripts
@@ -192,7 +192,7 @@ jobs:
             echo "langchain_changed=false" >> $GITHUB_OUTPUT
           fi
 
-          OPENCLAW_PATTERN="examples/openclaw-plugin/|examples/memory-plugin-shared/(lib/|sync\.mjs)|\.github/workflows/pr\.yml"
+          OPENCLAW_PATTERN="examples/openclaw-plugin/|examples/plugin-shared/(lib/|sync\.mjs)|\.github/workflows/pr\.yml"
           OPENCLAW_CHANGED_FILES=$(git diff --name-only origin/${{ github.base_ref }} HEAD | grep -E "$OPENCLAW_PATTERN" || true)
 
           if [ -n "$OPENCLAW_CHANGED_FILES" ]; then
