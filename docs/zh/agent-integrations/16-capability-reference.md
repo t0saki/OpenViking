@@ -88,22 +88,22 @@ per-harness 章节（档案卡）只写差异；所有共享事实均在本章�
 
 | # | 工具名 | 功能 | 参数要点（定义行号） |
 |---|---|---|---|
-| 1 | `find` | 不依赖会话上下文的快速语义检索 | `query, target_uri="", limit=10, min_score=0.35, level, context_type, read_content`；只传 `context_type="skill"` 时改调 `SearchService.find_skills`（包级检索，`skill_package_retriever.py`）：一个 skill 包一条命中，URI 改写为 `<包根>/SKILL.md`，摘要取包自身的 abstract，`read_content` 也读这个文件；不传 `target_uri` 时同时检索 `viking://~/skills` 与 `viking://agent/skills`。其它 `context_type` 组合，以及不带 query 只给 filter 的调用，仍走通用条目级路径（`:262`） |
-| 2 | `search` | 深检索，可带 `session_id` + 意图分析 | `session_id` 仅在服务端 `retrieval.enable_intent`（默认 true）开启时才会加载会话（`:315`）。这里的 skill 命中仍是条目级，同一个包可能返回多条，但每条的 URI 同样改写为 `<包根>/SKILL.md` |
-| 3 | `read` | 读取单个或多个 `viking://` 文件全文 | 并发信号量 10；单条失败返回 `(nothing found at <uri>)` 不抛错（`:389`） |
-| 4 | `list` | 列目录（函数名 `ls`，注册名显式改写为 `list`） | `recursive=False`（`:423`） |
-| 5 | `tree` | 递归目录树 | `level_limit=3, node_limit=1000, include_abstract=False`；`include_abstract=true` 时打印每个目录的 abstract（最长 1024 字符），因此 `tree(uri="viking://~/skills", level_limit=1, include_abstract=true)` 能列出全部 skill 及其描述（`:764`） |
-| 6 | `remember` | 写长期记忆 | 内部建一次性会话 `mcp-store-<uuid12>` 并立即 `commit_async`（`:504-523`）——这是 MCP 面唯一的 commit 入口；MCP 没有显式 commit 工具 |
-| 7 | `write` | 写 `viking://` 文件 | `mode=replace\|append\|create`：replace 覆盖或在缺失时创建，append 追加或在缺失时创建，create 仅创建缺失文件且已存在时返回冲突；显式 create 的文件扩展名白名单为 `.md .txt .json .yaml .yml .toml .py .js .ts`；可写域 `resources/user/agent`；用户根下 `skills/ peers/ privacy/ sessions/` 只读；已存在的 `.abstract.md/.overview.md` sidecar 可改正文，但公共 API 不能创建；写 `viking://agent/skills` 不会被拒绝，但会绕过 skill 安装流程，skill 请改用 `add_skill`，详见 [§3.5](#_3-5-写入与删除的类型边界)（`:952`；`content_write.py:60-81`） |
-| 8 | `edit` | 精确字符串替换 | `old_string` 空/0 命中/多命中且非 replace_all 均报错，且文件内容不变；编辑 skill 包内的文件不会重新触发 skill 安装流程，详见 [§3.5](#_3-5-写入与删除的类型边界)（`:992`） |
-| 9 | `add_resource` | 资源摄取（远程 URL / 本地文件签名上传 / Connector） | `watch_interval` 单位为分钟（0=不 watch）；本地路径分支返回签名上传 URL（TTL 默认 600s），上传后自动入库，无需二次调用（`:723-947`） |
-| 10 | `add_skill` | 新建、安装或替换 skill | `data`（完整 SKILL.md 文本）或 `path`（Git URL / GitHub tree URL，或本地 SKILL.md、目录、zip——本地分支和 `add_resource` 一样返回签名上传 URL）；`skills=[...]` 从多 skill 源里挑选，`list_only=true` 只预览；`target_uri="viking://agent/skills"` 表示账户共享。与 REST `POST /api/v1/skills` 共用安装代码。工具描述里写明它是新建和更新 skill 的唯一入口，删除请走 `ov skills remove` 或 Studio（`:1436`） |
-| 11 | `list_watches` | 列 watch 订阅，商业版尚未支持 | scheduler 未运行时返回错误串（`:958`） |
-| 12 | `cancel_watch` | 按 `to_uri` 取消，商业版尚未支持 | 刻意不暴露 pause/resume/trigger/update（`:990`） |
-| 13 | `grep` | 正则内容检索 | 多 pattern 并发（信号量 10），`node_limit=10`（`:1032`） |
-| 14 | `glob` | 文件名 glob | `node_limit=100`（`:1084`） |
-| 15 | `forget` | 删除 URI（不可恢复） | 默认 `recursive=False`；类型边界详见 [§3.5](#_3-5-写入与删除的类型边界)（`:1775`） |
-| 16 | `health` | 健康检查 | 无参（`:1123`） |
+| 1 | `find` | 不依赖会话上下文的快速语义检索 | `query, target_uri="", limit=10, min_score=0.35, level, context_type, read_content`；只传 `context_type="skill"` 时改调 `SearchService.find_skills`（包级检索，`skill_package_retriever.py`）：一个 skill 包一条命中，URI 改写为 `<包根>/SKILL.md`，摘要取包自身的 abstract，`read_content` 也读这个文件；不传 `target_uri` 时同时检索 `viking://~/skills` 与 `viking://agent/skills`。其它 `context_type` 组合，以及不带 query 只给 filter 的调用，仍走通用检索路径；渲染时的 URI 改写和「一个包一条」合并照常生效（`:262`） |
+| 2 | `search` | 深检索，可带 `session_id` + 意图分析 | `session_id` 仅在服务端 `retrieval.enable_intent`（默认 true）开启时才会加载会话（`:315`）。这里按条目检索 skill，只在渲染时合并，所以一个包在多个文件上命中会占掉多个 `limit` 名额，摘要也取自实际命中的文件 |
+| 3 | `read` | 读取单个或多个 `viking://` 文件全文 | 并发信号量 10；单条失败返回 `(nothing found at <uri>)` 不抛错（`:643`） |
+| 4 | `list` | 列目录（函数名 `ls`，注册名显式改写为 `list`） | `recursive=False`（`:784`） |
+| 5 | `tree` | 递归目录树 | `level_limit=3, node_limit=1000, include_abstract=False`；`include_abstract=true` 时打印每个目录的 abstract（最长 1024 字符），因此 `tree(uri="viking://~/skills", level_limit=1, include_abstract=true)` 能列出全部 skill 及其描述（`:862`） |
+| 6 | `remember` | 写长期记忆 | 内部建一次性会话 `mcp-store-<uuid12>` 并立即 `commit_async`（`:940`）——这是 MCP 面唯一的 commit 入口；MCP 没有显式 commit 工具 |
+| 7 | `write` | 写 `viking://` 文件 | `mode=replace\|append\|create`：replace 覆盖或在缺失时创建，append 追加或在缺失时创建，create 仅创建缺失文件且已存在时返回冲突；显式 create 的文件扩展名白名单为 `.md .txt .json .yaml .yml .toml .py .js .ts`；可写域 `resources/user/agent`；用户根下 `skills/ peers/ privacy/ sessions/` 只读；已存在的 `.abstract.md/.overview.md` sidecar 可改正文，但公共 API 不能创建；写 `viking://agent/skills` 不会被拒绝，但会绕过 skill 安装流程，skill 请改用 `add_skill`，详见 [§3.5](#_3-5-写入与删除的类型边界)（`:965`；`content_write.py:60-81`） |
+| 8 | `edit` | 精确字符串替换 | `old_string` 空/0 命中/多命中且非 replace_all 均报错，且文件内容不变；编辑 skill 包内的文件不会重新触发 skill 安装流程，详见 [§3.5](#_3-5-写入与删除的类型边界)（`:1005`） |
+| 9 | `add_resource` | 资源摄取（远程 URL / 本地文件签名上传 / Connector） | `watch_interval` 单位为分钟（0=不 watch）；本地路径分支返回签名上传 URL（TTL 默认 600s），上传后自动入库，无需二次调用（`:1161`） |
+| 10 | `add_skill` | 新建、安装或替换 skill | `data`（完整 SKILL.md 文本）或 `path`（Git URL / GitHub tree URL，或本地 SKILL.md、目录、zip——本地分支和 `add_resource` 一样返回签名上传 URL）；`skills=[...]` 从多 skill 源里挑选，`list_only=true` 只预览；`target_uri="viking://agent/skills"` 表示账户共享。与 REST `POST /api/v1/skills` 共用安装代码。工具描述里写明它是新建和更新 skill 的唯一入口，删除请走 `ov skills remove` 或 Studio（`:1452`） |
+| 11 | `list_watches` | 列 watch 订阅，商业版尚未支持 | scheduler 未运行时返回错误串（`:1621`） |
+| 12 | `cancel_watch` | 按 `to_uri` 取消，商业版尚未支持 | 刻意不暴露 pause/resume/trigger/update（`:1653`） |
+| 13 | `grep` | 正则内容检索 | 多 pattern 并发（信号量 10），`node_limit=10`（`:1696`） |
+| 14 | `glob` | 文件名 glob | `node_limit=100`（`:1765`） |
+| 15 | `forget` | 删除 URI（不可恢复） | 默认 `recursive=False`；类型边界详见 [§3.5](#_3-5-写入与删除的类型边界)（`:1791`） |
+| 16 | `health` | 健康检查 | 无参（`:1808`） |
 
 配套机制：
 
