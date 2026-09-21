@@ -608,7 +608,7 @@ HTTP 对应查询为 `GET /api/v1/skills/search-web?include_content=true&include
 
 清单包含 `SKILL.md`、摘要和辅助文件/目录，不包含 `.source.json`。完整性 API 上限为 **512 个条目（包含目录）、单文件 16 MiB、总文件字节数 64 MiB**，读取并发为 8；超限返回 `RESOURCE_EXHAUSTED`。正文、清单和 revision 在同一次树锁保护的读取中取得，但后续下载仍可能遇到更新，消费方应校验文件哈希并复查 revision。
 
-检索与 `get_skill` 只返回内容和清单，不会执行脚本或把文件安装到 Agent 沙箱。Harness 可按需远程读文本，在工具需要本地路径时下载资源。VikingBot 的完整流程见 [Skills](../../../bot/docs/zh/concepts/06-skills.md)。
+检索与 `get_skill` 只返回内容和清单，不会执行脚本或把文件安装到 Agent 沙箱。Harness 可按需远程读文本，在工具需要本地路径时下载资源。VikingBot 的完整流程见 [Skills](../../../bot/docs/zh/concepts/06-skills.md)。MCP 客户端通过 `find` 工具传 `context_type="skill"` 得到同样的包级行为，见 [MCP 集成](../guides/06-mcp-integration.md)。
 
 ### 搜索技能
 
@@ -625,7 +625,7 @@ HTTP 对应查询为 `GET /api/v1/skills/search-web?include_content=true&include
 
 包内命中按完整 Skill 根 URI 合并，使用最高最终得分排序，再截取 `limit` 个 Skill。不同空间的同名 Skill 分别保留。`total` 是本次返回数组长度，不是所有匹配项的总数。
 
-每个 Skill 返回包内最终得分最高的一条命中。`uri`、`level`、`score`、`abstract` 直接使用该命中的原有字段，不增加额外返回字段。按 Skill 合并和补页仅用于专用 `skills/find`；通用 `find/search` 保持按命中内容返回。
+每个 Skill 返回包内最终得分最高的一条命中。`uri`、`level`、`score`、`abstract` 直接使用该命中的原有字段，不增加额外返回字段。按 Skill 合并和补页用于专用 `skills/find`，以及只传 `context_type="skill"` 的 MCP `find` 工具；REST `find` / `search` 和 MCP `search` 仍按命中内容返回。
 
 | 返回字段 | 含义 |
 | --- | --- |
@@ -635,11 +635,11 @@ HTTP 对应查询为 `GET /api/v1/skills/search-web?include_content=true&include
 | `name` / `description` / `tags` / `allowed_tools` | 专用 `skills/find` 从 Skill 主目录单独读取的元数据 |
 | `root_uri` / `skill_md_uri` | 专用 `skills/find` 返回的 Skill 根目录和主 `SKILL.md` 地址 |
 
-专用 `skills/find` 的 `uri` 从原先的包根地址调整为实际命中地址，列表和按名称读取接口保持原样。`level=[2]` 只让文件参与匹配，返回的 `level` 为 `2`、`uri` 指向包内得分最高的文件。
+专用 `skills/find` 的 `uri` 从原先的包根地址调整为实际命中地址；MCP `find` 工具的行为不同，它把每条 Skill 命中改写成 `<包根>/SKILL.md`。列表和按名称读取接口保持原样。`level=[2]` 只让文件参与匹配，返回的 `level` 为 `2`、`uri` 指向包内得分最高的文件。
 
-通用检索中 `read_content=true` 继续读取实际返回的 `uri`。专用 `skills/find` 不支持该参数。
+通用检索中 `read_content=true` 继续读取实际返回的 `uri`——对只传 `context_type="skill"` 的 MCP `find` 来说，这个 URI 是包的 `SKILL.md`，不是实际命中的文件。专用 `skills/find` 不支持该参数。
 
-上表的 URI 规则适用于语义检索。通用 `find` 仅按 `filter` 筛选时，仍保留索引记录的 URI、返回 `score=0`，不为 L0、L1 补摘要文件后缀。
+上表的 URI 规则适用于语义检索。通用 `find` 仅按 `filter` 筛选时，仍保留索引记录的 URI、返回 `score=0`，不为 L0、L1 补摘要文件后缀；MCP `find` 遇到这种调用也留在通用路径上，因为包级检索必须带检索文本。
 
 搜索范围、层级和权限限制先作用于包内命中，再合并 Skill；根目录也必须可访问。
 
