@@ -3,9 +3,8 @@
 Long-term semantic memory for Claude Code, powered by [OpenViking](https://github.com/volcengine/OpenViking). Recall happens automatically before every prompt, capture happens automatically after every turn — no MCP tool calls required from the model.
 
 > **Requires an OpenViking server with `viking://~` home-alias support.** Recall targets the
-> caller's own context space through `viking://~/memories` and `viking://~/skills`, plus the
-> account-shared `viking://agent/skills`; the uid-less `viking://user/memories` shorthand is
-> rejected by newer servers.
+> caller's own context space through `viking://~/memories` and `viking://~/skills`; the uid-less
+> `viking://user/memories` shorthand is rejected by newer servers.
 
 > Installable straight from the repo's marketplace catalog — no separate distribution repo. See [Manual setup](#manual-setup) for the two-command remote install.
 
@@ -186,7 +185,7 @@ Upgrading from the path-derived peer needs no action: memories written under the
 
 Recall defaults to the broad mode: global memory, the current workspace, and other workspace memories can all be recalled, with other workspaces penalized and rendered later. Set `OPENVIKING_RECALL_PEER_SCOPE=actor` for the isolation mode, which only sees global memory plus the current workspace. In deployments where one bot serves multiple real people, such as zouk, vikingbot, or AstrBot, use the isolation mode with an explicit actor peer so one person's memories are not recalled into another person's session.
 
-Recall covers skills as well as memories. The server-assembled context block can carry skill entries (`type="skills"`), and the final raw-find fallback searches `viking://~/memories`, `viking://~/skills`, and the account-shared `viking://agent/skills`. When the injected block holds a skill entry, it gains one line telling Claude to read `SKILL.md` under the entry's URI before following it; rounds without skills are unchanged.
+Recall covers skills as well as memories: the server-assembled context block can carry skill entries (`type="skills"`), from your own skills and the ones shared with your account.
 
 #### Capture tuning
 

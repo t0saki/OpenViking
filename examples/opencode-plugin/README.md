@@ -3,9 +3,8 @@
 A unified OpenCode plugin for OpenViking repository retrieval and long-term memory.
 
 > **Requires an OpenViking server with `viking://~` home-alias support.** Recall targets the
-> caller's own context space through `viking://~/memories` and `viking://~/skills` (plus the
-> account-shared `viking://agent/skills`); the uid-less `viking://user/memories` shorthand is
-> rejected by newer servers.
+> caller's own context space through `viking://~/memories` and `viking://~/skills`; the uid-less
+> `viking://user/memories` shorthand is rejected by newer servers.
 
 This is the only OpenCode plugin example maintained in this repository. It supersedes the former split examples for indexed repository prompt injection and long-term memory.
 

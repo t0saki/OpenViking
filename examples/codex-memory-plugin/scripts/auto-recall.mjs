@@ -28,12 +28,9 @@ import {
 import { deriveOvSessionId, getStateDir } from "./session-state.mjs";
 import {
   buildRecallEndpointBody,
-  dedupeSkillHits,
   fetchAssembledContext,
   normalizeContextEntry,
   postRecall,
-  skillEntryHint,
-  skillHitUri,
 } from "./shared/recall-core.mjs";
 import { runHookStage } from "./shared/agent-hook-runtime.mjs";
 import { createOvHttp } from "./shared/ov-http.mjs";
@@ -66,10 +63,8 @@ function output(obj, exitAfter = false) {
 function wrapRecallContext(additionalContext) {
   const body = sanitizeInjectedText(additionalContext).trim();
   if (!body) return "";
-  const skillHint = skillEntryHint(body);
   return [
     '<openviking-context source="auto-recall" format="digest">',
-    ...(skillHint ? [skillHint] : []),
     body,
     "</openviking-context>",
   ].join("\n");
@@ -151,17 +146,12 @@ function lexicalOverlapBoost(tokens, text) {
   return Math.min(0.2, (matched / Math.min(tokens.length, 4)) * 0.2);
 }
 
-// A skill hit names its directory, but it is as complete a unit as a memory leaf.
-function isLeafHit(item) {
-  return item.level === 2 || item.category === "skills" || String(item.uri || "").endsWith(".md");
-}
-
 function getRankingBreakdown(item, profile) {
   const base = clampScore(item.score);
   const abstract = (item.abstract || item.overview || "").trim();
   const cat = (item.category || "").toLowerCase();
   const uri = item.uri.toLowerCase();
-  const leafBoost = isLeafHit(item) ? 0.12 : 0;
+  const leafBoost = (item.level === 2 || uri.endsWith(".md")) ? 0.12 : 0;
   const eventBoost = profile.wantsTemporal && (cat === "events" || uri.includes("/events/")) ? 0.1 : 0;
   const prefBoost = profile.wantsPreference && (cat === "preferences" || uri.includes("/preferences/")) ? 0.08 : 0;
   const overlapBoost = lexicalOverlapBoost(profile.tokens, `${item.uri} ${abstract}`);
@@ -194,7 +184,7 @@ function pickMemories(items, limit, queryText) {
   const profile = buildQueryProfile(queryText);
   const sorted = [...items].sort((a, b) => rankForInjection(b, profile) - rankForInjection(a, profile));
   const deduped = dedupeByAbstract(sorted);
-  const leaves = deduped.filter(isLeafHit);
+  const leaves = deduped.filter((m) => m.level === 2 || m.uri.endsWith(".md"));
   if (leaves.length >= limit) return leaves.slice(0, limit);
   const picked = [...leaves];
   const used = new Set(picked.map((m) => m.uri));
@@ -211,8 +201,7 @@ function postProcess(items, limit, threshold) {
   const sorted = [...items].sort((a, b) => clampScore(b.score) - clampScore(a.score));
   const result = [];
   for (const item of sorted) {
-    // Memories are leaves; a skill is found through its directory's abstract.
-    if (item.level !== 2 && item.category !== "skills") continue;
+    if (item.level !== 2) continue;
     if (clampScore(item.score) < threshold) continue;
     const cat = (item.category || "").toLowerCase() || "unknown";
     const abs = (item.abstract || item.overview || "").trim().toLowerCase();
@@ -272,20 +261,13 @@ async function searchBucket(query, targetUris, limit, bucket, sessionId = null) 
 }
 
 async function searchAll(query, limit, sessionId = null) {
-  const [userMems, userSkills, sharedSkills] = await Promise.all([
+  const [userMems, userSkills] = await Promise.all([
     searchBucket(query, userScopedTargets("memories"), limit, "memories", sessionId),
     searchBucket(query, userScopedTargets("skills"), limit, "skills", sessionId),
-    searchBucket(query, ["viking://agent/skills"], limit, "skills", sessionId),
   ]);
   log("search_complete", { scope: "user", rawCount: userMems.length, topScores: userMems.slice(0, 3).map((m) => m.score) });
   log("search_complete", { scope: "skills", rawCount: userSkills.length, topScores: userSkills.slice(0, 3).map((m) => m.score) });
-  log("search_complete", { scope: "shared_skills", rawCount: sharedSkills.length, topScores: sharedSkills.slice(0, 3).map((m) => m.score) });
-  const skills = dedupeSkillHits(
-    [...userSkills, ...sharedSkills]
-      .map((m) => ({ ...m, uri: skillHitUri(m.uri), category: "skills" }))
-      .filter((m) => m.uri),
-  );
-  const all = [...userMems, ...skills];
+  const all = [...userMems, ...userSkills];
   const seen = new Set();
   return all.filter((m) => {
     if (seen.has(m.uri)) return false;

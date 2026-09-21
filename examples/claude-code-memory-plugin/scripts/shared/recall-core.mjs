@@ -16,55 +16,7 @@ const USER_RESERVED_DIRS = new Set(["memories", "skills"]);
 const SOURCES = [
   { type: "memory", uri: "viking://~/memories", bucket: "memories" },
   { type: "skill", uri: "viking://~/skills", bucket: "skills" },
-  { type: "skill", uri: "viking://agent/skills", bucket: "skills" },
 ];
-const SKILL_ENTRY_HINT =
-  "Skill entries are OpenViking skills: read SKILL.md under the entry's URI before following one.";
-const SKILL_URI_IN_TEXT_RE = /\bviking:\/\/(?:~|user\/[^/\s"'<>()]+|agent)\/skills\/[^\s"'<>()]/;
-
-/**
- * The header line for a recall block that carries a skill — an assembled
- * type="skills" entry, or any skill URI a digest cites — else null.
- */
-export function skillEntryHint(text) {
-  const value = String(text || "");
-  return /\btype="skills"/.test(value) || SKILL_URI_IN_TEXT_RE.test(value) ? SKILL_ENTRY_HINT : null;
-}
-
-const SKILLS_ROOT_RE = /^viking:\/\/(?:~|user\/[^/]+|agent)\/skills(?:\/|$)/i;
-const SKILL_PACKAGE_RE = /^(viking:\/\/(?:~|user\/[^/]+|agent)\/skills\/([^/]+))(?:\/|$)/i;
-
-/**
- * A skill is indexed as a whole package, so a hit can be its .abstract.md, its
- * SKILL.md, or any file inside the directory. Name the package directory, the
- * way the server's skill_root_uri does, as the context face and the
- * session-start catalog do. A hit at a bare skills root, or under a package
- * whose name starts with "." (an internal update backup), is not an installed
- * skill and yields "". A URI outside a skills root is left alone.
- */
-export function skillHitUri(uri) {
-  const value = String(uri || "").replace(/\/+$/, "");
-  const match = SKILL_PACKAGE_RE.exec(value);
-  if (match) return match[2].startsWith(".") ? "" : match[1];
-  return SKILLS_ROOT_RE.test(value) ? "" : value;
-}
-
-/** One entry per skill package, keeping each package's highest-scoring hit. */
-export function dedupeSkillHits(items) {
-  const best = new Map();
-  const kept = [];
-  for (const item of items) {
-    const uri = item?.uri || "";
-    const index = best.get(uri);
-    if (index === undefined) {
-      best.set(uri, kept.length);
-      kept.push(item);
-    } else if ((item?.score || 0) > (kept[index]?.score || 0)) {
-      kept[index] = item;
-    }
-  }
-  return kept;
-}
 const DEFAULT_CONTEXT_LIMIT = 10;
 const DEFAULT_CONTEXT_MAX_TOKENS = 1600;
 const DEFAULT_REWRITE_MAX_BULLETS = 6;
@@ -283,8 +235,7 @@ function rankItem(item, profile) {
   const abstract = (item.abstract || item.overview || "").trim();
   const cat = (item.category || "").toLowerCase();
   const uri = (item.uri || "").toLowerCase();
-  // A skill hit names its directory, but it is as complete a unit as a memory leaf.
-  const leafBoost = (item.level === 2 || item._sourceType === "skill" || uri.endsWith(".md")) ? 0.12 : 0;
+  const leafBoost = (item.level === 2 || uri.endsWith(".md")) ? 0.12 : 0;
   const eventBoost = profile.wantsTemporal && (cat === "events" || uri.includes("/events/")) ? 0.1 : 0;
   const prefBoost = profile.wantsPreference && (cat === "preferences" || uri.includes("/preferences/")) ? 0.08 : 0;
   const overlapBoost = lexicalOverlapBoost(profile.tokens, `${item.uri} ${abstract}`);
@@ -367,15 +318,7 @@ async function searchOneSource(fetchJSON, query, source, limit, actorPeerId = ""
   }, { actorPeerId });
   if (!res.ok) return [];
   const items = res.result?.[source.bucket] || [];
-  if (source.type !== "skill") {
-    return items.map((item) => ({ ...item, _sourceType: source.type }));
-  }
-  const hits = [];
-  for (const item of items) {
-    const uri = skillHitUri(item.uri);
-    if (uri) hits.push({ ...item, uri, _sourceType: source.type });
-  }
-  return dedupeSkillHits(hits);
+  return items.map((item) => ({ ...item, _sourceType: source.type }));
 }
 
 async function searchAllSources(fetchJSON, query, perSourceLimit, actorPeerId = "", log = () => {}) {
@@ -423,7 +366,6 @@ async function buildFallbackInjectionBlock(fetchJSON, items, cfg, actorPeerId = 
     "<openviking-context>",
     "Relevant context from OpenViking. Use the read MCP tool to expand URIs.",
   ];
-  if (items.some((item) => item._sourceType === "skill")) lines.push(SKILL_ENTRY_HINT);
   let contentCount = 0;
   let hintCount = 0;
 
@@ -530,7 +472,6 @@ function wrapContext(body) {
   return [
     "<openviking-context>",
     "Relevant memory from OpenViking. Use the search/read MCP tools to expand URIs.",
-    ...(skillEntryHint(body) ? [SKILL_ENTRY_HINT] : []),
     body,
     "</openviking-context>",
   ].join("\n");

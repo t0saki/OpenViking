@@ -39,7 +39,7 @@ bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/memory-plugin-shar
 ## 工作原理
 
 - `sessionStart`：加载用户画像、当前项目的记忆索引，以及 OpenViking skill 清单 `<available-skills>`。
-- `beforeSubmitPrompt`：根据当前问题召回上下文并通过 `additional_context` 注入，召回范围包括你自己的 skill 和账号内共享在 `viking://agent/skills` 下的 skill。召回结果里有 skill 时，注入块会提示 Agent 先读它的 `SKILL.md` 再照做。
+- `beforeSubmitPrompt`：根据当前问题召回上下文并通过 `additional_context` 注入，召回范围包括你自己的 skill 和账号内共享在 `viking://agent/skills` 下的 skill。
 - `beforeReadFile`：阻止把 `viking://` 虚拟路径当作本地文件读取，并提示改用 OpenViking MCP 工具；shell 命令不做检查。
 - `stop`：增量捕获本轮新增的用户与助手消息。
 - `preCompact` / `sessionEnd`：提交尚未处理的消息，触发记忆抽取。

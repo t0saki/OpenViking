@@ -265,9 +265,7 @@ JS 系 harness 的召回逻辑均由 `recall-core.mjs` 中的三级降级链处�
 
 1. **context face**：调用 `POST /api/v1/search/search`，参数设定为 `mode:"context"` 且 `purpose:"coding"`。其核心设计原则为"只声明意图，机制交服务端"：对于 `quotas`/`max_tokens`/`query_expansion`/`rewrite_max_bullets` 等参数，仅在用户显式配置时（带有 configured 哨兵字段）才会发送，否则直接采用服务端的默认设定。
 2. **legacy `/recall`**：若 context face 请求返回 400/422 错误，且响应报文包含 `extra`/`mode`/`unexpected` 等特征字段，则判定对接了旧版服务端。此时会在本地写入 6 小时的负缓存（路径为 `~/.openviking/state/context-face.json`，该文件全机共享，一旦被任一 harness 标记，同机所有 JS 系 harness 均会跳过 context face 阶段）。随后降级调用已弃用的 `/api/v1/search/recall` 接口；若 `peer_scope` 被拒，则去掉该参数重试一次。
-3. **raw find 兜底**：并发请求 `viking://~/memories`、`viking://~/skills` 与账户共享的 `viking://agent/skills`，每个来源调用一次 `POST /search/find`（注意：resources 被刻意排除在自动召回之外，资源类文档由模型主动调用 `search` 获取）。客户端收到结果后进行本地重排（权重规则为：leaf +0.12 / 时间意图 +0.10 / 偏好意图 +0.08 / 词面重叠 ≤0.2）、去重，最后按客户端 token 预算装填。`recallTokenBudget`、`recallMaxContentChars` 与 `recallPreferAbstract` 三个旋钮只在这一级生效；而在 context face 下，注入预算由服务端 `max_tokens`（默认 1600）决定。
-
-skill 也走这条链路：context face 把 skill 作为 `type="skills"` 的条目返回，兜底级的两个 skill 来源和记忆一起参与本地重排。注入块里出现 skill 条目时，`recall-core.mjs` 会在块头多加一行 `Skill entries are OpenViking skills: read SKILL.md under the entry's URI before following one.`；没有 skill 的轮次不受影响。
+3. **raw find 兜底**：并发请求 `viking://~/memories` 与 `viking://~/skills`，调用两次 `POST /search/find`（注意：resources 被刻意排除在自动召回之外，资源类文档由模型主动调用 `search` 获取）。客户端收到结果后进行本地重排（权重规则为：leaf +0.12 / 时间意图 +0.10 / 偏好意图 +0.08 / 词面重叠 ≤0.2）、去重，最后按客户端 token 预算装填。`recallTokenBudget`、`recallMaxContentChars` 与 `recallPreferAbstract` 三个旋钮只在这一级生效；而在 context face 下，注入预算由服务端 `max_tokens`（默认 1600）决定。
 
 服务端在处理 session_id 时，分为两条截然不同的执行路径：
 

@@ -39,7 +39,7 @@ Quit Cursor completely and restart it after installation.
 ## How it works
 
 - `sessionStart` loads your profile, the current project's memory index, and an `<available-skills>` catalog of your OpenViking skills.
-- `beforeSubmitPrompt` recalls context for the current request, including your own skills and those shared with your account under `viking://agent/skills`, and injects it through `additional_context`. When a recalled entry is a skill, the block tells the Agent to read its `SKILL.md` before following it.
+- `beforeSubmitPrompt` recalls context for the current request, including your own skills and those shared with your account under `viking://agent/skills`, and injects it through `additional_context`.
 - `beforeReadFile` denies reading a `viking://` path as a local file and points the Agent to OpenViking MCP tools. Shell commands are not checked.
 - `stop` incrementally captures new user and assistant messages.
 - `preCompact` and `sessionEnd` commit pending messages for memory extraction.

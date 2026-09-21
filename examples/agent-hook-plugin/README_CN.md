@@ -8,7 +8,7 @@ bash examples/memory-plugin-shared/install.sh --harness trae,trae-cn
 bash examples/memory-plugin-shared/install.sh --harness zcode
 ```
 
-> **需要支持 `viking://~` home alias 的 OpenViking 服务端。** 召回通过 `viking://~/memories` 与 `viking://~/skills` 指向调用者自己的上下文空间，另加账号内共享的 `viking://agent/skills`；不带 uid 的 `viking://user/memories` 简写会被较新的服务端拒绝。
+> **需要支持 `viking://~` home alias 的 OpenViking 服务端。** 召回通过 `viking://~/memories` 与 `viking://~/skills` 指向调用者自己的上下文空间；不带 uid 的 `viking://user/memories` 简写会被较新的服务端拒绝。
 
 ## Hook 做什么
 

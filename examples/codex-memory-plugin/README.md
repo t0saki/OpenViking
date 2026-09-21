@@ -349,7 +349,7 @@ from 1 through 5 therefore produce an effective total quota of 6, one retrieval
 slot for each coding domain. Eligible cache misses still use local `codex exec`
 compression on top of whichever path answered.
 
-The `mode="context"` request covers skills as well as memories, from both your own `skills/` and the account-shared `viking://agent/skills`, so a skill that fits the prompt can show up in the digest with its `viking://` URI. The last-resort `/api/v1/search/search` pass searches your own `memories` and `skills` (`viking://user/<user>/…` first when a user is configured, then `viking://~/…`) plus the shared `viking://agent/skills`, and names each skill hit by its skill directory. When the injected digest carries a skill entry or cites a skill URI, one extra header line tells the model: `Skill entries are OpenViking skills: read SKILL.md under the entry's URI before following one.`
+The `mode="context"` request covers skills as well as memories, from both your own `skills/` and the account-shared `viking://agent/skills`, so a skill that fits the prompt can show up in the digest with its `viking://` URI.
 
 Client-side knobs can also live in `~/.openviking/ovcli.conf` under
 `plugin` (shared) or `plugin.codex` (this harness only), or in the workspace

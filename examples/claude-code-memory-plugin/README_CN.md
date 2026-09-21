@@ -156,7 +156,7 @@ claude
 | `OPENVIKING_RECALL_COMPRESS`           | `auto`        | digest 压缩：`off`、`client`（本地宿主 CLI）、`server`、`auto`（本地优先、失败回落服务端） |
 | `OPENVIKING_RECALL_COMPRESS_MAX_BULLETS` | `6`         | digest 条数上限                                                     |
 
-召回的不只是记忆，也包括 skill。服务端组装的上下文块可能带有 skill 条目（`type="skills"`）；最终的 raw-find fallback 会搜索 `viking://~/memories`、`viking://~/skills` 和账号内共享的 `viking://agent/skills` 三处。注入块里只要有 skill 条目，就会多一行提示，让 Claude 先读取该条目 URI 下的 `SKILL.md` 再照做；不含 skill 的轮次不受影响。
+召回的不只是记忆，也包括 skill：服务端组装的上下文块可能带有 skill 条目（`type="skills"`），既有你自己的 skill，也有账号内共享的 skill。
 
 #### 捕获调优
 
