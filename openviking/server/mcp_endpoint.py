@@ -52,6 +52,7 @@ from openviking.retrieve.context_assembler import (
     AssembleParams,
     assemble_context,
 )
+from openviking.retrieve.skill_results import skill_root_uri
 from openviking.server.auth import (
     _build_request_context,
     _extract_api_key,
@@ -267,24 +268,37 @@ async def find(
     context_type: Optional[Union[str, List[str]]] = None,
     read_content: bool = False,
 ) -> str:
-    """Fast semantic retrieval without session context. Returns ranked memories, resources, and skills with URI, abstract, and score. context_type="skill" without target_uri searches both the user's own and the account-shared skills."""
+    """Fast semantic retrieval without session context. Returns ranked memories, resources, and skills with URI, abstract, and score. context_type="skill" returns one hit per skill package, pointing at its SKILL.md, and without target_uri searches both the user's own and the account-shared skills."""
     service = get_service()
     ctx = _get_ctx()
     context_filter = _resolve_context_type_filter(context_type)
+    skill_only = resolve_context_types(context_type) == [ContextType.SKILL.value]
     if target_uri:
         target_uri = _resolve_mcp_workspace_uri(target_uri, ctx)
-    elif resolve_context_types(context_type) == [ContextType.SKILL.value]:
+    elif skill_only:
         # The generic default targets stop at the user root and miss viking://agent/skills.
         target_uri = default_target_directories(ctx, context_type=ContextType.SKILL)
-    result = await service.search.find(
-        query=query,
-        ctx=ctx,
-        target_uri=target_uri,
-        limit=limit,
-        score_threshold=min_score,
-        filter=context_filter,
-        level=level,
-    )
+    if skill_only:
+        # A skill is indexed as a whole package, so an item-level find returns one hit per
+        # file. find_skills collapses those to the best hit per package.
+        result = await service.search.find_skills(
+            query=query,
+            ctx=ctx,
+            target_uri=target_uri,
+            limit=limit,
+            score_threshold=min_score,
+            level=level,
+        )
+    else:
+        result = await service.search.find(
+            query=query,
+            ctx=ctx,
+            target_uri=target_uri,
+            limit=limit,
+            score_threshold=min_score,
+            filter=context_filter,
+            level=level,
+        )
     return await _format_search_result(result, service=service, ctx=ctx, read_content=read_content)
 
 
@@ -433,31 +447,38 @@ async def search(
     return await _format_search_result(result, service=service, ctx=ctx, read_content=read_content)
 
 
-_SKILL_INDEX_SIDECARS = ("/.abstract.md", "/.overview.md")
-
-
 def _hit_uri(ctx_type: str, uri: str) -> str:
     """The URI an agent should read for a hit.
 
-    A skill is indexed through its directory's .abstract.md, whose body is only the
-    frontmatter; the skill itself is the SKILL.md beside it.
+    A skill is indexed as a whole package: the hit may be its .abstract.md, its
+    .overview.md, or any file inside the directory. The skill itself is the
+    package's SKILL.md.
     """
     if ctx_type == "skill":
-        for sidecar in _SKILL_INDEX_SIDECARS:
-            if uri.endswith(sidecar):
-                return f"{uri[: -len(sidecar)]}/SKILL.md"
+        root = skill_root_uri(uri)
+        if root:
+            return f"{root}/SKILL.md"
     return uri
 
 
 async def _format_search_result(result, *, service, ctx, read_content: bool = False) -> str:
     items = []
+    seen: dict[str, int] = {}
     for ctx_type, contexts in [
         ("memory", result.memories),
         ("resource", result.resources),
         ("skill", result.skills),
     ]:
         for m in contexts:
-            items.append((ctx_type, m, _hit_uri(ctx_type, m.uri)))
+            uri = _hit_uri(ctx_type, m.uri)
+            # Several files of one skill package can match; keep the best-scored hit.
+            previous = seen.get(uri)
+            if previous is not None:
+                if getattr(m, "score", 0.0) > getattr(items[previous][1], "score", 0.0):
+                    items[previous] = (ctx_type, m, uri)
+                continue
+            seen[uri] = len(items)
+            items.append((ctx_type, m, uri))
 
     if not items:
         return "No matching context found."
