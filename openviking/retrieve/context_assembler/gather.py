@@ -19,8 +19,11 @@ from openviking.retrieve.context_assembler.params import (
     ORIGIN_ORDER,
     OTHER_MEMORY_CATEGORY,
     OTHER_PEER_OVERFETCH,
+    READ_CONCURRENCY,
     REPORTED_CATEGORY_KEYS,
+    SKILL_PACKAGE_OVERFETCH,
 )
+from openviking.retrieve.skill_results import package_abstract, skill_root_uri
 from openviking.server.identity import RequestContext
 from openviking.utils.search_filters import merge_context_type_filter
 from openviking_cli.exceptions import InvalidArgumentError
@@ -234,10 +237,23 @@ async def gather_candidates(
             base_uri, is_directory = strip_level_suffix(uri)
             if base_uri.endswith("/profile.md"):
                 continue
+            category = category_for(item, bucket)
+            abstract = _abstract(item)
+            if category == "skills":
+                # Every file and directory level of a package carries its own
+                # vector, so a hit anywhere inside one stands for the package:
+                # it becomes the package's SKILL.md before exclusion is checked,
+                # which is what lets the ledger cool a whole package for a turn.
+                root = skill_root_uri(uri)
+                if not root:
+                    continue
+                if uri != f"{root}/.abstract.md":
+                    abstract = ""
+                uri = base_uri = f"{root}/SKILL.md"
+                is_directory = False
             if uri in excluded or base_uri in excluded:
                 excluded_count += 1
                 continue
-            category = category_for(item, bucket)
             origin = origin_for_uri(base_uri, ctx.actor_peer_id, user_root)
             score = _score(item)
             penalty = penalties.get(category, 0.0) if origin == "other_peer" else 0.0
@@ -249,7 +265,7 @@ async def gather_candidates(
                     score=score,
                     ranked_score=score - penalty,
                     level=_level(item),
-                    abstract=_abstract(item),
+                    abstract=abstract,
                     origin=origin,
                     is_directory=is_directory,
                     read_ctx=open_ctx if origin == "other_peer" else ctx,
@@ -294,12 +310,13 @@ async def gather_candidates(
             "skills": ContextType.SKILL,
         }.get(bucket, ContextType.MEMORY)
         bucket_filter = merge_context_type_filter(filter, context_type)
+        want = quota * SKILL_PACKAGE_OVERFETCH if bucket == "skills" else quota
         searches = [
             _find(
                 query=query,
                 find_ctx=ctx,
                 target_uri=target,
-                find_limit=_overfetch(quota),
+                find_limit=_overfetch(want),
                 find_filter=bucket_filter,
             )
             for query in planned
@@ -332,6 +349,8 @@ async def gather_candidates(
         found = dedupe_keep_best(found)
         searched[bucket] = len(found)
         candidates = _build([(item, bucket) for item in found])
+        if bucket == "skills":
+            candidates = _dedupe_candidates(candidates)
         candidates.sort(key=_rank_key, reverse=True)
         return candidates[: max(0, quota)]
 
@@ -376,6 +395,12 @@ async def gather_candidates(
         found = dedupe_keep_best(found)
         searched["all"] = len(found)
         candidates = _build([(item, buckets.get(_uri(item))) for item in found])
+        # Only skills collapse here. Merging the other categories before the cut
+        # would hand them quota they never had in this mode.
+        skills = [c for c in candidates if c.category == "skills"]
+        if skills:
+            candidates = [c for c in candidates if c.category != "skills"]
+            candidates.extend(_dedupe_candidates(skills))
         candidates.sort(key=_rank_key, reverse=True)
         return candidates[: max(0, limit)]
 
@@ -387,6 +412,8 @@ async def gather_candidates(
         candidates = [candidate for bucket in buckets for candidate in bucket]
         candidates = _dedupe_candidates(candidates)
         candidates.sort(key=_rank_key, reverse=True)
+
+    candidates = await _fill_skill_abstracts(service, candidates)
 
     origins = dict.fromkeys(ORIGIN_ORDER, 0)
     for candidate in candidates:
@@ -403,6 +430,31 @@ async def gather_candidates(
     if retrieval_errors:
         stats["retrieval_errors"] = retrieval_errors[:5]
     return candidates, stats
+
+
+async def _fill_skill_abstracts(service: Any, candidates: List[Candidate]) -> List[Candidate]:
+    """Describe each skill entry with its package abstract rather than the file that matched."""
+    wanted = [
+        index
+        for index, candidate in enumerate(candidates)
+        if candidate.category == "skills" and not candidate.abstract.strip()
+    ]
+    if not wanted:
+        return candidates
+    semaphore = asyncio.Semaphore(READ_CONCURRENCY)
+
+    async def read_one(index: int) -> Tuple[int, str]:
+        candidate = candidates[index]
+        async with semaphore:
+            abstract = await package_abstract(
+                service.fs, candidate.read_ctx, skill_root_uri(candidate.base_uri)
+            )
+        return index, abstract
+
+    for index, abstract in await asyncio.gather(*(read_one(index) for index in wanted)):
+        if abstract:
+            candidates[index] = replace(candidates[index], abstract=abstract)
+    return candidates
 
 
 def _rank_key(candidate: Candidate) -> Tuple[float, int]:

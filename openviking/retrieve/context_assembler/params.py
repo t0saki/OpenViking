@@ -35,6 +35,10 @@ MAX_EXCLUDE_URIS = 200
 MAX_PLANNED_QUERIES = 3
 READ_CONCURRENCY = 8
 OTHER_PEER_OVERFETCH = 4
+# A Skill package stores one vector per file and per subdirectory level, and all
+# of them collapse into a single entry for the package. The skills bucket asks
+# for this multiple of its quota so the surviving entries are distinct packages.
+SKILL_PACKAGE_OVERFETCH = 4
 
 ORIGIN_ORDER: Tuple[str, ...] = ("actor_peer", "self", "other_peer")
 
