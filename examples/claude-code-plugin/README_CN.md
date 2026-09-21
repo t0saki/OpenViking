@@ -1,4 +1,4 @@
-# OpenViking Memory Plugin for Claude Code
+# OpenViking Plugin for Claude Code
 
 为 Claude Code 提供长期语义记忆，由 [OpenViking](https://github.com/volcengine/OpenViking) 驱动。每次用户输入前自动召回相关记忆，每轮对话结束后自动捕获上下文——模型不需要主动调用任何 MCP 工具。
 
@@ -12,7 +12,7 @@
 bash <(curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/main/examples/plugin-shared/install.sh) --harness claude
 ```
 
-仅支持 macOS 和 Linux。Claude Code 和 Codex 共用这一个安装脚本（去掉 `--harness claude` 可交互勾选）：它会依次询问界面语言（English/中文）、下载源（GitHub，或 GitHub 受限地区用 TOS 镜像——传 `--dist tos`）和 OpenViking 凭据，然后从远程 marketplace 安装 `openviking-memory`。stdio MCP 代理运行时读取 `ovcli.conf`，不再需要 shell wrapper 或 `.mcp.json` 渲染。重复执行安全。
+仅支持 macOS 和 Linux。Claude Code 和 Codex 共用这一个安装脚本（去掉 `--harness claude` 可交互勾选）：它会依次询问界面语言（English/中文）、下载源（GitHub，或 GitHub 受限地区用 TOS 镜像——传 `--dist tos`）和 OpenViking 凭据，然后从远程 marketplace 安装 `openviking`。stdio MCP 代理运行时读取 `ovcli.conf`，不再需要 shell wrapper 或 `.mcp.json` 渲染。重复执行安全。
 
 如果你更喜欢手动操作，按下面四步走。
 
@@ -51,7 +51,7 @@ curl http://localhost:1933/health   # 或者你的远程 URL
 
 ```bash
 claude plugin marketplace add https://raw.githubusercontent.com/volcengine/OpenViking/main/.claude-plugin/marketplace.json
-claude plugin install openviking-memory@openviking
+claude plugin install openviking@openviking
 ```
 
 （`claude plugin marketplace add volcengine/OpenViking` 也可以，但会把整个仓库 clone 下来作为 marketplace。）
@@ -62,12 +62,12 @@ claude plugin install openviking-memory@openviking
 
 ```bash
 claude plugin marketplace add "$(pwd)/examples"
-claude plugin install openviking-memory@openviking
+claude plugin install openviking@openviking
 ```
 
-> 两条命令默认都装在 user scope —— 插件在任何目录下都生效。这里**不显式传 `--scope user`**，因为老的 Claude Code 2.0.x（比如 2.0.76）不识别这个 flag 会直接报错。在支持 `--scope` 的新版本上，如果装完发现落到了 local scope，可以跑一次 `claude plugin enable openviking-memory@openviking --scope user` 提升到 user scope。
+> 两条命令默认都装在 user scope —— 插件在任何目录下都生效。这里**不显式传 `--scope user`**，因为老的 Claude Code 2.0.x（比如 2.0.76）不识别这个 flag 会直接报错。在支持 `--scope` 的新版本上，如果装完发现落到了 local scope，可以跑一次 `claude plugin enable openviking@openviking --scope user` 提升到 user scope。
 >
-> 目录模式注意：移动 / 重命名 / 删除源码目录，或 `git checkout` 到不含这些文件的分支，会立刻让插件失效。两种模式注册的 marketplace 都叫 `openviking`，插件 id 恒为 `openviking-memory@openviking`；切换模式时先移除 marketplace 再添加另一个来源（安装脚本会自动处理）。
+> 目录模式注意：移动 / 重命名 / 删除源码目录，或 `git checkout` 到不含这些文件的分支，会立刻让插件失效。两种模式注册的 marketplace 都叫 `openviking`，插件 id 恒为 `openviking@openviking`；切换模式时先移除 marketplace 再添加另一个来源（安装脚本会自动处理）。
 
 ##### 兼容模式（Claude Code < 2.0）
 
@@ -258,7 +258,7 @@ bypass 命中时所有 hook 直接放行，不联系 OpenViking。
 - **环境变量是逗号分隔的列表**，先按逗号切分再解析，所以需要字面逗号的规则（比如带下界的 `{10,}`）只能写进上面的数组。（`\x2c` 能表示模式里其它位置的字面逗号，但它不是量词语法。）
 - **顺序有意义，丢弃优先。** 第一条命中的 `d`（或未命中的 `k`）就决定了结果。过滤发生在 `OPENVIKING_MIN_QUERY_LENGTH` 和内置的应答语／slash 命令启发式之前，所以剥掉前缀后只剩「好的」的文本会按应答语丢弃。被替换成空串不算丢弃 —— query 空了只是长度不够。
 - **过滤只管送出去的内容，管不到已经存下的。** 会话中途新增 `d`/`k` 规则还会让捕获游标计数的回合列表变短，这会被当成 transcript 被改写、从最后一个用户回合重放 —— 和切换 `OPENVIKING_CAPTURE_ASSISTANT_TURNS` 是同一个现象。
-- **坏规则只会被跳过，不会让 hook 挂掉。** `ov-memory-doctor` 会列出生效的规则，并对编译失败的那条给出确切的解析或 RegExp 报错。
+- **坏规则只会被跳过，不会让 hook 挂掉。** `ov-plugin-doctor` 会列出生效的规则，并对编译失败的那条给出确切的解析或 RegExp 报错。
 
 ### 插件配置放在 `ovcli.conf`
 
@@ -348,10 +348,10 @@ OV ✓ │ 🔗 resumed │ +3 today               session 已恢复上下文；
 先跑内置的体检脚本——它会检查安装（marketplace、启用状态、hooks、MCP 接线）、解析后的配置（哪个文件生效、API key 脱敏展示）、连接（可达性、鉴权、`/mcp`）和最近的 hook 活动，并给每个问题附上修复建议：
 
 ```bash
-node "$(jq -r '.plugins["openviking-memory@openviking"][0].installPath' ~/.claude/plugins/installed_plugins.json)/scripts/ov-plugin-doctor.mjs"
+node "$(jq -r '.plugins["openviking@openviking"][0].installPath' ~/.claude/plugins/installed_plugins.json)/scripts/ov-plugin-doctor.mjs"
 ```
 
-也可以直接让 Claude 检查插件：`ov-memory-doctor` skill 会运行同一个脚本并解读报告。当 server 与插件在同一台机器上（loopback url）时，报告还会多一节 Server health：端口上是否有 server 在监听、ov.conf 里只有插件会读而 server 会拒绝启动的键、以及 `GET /ready`；其余 server 端检查（配置校验、实际 embedding 探测、native engine、磁盘）仍由 `openviking-server doctor` 负责。
+也可以直接让 Claude 检查插件：`ov-plugin-doctor` skill 会运行同一个脚本并解读报告。当 server 与插件在同一台机器上（loopback url）时，报告还会多一节 Server health：端口上是否有 server 在监听、ov.conf 里只有插件会读而 server 会拒绝启动的键、以及 `GET /ready`；其余 server 端检查（配置校验、实际 embedding 探测、native engine、磁盘）仍由 `openviking-server doctor` 负责。
 
 | 症状                                         | 原因                                                  | 解决方案                                                                                       |
 |----------------------------------------------|------------------------------------------------------|-----------------------------------------------------------------------------------------------|
@@ -449,9 +449,9 @@ claude-code-plugin/
 ├── commands/
 │   └── ov.md                # /ov 状态命令
 ├── skills/
-│   ├── openviking-memory/   # 记忆工具使用指南
+│   ├── openviking/   # 记忆工具使用指南
 │   ├── ov-experience-memory/
-│   └── ov-memory-doctor/    # 安装 / 配置 / 连接 / 本机 server 排障
+│   └── ov-plugin-doctor/    # 安装 / 配置 / 连接 / 本机 server 排障
 ├── servers/
 │   └── mcp-proxy.mjs        # stdio -> OpenViking /mcp 桥接
 ├── scripts/
@@ -465,7 +465,7 @@ claude-code-plugin/
 │   ├── subagent-start.mjs   # SubagentStart
 │   ├── subagent-stop.mjs    # SubagentStop
 │   ├── ov-status.mjs        # /ov 状态报告
-│   ├── ov-plugin-doctor.mjs # 体检脚本（ov-memory-doctor skill）
+│   ├── ov-plugin-doctor.mjs # 体检脚本（ov-plugin-doctor skill）
 │   └── lib/
 │       ├── ov-session.mjs   # OV HTTP 客户端 + session 帮助 + bypass 检查
 │       └── async-writer.mjs # 写路径 detach-worker 帮助

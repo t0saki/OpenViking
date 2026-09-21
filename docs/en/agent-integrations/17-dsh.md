@@ -1,12 +1,12 @@
-# DeepSeek Harness Memory Bundle
+# DeepSeek Harness Plugin
 
-Give [DeepSeek Harness](https://www.npmjs.com/package/@deepseek-ai/dsh) (`dsh`) cross-project and cross-session long-term memory. Once installed, every conversation automatically recalls relevant memories and captures new content, and the model gets the OpenViking tools and the `openviking-memory` skill without any extra setup.
+Give [DeepSeek Harness](https://www.npmjs.com/package/@deepseek-ai/dsh) (`dsh`) cross-project and cross-session long-term memory. Once installed, every conversation automatically recalls relevant memories and captures new content, and the model gets the OpenViking tools and the `openviking` skill without any extra setup.
 
 Source: [examples/dsh-plugin](https://github.com/volcengine/OpenViking/tree/main/examples/dsh-plugin)
 
 ## Install
 
-DSH shares the installer with the other memory plugins. It asks for your language (English/中文), which harnesses to install, the download source, and your OpenViking credentials; every step is idempotent—re-running it is entirely safe.
+DSH shares the installer with the other plugins. It asks for your language (English/中文), which harnesses to install, the download source, and your OpenViking credentials; every step is idempotent—re-running it is entirely safe.
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/main/examples/plugin-shared/install.sh)
@@ -30,7 +30,7 @@ After using it for a while, start a new conversation and ask about something you
 2. **Add the bundle to a profile**:
 
    ```bash
-   dsh plugin --profile web add @openviking/dsh-memory-plugin
+   dsh plugin --profile web add @openviking/dsh-plugin
    ```
 
    `dsh plugin` forwards to pnpm inside the profile directory, so any profile name works; `web` is the one `dsh` creates for you on first use.
@@ -41,11 +41,11 @@ After using it for a while, start a new conversation and ask about something you
    dsh --profile web --dump-config
    ```
 
-   The output should contain an `openviking-memory` plugin group.
+   The output should contain an `openviking` plugin group.
 
 > Don't have `ovcli.conf` yet? See the [Deployment Guide → CLI](../guides/03-deployment.md#cli).
 >
-> To remove it: `dsh plugin --profile web rm @openviking/dsh-memory-plugin`.
+> To remove it: `dsh plugin --profile web rm @openviking/dsh-plugin`.
 
 </details>
 
@@ -61,7 +61,7 @@ The bundle runs inside DSH as a Cordis plugin rather than as external hooks, so 
 
 Each DSH session maps to `dsh-<session-id>` in OpenViking, and every subagent gets its own session.
 
-The model-facing surface is the OpenViking MCP tool set, reached through the same stdio proxy the other memory integrations use and published under an `mcp__openviking__` prefix. Because that proxy runs once per profile, `mcp__openviking__remember` stores into a short-lived server-side session rather than the current one—automatic capture still records the conversation itself—and tool calls carry the actor peer resolved at startup. Set `OPENVIKING_PEER_ID` when one process serves several workspaces and tool calls need exact attribution. The bundle also ships the shared `openviking-memory` skill, so the model knows when to search, read, and write.
+The model-facing surface is the OpenViking MCP tool set, reached through the same stdio proxy the other memory integrations use and published under an `mcp__openviking__` prefix. Because that proxy runs once per profile, `mcp__openviking__remember` stores into a short-lived server-side session rather than the current one—automatic capture still records the conversation itself—and tool calls carry the actor peer resolved at startup. Set `OPENVIKING_PEER_ID` when one process serves several workspaces and tool calls need exact attribution. The bundle also ships the shared `openviking` skill, so the model knows when to search, read, and write.
 
 A filesystem tool call whose path is a `viking://` URI is blocked with a hint pointing at the right OpenViking tool. A shell command that carries a `viking://` URI still runs, and the model gets a notice suggesting the OpenViking tools, which it can ignore when the URI is intentional data.
 
@@ -84,14 +84,14 @@ Behavior knobs live in the profile's Cordis patch entry:
 
 ```yaml
 - insert:
-    - id: openviking-memory
+    - id: openviking
       name: '@deepseek-ai/cordis-plugin-group'
       group: true
       isolate:
-        openvikingMemory: true
+        openviking: true
       config:
-        - id: openviking-memory-runtime
-          name: '@openviking/dsh-memory-plugin'
+        - id: openviking-runtime
+          name: '@openviking/dsh-plugin'
           config:
             recallTokenBudget: 2000
             scoreThreshold: 0.35
@@ -111,7 +111,7 @@ Credentials given in the patch win over the environment. Behavior knobs resolve 
 
 | Issue | What to check |
 |-------|---------------|
-| Nothing injected, no OpenViking tools | `dsh --profile web --dump-config` should list `openviking-memory`; re-run the installer or `dsh plugin --profile web add …` |
+| Nothing injected, no OpenViking tools | `dsh --profile web --dump-config` should list `openviking`; re-run the installer or `dsh plugin --profile web add …` |
 | Installed into the wrong profile | The installer defaults to `web`; re-run it with `--dsh-profile <name>` |
 | `ERESOLVE` during install | The `@deepseek-ai/dsh-*` prerelease tags drift apart; install `@deepseek-ai/dsh@0.1.0-rc.6` exactly |
 | Install says the package is "not in the npm registry" | pnpm refuses releases younger than 24 hours by default (`minimumReleaseAge`). Wait it out, or add the exact version to `minimumReleaseAgeExclude` in the profile's `pnpm-workspace.yaml` |

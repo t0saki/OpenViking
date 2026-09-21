@@ -117,7 +117,7 @@
       "name": "DeepSeek Harness",
       "tags": ["Plugin"],
       "logo": "https://docs.openviking.net/agents/image/deepseek-harness/logo.png",
-      "summary": "Give DeepSeek Harness long-term memory across projects and sessions, with automatic recall, capture, OpenViking tools, and the openviking-memory skill.",
+      "summary": "Give DeepSeek Harness long-term memory across projects and sessions, with automatic recall, capture, OpenViking tools, and the openviking skill.",
       "detailPath": "https://docs.openviking.net/agents/en/deepseek-harness.md"
     },
     {

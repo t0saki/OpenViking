@@ -222,7 +222,7 @@ The proxy forwards the server's real `tools/list` response; the plugin does not 
 
 The plugin writes runtime files to `~/.config/opencode/openviking/` by default:
 
-- `openviking-memory.log`
+- `openviking.log`
 - `openviking-session-state.json`
 
 Set `dataDir` in `plugin.opencode` to override this directory.

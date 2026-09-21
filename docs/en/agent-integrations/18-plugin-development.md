@@ -304,7 +304,7 @@ examples/agent-hook-plugin/
   scripts/hook.mjs             Common dispatcher
   servers/mcp-proxy.mjs        Common MCP entrypoint
 
-examples/<host>-memory-plugin/ Create only when a separate native plugin is needed
+examples/<host>-plugin/ Create only when a separate native plugin is needed
   <host manifest directory>/
   hooks/
   scripts/                    Host entrypoints, state, transcript adaptation
@@ -491,7 +491,7 @@ Design documents should retain constraints, decisions, and recovery invariants t
 Choose an entrypoint by the problem, instead of starting from generated plugin copies:
 
 - Supported behavior across integrations: [Capability Reference](./16-capability-reference.md).
-- Configuration, peers, and generation strategy: [Memory Plugin Shared README](https://github.com/volcengine/OpenViking/blob/main/examples/plugin-shared/README.md).
+- Configuration, peers, and generation strategy: [Plugin Shared README](https://github.com/volcengine/OpenViking/blob/main/examples/plugin-shared/README.md).
 - Claude Code event wiring: [hooks.json](https://github.com/volcengine/OpenViking/blob/main/examples/claude-code-plugin/hooks/hooks.json); recall adaptation: [auto-recall.mjs](https://github.com/volcengine/OpenViking/blob/main/examples/claude-code-plugin/scripts/auto-recall.mjs).
 - Codex commits, abnormal exits, and recovery: [DESIGN.md](https://github.com/volcengine/OpenViking/blob/main/examples/codex-plugin/DESIGN.md); implementation: [session-end.mjs](https://github.com/volcengine/OpenViking/blob/main/examples/codex-plugin/scripts/session-end.mjs).
 - New configuration-file hosts: [agent-hook-plugin README](https://github.com/volcengine/OpenViking/blob/main/examples/agent-hook-plugin/README.md); strict protocol example: [ZCode DESIGN](https://github.com/volcengine/OpenViking/blob/main/examples/agent-hook-plugin/DESIGN.md).

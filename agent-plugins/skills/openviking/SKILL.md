@@ -1,11 +1,11 @@
 ---
-name: openviking-memory
+name: openviking
 description: Recall and persist long-term memory through the OpenViking MCP tools. Use at the start of any substantive task (coding, configuration, debugging, multi-step or tool-based work) to retrieve relevant prior knowledge with find/search/read, and during or after work to persist durable facts, preferences, decisions, and lessons with remember. Do not use for casual chat or simple factual questions the model can answer directly.
 ---
 
-# OpenViking Memory
+# OpenViking
 
-OpenViking is a long-term semantic memory store addressed by `viking://` URIs.
+OpenViking is a context database addressed by `viking://` URIs.
 This client has no lifecycle hooks, so nothing is recalled or captured
 automatically — you drive both halves of the loop with the `openviking` MCP
 tools.

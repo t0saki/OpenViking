@@ -37,7 +37,7 @@
    PreCompact
    ```
 
-2. If you miss the prompt or pick the third option, the hooks never run. Enter `/hooks` to trust and enable the entries, and check `/plugins` shows `openviking-memory` as enabled — two independent switches, both have to be on. A plugin update that touches a hook asks for trust again.
+2. If you miss the prompt or pick the third option, the hooks never run. Enter `/hooks` to trust and enable the entries, and check `/plugins` shows `openviking` as enabled — two independent switches, both have to be on. A plugin update that touches a hook asks for trust again.
 
 3. Verify Profile loading: once trusted, submit your first Prompt. Any prompt is fine. The plugin should load your Profile automatically. If the beginning of the conversation contains recalled memory context, the integration is working:
 

@@ -153,7 +153,7 @@ export OPENVIKING_CLI_CONFIG_FILE=/path/to/ovcli.conf
 
 优先级从高到低：环境变量 → [工作区各层](#工作区配置) → `plugin.<harness>` → `plugin` → `ov.conf` 里遗留的按 harness 分块 → 内置默认值。hook 每次触发都会重新读文件，所以改完下一轮就生效；改 `OPENVIKING_*` 变量则需要重启 agent，因为 hook 继承的是它的环境。
 
-目前只有 Claude Code 和 Codex 插件会读这一段，用其它 harness 名字建的条目不会生效。`ov-memory-doctor` 会打印它解析到的结果，并对不认识的键给出告警和最接近的正确键名。
+目前只有 Claude Code 和 Codex 插件会读这一段，用其它 harness 名字建的条目不会生效。`ov-plugin-doctor` 会打印它解析到的结果，并对不认识的键给出告警和最接近的正确键名。
 
 ## 工作区配置
 
@@ -184,7 +184,7 @@ export OPENVIKING_CLI_CONFIG_FILE=/path/to/ovcli.conf
 
 标量由高优先级的层直接覆盖低优先级的层；列表在各层之间取并集，首元素为 `"!reset"` 时会丢弃低层贡献的全部条目，即 `["!reset", "*/scratch/*"]` 就是最终列表。
 
-注册表文件没有任何命令会写入。按 `ov-memory-doctor` 打印的路径手工创建即可，写上 `version: 1`，schema 与工作区文件相同。
+注册表文件没有任何命令会写入。按 `ov-plugin-doctor` 打印的路径手工创建即可，写上 `version: 1`，schema 与工作区文件相同。
 
 ### Schema
 
@@ -292,7 +292,7 @@ hook 是非交互进程，因此这些文件不经确认即被信任；被拒绝
 - 连接与凭证类的键——`url`、`api_key`、`root_api_key`、`account`、`user`、`extra_headers` 等——无论出现在哪一层都会被剥离并给出警告。“数据发往哪个服务端”这个问题始终只看 `ovcli.conf` 和环境变量就能回答。
 - 这些文件中不会展开 `${VAR}`。
 
-提交到仓库的文件关掉了什么，采用提示而不是拦截的方式：插件的 `ov-memory-doctor` 会列出每一项工作区级配置的值、来源层，以及它覆盖掉的内容。
+提交到仓库的文件关掉了什么，采用提示而不是拦截的方式：插件的 `ov-plugin-doctor` 会列出每一项工作区级配置的值、来源层，以及它覆盖掉的内容。
 
 `.gitignore` 不能忽略整个 `.openviking/`，否则 `config.json` 永远无法提交。请把规则收窄到解析器的临时目录和私有文件：
 
@@ -302,7 +302,7 @@ hook 是非交互进程，因此这些文件不经确认即被信任；被拒绝
 .openviking/config.local.json
 ```
 
-存在整目录忽略规则时，`ov-memory-doctor` 会给出警告。
+存在整目录忽略规则时，`ov-plugin-doctor` 会给出警告。
 
 ## 相关环境变量
 

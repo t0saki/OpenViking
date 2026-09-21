@@ -1,4 +1,4 @@
-# Codex 记忆插件
+# Codex 插件
 
 本插件旨在为 [Codex](https://developers.openai.com/codex) 提供持久化的跨会话（session）记忆功能。只需安装一次，即可实现：在会话开始时加载 OpenViking profile 与记忆索引，在每次用户输入前自动召回相关记忆，在每轮对话结束后进行增量捕获，并在上下文压缩（compaction）前将完整记录提交给记忆抽取器。同时，该插件将 Codex 连接至 OpenViking 的 `/mcp` 端点，使模型能够直接调用 `find`、`search`、`read`、`remember` 等工具来主动管理记忆。
 
@@ -50,7 +50,7 @@ Hooks can run outside the sandbox after you trust them.
 选第 3 项或错过这一步，hooks 就不会运行：MCP 工具仍能调用，但自动召回和捕获全部停摆。要恢复，得让两个彼此独立的开关都处于开启状态：
 
 - `/hooks` — hook 的信任与开关，把标着 *New hook - review required* 或 *Modified since last trusted* 的条目信任并打开。
-- `/plugins` — 插件本身的启用状态，确认 `openviking-memory` 是 enabled。
+- `/plugins` — 插件本身的启用状态，确认 `openviking` 是 enabled。
 
 任何一边是关着的，自动召回和捕获都不会发生。
 
@@ -65,7 +65,7 @@ Hooks can run outside the sandbox after you trust them.
 
    ```bash
    codex plugin marketplace add volcengine/OpenViking
-   codex plugin add openviking-memory@openviking
+   codex plugin add openviking@openviking
    ```
 
    若你的 Codex 版本未默认启用 plugin hooks，在 `~/.codex/config.toml` 中加上 `[features]` → `plugin_hooks = true`。之后可用 `codex plugin marketplace upgrade openviking` 更新。
@@ -125,7 +125,7 @@ TraeCode CLI 2.0 用户启动 `trae-cli`，并可用 `trae-cli plugin list` 确�
 |------|------|------|
 | MCP 工具调用报认证错误 | 当前 ovcli 配置没有 authenticated server 所需的有效 `api_key` | 修正 `~/.openviking/ovcli.conf`（或运行 `node <插件目录>/scripts/setup.mjs`）后重启 Codex；stdio 代理会在启动时和认证失败后重新读取配置 |
 | MCP 工具调用报连接错误 | 服务器不可达或 URL 配置错误 | 执行 `curl "$(jq -r '.url' ~/.openviking/ovcli.conf)/health"` 检查服务器状态 |
-| `6 hooks need review`，或插件已装但 hook 不生效 | 全新安装要信任全部 6 个 hook，之后每次插件更新改动到 hook 时还会再问一次；当时选了 *Continue without trusting* 或直接跳过，hooks 就一直不会运行 | `/hooks` 里信任并开启相关条目，`/plugins` 里确认 `openviking-memory` 已启用——两个开关相互独立，都要是开着的 |
+| `6 hooks need review`，或插件已装但 hook 不生效 | 全新安装要信任全部 6 个 hook，之后每次插件更新改动到 hook 时还会再问一次；当时选了 *Continue without trusting* 或直接跳过，hooks 就一直不会运行 | `/hooks` 里信任并开启相关条目，`/plugins` 里确认 `openviking` 已启用——两个开关相互独立，都要是开着的 |
 | `ov config switch` 后插件仍指向旧服务器 | 上个会话的代理进程仍在运行 | 重启 Codex；代理在启动时解析凭据 |
 | Hook 与 MCP 指向不同服务器 | 某一侧残留了过期的 `OPENVIKING_*` 凭据环境变量（默认环境变量优先于 ovcli.conf） | 清除过期环境变量（让 ovcli.conf 同时驱动两者）、设置 `OPENVIKING_CREDENTIAL_SOURCE=cli`，或保证环境变量一致 |
 

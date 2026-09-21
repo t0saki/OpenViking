@@ -15,7 +15,7 @@
 ## Step 2: Verify
 
 1. Open **Customize → MCPs** and confirm both **openviking User** and **openviking Plugin** are visible.
-2. Open **Customize → Hooks** and confirm the **openviking-memory** entry is visible.
+2. Open **Customize → Hooks** and confirm the **openviking** entry is visible.
 
 ## Troubleshoot
 

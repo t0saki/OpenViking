@@ -2,7 +2,7 @@
 
 社区维护的各运行时集成。各插件在目标平台、集成深度和维护状态上各有差异，使用前请先阅读各自的 README。
 
-## ZCode 记忆集成
+## ZCode 集成
 
 源码：[examples/agent-hook-plugin](https://github.com/volcengine/OpenViking/tree/main/examples/agent-hook-plugin)
 

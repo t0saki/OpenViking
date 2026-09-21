@@ -172,7 +172,7 @@ OpenCode 的 `mcp.openviking` 配置。
 
 ```bash
 ls ~/.config/opencode/openviking/
-tail -n 100 ~/.config/opencode/openviking/openviking-memory.log
+tail -n 100 ~/.config/opencode/openviking/openviking.log
 ```
 
 如果使用本地 server，也确认 OpenViking 可访问：
@@ -239,7 +239,7 @@ openviking_add_resource(path="file:///home/alice/project/notes.md", description=
 
 可能包含：
 
-- `openviking-memory.log`
+- `openviking.log`
 - `openviking-session-state.json`
 
 可以通过 `plugin.opencode` 里的 `dataDir` 修改这个目录。

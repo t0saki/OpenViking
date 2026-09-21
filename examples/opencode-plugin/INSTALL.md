@@ -169,7 +169,7 @@ If anything looks wrong, check the runtime files:
 
 ```bash
 ls ~/.config/opencode/openviking/
-tail -n 100 ~/.config/opencode/openviking/openviking-memory.log
+tail -n 100 ~/.config/opencode/openviking/openviking.log
 ```
 
 For a local server, also confirm OpenViking is reachable:
@@ -236,7 +236,7 @@ By default, the plugin writes runtime files to:
 
 Possible files include:
 
-- `openviking-memory.log`
+- `openviking.log`
 - `openviking-session-state.json`
 
 You can change this directory with `dataDir` in `plugin.opencode`.

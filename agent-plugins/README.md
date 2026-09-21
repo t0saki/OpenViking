@@ -28,7 +28,7 @@ Zero npm dependencies; the proxy and tests run on the Node.js standard library (
 1. Have an OpenViking server reachable (see the [quickstart](../docs/en/getting-started/02-quickstart.md)); default local endpoint is `http://127.0.0.1:1933`.
 2. Point your Agent-Plugins-conforming client at this directory (each client has its own install command or plugin directory; consult its docs). The client will:
    - register the `openviking` MCP server from `mcp.json` — it runs `node <plugin>/servers/mcp-proxy.mjs` over stdio;
-   - discover the `openviking-memory`, `ov-memory-troubleshoot`, and `ov-experience-memory` skills from `skills/`.
+   - discover the `openviking`, `ov-memory-troubleshoot`, and `ov-experience-memory` skills from `skills/`.
 3. Configure credentials (next section) and start a session. The model gains `find` / `search` / `read` / `remember` / `write` and the other OpenViking MCP tools. Use `search` with `mode="context"` for server-assembled context.
 
 ## Why a stdio proxy instead of a `streamable-http` entry

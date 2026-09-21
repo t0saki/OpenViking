@@ -42,7 +42,7 @@ Hooks can run outside the sandbox after you trust them.
   3. Continue without trusting (hooks won't run)
 ```
 
-Then run `trae-cli plugin list` and confirm that `openviking-memory` is enabled. If you miss the prompt or pick the third option, the hooks never run: enter `/hooks` to trust and enable the entries, and check `/plugins` shows the plugin as enabled — two independent switches, both have to be on. A plugin update that touches a hook asks for trust again.
+Then run `trae-cli plugin list` and confirm that `openviking` is enabled. If you miss the prompt or pick the third option, the hooks never run: enter `/hooks` to trust and enable the entries, and check `/plugins` shows the plugin as enabled — two independent switches, both have to be on. A plugin update that touches a hook asks for trust again.
 
 ## Troubleshoot
 

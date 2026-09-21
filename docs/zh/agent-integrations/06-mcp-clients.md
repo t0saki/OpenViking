@@ -35,7 +35,7 @@ claude mcp add --transport http openviking \
 
 加 `--scope user` 使配置全局生效。
 
-> 如果你需要免工具调用的自动召回与自动捕获，请使用 [Claude Code 记忆插件](./02-claude-code.md)。
+> 如果你需要免工具调用的自动召回与自动捕获，请使用 [Claude Code 插件](./02-claude-code.md)。
 
 ### Trae / Cursor / ChatGPT
 
@@ -43,7 +43,7 @@ claude mcp add --transport http openviking \
 
 ### Codex
 
-Codex 请使用 [Codex 记忆插件](./04-codex.md)。插件通过 manifest 提供 stdio MCP 代理，并让 MCP 与生命周期 hooks 共用同一套凭据配置。
+Codex 请使用 [Codex 插件](./04-codex.md)。插件通过 manifest 提供 stdio MCP 代理，并让 MCP 与生命周期 hooks 共用同一套凭据配置。
 
 ### OpenCode
 

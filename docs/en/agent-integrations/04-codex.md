@@ -1,4 +1,4 @@
-# Codex Memory Plugin
+# Codex Plugin
 
 Equip [Codex](https://developers.openai.com/codex) with persistent memory across sessions. Install it once, and your OpenViking profile and memory index are loaded at session start, relevant memories are recalled with every prompt, new turns are captured after each response, and sessions are committed before compaction. The plugin also connects Codex to OpenViking's `/mcp` endpoint, enabling the model to call tools such as `find`, `search`, `read`, and `remember` directly.
 
@@ -51,7 +51,7 @@ A fresh install lists all 6 hooks the plugin registers. After that, any plugin u
 Pick the third option, or skip past the prompt, and the hooks never run: MCP tools still work, but automatic recall and capture are both dead. Recovering means switching on two independent things:
 
 - `/hooks` — hook trust and on/off state. Trust and enable the entries marked *New hook - review required* or *Modified since last trusted*.
-- `/plugins` — the plugin's own enabled state. Confirm `openviking-memory` is enabled.
+- `/plugins` — the plugin's own enabled state. Confirm `openviking` is enabled.
 
 If either side is off, nothing is recalled or captured.
 
@@ -66,7 +66,7 @@ Prerequisites: Node.js >= 22, Codex >= 0.130.0, and the `plugin_hooks` feature e
 
    ```bash
    codex plugin marketplace add volcengine/OpenViking
-   codex plugin add openviking-memory@openviking
+   codex plugin add openviking@openviking
    ```
 
    Then enable plugin hooks in `~/.codex/config.toml` if your build doesn't already: `[features]` → `plugin_hooks = true`. Update later with `codex plugin marketplace upgrade openviking`.
@@ -126,7 +126,7 @@ Change it with `OPENVIKING_PEER_SOURCE`, with `plugin.peerSource` in `ovcli.conf
 |---------|-------|-----|
 | MCP tool calls fail with an auth error | The active ovcli config has no valid `api_key` for an authenticated server | Fix `~/.openviking/ovcli.conf` (or run `node <plugin-dir>/scripts/setup.mjs`) and restart Codex; the stdio proxy re-reads it on launch and after auth failures. |
 | MCP tool calls fail with a connection error | Server unreachable or the URL is wrong | Check the endpoint: `curl "$(jq -r '.url' ~/.openviking/ovcli.conf)/health"` |
-| `6 hooks need review`, or the plugin is installed but no hook fires | A fresh install trusts all 6 hooks at once, and every later update that touches a hook asks again; choosing *Continue without trusting* or skipping it leaves the hooks off for good | Trust and enable the entries in `/hooks`, and confirm `openviking-memory` is enabled in `/plugins` — two independent switches, both have to be on. |
+| `6 hooks need review`, or the plugin is installed but no hook fires | A fresh install trusts all 6 hooks at once, and every later update that touches a hook asks again; choosing *Continue without trusting* or skipping it leaves the hooks off for good | Trust and enable the entries in `/hooks`, and confirm `openviking` is enabled in `/plugins` — two independent switches, both have to be on. |
 | Plugin still targets an old server after `ov config switch` | Codex keeps the proxy process from the previous session | Restart Codex; the proxy resolves credentials at startup. |
 | Hooks use one server, MCP another | Stale `OPENVIKING_*` credential env vars in one context (env vars override ovcli.conf by default) | Unset the stale env vars (ovcli.conf then drives both), set `OPENVIKING_CREDENTIAL_SOURCE=cli`, or make the env vars consistent. |
 

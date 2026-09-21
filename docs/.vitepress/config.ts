@@ -638,6 +638,10 @@ function migrationSection(
       {
         text: '0.3.x → 0.4.0',
         link: linkFor(path.join(docsRoot, locale, 'migration', '01-user-peer-model.md'))
+      },
+      {
+        text: locale === 'zh' ? '插件统一更名为 OpenViking' : 'Plugins renamed to OpenViking',
+        link: linkFor(path.join(docsRoot, locale, 'migration', '02-plugin-rename.md'))
       }
     ]
   }

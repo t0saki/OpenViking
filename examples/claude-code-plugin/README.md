@@ -1,4 +1,4 @@
-# OpenViking Memory Plugin for Claude Code
+# OpenViking Plugin for Claude Code
 
 Long-term semantic memory for Claude Code, powered by [OpenViking](https://github.com/volcengine/OpenViking). Recall happens automatically before every prompt, capture happens automatically after every turn — no MCP tool calls required from the model.
 
@@ -16,7 +16,7 @@ Long-term semantic memory for Claude Code, powered by [OpenViking](https://githu
 bash <(curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/main/examples/plugin-shared/install.sh) --harness claude
 ```
 
-macOS / Linux only. Claude Code and Codex share this installer (drop `--harness claude` to pick interactively): it asks for your language (English/中文), the download source (GitHub, or a TOS mirror for GitHub-blocked regions — pass `--dist tos`), and your OpenViking credentials, then installs `openviking-memory` via the remote marketplace. The stdio MCP proxy reads `ovcli.conf` at runtime, so no shell wrapper or `.mcp.json` rendering is needed. Re-running is safe.
+macOS / Linux only. Claude Code and Codex share this installer (drop `--harness claude` to pick interactively): it asks for your language (English/中文), the download source (GitHub, or a TOS mirror for GitHub-blocked regions — pass `--dist tos`), and your OpenViking credentials, then installs `openviking` via the remote marketplace. The stdio MCP proxy reads `ovcli.conf` at runtime, so no shell wrapper or `.mcp.json` rendering is needed. Re-running is safe.
 
 If you'd rather do it by hand, follow the four steps below.
 
@@ -55,7 +55,7 @@ If `ov.conf` is what you already maintain, the plugin reads it too — see [Conf
 
 ```bash
 claude plugin marketplace add https://raw.githubusercontent.com/volcengine/OpenViking/main/.claude-plugin/marketplace.json
-claude plugin install openviking-memory@openviking
+claude plugin install openviking@openviking
 ```
 
 (`claude plugin marketplace add volcengine/OpenViking` works too, but clones the whole repo as the marketplace.)
@@ -66,12 +66,12 @@ If you skipped step 2, configure the connection afterwards: write `~/.openviking
 
 ```bash
 claude plugin marketplace add "$(pwd)/examples"
-claude plugin install openviking-memory@openviking
+claude plugin install openviking@openviking
 ```
 
-> Both commands install at user scope by default — the plugin is active from any directory. We don't pass `--scope user` explicitly because older Claude Code 2.0.x builds (e.g. 2.0.76) reject the flag. On newer builds that do accept `--scope`, you can lift a local-scoped install to user scope with `claude plugin enable openviking-memory@openviking --scope user`.
+> Both commands install at user scope by default — the plugin is active from any directory. We don't pass `--scope user` explicitly because older Claude Code 2.0.x builds (e.g. 2.0.76) reject the flag. On newer builds that do accept `--scope`, you can lift a local-scoped install to user scope with `claude plugin enable openviking@openviking --scope user`.
 >
-> Directory-mode caveat: moving / renaming / deleting the source dir, or `git checkout`-ing to a branch without these files, breaks the plugin. Both modes register a marketplace named `openviking`, so the plugin id is always `openviking-memory@openviking`; switch modes by removing the marketplace and re-adding the other source (the installer does this automatically).
+> Directory-mode caveat: moving / renaming / deleting the source dir, or `git checkout`-ing to a branch without these files, breaks the plugin. Both modes register a marketplace named `openviking`, so the plugin id is always `openviking@openviking`; switch modes by removing the marketplace and re-adding the other source (the installer does this automatically).
 
 ##### Legacy mode (Claude Code < 2.0)
 
@@ -288,7 +288,7 @@ In `ovcli.conf` the rules are a JSON array, so backslashes are doubled:
 - **The env vars are comma-separated lists**, split before parsing, so a rule that needs a literal comma — a bounded `{10,}`, say — belongs in the array above. (`\x2c` covers a literal comma elsewhere in a pattern, but it is not quantifier syntax.)
 - **Order matters and drops win.** The first `d` that matches, or `k` that does not, ends the decision. Filters run before `OPENVIKING_MIN_QUERY_LENGTH` and before the built-in ack / slash-command heuristics, so a prefix stripped down to `ok` is discarded as an ack. Text a substitution empties is not a drop — an emptied query is simply too short to recall on.
 - **Filters shape what is sent, not what is stored.** Adding a `d`/`k` rule mid-session also shortens the turn list the capture cursor counts, which reads as a transcript rewrite and replays from the last user turn — the same thing toggling `OPENVIKING_CAPTURE_ASSISTANT_TURNS` does.
-- **A bad rule is skipped, never fatal.** `ov-memory-doctor` lists the active rules and reports the exact parse or RegExp error for the ones it could not compile.
+- **A bad rule is skipped, never fatal.** `ov-plugin-doctor` lists the active rules and reports the exact parse or RegExp error for the ones it could not compile.
 
 ### Plugin settings in `ovcli.conf`
 
@@ -326,7 +326,7 @@ A repository can carry its own plugin settings in `<repo-root>/.openviking/confi
 
 `version: 1` is required; a file declaring another version is skipped with a warning. Schema v1 is `peer.source`, `peer.id`, `recall.enabled`, `recall.peer_scope`, `recall.dedup_turns`, `recall.max_items`, `recall.score_threshold`, `capture.enabled`, `capture.commit_token_threshold`, `bypass.session_patterns`, and `labels`. Lists union across layers, and a leading `"!reset"` drops what was inherited. Unknown keys are kept and ignored.
 
-These files are trusted without a prompt, because a hook is non-interactive and an approval gate would mean one command per workspace. What is refused is structural: connection and credential keys (`url`, `api_key`, `account`, `user`, `extra_headers`, …) are stripped with a warning and `${VAR}` is never expanded in them. What a committed file switches off is announced by `ov-memory-doctor` rather than blocked.
+These files are trusted without a prompt, because a hook is non-interactive and an approval gate would mean one command per workspace. What is refused is structural: connection and credential keys (`url`, `api_key`, `account`, `user`, `extra_headers`, …) are stripped with a warning and `${VAR}` is never expanded in them. What a committed file switches off is announced by `ov-plugin-doctor` rather than blocked.
 
 Keep `.gitignore` from ignoring all of `.openviking/`, or `config.json` can never be committed — narrow the rule to `.openviking/media/` and `.openviking/downloads/`. The doctor warns while the blanket rule is in place.
 
@@ -398,10 +398,10 @@ Set `claude_code.debug: true` in `ov.conf` or `OPENVIKING_DEBUG=1` to write hook
 Start with the bundled doctor — it checks the install (marketplace, enablement, hooks, MCP wiring), the resolved config (which file won, API key shown masked), the connection (reachability, auth, `/mcp`) and recent hook activity, and prints a fix for every finding:
 
 ```bash
-node "$(jq -r '.plugins["openviking-memory@openviking"][0].installPath' ~/.claude/plugins/installed_plugins.json)/scripts/ov-plugin-doctor.mjs"
+node "$(jq -r '.plugins["openviking@openviking"][0].installPath' ~/.claude/plugins/installed_plugins.json)/scripts/ov-plugin-doctor.mjs"
 ```
 
-Or just ask Claude to check the plugin: the `ov-memory-doctor` skill runs the same script and walks the report. When the server runs on the same machine (loopback url) the report adds a Server health section — whether anything listens on the port, plugin-only keys in ov.conf that stop the server from starting, and `GET /ready`; everything else server-side (config validation, live embedding probe, native engine, disk) stays with `openviking-server doctor`.
+Or just ask Claude to check the plugin: the `ov-plugin-doctor` skill runs the same script and walks the report. When the server runs on the same machine (loopback url) the report adds a Server health section — whether anything listens on the port, plugin-only keys in ov.conf that stop the server from starting, and `GET /ready`; everything else server-side (config validation, live embedding probe, native engine, disk) stays with `openviking-server doctor`.
 
 | Symptom                                    | Cause                                                        | Fix                                                                                                |
 |--------------------------------------------|--------------------------------------------------------------|----------------------------------------------------------------------------------------------------|
@@ -499,9 +499,9 @@ claude-code-plugin/
 ├── commands/
 │   └── ov.md                # /ov status command
 ├── skills/
-│   ├── openviking-memory/   # how to use the memory tools
+│   ├── openviking/   # how to use the memory tools
 │   ├── ov-experience-memory/
-│   └── ov-memory-doctor/    # install / config / connection / local-server troubleshooting
+│   └── ov-plugin-doctor/    # install / config / connection / local-server troubleshooting
 ├── servers/
 │   └── mcp-proxy.mjs        # stdio -> OpenViking /mcp bridge
 ├── scripts/
@@ -515,7 +515,7 @@ claude-code-plugin/
 │   ├── subagent-start.mjs   # SubagentStart
 │   ├── subagent-stop.mjs    # SubagentStop
 │   ├── ov-status.mjs        # /ov status report
-│   ├── ov-plugin-doctor.mjs # diagnostics script (ov-memory-doctor skill)
+│   ├── ov-plugin-doctor.mjs # diagnostics script (ov-plugin-doctor skill)
 │   └── lib/
 │       ├── ov-session.mjs   # OV HTTP client + session helpers + bypass check
 │       └── async-writer.mjs # detached-worker helper for write-path hooks

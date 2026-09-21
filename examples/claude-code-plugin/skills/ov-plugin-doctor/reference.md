@@ -1,4 +1,4 @@
-# OpenViking Memory Doctor — reference
+# OpenViking Plugin Doctor — reference
 
 Companion to SKILL.md: where things live, what the exact error strings mean,
 and the symptom catalogue. Paths assume the defaults; `OPENVIKING_HOME`,
@@ -14,12 +14,12 @@ and `OPENVIKING_PENDING_DIR` relocate individual pieces.
 | `~/.openviking/ovcli.conf.<name>` | Saved CLI profiles (`ov config switch` copies one over `ovcli.conf`). `ovcli.conf.bak.<epoch>` are installer backups, not profiles. |
 | `<repo root>/.openviking/config.json` / `config.local.json` | Workspace config layers, `version: 1` required: `peer.source`, `peer.id`, `recall.*`, `capture.*`, `bypass.session_patterns`, `labels`. `config.json` is committed and shared; `config.local.json` is private and gitignored. Trusted without a prompt, but connection and credential keys (`url`, `api_key`, `account`, `user`, `extra_headers`, …) are stripped with a warning and `${VAR}` is never expanded. A blanket `.openviking/` rule in `.gitignore` stops `config.json` from ever being committed — narrow it to `.openviking/media/` and `.openviking/downloads/`. |
 | `~/.openviking/workspaces/<slot>.json` | Per-machine workspace registry, one file per workspace (`<dir name>-<hash>.json`, mode 0600). Outranks both workspace files, and nothing writes it — a user creates the file by hand. An entry recorded for a different repository is ignored, not inherited. |
-| `~/.claude/plugins/installed_plugins.json` | Install registry: `plugins["openviking-memory@openviking"][0].installPath/version/lastUpdated`. |
+| `~/.claude/plugins/installed_plugins.json` | Install registry: `plugins["openviking@openviking"][0].installPath/version/lastUpdated`. |
 | `~/.claude/plugins/known_marketplaces.json` | Marketplace `openviking` → `source` (`directory` path or `github`), `installLocation`. |
-| `~/.claude/plugins/cache/openviking/openviking-memory/<version>/` | The copy Claude Code actually runs. Keyed by `plugin.json` version. |
+| `~/.claude/plugins/cache/openviking/openviking/<version>/` | The copy Claude Code actually runs. Keyed by `plugin.json` version. |
 | `~/.claude/settings.json` | `enabledPlugins`, `statusLine`, optional `env`, legacy `hooks`. |
 | `~/.openviking/marketplaces/openviking-claude/` | Installer-generated directory marketplace (GitHub dist) whose manifest points at `git-subdir` `examples/claude-code-plugin`. |
-| `~/.openviking/memory-plugin-marketplace/` | Unpacked TOS archive (TOS dist); cannot self-update. |
+| `~/.openviking/plugin-marketplace/` | Unpacked TOS archive (TOS dist); cannot self-update. |
 | `~/.openviking/state/` | `last-recall.json`, `last-capture.json`, `last-session-event.json`, `daily-stats.json`, `server-probe.json`, `host-cli-probe.json`, `context-face.json`, `recall-digest.json`, `ws-peer-<session>.json`, `ws-identity-<hash>.json` (60s cache of the git identity behind the peer). Anything else there is residue. |
 | `~/.openviking/last_inject.md` | Full text of the last SessionStart injection. |
 | `~/.openviking/logs/cc-hooks.log` | JSONL hook + proxy log; written only when `OPENVIKING_DEBUG=1` or `debug: true`. |
@@ -52,7 +52,7 @@ Peers minted before this need no migration: the old cwd-derived id is recomputed
 Hook budgets in `hooks/hooks.json`: SessionStart 120s, UserPromptSubmit 60s, Stop and SubagentStop 45s, PreCompact and SessionEnd 30s, SubagentStart 10s, PreToolUse and PostToolUse 5s. `timeoutMs` (default 15000) must stay below 60s and `captureTimeoutMs` (default 30000, derived as twice `timeoutMs` when it is not set) at or below 45s; doctor warns when either outgrows its hook.
 
 Sent headers: `Authorization: Bearer <key>`, `X-OpenViking-Account/User` (trusted
-mode only), `X-OpenViking-Actor-Peer`, `User-Agent: openviking-memory-claude-code/<version>`.
+mode only), `X-OpenViking-Actor-Peer`, `User-Agent: openviking-claude-code/<version>`.
 The plugin never sends `X-API-Key`. The open-source server still accepts it (and
 prefers it when both are sent), so a gateway that injects one shadows the key
 here; the Volcengine-hosted OpenViking Service (`https://api.vikingdb.cn-beijing.volces.com/openviking`) accepts Bearer only.

@@ -24,11 +24,11 @@
 ## 步骤2：验证
 
 1. 重启 Claude Code。
-2. 执行 `/plugins` 命令，确认 installed 列表中显示 `openviking-memory` 已安装，且 `openviking` MCP 已连接：
+2. 执行 `/plugins` 命令，确认 installed 列表中显示 `openviking` 已安装，且 `openviking` MCP 已连接：
 
    ```text
    User
-     ❯ openviking-memory Plugin · openviking · ✔ enabled
+     ❯ openviking Plugin · openviking · ✔ enabled
        └ openviking MCP · ✔ connected
    ```
 
@@ -36,13 +36,13 @@
 
    ```text
    Built-in MCPs (always available)
-     ❯ plugin:openviking-memory:openviking · ✔ connected · 10 tools
+     ❯ plugin:openviking:openviking · ✔ connected · 10 tools
    ```
 
-4. 执行 `/openviking-memory:ov` 命令，确认服务状态正常：
+4. 执行 `/openviking:ov` 命令，确认服务状态正常：
 
    ```text
-   OpenViking Memory Status
+   OpenViking Status
      ✅ Status: OpenViking server is healthy and running
    ```
 

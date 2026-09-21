@@ -82,7 +82,7 @@ The knobs themselves are declared once in `lib/config-schema.mjs`, with each one
 
 Every file declares `version: 1`; one declaring another version is skipped with a warning. Schema v1 is `peer.source`, `peer.id`, `recall.enabled`, `recall.peer_scope`, `recall.dedup_turns`, `recall.max_items`, `recall.score_threshold`, `capture.enabled`, `capture.commit_token_threshold`, `bypass.session_patterns`, and `labels`. Lists union across layers, and a leading `"!reset"` clears what was inherited. Unknown keys are kept and ignored.
 
-Workspace files are trusted without a prompt: a hook is non-interactive, and an approval gate would degrade into one command per workspace. What is refused instead is structural — connection and credential keys (`url`, `api_key`, `account`, `user`, `extra_headers`, …) are stripped with a warning and `${VAR}` is never expanded in these files. What a committed file switches off is announced in `ov-memory-doctor` rather than blocked.
+Workspace files are trusted without a prompt: a hook is non-interactive, and an approval gate would degrade into one command per workspace. What is refused instead is structural — connection and credential keys (`url`, `api_key`, `account`, `user`, `extra_headers`, …) are stripped with a warning and `${VAR}` is never expanded in these files. What a committed file switches off is announced in `ov-plugin-doctor` rather than blocked.
 
 `.gitignore` must not ignore all of `.openviking/`, or `config.json` can never be committed. Narrow the rule to `.openviking/media/` and `.openviking/downloads/`; doctor warns while it is still blanket.
 

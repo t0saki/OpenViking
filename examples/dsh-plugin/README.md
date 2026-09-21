@@ -1,4 +1,4 @@
-# OpenViking Memory for DeepSeek Harness
+# OpenViking for DeepSeek Harness
 
 An installable DeepSeek Harness bundle that adds OpenViking auto-recall, session capture, `viking://` URI protection, and the OpenViking MCP tool surface.
 
@@ -6,7 +6,7 @@ An installable DeepSeek Harness bundle that adds OpenViking auto-recall, session
 > caller's own context space through `viking://~/memories` and `viking://~/skills`; the uid-less
 > `viking://user/memories` shorthand is rejected by newer servers.
 
-Published as [`@openviking/dsh-memory-plugin`](https://www.npmjs.com/package/@openviking/dsh-memory-plugin).
+Published as [`@openviking/dsh-plugin`](https://www.npmjs.com/package/@openviking/dsh-plugin).
 
 ## Install
 
@@ -20,8 +20,8 @@ bash <(curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/main/e
 Or add the package to a profile directly:
 
 ```bash
-dsh plugin --profile web add @openviking/dsh-memory-plugin
-dsh --profile web --dump-config    # should list the openviking-memory group
+dsh plugin --profile web add @openviking/dsh-plugin
+dsh --profile web --dump-config    # should list the openviking group
 ```
 
 `dsh plugin` forwards to pnpm inside the profile directory, so the bundle has to
@@ -85,7 +85,7 @@ this plugin, remove those constraints and let DSH supply its matching packages:
 
 ```bash
 dsh plugin --profile web remove @deepseek-ai/dsh-skill @deepseek-ai/dsh-skill-filesystem
-dsh plugin --profile web add @openviking/dsh-memory-plugin@latest
+dsh plugin --profile web add @openviking/dsh-plugin@latest
 dsh --profile web
 ```
 
@@ -176,14 +176,14 @@ The patch can also carry plugin config:
 
 ```yaml
 - insert:
-    - id: openviking-memory
+    - id: openviking
       name: '@deepseek-ai/cordis-plugin-group'
       group: true
       isolate:
-        openvikingMemory: true
+        openviking: true
       config:
-        - id: openviking-memory-runtime
-          name: '@openviking/dsh-memory-plugin'
+        - id: openviking-runtime
+          name: '@openviking/dsh-plugin'
           config:
             endpoint: http://127.0.0.1:1933
             recallTokenBudget: 2000
@@ -222,7 +222,7 @@ announces a change, so a server upgrade adds tools without a bundle release.
 `mcp__openviking__forget` performs permanent deletion. The calling model should
 use it only when the user explicitly requests deletion.
 
-The bundle also serves the shared `openviking-memory` skill from `skills/`
+The bundle also serves the shared `openviking` skill from `skills/`
 through its own isolated `ctx.skills` provider, so the model gets the same
 guidance on when to search, read, and write that the other integrations ship.
 

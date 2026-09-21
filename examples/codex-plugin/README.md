@@ -1,4 +1,4 @@
-# OpenViking Memory Plugin for Codex and TraeCode CLI 2.0
+# OpenViking Plugin for Codex and TraeCode CLI 2.0
 
 Long-term semantic memory for [Codex](https://developers.openai.com/codex), powered by [OpenViking](https://github.com/volcengine/OpenViking).
 TraeCode CLI 2.0 supports the same plugin format; use the shared installer's dedicated `--harness trae-cli` entry.
@@ -21,7 +21,7 @@ It also starts a local stdio MCP proxy that forwards to OpenViking's native `/mc
 
 ## Quick Start
 
-There are two install paths. **Pick one — don't mix them** (both surface the same `openviking-memory` plugin; enabling it from both would run the hooks twice). The **one-line installer (A)** is the recommended path for most users; the marketplace install (B) is useful when you already manage `~/.openviking/ovcli.conf` yourself.
+There are two install paths. **Pick one — don't mix them** (both surface the same `openviking` plugin; enabling it from both would run the hooks twice). The **one-line installer (A)** is the recommended path for most users; the marketplace install (B) is useful when you already manage `~/.openviking/ovcli.conf` yourself.
 
 ### A. One-line installer — `curl | bash` (recommended)
 
@@ -39,7 +39,7 @@ Claude Code and Codex share this installer (drop `--harness codex` to pick inter
 
 1. Checks `codex` and Node.js 18+ (the plugin itself wants Codex's bundled Node 22+ at runtime)
 2. Sets up `~/.openviking/ovcli.conf` interactively
-3. Registers the `openviking` marketplace — remote git by default (`codex plugin marketplace add https://github.com/volcengine/OpenViking.git`), or this checkout / a TOS archive in dev/archive mode — and enables `openviking-memory@openviking` with `features.plugin_hooks = true`
+3. Registers the `openviking` marketplace — remote git by default (`codex plugin marketplace add https://github.com/volcengine/OpenViking.git`), or this checkout / a TOS archive in dev/archive mode — and enables `openviking@openviking` with `features.plugin_hooks = true`
 4. Keeps the checked-in stdio `.mcp.json` intact; `servers/mcp-proxy.mjs` reads your active `ovcli.conf` at runtime
 5. Runs plugin-list and stdio MCP validation
 
@@ -64,7 +64,7 @@ codex plugin marketplace add volcengine/OpenViking
 
 # 2. install the plugin from that marketplace
 #    (older Codex builds spell this `codex plugin install`)
-codex plugin add openviking-memory@openviking
+codex plugin add openviking@openviking
 ```
 
 Then enable plugin hooks (if your Codex build doesn't already) by adding to `~/.codex/config.toml`:
@@ -105,7 +105,7 @@ If you don't want the installer touching your rc, do these things yourself:
 
    Or run the bundled interactive wizard: `node scripts/setup.mjs` (from the plugin directory).
 
-2. **Add the plugin** via the remote marketplace (path B above), or via a local directory marketplace: `codex plugin marketplace add <checkout>/examples` reads `examples/.agents/plugins/marketplace.json` and yields the same `openviking-memory@openviking` id. `hooks/hooks.json` needs no rendering on modern Codex: it uses the native `${PLUGIN_ROOT}` token, which Codex injects into the hook env and substitutes inline.
+2. **Add the plugin** via the remote marketplace (path B above), or via a local directory marketplace: `codex plugin marketplace add <checkout>/examples` reads `examples/.agents/plugins/marketplace.json` and yields the same `openviking@openviking` id. `hooks/hooks.json` needs no rendering on modern Codex: it uses the native `${PLUGIN_ROOT}` token, which Codex injects into the hook env and substitutes inline.
 
 ## Configuration
 
@@ -199,7 +199,7 @@ The env vars are comma-separated lists, split before parsing, so a rule needing 
 }
 ```
 
-Rules run top to bottom and the first `d` that matches (or `k` that does not) ends the decision; text a substitution empties is not a drop, just too short to recall on. Filters run before `OPENVIKING_MIN_QUERY_LENGTH` and before the built-in ack / slash-command heuristics. A capture rule shapes what is sent, not what is already stored, and anything already in the pending queue carries the rules that were in effect when it was enqueued; adding a `d`/`k` rule mid-session also shortens the turn list the cursor counts, which reads as a transcript rewrite and replays from the last user turn. A rule that fails to compile is skipped, never fatal — `ov-memory-doctor` lists the active rules and reports the exact error for the ones it could not parse.
+Rules run top to bottom and the first `d` that matches (or `k` that does not) ends the decision; text a substitution empties is not a drop, just too short to recall on. Filters run before `OPENVIKING_MIN_QUERY_LENGTH` and before the built-in ack / slash-command heuristics. A capture rule shapes what is sent, not what is already stored, and anything already in the pending queue carries the rules that were in effect when it was enqueued; adding a `d`/`k` rule mid-session also shortens the turn list the cursor counts, which reads as a transcript rewrite and replays from the last user turn. A rule that fails to compile is skipped, never fatal — `ov-plugin-doctor` lists the active rules and reports the exact error for the ones it could not parse.
 
 #### Workspace configuration files
 
@@ -216,7 +216,7 @@ A repository can carry its own plugin settings in `<repo-root>/.openviking/confi
 
 `version: 1` is required; a file declaring another version is skipped with a warning. Schema v1 is `peer.source`, `peer.id`, `recall.enabled`, `recall.peer_scope`, `recall.dedup_turns`, `recall.max_items`, `recall.score_threshold`, `capture.enabled`, `capture.commit_token_threshold`, `bypass.session_patterns`, and `labels`. Lists union across layers, and a leading `"!reset"` drops what was inherited. Unknown keys are kept and ignored.
 
-These files are trusted without a prompt, because a hook is non-interactive and an approval gate would mean one command per workspace. What is refused is structural: connection and credential keys (`url`, `api_key`, `account`, `user`, `extra_headers`, …) are stripped with a warning and `${VAR}` is never expanded in them. What a committed file switches off is announced by `$ov-memory-doctor` rather than blocked.
+These files are trusted without a prompt, because a hook is non-interactive and an approval gate would mean one command per workspace. What is refused is structural: connection and credential keys (`url`, `api_key`, `account`, `user`, `extra_headers`, …) are stripped with a warning and `${VAR}` is never expanded in them. What a committed file switches off is announced by `$ov-plugin-doctor` rather than blocked.
 
 Keep `.gitignore` from ignoring all of `.openviking/`, or `config.json` can never be committed — narrow the rule to `.openviking/media/` and `.openviking/downloads/`. The doctor warns while the blanket rule is in place.
 
@@ -408,10 +408,10 @@ Unlike Claude Code, **Codex does not support `decision: "approve"`**; only `deci
 Start with the bundled doctor — it checks the install (marketplace, `config.toml` enablement, hook trust records, MCP wiring), the resolved config (which file won, API key shown masked), the connection (reachability, auth, `/mcp`) and the session state left by the hooks, and prints a fix for every finding:
 
 ```bash
-node "$(ls -d ~/.codex/plugins/cache/openviking/openviking-memory/*/ | sort -V | tail -1)scripts/ov-plugin-doctor.mjs"
+node "$(ls -d ~/.codex/plugins/cache/openviking/openviking/*/ | sort -V | tail -1)scripts/ov-plugin-doctor.mjs"
 ```
 
-Or invoke the `$ov-memory-doctor` skill in Codex, which runs the same script and walks the report. When the server runs on the same machine (loopback url) the report adds a Server health section — whether anything listens on the port, plugin-only keys in ov.conf that stop the server from starting, and `GET /ready`; everything else server-side (config validation, live embedding probe, native engine, disk) stays with `openviking-server doctor`.
+Or invoke the `$ov-plugin-doctor` skill in Codex, which runs the same script and walks the report. When the server runs on the same machine (loopback url) the report adds a Server health section — whether anything listens on the port, plugin-only keys in ov.conf that stop the server from starting, and `GET /ready`; everything else server-side (config validation, live embedding probe, native engine, disk) stays with `openviking-server doctor`.
 
 ## Testing
 
@@ -460,12 +460,12 @@ codex-plugin/
 │                                  + SessionEnd + PreCompact (uses Codex's native
 │                                  ${PLUGIN_ROOT} token; no rendering needed on modern Codex)
 ├── skills/
-│   ├── openviking-memory/       # How to use the memory tools
+│   ├── openviking/       # How to use the memory tools
 │   ├── ov-experience-memory/
-│   └── ov-memory-doctor/        # Install / config / connection / local-server troubleshooting
+│   └── ov-plugin-doctor/        # Install / config / connection / local-server troubleshooting
 ├── scripts/
 │   ├── config.mjs               # Shared config loader (ovcli.conf + env)
-│   ├── ov-plugin-doctor.mjs     # Diagnostics script ($ov-memory-doctor skill)
+│   ├── ov-plugin-doctor.mjs     # Diagnostics script ($ov-plugin-doctor skill)
 │   ├── capture-utils.mjs        # Transcript text extraction, filtering, tool compression
 │   ├── debug-log.mjs            # Structured JSONL logger
 │   ├── recall-compressor-profile.mjs # Compressor profile detection/cache

@@ -21,14 +21,14 @@ The installer asks for the language, harness, download source, and OpenViking cr
 
 ## Step 2: Verify
 
-1. Run `dsh --profile web` and open a new conversation. Confirm that “context injection · openviking-memory” appears at the top.
+1. Run `dsh --profile web` and open a new conversation. Confirm that “context injection · openviking” appears at the top.
 2. Confirm that the model has `mcp__openviking__*` tools and can call them.
 
 ## Troubleshooting
 
 | Issue | What to check |
 |---|---|
-| No context injection or OpenViking tools | Run `dsh --profile web --dump-config` and confirm it contains `openviking-memory`; otherwise rerun the installer or run `dsh plugin --profile web add @openviking/dsh-memory-plugin` |
+| No context injection or OpenViking tools | Run `dsh --profile web --dump-config` and confirm it contains `openviking`; otherwise rerun the installer or run `dsh plugin --profile web add @openviking/dsh-plugin` |
 | Installed into the wrong profile | The installer defaults to `web`; rerun it with `--dsh-profile <name>` |
 | `ERESOLVE @deepseek-ai/dsh-*` during install | Prerelease tags may be out of sync; install `@deepseek-ai/dsh@0.1.0-rc.6` exactly |
 | Package reported missing from npm | pnpm rejects releases younger than 24 hours by default; wait and retry, or add the exact version to `minimumReleaseAgeExclude` in `pnpm-workspace.yaml` |

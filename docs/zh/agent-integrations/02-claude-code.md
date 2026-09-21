@@ -1,4 +1,4 @@
-# Claude Code 记忆插件
+# Claude Code 插件
 
 为 [Claude Code](https://docs.claude.com/zh-CN/docs/claude-code/overview) 添加跨项目、跨会话（session）的长期记忆功能。安装完成后，每轮对话均会自动召回相关记忆并捕获新内容，无需模型主动调用任何工具。
 
@@ -35,7 +35,7 @@ bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/plugin-shared/inst
 
    ```bash
    claude plugin marketplace add https://raw.githubusercontent.com/volcengine/OpenViking/main/.claude-plugin/marketplace.json
-   claude plugin install openviking-memory@openviking
+   claude plugin install openviking@openviking
    ```
 
    开发场景也可注册本地 checkout：`claude plugin marketplace add "<仓库路径>/examples"`，插件 id 相同。
@@ -54,9 +54,9 @@ bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/plugin-shared/inst
 
 启动 `claude`，随后：
 
-- 输入 `/plugins` → 在 Installed 列表中应能找到 **openviking-memory**（其子项 **openviking** MCP 应显示为已连接状态）。
+- 输入 `/plugins` → 在 Installed 列表中应能找到 **openviking**（其子项 **openviking** MCP 应显示为已连接状态）。
 - 输入 `/mcp` → OpenViking 对应的条目应显示您的服务器 URL 及有效的认证信息。
-- 输入 `/openviking-memory:ov` → 查看服务器状态、身份信息、召回/注入的统计数据以及功能开关状态。
+- 输入 `/openviking:ov` → 查看服务器状态、身份信息、召回/注入的统计数据以及功能开关状态。
 
 若插件未正常工作，可设置环境变量 `OPENVIKING_DEBUG=1`，并查看日志文件 `~/.openviking/logs/cc-hooks.log` 以排查问题。
 

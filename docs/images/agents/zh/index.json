@@ -117,7 +117,7 @@
       "name": "DeepSeek Harness",
       "tags": ["Plugin"],
       "logo": "https://docs.openviking.net/agents/image/deepseek-harness/logo.png",
-      "summary": "为 DeepSeek Harness 提供跨项目、跨会话的长期记忆；安装后可自动召回相关记忆、捕获新内容，并直接使用 OpenViking 工具与 openviking-memory 技能，无需额外配置。",
+      "summary": "为 DeepSeek Harness 提供跨项目、跨会话的长期记忆；安装后可自动召回相关记忆、捕获新内容，并直接使用 OpenViking 工具与 openviking 技能，无需额外配置。",
       "detailPath": "https://docs.openviking.net/agents/zh/deepseek-harness.md"
     },
     {

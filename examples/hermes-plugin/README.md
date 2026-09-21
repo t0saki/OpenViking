@@ -131,7 +131,7 @@ profile's `.env`:
 When `OPENVIKING_API_KEY` is set, Hermes lets OpenViking derive account/user
 identity from the key. In local or trusted deployments without an API key,
 Hermes sends `OPENVIKING_ACCOUNT` and `OPENVIKING_USER` as identity headers.
-Hermes also sends `User-Agent: openviking-memory-hermes/<version>` on
+Hermes also sends `User-Agent: openviking-hermes/<version>` on
 OpenViking requests. This standard harness identifier contains the Hermes
 version, but no per-user identifier, and does not add a separate request.
 
@@ -171,16 +171,16 @@ changes future writes, not the location of existing memories.
 
 | Tool | Description |
 |------|-------------|
-| `viking_search` | Semantic search with fast/deep/auto modes |
-| `viking_read` | Read content at a viking:// URI (abstract/overview/full) |
-| `viking_browse` | Filesystem-style navigation (list/tree/stat) |
-| `viking_remember` | Submit a fact through OpenViking session memory extraction |
-| `viking_forget` | Delete one exact `viking://` memory file URI |
-| `viking_add_resource` | Ingest URLs/docs into the knowledge base |
+| `openviking_search` | Semantic search with fast/deep/auto modes |
+| `openviking_read` | Read content at a viking:// URI (abstract/overview/full) |
+| `openviking_browse` | Filesystem-style navigation (list/tree/stat) |
+| `openviking_remember` | Submit a fact through OpenViking session memory extraction |
+| `openviking_forget` | Delete one exact `viking://` memory file URI |
+| `openviking_add_resource` | Ingest URLs/docs into the knowledge base |
 
 ## Memory Writes And Deletes
 
-`viking_remember` creates a one-shot `hermes-remember-<random>` OpenViking
+`openviking_remember` creates a one-shot `hermes-remember-<random>` OpenViking
 session, adds the fact as one message, and commits the session with no retained
 tail. The session remains available in OpenViking for audit. OpenViking then
 classifies the source and can add, merge, or skip a memory through its normal
@@ -217,10 +217,10 @@ local memory operation succeeds:
 
 Built-in `replace` and `remove` operations are not mirrored because Hermes
 native memory entries do not yet carry stable OpenViking file URIs. Use
-`viking_forget` when the user explicitly asks to delete a specific OpenViking
+`openviking_forget` when the user explicitly asks to delete a specific OpenViking
 memory URI.
 
-`viking_forget` is intentionally narrow. It only accepts concrete user memory
+`openviking_forget` is intentionally narrow. It only accepts concrete user memory
 file URIs, such as
 `viking://user/default/peers/hermes/memories/preferences/mem_abc123.md`, or the
 `viking://~/...` self alias. Under `viking://user/...` the user id is required

@@ -35,7 +35,7 @@ claude mcp add --transport http openviking \
 
 Add `--scope user` to make the config global across all projects.
 
-> For auto-recall and auto-capture without manual tool calls, use the [Claude Code Memory Plugin](./02-claude-code.md) instead.
+> For auto-recall and auto-capture without manual tool calls, use the [Claude Code Plugin](./02-claude-code.md) instead.
 
 ### Trae / Cursor / ChatGPT
 
@@ -43,7 +43,7 @@ Standard `mcpServers` config as shown above — all verified with API key auth.
 
 ### Codex
 
-For Codex, use the [Codex Memory Plugin](./04-codex.md). It supplies a stdio MCP proxy through the plugin manifest and keeps MCP credentials aligned with the lifecycle hooks.
+For Codex, use the [Codex Plugin](./04-codex.md). It supplies a stdio MCP proxy through the plugin manifest and keeps MCP credentials aligned with the lifecycle hooks.
 
 ### OpenCode
 

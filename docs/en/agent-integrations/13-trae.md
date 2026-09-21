@@ -1,4 +1,4 @@
-# TRAE, TRAE CN, and TraeCode CLI 2.0 Memory Integration
+# TRAE, TRAE CN, and TraeCode CLI 2.0 Integration
 
 Give TRAE, TRAE CN, and TraeCode CLI 2.0 long-term memory across projects and sessions. OpenViking Hooks automatically load relevant context, capture each conversation turn, and commit it for memory extraction. MCP remains available for explicit memory search, reading, and management.
 
@@ -58,7 +58,7 @@ A fresh install lists all 6 hooks the plugin registers. After that, any plugin u
 Pick the third option, or skip past the prompt, and the hooks never run: MCP tools still work, but automatic recall and capture are both dead. Recovering means switching on two independent things:
 
 - `/hooks` — hook trust and on/off state. Trust and enable the entries marked *New hook - review required* or *Modified since last trusted*.
-- `/plugins` — the plugin's own enabled state. Confirm `openviking-memory` is enabled.
+- `/plugins` — the plugin's own enabled state. Confirm `openviking` is enabled.
 
 TRAE and TRAE CN read `hooks.json` directly and need no such approval — restarting the client is enough.
 
@@ -76,7 +76,7 @@ TRAE and TRAE CN read `hooks.json` directly and need no such approval — restar
 2. Confirm that `openviking` is connected in the client's MCP settings.
 3. Ask about an existing project or preference and confirm that the answer uses stored memory.
 4. Tell the Agent a temporary preference, wait for the response to finish, then create a new session and ask for it again to verify capture, commit, and cross-session recall.
-5. For TraeCode CLI 2.0, run `trae-cli plugin list` to confirm that `openviking-memory` is enabled, then run `/hooks` in the session and confirm the OpenViking entries are trusted and switched on.
+5. For TraeCode CLI 2.0, run `trae-cli plugin list` to confirm that `openviking` is enabled, then run `/hooks` in the session and confirm the OpenViking entries are trusted and switched on.
 
 For Hook diagnostics, start the client with `OPENVIKING_DEBUG=1` and inspect:
 
@@ -98,18 +98,18 @@ bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/plugin-shared/inst
   --harness trae-cn --uninstall --yes
 ```
 
-Replace `trae-cn` with `trae` for TRAE. For TraeCode CLI 2.0, use `trae-cli plugin uninstall openviking-memory@openviking`. Running the installer with `--harness trae-cli --uninstall` only removes the deprecated standalone Hooks integration from older installations.
+Replace `trae-cn` with `trae` for TRAE. For TraeCode CLI 2.0, use `trae-cli plugin uninstall openviking@openviking`. Running the installer with `--harness trae-cli --uninstall` only removes the deprecated standalone Hooks integration from older installations.
 
 ## Troubleshooting
 
 | Symptom | Cause and fix |
 |---------|---------------|
 | Automatic recall does not run | Quit the client completely, restart it, and create a new Agent session. |
-| TraeCode CLI 2.0 has the plugin, but nothing is recalled or captured | The startup hook-trust prompt was skipped or answered with *Continue without trusting*; an update that touches a hook asks for trust again. Trust and enable the OpenViking entries in `/hooks`, and confirm `openviking-memory` is enabled in `/plugins` — two independent switches, both have to be on. |
+| TraeCode CLI 2.0 has the plugin, but nothing is recalled or captured | The startup hook-trust prompt was skipped or answered with *Continue without trusting*; an update that touches a hook asks for trust again. Trust and enable the OpenViking entries in `/hooks`, and confirm `openviking` is enabled in `/plugins` — two independent switches, both have to be on. |
 | MCP does not connect | Check the URL/API key in `~/.openviking/ovcli.conf`, then restart the client. |
 | A new session cannot recall the previous turn | Inspect the Hook log and confirm that `Stop` ran without `/commit` connection or authentication errors. |
 | The same content is captured more than once | Check user and project Hooks for older `trae-auto-recall.mjs` or `trae-auto-capture.mjs` entries. Re-running the installer removes OpenViking-managed legacy entries. |
-| TraeCode CLI 2.0 does not list the plugin | Run `trae-cli plugin list`; if `openviking-memory` is absent, rerun the installer with `--harness trae-cli`. |
+| TraeCode CLI 2.0 does not list the plugin | Run `trae-cli plugin list`; if `openviking` is absent, rerun the installer with `--harness trae-cli`. |
 
 ## See also
 

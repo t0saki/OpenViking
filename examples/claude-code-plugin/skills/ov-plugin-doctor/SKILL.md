@@ -1,5 +1,5 @@
 ---
-name: ov-memory-doctor
+name: ov-plugin-doctor
 description: >
   Diagnose and fix the OpenViking memory plugin on this machine: the plugin
   install (enablement, hooks, MCP server), the client configuration
@@ -14,7 +14,7 @@ description: >
 allowed-tools: Bash(node ${CLAUDE_PLUGIN_ROOT}/scripts/ov-plugin-doctor.mjs *)
 ---
 
-# OpenViking Memory Doctor
+# OpenViking Plugin Doctor
 
 Client-side troubleshooting for the OpenViking memory plugin. The plugin has
 three moving parts and each fails silently in its own way:
@@ -76,9 +76,9 @@ Work top-down; fix the first ✗ and rerun before chasing the next.
 | `plugin disabled — every hook exits immediately` | No parseable config, `OPENVIKING_MEMORY_ENABLED=0`, or `claude_code.enabled: false` in ov.conf | Fix the reason it names. Fresh machine: create `~/.openviking/ovcli.conf` with `url` + `api_key` (`chmod 600`). |
 | `ovcli.conf cannot be parsed` | Trailing comma/comment; the plugin treats the file as absent | Fix the JSON. This is the most common "installed but nothing happens". |
 | `not registered in installed_plugins.json` / `claude plugin list does not show …` | Plugin never installed, or installed under an old id | Re-run the one-line installer (`bash <(curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/main/examples/plugin-shared/install.sh) --harness claude`; add `--dist tos` where GitHub is blocked). |
-| `plugin is disabled in ~/.claude/settings.json` | Installed but `enabledPlugins` is false/missing | `claude plugin enable openviking-memory@openviking`, restart Claude Code. |
+| `plugin is disabled in ~/.claude/settings.json` | Installed but `enabledPlugins` is false/missing | `claude plugin enable openviking@openviking`, restart Claude Code. |
 | `marketplace 'openviking' … missing directory` / registered as a file | The checkout/archive moved, or a file-type marketplace (fails `marketplace update` with EISDIR) | `claude plugin marketplace remove openviking` then re-run the installer. |
-| `no skills/ directory in this plugin copy` / registered version behind the repo | Stale version-keyed cache; `claude plugin update` is a no-op when the version string did not change | `claude plugin marketplace update openviking && claude plugin uninstall openviking-memory@openviking && claude plugin install openviking-memory@openviking`. |
+| `no skills/ directory in this plugin copy` / registered version behind the repo | Stale version-keyed cache; `claude plugin update` is a no-op when the version string did not change | `claude plugin marketplace update openviking && claude plugin uninstall openviking@openviking && claude plugin install openviking@openviking`. |
 | `legacy openviking hooks … settings.json` / extra plugin ids / user-scope MCP `openviking` | Pre-2.0 install residue; every hook fires twice, MCP server registered twice | Remove the openviking entries from `.hooks` in `~/.claude/settings.json` (back it up), `claude plugin uninstall <stale id>`, `claude mcp remove openviking -s user`. |
 | `node is not on PATH` / node < 18 | Hooks and `.mcp.json` run the bare command `node`; GUI/IDE launches often lack nvm/volta shims | Put node on PATH for the launching environment, or set `PATH` in the `env` block of `~/.claude/settings.json`. |
 | `server unreachable` (refused / dns / timeout / tls) | Wrong url/port, server down, DNS/VPN, private CA | Compare with `curl -sS <url>/health`. curl OK + doctor fails ⇒ proxy or CA issue (see Step 3). |
@@ -133,8 +133,8 @@ curl -sS -o /dev/null -w '%{http_code}\n' -X POST "$URL/mcp" \
 ```
 
 Prove Claude Code's MCP wiring: `claude mcp list` (slow, 30–60s) must show
-`plugin:openviking-memory:openviking: node <installPath>/servers/mcp-proxy.mjs - ✔ Connected`;
-`claude mcp get 'plugin:openviking-memory:openviking'` needs the full quoted
+`plugin:openviking:openviking: node <installPath>/servers/mcp-proxy.mjs - ✔ Connected`;
+`claude mcp get 'plugin:openviking:openviking'` needs the full quoted
 name. `/mcp` inside a session reconnects the proxy.
 
 Prove a capture landed: take `ov_session_id` from
@@ -172,7 +172,7 @@ ask before stopping or restarting it.
   that shell and silently outranks the file everywhere.
 - After changing `url`, installing or updating the plugin: restart Claude
   Code. Hooks re-read config per invocation, the MCP proxy does not.
-- Updates: GitHub installs → `claude plugin marketplace update openviking && claude plugin update openviking-memory@openviking`;
+- Updates: GitHub installs → `claude plugin marketplace update openviking && claude plugin update openviking@openviking`;
   TOS/archive and dev-checkout installs → re-run the installer.
 - Confirm the fix by rerunning the doctor, then by observing an
   `<openviking-context>` block on the next prompt.

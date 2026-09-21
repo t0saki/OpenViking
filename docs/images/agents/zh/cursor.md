@@ -15,7 +15,7 @@
 ## 步骤2：验证
 
 1. 点击「Customize → MCPs」，确认可以看到「openviking User」和「openviking Plugin」两项。
-2. 点击「Customize → Hooks」，确认可以看到「openviking-memory」条目。
+2. 点击「Customize → Hooks」，确认可以看到「openviking」条目。
 
 ## 故障排查
 

@@ -150,7 +150,7 @@ Restart OpenCode after installation. In an OpenCode session, the plugin should e
 Ask OpenCode to search or browse OpenViking memory. Runtime state and errors are written to:
 
 ```bash
-~/.config/opencode/openviking/openviking-memory.log
+~/.config/opencode/openviking/openviking.log
 ~/.config/opencode/openviking/openviking-session-state.json
 ```
 

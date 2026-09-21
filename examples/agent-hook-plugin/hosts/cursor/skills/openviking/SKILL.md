@@ -1,5 +1,5 @@
 ---
-name: openviking-memory
+name: openviking
 description: >
   Work with OpenViking, the persistent context database behind this agent's
   memory. Use it whenever the user refers to earlier sessions or shared history
@@ -12,7 +12,7 @@ description: >
 version: 2026.8.7
 ---
 
-# OpenViking Memory
+# OpenViking
 
 OpenViking stores three kinds of durable context — memories (facts, preferences,
 decisions), resources (imported documents, sites, repos), and skills — and

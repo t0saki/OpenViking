@@ -156,7 +156,7 @@ Each key is the camelCase counterpart of an `OPENVIKING_*` tuning variable — `
 
 Resolution order, highest first: environment variables → the [workspace layers](#workspace-configuration) → `plugin.<harness>` → `plugin` → the legacy per-harness block in `ov.conf` → built-in defaults. Hook processes read the file on every invocation, so an edit takes effect on the next turn; changing an `OPENVIKING_*` variable instead needs the agent restarted, since hooks inherit its environment.
 
-Only the Claude Code and Codex plugins read this section today, so an entry named after any other harness is inert. `ov-memory-doctor` prints what it resolved and warns about keys it does not recognise, naming the closest real one.
+Only the Claude Code and Codex plugins read this section today, so an entry named after any other harness is inert. `ov-plugin-doctor` prints what it resolved and warns about keys it does not recognise, naming the closest real one.
 
 ## Workspace Configuration
 
@@ -187,7 +187,7 @@ Highest first:
 
 A scalar from a higher layer replaces the lower one. Lists are unioned across layers; a leading `"!reset"` element drops everything the lower layers contributed, so `["!reset", "*/scratch/*"]` is the whole list.
 
-No command writes the registry file. Create it by hand at the path `ov-memory-doctor` prints, with `version: 1` and the same schema as the workspace files.
+No command writes the registry file. Create it by hand at the path `ov-plugin-doctor` prints, with `version: 1` and the same schema as the workspace files.
 
 ### Schema
 
@@ -295,7 +295,7 @@ A hook runs without a prompt, so these files are trusted; what is refused is str
 - Connection and credential keys — `url`, `api_key`, `root_api_key`, `account`, `user`, `extra_headers`, and the rest — are stripped with a warning wherever they appear. Which server the data goes to stays answerable from `ovcli.conf` and the environment alone.
 - `${VAR}` is never expanded in these files.
 
-What a committed file switches off is announced rather than blocked: the plugin's `ov-memory-doctor` reports every workspace-scoped value, the layer it came from, and what it shadowed.
+What a committed file switches off is announced rather than blocked: the plugin's `ov-plugin-doctor` reports every workspace-scoped value, the layer it came from, and what it shadowed.
 
 `.gitignore` must not ignore all of `.openviking/`, or `config.json` can never be committed. Narrow the rule to the parser's scratch directories and the private file:
 
@@ -305,7 +305,7 @@ What a committed file switches off is announced rather than blocked: the plugin'
 .openviking/config.local.json
 ```
 
-`ov-memory-doctor` warns when a blanket rule is in effect.
+`ov-plugin-doctor` warns when a blanket rule is in effect.
 
 ## Related Environment Variables
 

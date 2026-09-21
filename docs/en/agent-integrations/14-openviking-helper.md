@@ -60,8 +60,8 @@ Helper reads the relevant local agent configuration and data to display integrat
 
 - [Capability Reference](./16-capability-reference.md)
 - [Agent integrations overview](./01-overview.md)
-- [Claude Code Memory Plugin](./02-claude-code.md)
-- [Codex Memory Plugin](./04-codex.md)
-- [Cursor Memory Integration](./12-cursor.md)
-- [TRAE Memory Integration](./13-trae.md)
+- [Claude Code Plugin](./02-claude-code.md)
+- [Codex Plugin](./04-codex.md)
+- [Cursor Integration](./12-cursor.md)
+- [TRAE Integration](./13-trae.md)
 - [OpenCode Plugin](./10-opencode.md)

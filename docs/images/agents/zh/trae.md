@@ -42,7 +42,7 @@ Hooks can run outside the sandbox after you trust them.
   3. Continue without trusting (hooks won't run)
 ```
 
-再执行 `trae-cli plugin list`，确认 `openviking-memory` 已启用。错过这个提示，或当时选了第 3 项，Hook 就不会运行：输入 `/hooks` 补上信任并开启条目，`/plugins` 里确认插件已启用——两个开关相互独立，都要是开着的。插件更新动了 Hook 时会再要求信任一次。
+再执行 `trae-cli plugin list`，确认 `openviking` 已启用。错过这个提示，或当时选了第 3 项，Hook 就不会运行：输入 `/hooks` 补上信任并开启条目，`/plugins` 里确认插件已启用——两个开关相互独立，都要是开着的。插件更新动了 Hook 时会再要求信任一次。
 
 ## 故障排查
 

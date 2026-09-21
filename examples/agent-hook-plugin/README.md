@@ -1,4 +1,4 @@
-# OpenViking Memory for the config-driven hook hosts
+# OpenViking for the config-driven hook hosts
 
 Cursor, TRAE, TRAE CN and ZCode all install the same way: the shared installer writes lifecycle hooks and an MCP server entry into the host's own configuration files, and assembles the OpenViking runtime beside the integration. None of them has a marketplace listing to register or a separate MCP setup to do.
 

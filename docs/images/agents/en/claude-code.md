@@ -24,11 +24,11 @@ Because Claude Code may block installation scripts from unknown sources, automat
 ## Step 2: Verify
 
 1. Restart Claude Code.
-2. Run `/plugins` and confirm the installed list shows `openviking-memory`, and the `openviking` MCP is connected:
+2. Run `/plugins` and confirm the installed list shows `openviking`, and the `openviking` MCP is connected:
 
    ```text
    User
-     ❯ openviking-memory Plugin · openviking · ✔ enabled
+     ❯ openviking Plugin · openviking · ✔ enabled
        └ openviking MCP · ✔ connected
    ```
 
@@ -36,13 +36,13 @@ Because Claude Code may block installation scripts from unknown sources, automat
 
    ```text
    Built-in MCPs (always available)
-     ❯ plugin:openviking-memory:openviking · ✔ connected · 10 tools
+     ❯ plugin:openviking:openviking · ✔ connected · 10 tools
    ```
 
-4. Run `/openviking-memory:ov` and confirm the service status is healthy:
+4. Run `/openviking:ov` and confirm the service status is healthy:
 
    ```text
-   OpenViking Memory Status
+   OpenViking Status
      ✅ Status: OpenViking server is healthy and running
    ```
 

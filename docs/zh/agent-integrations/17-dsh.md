@@ -1,12 +1,12 @@
-# DeepSeek Harness 记忆插件
+# DeepSeek Harness 插件
 
-为 [DeepSeek Harness](https://www.npmjs.com/package/@deepseek-ai/dsh)（`dsh`）接入跨项目、跨会话的长期记忆。安装后每次对话都会自动召回相关记忆并捕获新内容，模型也会直接拿到 OpenViking 工具和 `openviking-memory` 技能，无需额外配置。
+为 [DeepSeek Harness](https://www.npmjs.com/package/@deepseek-ai/dsh)（`dsh`）接入跨项目、跨会话的长期记忆。安装后每次对话都会自动召回相关记忆并捕获新内容，模型也会直接拿到 OpenViking 工具和 `openviking` 技能，无需额外配置。
 
 源码：[examples/dsh-plugin](https://github.com/volcengine/OpenViking/tree/main/examples/dsh-plugin)
 
 ## 安装
 
-DSH 与其他记忆插件共用同一个安装器。它会依次询问语言（English/中文）、要安装的 harness、下载源和 OpenViking 凭据；每一步都是幂等的，重复运行完全安全。
+DSH 与其他插件共用同一个安装器。它会依次询问语言（English/中文）、要安装的 harness、下载源和 OpenViking 凭据；每一步都是幂等的，重复运行完全安全。
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/main/examples/plugin-shared/install.sh)
@@ -30,7 +30,7 @@ bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/plugin-shared/inst
 2. **把插件装进 profile**：
 
    ```bash
-   dsh plugin --profile web add @openviking/dsh-memory-plugin
+   dsh plugin --profile web add @openviking/dsh-plugin
    ```
 
    `dsh plugin` 会转发给 profile 目录下的 pnpm，所以任何 profile 名都可以；`web` 是 `dsh` 首次运行时自动创建的那个。
@@ -41,11 +41,11 @@ bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/plugin-shared/inst
    dsh --profile web --dump-config
    ```
 
-   输出里应该能看到 `openviking-memory` 插件组。
+   输出里应该能看到 `openviking` 插件组。
 
 > 还没有 `ovcli.conf`？见[部署指南 → CLI](../guides/03-deployment.md#cli)。
 >
-> 卸载：`dsh plugin --profile web rm @openviking/dsh-memory-plugin`。
+> 卸载：`dsh plugin --profile web rm @openviking/dsh-plugin`。
 
 </details>
 
@@ -61,7 +61,7 @@ bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/plugin-shared/inst
 
 每个 DSH 会话映射为 OpenViking 中的 `dsh-<session-id>`，子 agent 各自拥有独立会话。
 
-模型看到的工具面就是 OpenViking 的 MCP 工具集，经由与其他记忆集成相同的 stdio 代理接入，以 `mcp__openviking__` 前缀发布。由于该代理每个 profile 只起一个进程，`mcp__openviking__remember` 写入的是服务端一个短生命周期的会话而不是当前会话（对话本身仍由自动捕获记录），工具调用带的也是启动时解析的 actor peer。若一个进程要服务多个工作区且需要精确归属工具调用，请显式设置 `OPENVIKING_PEER_ID`。插件同时附带共享的 `openviking-memory` 技能，让模型知道何时该检索、读取和写入。
+模型看到的工具面就是 OpenViking 的 MCP 工具集，经由与其他集成相同的 stdio 代理接入，以 `mcp__openviking__` 前缀发布。由于该代理每个 profile 只起一个进程，`mcp__openviking__remember` 写入的是服务端一个短生命周期的会话而不是当前会话（对话本身仍由自动捕获记录），工具调用带的也是启动时解析的 actor peer。若一个进程要服务多个工作区且需要精确归属工具调用，请显式设置 `OPENVIKING_PEER_ID`。插件同时附带共享的 `openviking` 技能，让模型知道何时该检索、读取和写入。
 
 文件工具误把 `viking://` URI 当本地路径时，调用会被拦截，并提示改用对应的 OpenViking 工具；shell 命令带 `viking://` URI 时照常执行，模型会收到一条改用 OpenViking 工具的提示，URI 是有意传入的数据时可以忽略。
 
@@ -84,14 +84,14 @@ bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/plugin-shared/inst
 
 ```yaml
 - insert:
-    - id: openviking-memory
+    - id: openviking
       name: '@deepseek-ai/cordis-plugin-group'
       group: true
       isolate:
-        openvikingMemory: true
+        openviking: true
       config:
-        - id: openviking-memory-runtime
-          name: '@openviking/dsh-memory-plugin'
+        - id: openviking-runtime
+          name: '@openviking/dsh-plugin'
           config:
             recallTokenBudget: 2000
             scoreThreshold: 0.35
@@ -111,7 +111,7 @@ patch 中写的凭证优先于环境变量。行为旋钮按优先级从高到�
 
 | 现象 | 排查方向 |
 |------|----------|
-| 没有注入，也没有 OpenViking 工具 | `dsh --profile web --dump-config` 里应能看到 `openviking-memory`；重新运行安装器或 `dsh plugin --profile web add …` |
+| 没有注入，也没有 OpenViking 工具 | `dsh --profile web --dump-config` 里应能看到 `openviking`；重新运行安装器或 `dsh plugin --profile web add …` |
 | 装到了错误的 profile | 安装器默认 `web`；用 `--dsh-profile <name>` 重新运行 |
 | 安装时报 `ERESOLVE` | `@deepseek-ai/dsh-*` 各包预发布 tag 不同步；请精确安装 `@deepseek-ai/dsh@0.1.0-rc.6` |
 | 安装时报包「不在 npm registry 中」 | pnpm 默认拒绝发布不满 24 小时的版本（`minimumReleaseAge`）。等一等，或把该精确版本加进 profile 的 `pnpm-workspace.yaml` 的 `minimumReleaseAgeExclude` |

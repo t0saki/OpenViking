@@ -1,5 +1,5 @@
 ---
-name: ov-memory-doctor
+name: ov-plugin-doctor
 description: >
   Diagnose and fix the OpenViking memory plugin for Codex on this machine: the plugin
   install (enablement, hooks, MCP server), the client configuration
@@ -13,12 +13,12 @@ description: >
   "recall 为空", "401".
 ---
 
-# OpenViking Memory Doctor (Codex)
+# OpenViking Plugin Doctor (Codex)
 
 Troubleshooting for the OpenViking memory plugin. Three things go
 wrong on a user's machine, each silently:
 
-- **Install** — marketplace registration, `[plugins."openviking-memory@openviking"]`
+- **Install** — marketplace registration, `[plugins."openviking@openviking"]`
   and `[features] hooks` (or legacy `plugin_hooks`) in `~/.codex/config.toml`, per-hook trust
   records, the stdio MCP proxy. When these are wrong, hooks never run and
   nothing is logged anywhere.
@@ -48,12 +48,12 @@ The script ships inside the plugin. Codex runs hooks from the plugin cache,
 so run the doctor from there (newest version directory):
 
 ```bash
-PLUGIN_DIR=$(ls -d ~/.codex/plugins/cache/openviking/openviking-memory/*/ | sort -V | tail -1)
+PLUGIN_DIR=$(ls -d ~/.codex/plugins/cache/openviking/openviking/*/ | sort -V | tail -1)
 node "$PLUGIN_DIR/scripts/ov-plugin-doctor.mjs"
 ```
 
 If that directory does not exist, fall back to the marketplace copy reported by
-`codex plugin list --json` (`.installed[] | select(.pluginId == "openviking-memory@openviking") | .source.path`),
+`codex plugin list --json` (`.installed[] | select(.pluginId == "openviking@openviking") | .source.path`),
 or to a source checkout's `examples/codex-plugin`.
 
 Options: `--json` (machine-readable), `--offline` (skip network probes),
@@ -83,10 +83,10 @@ Work top-down; fix the first ✗ and rerun before chasing the next.
 | `[features] hooks enabled by default` | The live CLI reports hooks enabled; legacy `plugin_hooks` has no effect | Continue with the remaining checks. |
 | `[features] hooks is not set` (info) | The CLI probe could not determine the modern feature state and no legacy flag decides it | Verify with `codex features list`; an unset key alone does not prove hooks are disabled. |
 | `[plugins."…"] enabled = false` / `installed but disabled` | Plugin switched off in config.toml | Set `enabled = true`, restart Codex. |
-| `hooks disabled in [hooks.state]` | A hook was declined at the trust prompt | Remove `enabled = false` from that `[hooks.state."openviking-memory@openviking:hooks/hooks.json:<event>:0:0"]` section; approve the hook again. |
+| `hooks disabled in [hooks.state]` | A hook was declined at the trust prompt | Remove `enabled = false` from that `[hooks.state."openviking@openviking:hooks/hooks.json:<event>:0:0"]` section; approve the hook again. |
 | `hooks without a trust record yet` | Codex has not yet approved those hooks (fresh install or `hooks.json` changed on update) | Start a Codex session and accept the hook prompt; nothing is wrong. |
 | `marketplace 'openviking' is not registered` / root missing | Marketplace removed or its clone deleted | Re-run the installer. |
-| `plugin.json does not declare skills` | Old plugin copy; `$ov-memory-doctor` and the other bundled skills are not loaded | Update the plugin. |
+| `plugin.json does not declare skills` | Old plugin copy; `$ov-plugin-doctor` and the other bundled skills are not loaded | Update the plugin. |
 | `cached plugin X differs from this copy` | The doctor was run from a checkout while Codex runs another version | Rerun from the cache path (Step 1). |
 | `node is not on PATH` / node < 18 | Hooks and `.mcp.json` run the bare command `node` | Put node on PATH for the environment that launches Codex. |
 | `credential source: env` unexpectedly | A stray `OPENVIKING_*` var forces env mode; `ov config switch` and ovcli.conf edits do nothing | Unset the var (check shell rc files and `~/.openviking/codex-plugin.rc.sh` residue). |

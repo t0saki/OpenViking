@@ -16,7 +16,7 @@ Preserve the existing copyright and permission notice.
 The distribution name is `hermes-plugin-openviking`. The provider, plugin, and
 future Hermes catalog key remain `openviking`. Existing `memory.openviking`
 settings, environment variables, linked `ovcli.conf` files, data paths, and
-`viking_*` tools keep their current behavior.
+`openviking_*` tools keep their current behavior.
 
 ## Migration coordination
 

@@ -1,4 +1,4 @@
-# OpenViking Memory Doctor (Codex) — reference
+# OpenViking Plugin Doctor (Codex) — reference
 
 Companion to SKILL.md: where things live, what the exact error strings mean,
 and the symptom catalogue. Paths assume the defaults; `OPENVIKING_CONFIG_FILE`,
@@ -14,8 +14,8 @@ and `CODEX_CONFIG_FILE` relocate individual pieces.
 | `~/.openviking/ovcli.conf.<name>` | Saved CLI profiles (`ov config switch` copies one over `ovcli.conf`). `ovcli.conf.bak.<epoch>` are installer backups. |
 | `<repo root>/.openviking/config.json` / `config.local.json` | Workspace config layers, `version: 1` required: `peer.source`, `peer.id`, `recall.*`, `capture.*`, `bypass.session_patterns`, `labels`. `config.json` is committed and shared; `config.local.json` is private and gitignored. Trusted without a prompt, but connection and credential keys (`url`, `api_key`, `account`, `user`, `extra_headers`, …) are stripped with a warning and `${VAR}` is never expanded. A blanket `.openviking/` rule in `.gitignore` stops `config.json` from ever being committed — narrow it to `.openviking/media/` and `.openviking/downloads/`. |
 | `~/.openviking/workspaces/<slot>.json` | Per-machine workspace registry, one file per workspace (`<dir name>-<hash>.json`, mode 0600). Outranks both workspace files, and nothing writes it — a user creates the file by hand. An entry recorded for a different repository is ignored, not inherited. |
-| `~/.codex/config.toml` | `[features] hooks` (or legacy `plugin_hooks`), `[plugins."openviking-memory@openviking"] enabled`, `[marketplaces.openviking]` (source, ref), `[hooks.state."openviking-memory@openviking:hooks/hooks.json:<event>:0:0"] trusted_hash` for `session_start`, `user_prompt_submit`, `pre_tool_use`, `stop`, `session_end`, `pre_compact`. |
-| `~/.codex/plugins/cache/openviking/openviking-memory/<version>/` | The copy Codex runs hooks from. Keyed by `plugin.json` version. |
+| `~/.codex/config.toml` | `[features] hooks` (or legacy `plugin_hooks`), `[plugins."openviking@openviking"] enabled`, `[marketplaces.openviking]` (source, ref), `[hooks.state."openviking@openviking:hooks/hooks.json:<event>:0:0"] trusted_hash` for `session_start`, `user_prompt_submit`, `pre_tool_use`, `stop`, `session_end`, `pre_compact`. |
+| `~/.codex/plugins/cache/openviking/openviking/<version>/` | The copy Codex runs hooks from. Keyed by `plugin.json` version. |
 | `~/.codex/.tmp/marketplaces/openviking/` | Git clone of the marketplace (GitHub/TOS dist); `examples/codex-plugin` inside it is what `codex plugin list` reports as the source path. |
 | `~/.openviking/codex-plugin-state/<session_id>.json` | Per-session state: `ovSessionId` (`cx-<session_id>`, null once committed), `transcriptPath` (last rollout seen, used by the SessionStart sweep to catch up unsent turns), `capturedTurnCount`, `lastUpdatedAt`. |
 | `~/.openviking/codex-plugin-state/<session_id>.ended.<timestamp>` / `.lock` | Sidecars: `.ended.<timestamp>` marks a thread whose SessionEnd fired but whose commit has not succeeded yet (the timestamp is in the filename so a conditional removal cannot delete a newer exit's marker; a bare `.ended` is a pre-0.8.1 leftover); `.lock` is the directory lock serializing the capture hooks. |
@@ -49,7 +49,7 @@ Peers minted before this need no migration: the old cwd-derived id is recomputed
 There is no global kill switch: `OPENVIKING_MEMORY_ENABLED` is ignored by the
 Codex plugin. Disable features with `OPENVIKING_AUTO_RECALL=0`,
 `OPENVIKING_AUTO_CAPTURE=0`, `OPENVIKING_NO_AUTO_INJECT=1`, or the plugin via
-`codex plugin remove openviking-memory@openviking` / `enabled = false`.
+`codex plugin remove openviking@openviking` / `enabled = false`.
 
 Hook budgets in `hooks/hooks.json`: SessionStart 70s, UserPromptSubmit 130s,
 PreToolUse 5s (`Bash` only, the `viking://` notice), Stop 30s, SessionEnd 3s
@@ -58,7 +58,7 @@ PreToolUse 5s (`Bash` only, the `viking://` notice), Stop 30s, SessionEnd 3s
 (default 30000) at or below 30s.
 
 Sent headers: `Authorization: Bearer <key>`, `X-OpenViking-Account/User` (trusted
-mode only), `X-OpenViking-Actor-Peer`, `User-Agent: openviking-memory-codex/<version>`.
+mode only), `X-OpenViking-Actor-Peer`, `User-Agent: openviking-codex/<version>`.
 The plugin never sends `X-API-Key`. The open-source server still accepts it (and
 prefers it when both are sent), so a gateway that injects one shadows the key
 here; the Volcengine-hosted OpenViking Service (`https://api.vikingdb.cn-beijing.volces.com/openviking`) accepts Bearer only.

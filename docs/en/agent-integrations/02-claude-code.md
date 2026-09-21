@@ -1,4 +1,4 @@
-# Claude Code Memory Plugin
+# Claude Code Plugin
 
 Give [Claude Code](https://docs.claude.com/en/docs/claude-code/overview) cross-project and cross-session long-term memory. Once installed, every conversation automatically recalls relevant memories and captures new content without requiring the model to make any tool calls.
 
@@ -35,7 +35,7 @@ If you prefer to set it up manually:
 
    ```bash
    claude plugin marketplace add https://raw.githubusercontent.com/volcengine/OpenViking/main/.claude-plugin/marketplace.json
-   claude plugin install openviking-memory@openviking
+   claude plugin install openviking@openviking
    ```
 
    Or, for development, register a local checkout: `claude plugin marketplace add "<repo>/examples"` then install the same plugin id.
@@ -54,9 +54,9 @@ If you prefer to set it up manually:
 
 Launch `claude`, then:
 
-- `/plugins` → Verify that **openviking-memory** is listed under "Installed", with the **openviking** MCP connected below it.
+- `/plugins` → Verify that **openviking** is listed under "Installed", with the **openviking** MCP connected below it.
 - `/mcp` → Ensure the OpenViking entry displays your server URL along with valid authentication.
-- `/openviking-memory:ov` → View server health, identity, recall/injection statistics, and toggle states.
+- `/openviking:ov` → View server health, identity, recall/injection statistics, and toggle states.
 
 If the plugin does not seem to activate, set `OPENVIKING_DEBUG=1` and check the logs at `~/.openviking/logs/cc-hooks.log`.
 

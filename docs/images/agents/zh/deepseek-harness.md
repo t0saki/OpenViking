@@ -21,14 +21,14 @@ bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/plugin-shared/inst
 
 ## 步骤2：验证
 
-1. 启动 `dsh --profile web` 并打开新会话，确认会话顶部显示“上下文注入 · openviking-memory”。
+1. 启动 `dsh --profile web` 并打开新会话，确认会话顶部显示”上下文注入 · openviking”。
 2. 确认模型具有 `mcp__openviking__*` 工具，并能够在会话中正常调用。
 
 ## 故障排查
 
 | 现象 | 排查方向 |
 |---|---|
-| 没有上下文注入，也没有 OpenViking 工具 | 执行 `dsh --profile web --dump-config`，确认输出中包含 `openviking-memory`；若缺失，重新运行安装器或执行 `dsh plugin --profile web add @openviking/dsh-memory-plugin` |
+| 没有上下文注入，也没有 OpenViking 工具 | 执行 `dsh --profile web --dump-config`，确认输出中包含 `openviking`；若缺失，重新运行安装器或执行 `dsh plugin --profile web add @openviking/dsh-plugin` |
 | 插件安装到了错误的 profile | 安装器默认使用 `web`；通过 `--dsh-profile <name>` 重新运行 |
 | 安装时报 `ERESOLVE @deepseek-ai/dsh-*` | 各包预发布 tag 可能不同步，请精确安装 `@deepseek-ai/dsh@0.1.0-rc.6` |
 | 安装时提示包不在 npm registry 中 | pnpm 默认拒绝发布不满 24 小时的版本；可稍后重试，或把精确版本加入 `pnpm-workspace.yaml` 的 `minimumReleaseAgeExclude` |

@@ -1,6 +1,6 @@
 # OpenCode 插件
 
-为 [OpenCode](https://opencode.ai/) 提供跨项目、跨会话的长期记忆和已索引仓库上下文。安装后，每次对话都会通过 OpenCode plugin hooks 自动召回相关记忆并捕获新内容；模型可调用工具来自 Claude Code / Codex 记忆插件同款的 OpenViking stdio MCP proxy。
+为 [OpenCode](https://opencode.ai/) 提供跨项目、跨会话的长期记忆和已索引仓库上下文。安装后，每次对话都会通过 OpenCode plugin hooks 自动召回相关记忆并捕获新内容；模型可调用工具来自 Claude Code / Codex 插件同款的 OpenViking stdio MCP proxy。
 
 源码：[examples/opencode-plugin](https://github.com/volcengine/OpenViking/tree/main/examples/opencode-plugin)
 
@@ -94,14 +94,14 @@ cp -r examples/opencode-plugin/servers ~/.config/opencode/plugins/openviking/
 
 ## 配置
 
-凭据与 Claude Code / Codex 记忆插件共用。可以在仓库根目录运行一次 setup 向导，或使用 `OPENVIKING_*` 环境变量。向导同样 import `lib/shared/`，所以要先生成：
+凭据与 Claude Code / Codex 插件共用。可以在仓库根目录运行一次 setup 向导，或使用 `OPENVIKING_*` 环境变量。向导同样 import `lib/shared/`，所以要先生成：
 
 ```bash
 node examples/plugin-shared/sync.mjs
 node examples/opencode-plugin/scripts/setup.mjs
 ```
 
-行为旋钮写在 `~/.openviking/ovcli.conf` 的 `plugin` 段，与向导写入的连接字段同一个文件。共享键对所有记忆插件生效；`plugin.opencode` 下的键只对本插件生效，并覆盖共享键：
+行为旋钮写在 `~/.openviking/ovcli.conf` 的 `plugin` 段，与向导写入的连接字段同一个文件。共享键对所有插件生效；`plugin.opencode` 下的键只对本插件生效，并覆盖共享键：
 
 ```json
 {
@@ -150,7 +150,7 @@ API key 会由 hooks 和 MCP proxy 作为 `Authorization: Bearer ...` 发送；`
 可以让 OpenCode 搜索或浏览 OpenViking memory。运行时状态和错误日志会写入：
 
 ```bash
-~/.config/opencode/openviking/openviking-memory.log
+~/.config/opencode/openviking/openviking.log
 ~/.config/opencode/openviking/openviking-session-state.json
 ```
 
