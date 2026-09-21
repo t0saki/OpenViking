@@ -131,6 +131,7 @@ async function compact(sessionId, transcriptPath, trigger, cwd, heartbeat) {
 
   // Reset OV session for the post-compact half. Keep capturedTurnCount so
   // we don't re-capture pre-compact turns when Stop fires next.
+  state.lastCommittedOvSessionId = state.ovSessionId;
   state.ovSessionId = null;
   await saveState(state);
 

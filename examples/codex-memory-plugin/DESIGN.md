@@ -12,11 +12,7 @@ events imply "context for a particular codex `session_id` is gone".
 - **codex `session_id`** — the codex thread/session id. Stable across
   process restarts when zouk-daemon resumes the same thread; replaced when
   `/clear`, `/new`, fresh codex startup, or zouk reset occurs.
-- **OV session** — `viking://user/sessions/cx-<codex-session-id>`. New captures
-  derive the OV session id from the codex `session_id` with a `cx-` prefix,
-  append messages on every `Stop`, and commit it (which triggers OV's
-  memory extractor) at session-end-equivalent moments. `/messages`
-  auto-creates the OV session, so the plugin does not call session create.
+- **OV session** — a persisted live mapping, otherwise `codex-<YYYYMMDD>-<HHMMSS>-<tail8>` decoded from UUIDv7 in UTC. Native sessions created before 2026-09-22 00:00 UTC, and unrecognized IDs, use `cx-<safe-native-id>`. Capture appends on every Stop; /messages auto-creates the session.
 - **State file** — `~/.openviking/codex-plugin-state/<safe-codex-session-id>.json`,
   shape `{ codexSessionId, ovSessionId, transcriptPath, capturedTurnCount, createdAt, lastUpdatedAt }`.
 - **End marker** — `<safe-codex-session-id>.ended.<timestamp>`, a sidecar written by the
@@ -59,7 +55,7 @@ or append-only.
 Codex fires `PreCompact` before summarizing. We catch up with any
 unappended turns from the transcript, commit the OV session for this codex
 `session_id`, and clear `ovSessionId` so the next `Stop` re-derives the
-same `cx-<codex-session-id>` OV session id for the post-compact half.
+current-format OV session ID for the post-compact half.
 `capturedTurnCount` is preserved unless the transcript was truncated by
 compaction (see "Post-compact transcript shrink" below).
 
@@ -121,7 +117,7 @@ CJK-aware estimator. Profile loading does not alter the commit decision tree.
 
 Resume may still need continuity after `PreCompact` or idle sweep already
 committed the live OV session. If local state has `ovSessionId = null`
-(or no state file remains), the hook derives `cx-<codex-session-id>`,
+(or no state file remains), the hook uses `lastCommittedOvSessionId` or derives the current-format ID,
 calls `GET /api/v1/sessions/{id}/context?token_budget=...`, and injects
 `latest_archive_overview` via `hookSpecificOutput.additionalContext` when
 present. The injected block includes
@@ -226,12 +222,7 @@ commit-on-every-turn fragmentation.
 ## Injected context boundary
 
 `UserPromptSubmit` stdin includes the user's `prompt` plus the Codex
-`session_id`. Recall derives the same OpenViking session id used by Stop
-capture (`cx-<safe-session-id>`) directly from the Codex session id and
-calls `/api/v1/search/search` with that `session_id`, so OpenViking can
-use recent session messages and archive overview during query expansion.
-Recall does not read plugin state, so a corrupt or missing state file
-cannot crash the recall hook. Recalled memory is sent back through
+`session_id`. Recall reads the live `ovSessionId` from the atomic state file and otherwise derives the ID from the native session. This keeps recall and capture aligned during upgrades. Missing or corrupt state falls back to derivation. It calls `/api/v1/search/search` with the resolved ID, so query expansion uses the matching messages and archive. Recalled memory is sent back through
 `hookSpecificOutput.additionalContext`, then Codex injects it into the
 model turn. Transcript capture may later see that injected context
 adjacent to the prompt, so plugin-generated recall and resume context are
@@ -343,7 +334,7 @@ own start time for the same reason.
 
 After PreCompact we set `ovSessionId = null` but keep
 `capturedTurnCount`. The next `Stop` for the same codex `session_id`
-re-derives the same `cx-<codex-session-id>` OV session id and starts
+re-derives the current-format OV session ID and starts
 appending from `capturedTurnCount`. Memory remains grouped under the same
 OV session id, while commits create additional archives under that session.
 
@@ -352,7 +343,8 @@ OV session id, while commits create additional archives under that session.
 ```json
 {
   "codexSessionId": "0193af...",   // codex thread id
-  "ovSessionId": "cx-0193af...-or-null", // null means "committed, awaiting next Stop or retirement"
+  "ovSessionId": "codex-20260922-104042-9e3a1c07", // null means "committed, awaiting next Stop or retirement"
+  "lastCommittedOvSessionId": null, // archive identity across a format transition
   "transcriptPath": "/path/rollout.jsonl", // last rollout seen; lets the sweep catch up
   "capturedTurnCount": 7,            // turns from transcript already appended
   "createdAt": 1715000000000,
@@ -360,10 +352,7 @@ OV session id, while commits create additional archives under that session.
 }
 ```
 
-Legacy state files from earlier plugin versions may still contain a UUID
-`ovSessionId`; those are now overwritten with the derived `cx-*` id on the
-next resolve. The migration window for preserving old UUID sessions has
-closed.
+Existing live mappings remain authoritative until a successful lifecycle commit. Before clearing `ovSessionId`, each lifecycle commit saves it as `lastCommittedOvSessionId` so resume can inject the correct archive even if the next capture adopts the new format.
 
 State files are atomic-write (tmpfile + rename) to survive crash mid-write.
 

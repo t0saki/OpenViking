@@ -138,6 +138,7 @@ async function finish(sessionId, transcriptPath, cwd, endToken, heartbeat) {
     status: commit.result?.status,
     trace_id: traceId || undefined,
   });
+  state.lastCommittedOvSessionId = state.ovSessionId;
   state.ovSessionId = null;
   await saveState(state, { touch: false });
   await clearEnded(sessionId, { before: endToken + 1 });

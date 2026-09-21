@@ -209,7 +209,7 @@ async function buildResumeArchiveContext(newSessionId) {
     return "";
   }
 
-  const ovSessionId = deriveOvSessionId(newSessionId);
+  const ovSessionId = state.lastCommittedOvSessionId || deriveOvSessionId(newSessionId);
   const context = await fetchJSON(
     `/api/v1/sessions/${encodeURIComponent(ovSessionId)}/context?token_budget=${cfg.resumeArchiveTokenBudget}`,
   );
@@ -259,6 +259,7 @@ async function commitAndRelease(state, reason, endToken) {
     status: commit.result?.status,
     trace_id: traceId || undefined,
   });
+  state.lastCommittedOvSessionId = state.ovSessionId;
   state.ovSessionId = null;
   await saveState(state, { touch: false });
   // Only retire the marker this pass verified; a newer one belongs to an exit

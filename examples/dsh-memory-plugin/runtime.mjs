@@ -1,7 +1,7 @@
 import { isCaptureEnabled } from "./shared/capture-utils.mjs";
 import { buildProfileBlock } from "./shared/profile-inject.mjs";
 import { buildRecallBlock, isRecallEnabled } from "./shared/recall-core.mjs";
-import { deriveHarnessSessionId } from "./shared/session-model.mjs";
+import { deriveReadableSessionId } from "./shared/session-model.mjs";
 import {
   dequeue,
   enqueue,
@@ -44,7 +44,7 @@ export class OpenVikingRuntime {
     });
     state = {
       dshSessionId: String(session.id),
-      ovSessionId: deriveHarnessSessionId("dsh-", String(session.id)),
+      ovSessionId: deriveReadableSessionId("dsh", "dsh-", String(session.id), session.header?.createdAt),
       config: { ...this.config, peerId: peer.peerId, legacyPeerId: peer.legacyPeerId },
       ready: false,
       profileBlock: "",

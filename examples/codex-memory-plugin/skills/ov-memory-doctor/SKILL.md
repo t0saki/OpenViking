@@ -140,8 +140,8 @@ curl -sS -o /dev/null -w '%{http_code}\n' -X POST "$URL/mcp" \
 
 Prove a capture landed: the state file for the session in
 `~/.openviking/codex-plugin-state/<session_id>.json` carries `ovSessionId`
-(`cx-<session_id>`) and `capturedTurnCount`; `GET $URL/api/v1/sessions/cx-<session_id>`
-(or `ov session get cx-<session_id>`) should show `total_message_count ≥` that
+(read the exact value; do not reconstruct it from a prefix) and `capturedTurnCount`; `GET $URL/api/v1/sessions/<ovSessionId>`
+(or `ov session get <ovSessionId>`) should show `total_message_count ≥` that
 count, and `commit_count > 0` proves extraction ran.
 
 Second opinion from the CLI: `ov health` and `ov config validate` read the

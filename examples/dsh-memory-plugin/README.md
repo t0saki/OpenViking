@@ -253,3 +253,9 @@ server: it stores a sentinel memory through a session commit, waits for
 extraction, and asserts recall returns that sentinel — the property no stub
 can certify. Enable it with `OPENVIKING_E2E=1` plus the normal credential
 chain; it skips otherwise (including in CI until a server secret exists).
+
+## Session IDs
+
+New sessions use `<harness>-<YYYYMMDD>-<HHMMSS>-<tail8>`, with UTC creation time and the last eight alphanumeric characters of the native ID in lowercase. The rollout epoch is **2026-09-22 00:00 UTC**. Sessions older than the epoch, and IDs whose creation time cannot be decoded, retain their legacy IDs. No existing server session is renamed.
+
+dsh uses a finite numeric session.header.createdAt. Missing timestamps keep the legacy dsh- ID. A session created after the epoch but before upgrading can change IDs; finish active sessions before upgrading or downgrading.

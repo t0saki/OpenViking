@@ -16,7 +16,7 @@
 import { join } from "node:path";
 import { loadConfig } from "./config.mjs";
 import { createLogger } from "./debug-log.mjs";
-import { getStateDir, deriveOvSessionId } from "./session-state.mjs";
+import { getStateDir, loadState, resolveOvSessionId } from "./session-state.mjs";
 import { createCodexCompressor } from "./host-compressor.mjs";
 import { buildRecallBlockDetailed } from "./shared/recall-core.mjs";
 import { runHookStage } from "./shared/agent-hook-runtime.mjs";
@@ -96,7 +96,7 @@ runHookStage({
 
   let userPrompt = (input.prompt || "").trim();
   const codexSessionId = typeof input.session_id === "string" ? input.session_id.trim() : "";
-  const recallSessionId = codexSessionId ? deriveOvSessionId(codexSessionId) : "";
+  const recallSessionId = codexSessionId ? resolveOvSessionId(await loadState(codexSessionId)) : "";
   log("start", {
     codexSessionId: codexSessionId || null,
     recallSessionId,

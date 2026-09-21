@@ -310,3 +310,17 @@ test("drainSessionBacklog stops after maxBatches and leaves remainder for later 
     }
   });
 });
+
+test("ensureSession uses readable UUIDv7 IDs after the epoch and keeps old sessions stable", async () => {
+  for (const [id, expected] of [
+    ["01a0c6e3-6400-7000-8000-00009e3a1c07", "pi-20260922-021306-9e3a1c07"],
+    ["01a0a402-2f88-7848-83cc-52e892de7000", "pi-01a0a402-2f88-7848-83cc-52e892de7000"],
+    ["pi-session", "pi-pi-session"],
+  ]) {
+    const sync = new SyncManager(client(), config());
+    await sync.ensureSession(id);
+    assert.equal(sync.sessionId, expected);
+    await sync.ensureSession("ignored-second-id");
+    assert.equal(sync.sessionId, expected);
+  }
+});

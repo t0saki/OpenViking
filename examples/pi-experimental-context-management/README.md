@@ -173,3 +173,9 @@ its own `.gitignore` with `!lib/` instead of adding another exception there.
 - [docs/en/agent-integrations/11-pi.md](../../docs/en/agent-integrations/11-pi.md)
   · [docs/zh/agent-integrations/11-pi.md](../../docs/zh/agent-integrations/11-pi.md)
   — the pi integration docs for the stable extension; they do not cover this one
+
+## Session IDs
+
+New sessions use `<harness>-<YYYYMMDD>-<HHMMSS>-<tail8>`, with UTC creation time and the last eight alphanumeric characters of the native ID in lowercase. The rollout epoch is **2026-09-22 00:00 UTC**. Sessions older than the epoch, and IDs whose creation time cannot be decoded, retain their legacy IDs. No existing server session is renamed.
+
+Pi decodes UUIDv7 creation time. A session created after the epoch but before upgrading can change IDs; saved windows for another ID are discarded by the existing ownership check. Finish active sessions before upgrading or downgrading. The shared session-model module and declaration are manually synchronized from memory-plugin-shared/lib, as this example is not a sync.mjs target.

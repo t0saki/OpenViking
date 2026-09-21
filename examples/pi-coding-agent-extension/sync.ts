@@ -1,7 +1,7 @@
 import type { OVClient } from "./client.js";
 import { createLogger } from "./shared/debug-log.mjs";
 import type { OVConfig } from "./config.js";
-import { deriveHarnessSessionId } from "./shared/session-model.mjs";
+import { deriveReadableSessionId, uuidV7TimeMs } from "./shared/session-model.mjs";
 import { claimForReplay, dequeue, enqueue, incrementRetry, listPending, replayPending } from "./shared/pending-queue.mjs";
 import { BATCH_LIMIT, sendSessionMessages } from "./shared/batch-send.mjs";
 import { extractBranchCapturePayloads } from "./lib/capture-adapter.mjs";
@@ -47,7 +47,7 @@ export class SyncManager {
   async ensureSession(piSessionId: string): Promise<boolean> {
     if (this.ovSessionId) return true;
 
-    const id = deriveHarnessSessionId("pi-", piSessionId);
+    const id = deriveReadableSessionId("pi", "pi-", piSessionId, uuidV7TimeMs(piSessionId));
     this.ovSessionId = id;
     return true;
   }

@@ -68,7 +68,7 @@ Injection is two-pass, and that is the interesting part. Historical user message
 
 `SyncManager` owns the OV session id, the capture watermark, and everything between a pi branch and a committed archive.
 
-The OV session id is `pi-<pi session id>`, derived locally by the shared `deriveHarnessSessionId`. Nothing round-trips to open a session: the id is deterministic, so the first write can carry it.
+The OV session ID is derived from UUIDv7 creation time as `pi-<YYYYMMDD>-<HHMMSS>-<tail8>` in UTC from 2026-09-22 onward. Older or unrecognized native IDs retain `pi-<native-id>`. No network request or new local identity state is needed.
 
 **Capture.** `turn_end` hands the whole branch to `extractBranchCapturePayloads` (`lib/capture-adapter.mjs`), which takes the entries past `syncedEntryCount`, normalizes roles, renders tool parts with bounded input and output, and decides entry by entry whether to capture. There are two decision modes. Normally it is the shared `shouldCaptureText` heuristic. Under takeover it is a faithful mode that drops only empty text, slash commands and OpenViking's own status messages: once the boundary advances, a short acknowledgement may be represented to the model *only* through the archive overview, so discarding it as low-signal would lose it outright. A branch shorter than the watermark means pi navigated to a different branch, so the watermark resets to zero and the branch is re-extracted from the start.
 

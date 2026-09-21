@@ -172,12 +172,16 @@ per-harness 章节（档案卡）只写差异；所有共享事实均在本章�
 | cursor | 配置驱动（写入 `~/.cursor/hooks.json`+`mcp.json`）+ rule + skill | 一键 `--harness cursor` | `cu-<conversation_id>` | env + ovcli.conf `plugin.cursor` | ❌（共用安装器 TUI） |
 | trae / trae-cn | 配置驱动（`~/.trae{,-cn}/hooks.json` + 平台相关 mcp.json） | 一键 `--harness trae,trae-cn` | `tr-` / `trcn-` | env + ovcli.conf `plugin.trae` / `plugin.trae_cn` | ❌ |
 | zcode | 配置驱动（合并进 `~/.zcode/cli/config.json`，并强制 `hooks.enabled=true`） | 一键 `--harness zcode` | `zc-<sess_…>` | env + ovcli.conf `plugin.zcode` | ❌ |
-| opencode | npm 插件 `@openviking/opencode-plugin`（config hook 自注入 MCP 条目） | 一键 `--harness opencode`（npm 注册 + 代理快照兜底）/ 手动 npm / 源码 | `oc-<id>`；subagent 格式为 `oc-<parent>__subagent-<child>` | env + ovcli.conf `plugin.opencode` | ✅ |
+| opencode | npm 插件 `@openviking/opencode-plugin`（config hook 自注入 MCP 条目） | 一键 `--harness opencode`（npm 注册 + 代理快照兜底）/ 手动 npm / 源码 | `opencode-<date>-<time>-<tail8>`；subagent 格式为 `<parent OV ID>__subagent-<child>` | env + ovcli.conf `plugin.opencode` | ✅ |
 | dsh | Cordis 同进程插件（`cordis.patch.yml` plugin group） | 统一安装器（会询问 profile，默认 `web`），或执行 `dsh plugin --profile web add @openviking/dsh-memory-plugin` | `dsh-<session.id 原样>`；subagent 各自独立会话 | env + ovcli.conf `plugin.dsh` + cordis patch config（行为旋钮的最低层；凭据仍以 patch 优先） | ❌ |
-| pi | pi 原生扩展（目录装载，jiti 直译 TS） | 一键 `--harness pi`（复制到自动发现目录，无需 `pi install`） | `pi-<piSessionId>` | env + ovcli.conf `plugin.pi`（凭据字段由凭据链统一解析） | ✅ |
+| pi | pi 原生扩展（目录装载，jiti 直译 TS） | 一键 `--harness pi`（复制到自动发现目录，无需 `pi install`） | `pi-<date>-<time>-<tail8>` | env + ovcli.conf `plugin.pi`（凭据字段由凭据链统一解析） | ✅ |
 | openclaw | context-engine 插件（`ownsCompaction:true`）+ 15 工具 + 5 slash + 4 hook + HTTP 路由 | ClawHub 执行 `openclaw plugins install clawhub:@openviking/openclaw-plugin` 搭配 `openclaw openviking setup` / npm 安装器 / TOS 离线包 | UUID 原样小写，否则 `sha256(sessionKey)`；`memory_store` 临时会话 `memory-store-<ts>-<rand>` | `openclaw.json` 的 `plugins.entries.openviking.config`（严格校验：存在未知键/非法值时插件进入 setup-only 模式）+ 少量 env | ✅ `openclaw openviking setup`（交互/非交互 + key 角色探测 + 版本兼容检查） |
 | hermes | Hermes bundled MemoryProvider（随 Hermes 发布，无需装插件） | 执行 `hermes memory setup openviking`（curses 向导）或手动 `config set memory.provider openviking` + `.env` | 由 Hermes 生成 `%Y%m%d_%H%M%S_<hex6>`，插件原样使用 | `.env`（`OPENVIKING_*`）或 ovcli.conf 联动（`use_ovcli_config` 模式会清空 .env 里的 5 个对应变量）+ config.yaml | ✅（多层菜单） |
 | ov CLI | Rust 原生二进制 | npm `@openviking/cli` / `uv tool install openviking` / cargo / GitHub Releases | 无自有会话（`ov chat` 默认使用 machine-uid） | `ovcli.conf`（多 profile）+ 少量 env | ✅ `ov config`（TUI 向导） |
+
+可读会话 ID 使用 `<harness>-<YYYYMMDD>-<HHMMSS>-<tail8>`，时间为 UTC，尾部为原生 ID 最后八个字母数字字符并转小写。Codex 和两个 Pi 插件解码 UUIDv7；OpenCode 解码取反时间戳；dsh 使用有限数值类型的 `session.header.createdAt`。启用日期固定为 **2026-09-22 00:00 UTC**：更早的会话和无法解码的 ID 沿用旧格式。OpenCode 保留已有映射，子会话使用父会话已有的 OV ID。Codex 的召回与写入都优先沿用活动会话映射，commit 后才释放，并保存 `lastCommittedOvSessionId` 供 resume 读取归档。
+
+新旧格式长期并存，服务端会话不重命名。Pi/dsh 在启用日期之后、升级之前创建的会话，升级时可能切换 ID（Pi experimental 会丢弃属于旧 ID 的保存窗口）。活动会话中途降级可能导致新 ID 未被 commit。Codex/Pi 的时间始终是原生会话首次创建时间；rollout 文件名使用本地时间时，日期可能不同。OpenCode 使用当前时钟选择最近的 36 位时间戳周期，可靠解码要求会话时间与当前时钟相差约一年以内。
 
 ### 3.1.2 统一安装器
 
@@ -276,11 +280,11 @@ JS 系 harness 的召回逻辑均由 `recall-core.mjs` 中的三级降级链处�
 | harness | 触发点 | query 构造 | session_id | 服务端路径 | 注入格式 / 位置 | 再摘要（客户端）* |
 |---|---|---|---|---|---|---|
 | claude-code | 每轮 `UserPromptSubmit` | prompt 原文 trim | ✅ `cc-` | A（context face） | `<openviking-context>` → `hookSpecificOutput.additionalContext` | ✅ 本地/服务端（默认 auto，[§3.2.5](#_3-2-5-召回再摘要)） |
-| codex / trae-cli | 每轮 `UserPromptSubmit`（整 hook 120s 硬截止） | prompt 原文 | ✅ `cx-`（确定性推导，不读 state） | A；二级降级 searchScope 落入 B | `<openviking-context source="auto-recall" format="digest">` | ✅ 本地 `codex exec`（[§3.2.5](#_3-2-5-召回再摘要)） |
+| codex / trae-cli | 每轮 `UserPromptSubmit`（整 hook 120s 硬截止） | prompt 原文 | ✅ 已解析的 OV ID（优先已有映射） | A；二级降级 searchScope 落入 B | `<openviking-context source="auto-recall" format="digest">` | ✅ 本地 `codex exec`（[§3.2.5](#_3-2-5-召回再摘要)） |
 | cursor | `beforeSubmitPrompt` | prompt 原文；基于事件 id 与 500ms 窗口去重，同 promptHash 复用缓存块 | ✅ `cu-` | A | `additional_context` | ❌ |
 | trae / trae-cn | `UserPromptSubmit` | 剥离历史注入块后的 prompt（只认 `input.prompt`） | ✅ `tr-`/`trcn-` | A | `additionalContext` | ❌ |
 | zcode | `UserPromptSubmit` | 剥离三类注入块（含 `<system-reminder>`） | ✅ `zc-` | A | `additionalContext`（严格 JSON） | ❌ |
-| opencode | 每条 `chat.message` 中的 user 消息 | 拼接非 synthetic text part；若正文已含 `<openviking-context` 则跳过本轮召回 | ✅ `oc-` | A（timeoutMs=30000） | 合成 synthetic part 并 `unshift` 到 parts 最前 | ❌ |
+| opencode | 每条 `chat.message` 中的 user 消息 | 拼接非 synthetic text part；若正文已含 `<openviking-context` 则跳过本轮召回 | ✅ `opencode-` / legacy `oc-` | A（timeoutMs=30000） | 合成 synthetic part 并 `unshift` 到 parts 最前 | ❌ |
 | dsh | `agent/pre-step` waterfall（先 await next 再 append） | claimed batch 全部消息（过滤自身注入的内容） | ✅ `dsh-` | A | 借由 `createUserMessage` append 到 `decision.messages` 尾部（source: plugin/openviking-memory） | ❌ |
 | pi | `before_agent_start` 阶段排队；在 `context` 事件内检索（当前轮 prompt 拿当前轮记忆） | prompt 原文 | ✅ `pi-`（会话未建立时不带） | A | 前置到最后一条真实 user 消息（通过 `<openviking-context` 幂等检测） | ❌ |
 | openclaw | context-engine transformContext assemble（设有 7 道 passthrough 门） | 最后一条 user 消息纯 text，清洗后截 4000 字符 | ❌（`/find` 无该字段） | `/find` | 以 `<relevant-memories>` + `Source: openviking-auto-recall` 格式前置进最后一条 user 消息 | ❌ |
@@ -387,7 +391,7 @@ JS 系 harness 的召回逻辑均由 `recall-core.mjs` 中的三级降级链处�
 |---|---|
 | claude-code | 隔离最完整：SubagentStart 派生 `cc-<sid>__subagent-<agent_id>` 独立会话，SubagentStop 读 subagent transcript 推送后无条件 commit 并清 state |
 | codex / trae-cli | 不单独建会话：subagent 输出（`agent_message` / `sub_agent_activity`）折叠进主会话的 assistant/tool part |
-| opencode | `oc-<parent>__subagent-<child>` 挂在父命名空间下；开场注入跳过 subagent（召回不跳过）；ID 派生依赖事件顺序——`chat.message` 先于 `session.created` 到达时会丢 `__subagent-` 后缀 |
+| opencode | `<parent OV ID>__subagent-<child>` 挂在父命名空间下；开场注入跳过 subagent（召回不跳过）；ID 派生依赖事件顺序——`chat.message` 先于 `session.created` 到达时会丢 `__subagent-` 后缀 |
 | dsh | 每个 subagent = 独立 `dsh-<id>` 会话，父子关系不保留；N 个 subagent = N 份 profile 注入 + N 个独立会话 |
 | hermes | `delegate_task` 传 `skip_memory=True` → subagent 不接 OV（无会话/召回/工具面）；子任务产出不回灌 |
 | cursor / trae×2 / zcode / pi / openclaw | 无 subagent 处理（有独立会话 id 就各自成会话，否则混入主会话；openclaw 可用 `bypassSessionPatterns` 屏蔽） |
@@ -511,7 +515,7 @@ MCP `write` / REST `content/write` 的三道 guard（`content_write.py`）：可
 - **集成文档**：[Codex 记忆插件](./04-codex.md)
 - **形态**：Codex 插件（marketplace），6 hook（SessionStart 70s / UserPromptSubmit 130s / Stop 30s / SessionEnd 3s / PreCompact 60s / PreToolUse:Bash 5s）+ MCP 代理 + 1 experience skill。版本 0.9.1。
 - **能力亮点**：本地召回压缩管线（`codex exec`，[§3.2.5](#_3-2-5-召回再摘要)）；SessionEnd（Codex ≥ 0.145）在正常退出时补齐 Stop 漏掉的轮次并 commit，SessionStart 的兜底扫描回收那些没触发 SessionEnd 的退出所遗留的未归档消息（[§3.3.3](#_3-3-3-关闭方式-×-harness-终局矩阵)）；PreToolUse:Bash（uri-guard）放行带 `viking://` URI 的 shell 命令，并附加提示，建议改用 OpenViking MCP 工具；Codex 通过 `apply_patch` 编辑文件，输入里没有路径参数，因此 guard 不会拒绝任何调用。
-- **行为要点**：session id 为 `cx-<safeId>`（确定性推导，不读 state）；SessionEnd 只在正常退出、且 Codex 0.145+ 时触发，信号、崩溃、旧版本以及 `codex app-server` 延后的场景都落到扫描路径；不使用磁盘 pending queue（离线靠游标不推进、下一轮重发补偿，[§3.3.4](#_3-3-4-pending-queue-离线补偿对照)）；idle-TTL 1800000ms、锁等待 120000ms（env 配置）；Stop 与 SessionEnd 默认 detach（`appended N turn(s)` 提示默认不展示）；单会话 mkdir 锁串行化 Stop worker、PreCompact、SessionEnd worker 与扫描。新增的 hook 在 Codex 侧没有信任记录，升级后需在 `/hooks` 中批准这次升级新增的 hook（SessionEnd、PreToolUse）。
+- **行为要点**：session id 为 `codex-<UTC日期>-<UTC时间>-<tail8>`（优先沿用已有映射）；SessionEnd 只在正常退出、且 Codex 0.145+ 时触发，信号、崩溃、旧版本以及 `codex app-server` 延后的场景都落到扫描路径；不使用磁盘 pending queue（离线靠游标不推进、下一轮重发补偿，[§3.3.4](#_3-3-4-pending-queue-离线补偿对照)）；idle-TTL 1800000ms、锁等待 120000ms（env 配置）；Stop 与 SessionEnd 默认 detach（`appended N turn(s)` 提示默认不展示）；单会话 mkdir 锁串行化 Stop worker、PreCompact、SessionEnd worker 与扫描。新增的 hook 在 Codex 侧没有信任记录，升级后需在 `/hooks` 中批准这次升级新增的 hook（SessionEnd、PreToolUse）。
 - **配置**：env + ovcli.conf `plugin.codex` + ov.conf `codex`；hooks 只用 `Authorization: Bearer` 认证（[§3.1.3](#_3-1-3-凭据体系)）。
 - **维度索引**：工具面 [§2.1](#_2-1-服务端-mcp-工具面) ｜召回 [§3.2](#_3-2-自动召回与注入) ｜commit [§3.3.2](#_3-3-2-常规-commit-触发条件)/[§3.3.3](#_3-3-3-关闭方式-×-harness-终局矩阵) ｜降级 [§3.6](#_3-6-降级与容错)。
 

@@ -3,7 +3,7 @@
  *
  * One state file per codex session_id, holding the long-lived OpenViking
  * session id that we incrementally append turns to via the Stop hook. The
- * OV session id is derived as `cx-<codex-session-id>` for new captures.
+ * New UUIDv7 sessions use readable UTC IDs; live persisted mappings are kept.
  * The OV session is committed (which extracts memories) by SessionEnd, by
  * PreCompact, or by the fallback sweep at SessionStart.
  *
@@ -25,7 +25,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, rename, rm, rmdir, stat, utimes, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { deriveCodexSessionId } from "./shared/session-model.mjs";
+import { deriveCodexSessionId, formatReadableSessionId, READABLE_ID_EPOCH_MS, uuidV7TimeMs } from "./shared/session-model.mjs";
 
 const DEFAULT_STATE_DIR = join(homedir(), ".openviking", "codex-plugin-state");
 
@@ -38,15 +38,14 @@ function safeId(codexSessionId) {
 }
 
 export function deriveOvSessionId(codexSessionId) {
-  return deriveCodexSessionId(codexSessionId);
+  const ms = uuidV7TimeMs(codexSessionId);
+  return (ms >= READABLE_ID_EPOCH_MS && formatReadableSessionId("codex", ms, codexSessionId))
+    || deriveCodexSessionId(codexSessionId);
 }
 
 export function resolveOvSessionId(state) {
-  // Always derive the deterministic cx-* id. Legacy persisted UUIDs from
-  // before the cx-* scheme are no longer preserved: the migration window
-  // has closed and keeping them would desync recall (which derives cx-*)
-  // from capture (which used to echo back the legacy value).
-  state.ovSessionId = deriveOvSessionId(state.codexSessionId);
+  // A live mapping remains authoritative until its commit succeeds.
+  state.ovSessionId ||= deriveOvSessionId(state.codexSessionId);
   return state.ovSessionId;
 }
 

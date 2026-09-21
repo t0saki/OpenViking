@@ -463,3 +463,16 @@ function userEvent(text) {
     },
   };
 }
+
+test("session header creation time selects readable IDs without changing old or incomplete headers", () => {
+  const id = "session-98765432-1234-4321-abcd-00009e3a1c07";
+  for (const [createdAt, expected] of [
+    [Date.parse("2026-09-22T10:40:42Z"), "dsh-20260922-104042-9e3a1c07"],
+    [Date.parse("2026-09-21T23:59:59Z"), "dsh-" + id],
+    [undefined, "dsh-" + id],
+    ["1789992000000", "dsh-" + id],
+  ]) {
+    const runtime = new OpenVikingRuntime({}, config(), { debug() {} });
+    assert.equal(runtime.stateFor({ id, header: { cwd: "/workspace", createdAt } }).ovSessionId, expected);
+  }
+});

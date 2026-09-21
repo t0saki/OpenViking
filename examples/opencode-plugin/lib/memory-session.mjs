@@ -7,7 +7,8 @@ import {
   shouldCaptureText,
 } from "./shared/capture-utils.mjs"
 import {
-  deriveHarnessSessionId,
+  deriveReadableSessionId,
+  opencodeTimeMs,
 } from "./shared/session-model.mjs"
 import {
   enqueue,
@@ -315,9 +316,9 @@ export function createMemorySessionManager({ config, pluginRoot }) {
 
   function createSessionState(opencodeSessionId, event = {}) {
     const parentId = event?.properties?.info?.parentID ?? event?.properties?.parentID ?? event?.parentID ?? ""
-    const ovSessionId = parentId
-      ? deriveHarnessSessionId("oc-", parentId, `subagent-${opencodeSessionId}`)
-      : deriveHarnessSessionId("oc-", opencodeSessionId)
+    const ovSessionId = parentId && parentId !== opencodeSessionId
+      ? getOrCreateSession(parentId).ovSessionId + "__subagent-" + opencodeSessionId
+      : deriveReadableSessionId("opencode", "oc-", opencodeSessionId, opencodeTimeMs(opencodeSessionId))
     return {
       ovSessionId,
       createdAt: Date.now(),

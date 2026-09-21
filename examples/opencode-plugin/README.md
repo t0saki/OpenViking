@@ -243,3 +243,9 @@ Registry failures stop the workflow instead of treating an unavailable registry 
 an unused version. Only upstream `main` can publish the official npm `latest` tag.
 Manual dispatch on `main` retries a failed release using the existing npm credentials
 or Trusted Publishing configuration.
+
+## Session IDs
+
+New sessions use `<harness>-<YYYYMMDD>-<HHMMSS>-<tail8>`, with UTC creation time and the last eight alphanumeric characters of the native ID in lowercase. The rollout epoch is **2026-09-22 00:00 UTC**. Sessions older than the epoch, and IDs whose creation time cannot be decoded, retain their legacy IDs. No existing server session is renamed.
+
+OpenCode decodes the inverted timestamp in ses_ IDs, choosing the nearest 36-bit timestamp period to the current clock (the period is about 2.18 years). Existing native-to-OV mappings remain authoritative. Subagent IDs append __subagent-<child> to the parent’s mapped OV ID. Keep the session-state file when upgrading.

@@ -12,7 +12,7 @@ This is the Codex counterpart to [`claude-code-memory-plugin`](../claude-code-me
 - **Session-start profile injection** on `startup`, `clear`, and `resume`: load `profile.md` plus abstract-annotated indexes of `preferences/` and `entities/` through the shared CJK-aware profile builder.
 - **Auto-recall** relevant memories on every `UserPromptSubmit` and inject them via `hookSpecificOutput.additionalContext`
 - **`viking://` notice on `PreToolUse` (`Bash`)**: a shell command that carries a `viking://` URI still runs, and the model is told that the URI is an OpenViking virtual path and which MCP tool reads it.
-- **Incremental capture on `Stop`** (turn end): append the new user/assistant turns to a deterministic OpenViking session id `cx-<codex_session_id>`. When `pending_tokens` reaches `OPENVIKING_COMMIT_TOKEN_THRESHOLD`, commit while keeping a recent live tail.
+- **Incremental capture on `Stop`** (turn end): append the new user/assistant turns to the session’s resolved OpenViking ID (see Session IDs below). When `pending_tokens` reaches `OPENVIKING_COMMIT_TOKEN_THRESHOLD`, commit while keeping a recent live tail.
 - **Commit on `PreCompact`**: trigger OpenViking's memory extractor on the full pre-compact transcript before Codex summarizes it.
 - **Commit on `SessionEnd`** (Codex ≥ 0.145): when a thread shuts down gracefully, catch up any turns `Stop` never sent and commit the OV session, so the extractor runs on the whole conversation the moment you leave.
 - **Fallback sweep on `SessionStart` (source=startup|clear)**: commit state files that carry an end marker whose commit did not go through, or that have been idle past `OPENVIKING_CODEX_IDLE_TTL_MS`. `source=resume` never commits or sweeps; if the live OV session was already committed, it combines the profile block with the latest archive summary for continuity. See `DESIGN.md` for the full decision tree.
@@ -281,14 +281,14 @@ Each candidate is committed under its per-session lock with no waiting; a lock t
 
 On any /commit failure (OV unreachable, non-2xx, timeout) we **preserve state** (keep `ovSessionId` set, and keep the `.ended` marker) so the next sweep can retry. `SessionEnd` and `PreCompact` apply the same unreadable-transcript guard as the sweep, so neither commits a session whose transcript it could not read.
 
-On `resume`, the script skips commit/sweep. It still injects the profile block. If local state has no live `ovSessionId`, it also reads `/api/v1/sessions/{cx-session-id}/context` and combines the latest committed archive overview into the same `SessionStart` output. The archive block includes a `viking://~/sessions/{cx-session-id}/history/` URI and tells the model to use the OpenViking MCP `read`/`search` tools for exact prior commands, file paths, tool outputs, or messages. Set `OPENVIKING_RESUME_ARCHIVE_INJECT=0` to disable the archive half without disabling profile injection.
+On `resume`, the script skips commit/sweep. It still injects the profile block. If local state has no live `ovSessionId`, it also reads `/api/v1/sessions/{ov-session-id}/context` and combines the latest committed archive overview into the same `SessionStart` output. The archive block includes a `viking://~/sessions/{ov-session-id}/history/` URI and tells the model to use the OpenViking MCP `read`/`search` tools for exact prior commands, file paths, tool outputs, or messages. Set `OPENVIKING_RESUME_ARCHIVE_INJECT=0` to disable the archive half without disabling profile injection.
 
 ### Auto-recall (every UserPromptSubmit)
 
 `auto-recall.mjs` adapts the Codex prompt/session payload and calls the shared
 `buildRecallBlockDetailed()` pipeline. The shared core owns context search,
 legacy `/recall`, raw-search fallback, ranking, injection budgets, digest selection,
-compression caching and URI repair. Codex owns the `cx-<safe-session-id>` mapping,
+compression caching and URI repair. Codex owns the native-to-OV session mapping,
 model/profile selection, CLI execution and the hook deadline.
 
 ```json
@@ -362,7 +362,7 @@ Nothing is denied: Codex edits files through `apply_patch`, whose input is a pat
 
 ### Stop (turn end → `add_message`, threshold commit)
 
-`auto-capture.mjs` derives one long-lived OpenViking session id per Codex `session_id` as `cx-<safe-session-id>` and incrementally appends every new user/assistant turn via `/api/v1/sessions/{id}/messages`. The `/messages` endpoint auto-creates the session on first append. Per-codex-session state lives at `~/.openviking/codex-plugin-state/<safe-session-id>.json`. Capture sanitizes obvious hook noise, metadata wrappers, and plugin-injected `<openviking-context ...>` blocks before append. Tool calls and results become dedicated `tool` parts and `tool_output` is reported verbatim — the server externalizes anything larger than `tool_output_externalization.threshold_chars` (default `20000`) and leaves a synopsis stub plus `tool_output_ref`, so the original stays readable via `/api/v1/sessions/{id}/tool-results`. `OPENVIKING_CAPTURE_TOOL_MAX_CHARS` (default `1000000`) is only a guard against pathological payloads. Configured `captureFilters` rules run last, just before the payload is sent — see [Input filters](#input-filters).
+`auto-capture.mjs` derives one long-lived OpenViking session id per Codex `session_id` using the persisted mapping, or UUIDv7 creation time for a new session and incrementally appends every new user/assistant turn via `/api/v1/sessions/{id}/messages`. The `/messages` endpoint auto-creates the session on first append. Per-codex-session state lives at `~/.openviking/codex-plugin-state/<safe-session-id>.json`. Capture sanitizes obvious hook noise, metadata wrappers, and plugin-injected `<openviking-context ...>` blocks before append. Tool calls and results become dedicated `tool` parts and `tool_output` is reported verbatim — the server externalizes anything larger than `tool_output_externalization.threshold_chars` (default `20000`) and leaves a synopsis stub plus `tool_output_ref`, so the original stays readable via `/api/v1/sessions/{id}/tool-results`. `OPENVIKING_CAPTURE_TOOL_MAX_CHARS` (default `1000000`) is only a guard against pathological payloads. Configured `captureFilters` rules run last, just before the payload is sent — see [Input filters](#input-filters).
 
 After a successful append, Stop reads the session meta and commits when `pending_tokens >= OPENVIKING_COMMIT_TOKEN_THRESHOLD` (default `20000`). Threshold commits pass `keep_recent_count=OPENVIKING_COMMIT_KEEP_RECENT_COUNT` (default `10`) so the newest turns remain live for continuity while older context is archived and extracted. `PreCompact` still commits everything before compaction.
 
@@ -372,7 +372,7 @@ After a successful append, Stop reads the session meta and commits when `pending
 
 1. Catch-up append for any turns Stop hasn't captured yet (race-safe via `capturedTurnCount`)
 2. Commit the long-lived OV session so the extractor runs against the full pre-compact transcript
-3. Reset `ovSessionId` to `null` so the next `Stop` re-derives the same `cx-<safe-session-id>` and appends the post-compact half under that deterministic OV session id
+3. Reset `ovSessionId` to `null` so the next `Stop` derives the current-format ID and appends the post-compact half under that deterministic OV session id
 
 ### Session end
 
@@ -519,3 +519,9 @@ the hook preserves the existing raw-context / legacy retrieval fallback.
 `auto` uses `rewrite: "auto"` when the Codex executable or its compressor profile
 is unavailable (including a cached runtime failure). A first local failure still
 uses the deterministic fallback for that turn; later turns use the server.
+
+## Session IDs
+
+New sessions use `<harness>-<YYYYMMDD>-<HHMMSS>-<tail8>`, with UTC creation time and the last eight alphanumeric characters of the native ID in lowercase. The rollout epoch is **2026-09-22 00:00 UTC**. Sessions older than the epoch, and IDs whose creation time cannot be decoded, retain their legacy IDs. No existing server session is renamed.
+
+Codex decodes UUIDv7 creation time. Recall and capture both honor a live persisted `ovSessionId`, including an older format. Only a successful lifecycle commit releases it; the next turn may then use the readable format. `lastCommittedOvSessionId` preserves the archive lookup on resume across that transition. Times refer to the original session creation, not resume time; rollout filenames use local time and can show a different calendar date. Downgrading during an active readable-ID session can leave it uncommitted.

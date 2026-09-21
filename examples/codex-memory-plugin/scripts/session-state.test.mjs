@@ -118,3 +118,21 @@ test("markEnded / readEndedAt still honour a pre-0.8.1 bare marker", async () =>
 test.after(async () => {
   await rm(STATE_DIR, { recursive: true, force: true });
 });
+
+test("readable IDs preserve a live mapping until a successful commit releases it", async () => {
+  const { deriveOvSessionId, loadState, resolveOvSessionId, saveState } = await import("./session-state.mjs");
+  const ms = Date.parse("2026-09-22T10:40:42Z");
+  const hex = ms.toString(16).padStart(12, "0");
+  const id = hex.slice(0, 8) + "-" + hex.slice(8) + "-7000-8000-00009e3a1c07";
+  const readable = "codex-20260922-104042-9e3a1c07";
+  assert.equal(deriveOvSessionId(id), readable);
+  const state = await loadState(id);
+  state.ovSessionId = "cx-" + id;
+  await saveState(state);
+  assert.equal(resolveOvSessionId(await loadState(id)), "cx-" + id);
+  state.ovSessionId = null;
+  await saveState(state);
+  assert.equal(resolveOvSessionId(await loadState(id)), readable);
+  assert.equal(deriveOvSessionId("01a0a402-2f88-7848-83cc-52e892de7000"), "cx-01a0a402-2f88-7848-83cc-52e892de7000");
+  assert.equal(deriveOvSessionId("unknown"), "cx-unknown");
+});

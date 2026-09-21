@@ -413,3 +413,27 @@ test("explicit commit writes the response trace_id to the plugin log", async () 
     await new Promise((resolve) => server.close(resolve))
   }
 })
+
+test("subagents inherit the parent's persisted OV identity", async (t) => {
+  await withCaptureServer(async ({ endpoint }) => {
+    await withTempDir("ov-oc-identity-", async (dir) => {
+      const parent = "ses_fdca75185ffeEo6lIymwg7XIki"
+      const savedId = "oc-existing-parent"
+      fs.writeFileSync(join(dir, "openviking-session-state.json"), JSON.stringify({
+        version: 2, sessions: { [parent]: { ovSessionId: savedId, messages: [] } },
+      }))
+      const manager = createMemorySessionManager({ config: baseConfig(endpoint), pluginRoot: dir })
+      await manager.init()
+      await manager.handleEvent({ type: "session.created", properties: { info: { id: "child", parentID: parent } } })
+      assert.equal(manager.getMappedSessionId("child"), savedId + "__subagent-child")
+      assert.equal(manager.getMappedSessionId(parent), savedId)
+      const ms = Date.parse("2026-09-22T10:40:42Z")
+      t.mock.method(Date, "now", () => ms)
+      const encoded = ((BigInt(ms) * 4096n) ^ 0xffffffffffffn) & 0xffffffffffffn
+      const native = "ses_" + encoded.toString(16).padStart(12, "0") + "AbCdEfGhIjKlMn"
+      await manager.handleEvent({ type: "session.created", properties: { info: { id: native } } })
+      assert.match(manager.getMappedSessionId(native), /^opencode-\d{8}-\d{6}-ghijklmn$/)
+      await manager.flushAll({ commit: false })
+    })
+  })
+})
