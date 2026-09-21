@@ -462,6 +462,16 @@ def _hit_uri(ctx_type: str, uri: str) -> str:
     return uri
 
 
+def _package_abstract(uri: str, abstract: str) -> str:
+    """The skill's own frontmatter, or "" when the package has no usable abstract."""
+    text = (abstract or "").strip()
+    placeholders = (
+        "[.abstract.md is not ready]",
+        f"# {uri} [Directory abstract is not ready]",
+    )
+    return "" if text in placeholders else text
+
+
 async def _describe_skills_by_package(items: List[Dict[str, Any]], *, service, ctx) -> None:
     """Describe a skill by its own abstract, not by whichever file inside it matched."""
     import asyncio
@@ -475,11 +485,14 @@ async def _describe_skills_by_package(items: List[Dict[str, Any]], *, service, c
             continue
         pending.setdefault(root, []).append(item)
 
+    semaphore = asyncio.Semaphore(10)
+
     async def _describe(root: str) -> None:
-        try:
-            abstract = (await service.fs.abstract(root, ctx=ctx) or "").strip()
-        except Exception:
-            return
+        async with semaphore:
+            try:
+                abstract = _package_abstract(root, await service.fs.abstract(root, ctx=ctx))
+            except Exception:
+                return
         if abstract:
             for item in pending[root]:
                 item["abstract"] = abstract

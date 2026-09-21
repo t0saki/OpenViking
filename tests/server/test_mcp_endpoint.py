@@ -547,6 +547,28 @@ async def test_find_tool_describes_a_package_file_hit_with_the_skill_abstract(se
     assert "AcroForm" not in result
 
 
+async def test_find_tool_keeps_the_file_abstract_when_the_package_has_none(service, monkeypatch):
+    hit = SimpleNamespace(
+        uri="viking://agent/skills/pdf-forms/scripts/fill.py",
+        abstract="Iterate the AcroForm fields and write each value",
+        score=0.52,
+    )
+
+    async def fake_find_skills(**kwargs):
+        return SimpleNamespace(memories=[], resources=[], skills=[hit])
+
+    async def fake_abstract(uri, ctx):
+        return f"# {uri} [Directory abstract is not ready]"
+
+    monkeypatch.setattr(service.search, "find_skills", fake_find_skills)
+    monkeypatch.setattr(service.fs, "abstract", fake_abstract)
+
+    result = await mcp_endpoint.find(query="fill a pdf", context_type="skill")
+
+    assert "is not ready" not in result
+    assert "Iterate the AcroForm fields" in result
+
+
 async def test_find_tool_keeps_the_package_abstract_of_a_sidecar_hit(service, monkeypatch):
     hit = SimpleNamespace(
         uri="viking://agent/skills/pdf-forms/.abstract.md",
