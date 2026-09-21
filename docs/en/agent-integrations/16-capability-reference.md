@@ -164,7 +164,7 @@ Core modules at a glance (detailed further in the per-dimension sections):
 
 | Harness | Integration Form | Install Channel | Session ID Prefix/Format | Config Source | Standalone Setup Wizard |
 |---|---|---|---|---|---|
-| claude-code | CC plugin (marketplace): 9 hooks + MCP proxy + slash + statusline + skill | One-line `install.sh --harness claude` (supports both the modern plugin path and the legacy `claude mcp add` compatibility path) / manual marketplace / TOS mirror | `cc-<CC session_id verbatim>`; subagents use `…__subagent-<agent_id>` | env + ovcli.conf `plugin.claude_code` + ov.conf `claude_code` | ✅ `scripts/setup.mjs` |
+| claude-code | CC plugin (marketplace): 9 hooks + MCP proxy + slash + statusline + skill | One-line `install.sh --harness claude` (supports both the modern plugin path and the legacy `claude mcp add` compatibility path) / manual marketplace / TOS mirror | `claude-<date>-<time>-<tail8>`; subagents use `…__subagent-<agent_id>` | env + ovcli.conf `plugin.claude_code` + ov.conf `claude_code` | ✅ `scripts/setup.mjs` |
 | codex | Codex plugin (marketplace): 6 hooks + MCP proxy + skill | One-line `--harness codex` / `codex plugin marketplace add` (the TOS channel uses dumb-HTTP git to ensure remote updates continue working) | `codex-<UTC date>-<UTC time>-<tail8>`; persisted live mappings win | env + ovcli.conf `plugin.codex` + ov.conf `codex` | ✅ |
 | trae-cli | **Installed as a codex plugin alias** (TraeCode CLI 2.0, 2.0 only; a Codex-family CLI: uses the `traecli` binary and `~/.trae/traecli.toml` config; its capability surface is identical to codex) | One-line `--harness trae-cli` (reuses the codex install flow; marketplace commands run against the targeted binary, e.g., `traecli plugin marketplace add`) | Same derivation rule as codex | Same as codex (env + ovcli.conf `plugin.codex` + ov.conf) | ✅ (same as codex) |
 | cursor | Config-driven (writes `~/.cursor/hooks.json`+`mcp.json`) + rule + skill | One-line `--harness cursor` | `cu-<conversation_id>` | env + ovcli.conf `plugin.cursor` | ❌ (shares the installer TUI) |
@@ -180,6 +180,8 @@ Core modules at a glance (detailed further in the per-dimension sections):
 Readable session IDs use `<harness>-<YYYYMMDD>-<HHMMSS>-<tail8>` in UTC. The tail is the last eight alphanumeric characters of the native ID, lowercased. Codex and both Pi extensions decode UUIDv7; OpenCode decodes its inverted timestamp; dsh uses a finite numeric `session.header.createdAt`. The fixed epoch is **2026-09-22 00:00 UTC**: older sessions and undecodable IDs keep the legacy format. OpenCode preserves existing mappings, including for subagent parents. Codex recall and capture preserve a live mapping until commit, and retain `lastCommittedOvSessionId` for resume archive lookup.
 
 New and legacy formats coexist; server sessions are never renamed. Pi/dsh sessions created after the epoch but before upgrading can change IDs during upgrade (Pi experimental discards saved windows belonging to the previous ID). Downgrading an active session can leave the new ID uncommitted. Codex/Pi timestamps refer to original creation, including on resume, while rollout filenames can use local time. OpenCode selects the nearest 36-bit timestamp period to the current clock, so reliable decoding assumes the session is within about one year of that clock.
+
+Claude Code pins `claude-<date>-<time>-<tail8>` under `~/.openviking/state/ov-session-<native>.json` before using it. Startup/clear can mint locally; resume/compact and prompt hooks require a definite legacy-session 404. Existing/offline sessions and write hooks without a pin keep `cc-<native>`. Unreadable or unpublishable pins skip writes without moving cursors. Pins have no age-based cleanup; deleting them or changing OPENVIKING_HOME can split an active session. Subagents inherit the pinned parent ID.
 
 ### 3.1.2 Unified installer
 
@@ -279,7 +281,7 @@ On the server side, `session_id` handling diverges into two distinct execution p
 
 | harness | trigger | query construction | session_id | server path | injection format / location | digest (client)* |
 |---|---|---|---|---|---|---|
-| claude-code | every `UserPromptSubmit` | prompt verbatim, trimmed | ✅ `cc-` | A (context face) | `<openviking-context>` → `hookSpecificOutput.additionalContext` | ✅ local/server (default auto, [§3.2.5](#_3-2-5-recall-digest)) |
+| claude-code | every `UserPromptSubmit` | prompt verbatim, trimmed | ✅ pinned OV ID | A (context face) | `<openviking-context>` → `hookSpecificOutput.additionalContext` | ✅ local/server (default auto, [§3.2.5](#_3-2-5-recall-digest)) |
 | codex / trae-cli | every `UserPromptSubmit` (hard 120s deadline for the whole hook) | prompt verbatim | ✅ resolved OV ID (persisted mapping first) | A; second-level degradation searchScope lands in B | `<openviking-context source="auto-recall" format="digest">` | ✅ local `codex exec` ([§3.2.5](#_3-2-5-recall-digest)) |
 | cursor | `beforeSubmitPrompt` | prompt verbatim; deduped by event id and a 500ms window, reusing the cached block for the same promptHash | ✅ `cu-` | A | `additional_context` | ❌ |
 | trae / trae-cn | `UserPromptSubmit` | prompt with prior injection blocks stripped (reads `input.prompt` only) | ✅ `tr-`/`trcn-` | A | `additionalContext` | ❌ |
@@ -410,7 +412,7 @@ Legend: **C** = commits; **C\*** = commits, with a precondition (see notes); **�
 
 | harness | handling |
 |---|---|
-| claude-code | Offers the most complete isolation: SubagentStart derives a separate `cc-<sid>__subagent-<agent_id>` session, and SubagentStop reads the subagent transcript, pushes it, commits unconditionally, and clears the state |
+| claude-code | Offers the most complete isolation: SubagentStart derives a separate `<parent OV ID>__subagent-<agent_id>` session, and SubagentStop reads the subagent transcript, pushes it, commits unconditionally, and clears the state |
 | codex / trae-cli | No separate session: Subagent output (`agent_message` / `sub_agent_activity`) is folded into the main session's assistant/tool components |
 | opencode | `<parent OV ID>__subagent-<child>` hangs under the parent namespace; the session-start injection skips subagents (though recall does not); ID derivation is sensitive to event order — when `chat.message` arrives before `session.created`, the `__subagent-` suffix is lost |
 | dsh | Each subagent operates as a separate `dsh-<id>` session, preserving no parent-child relationship; N subagents = N profile injections + N separate sessions |

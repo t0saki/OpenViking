@@ -24,6 +24,7 @@ and `OPENVIKING_PENDING_DIR` relocate individual pieces.
 | `~/.openviking/last_inject.md` | Full text of the last SessionStart injection. |
 | `~/.openviking/logs/cc-hooks.log` | JSONL hook + proxy log; written only when `OPENVIKING_DEBUG=1` or `debug: true`. |
 | `~/.openviking/pending/` | Offline write queue (retryable failures only); drained at SessionStart after `/health` passes. |
+| `~/.openviking/state/ov-session-<native>.json` | Immutable session identity pin (0600); use `ovSessionId` for server inspection. Do not delete it to troubleshoot an active session. |
 | `$TMPDIR/openviking-cc-capture-state/<session>.json` | Capture cursor (`capturedTurnCount`). macOS purges `$TMPDIR`, which forces a re-push. |
 
 ## Config resolution
@@ -136,7 +137,7 @@ Hook log (`cc-hooks.log`) stages worth grepping: `health_check`
 
 `last-capture.json`: `turns_captured`, `turns_queued` (retryable, will replay),
 `turns_failed` (non-retryable, dropped), `pending_tokens` / `commit_threshold`,
-`commit_count`, `ov_session_id` (`cc-<claude session id>`), `ts`.
+`commit_count`, `ov_session_id` (the exact pinned readable or legacy ID), `ts`.
 
 Statusline: `OV ✓` = `/health` 200 within 1s (says nothing about auth);
 `OV ⚠ slow` = probe timed out; `OV ✗ offline` = refused/DNS/TLS/non-2xx;

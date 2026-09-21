@@ -405,7 +405,7 @@ Claude Code 自带 `MEMORY.md` 文件系统，本插件**与之互补**：
 
 没有 TypeScript 编译步骤，也没有运行时 npm 引导。Hook 都是直接走 HTTP 调 OpenViking 的 `.mjs` 文件；MCP 使用 `servers/mcp-proxy.mjs` 作为零依赖 stdio 桥接，转发到 OpenViking 服务器自身的 `/mcp` endpoint。
 
-首次接触时创建一个持久化的 OpenViking session，整个 Claude Code 会话期间复用。OV session ID 是 `cc-<cc_session_id>`（CC session_id 原样保留，不做哈希），所以 resume / compact / 多 hook 事件都打到同一个 session。归档与记忆抽取由客户端触发：`Stop` hook 在服务端报告的 pending tokens 超过 `commitTokenThreshold`（默认 20000）时 commit，`PreCompact` / `SessionEnd` / `SubagentStop` 则无条件 commit。
+首次接触时创建一个持久化的 OpenViking session，整个 Claude Code 会话期间复用。新 ID 为 `claude-<YYYYMMDD>-<HHMMSS>-<tail8>`，使用 UTC 时间和原生 ID 最后八个字母数字字符（小写）。所有 hook 读取同一个不可变 pin：`~/.openviking/state/ov-session-<safe-native-id>.json`。归档与记忆抽取由客户端触发：`Stop` hook 在服务端报告的 pending tokens 超过 `commitTokenThreshold`（默认 20000）时 commit，`PreCompact` / `SessionEnd` / `SubagentStop` 则无条件 commit。
 
 ### 各 hook 职责
 
@@ -477,3 +477,9 @@ claude-code-memory-plugin/
 ## License
 
 Apache-2.0 — 同 [OpenViking](https://github.com/volcengine/OpenViking)。
+
+### 会话 ID 持久化
+
+只有 SessionStart 和 UserPromptSubmit 可以生成新格式。startup/clear 会在健康检查和注入判断前写入本地 pin；resume/compact 和 prompt hook 只有确认旧 `cc-<native-id>` 返回 404 时才生成新格式。服务端已有会话、响应不明确或离线时固定旧 ID。写路径 hook 不生成新格式：没有 pin 就先把旧 ID 写入 pin。子会话在父会话 pin 中的 ID 后追加 `__subagent-<agent-id>`。
+
+pin 权限为 0600，完整写入临时文件后用硬链接原子发布，并发时读取已成功发布的 pin。pin 损坏、不可读或无法发布时，本次 OV 写入跳过，捕获游标不动；召回仍可不带 session ID 搜索。pin 不按时间清理。请保留状态目录并保持 OPENVIKING_HOME 不变，删除或移动它会让正在使用新格式的会话分裂。新旧格式长期并存，活动会话中途降级可能导致新格式会话未被 commit。

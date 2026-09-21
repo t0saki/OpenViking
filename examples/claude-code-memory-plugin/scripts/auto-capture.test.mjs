@@ -402,3 +402,29 @@ test("capture filters rewrite and drop turns at the send site", async () => {
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("an unreadable session pin prevents capture and leaves the cursor untouched", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ov-cc-capture-pin-"));
+  const sessionId = "unreadable-pin-session";
+  const transcriptPath = join(root, "transcript.jsonl");
+  const cursorDir = join(root, "openviking-cc-capture-state");
+  const cursorFile = join(cursorDir, sessionId + ".json");
+  try {
+    await writeTranscript(transcriptPath);
+    await mkdir(cursorDir, { recursive: true });
+    await writeFile(cursorFile, JSON.stringify({ capturedTurnCount: 1 }));
+    const before = await readFile(cursorFile, "utf8");
+    await mkdir(join(root, ".openviking", "state", "ov-session-" + sessionId + ".json"), { recursive: true });
+    let requests = 0;
+    await withMockOpenViking(async (_req, res) => {
+      requests++;
+      writeJson(res, { status: "ok" });
+    }, async (baseUrl) => {
+      await runAutoCapture({ session_id: sessionId, transcript_path: transcriptPath, cwd: root }, hookEnv(root, baseUrl));
+    });
+    assert.equal(requests, 0);
+    assert.equal(await readFile(cursorFile, "utf8"), before);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

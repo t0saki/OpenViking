@@ -27,7 +27,7 @@ import { dirname, join } from "node:path";
 import { isPluginEnabled, loadConfig } from "./config.mjs";
 import { createLogger } from "./debug-log.mjs";
 import {
-  deriveOvSessionId,
+  resolveOvSessionId,
   getSessionContext,
   makeFetchJSON,
 } from "./lib/ov-session.mjs";
@@ -93,6 +93,7 @@ runHookStage({
   onSkip: (reason) => log("skip", { reason }),
 }, async ({ cfg, input, cwd, sessionId }) => {
   const source = input.source || "startup";
+  const ovSessionId = await resolveOvSessionId(sessionId, { mint: true, source, fetchJSON });
   const effectivePeer = getEffectivePeerId(cfg, { sessionId, cwd });
   log("start", { source, sessionId, peerSource: effectivePeer.source });
 
@@ -134,9 +135,7 @@ runHookStage({
 
   // 2. Archive injection — resume/compact only, requires session_id.
   let archiveSection = null;
-  let ovSessionId = null;
-  if ((source === "resume" || source === "compact") && sessionId) {
-    ovSessionId = deriveOvSessionId(sessionId);
+  if ((source === "resume" || source === "compact") && ovSessionId) {
     const sessionCtx = await getSessionContext(fetchJSON, ovSessionId, cfg.resumeContextBudget);
     archiveSection = formatArchiveSection(sessionCtx);
   }

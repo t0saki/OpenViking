@@ -13,7 +13,7 @@ import { isPluginEnabled, loadConfig } from "./config.mjs";
 import { createLogger } from "./debug-log.mjs";
 import {
   commitSession,
-  deriveOvSessionId,
+  resolveOvSessionId,
   enqueuePendingDirectly,
   isRetryableFailure,
   makeFetchJSON,
@@ -58,7 +58,11 @@ async function main() {
       return;
     }
 
-    const ovSessionId = deriveOvSessionId(sessionId);
+    const ovSessionId = await resolveOvSessionId(sessionId);
+    if (!ovSessionId) {
+      log("skip", { reason: "session_pin_unavailable" });
+      return;
+    }
     const health = await fetchJSON("/health");
     if (!health.ok && isRetryableFailure(health)) {
       const queued = await enqueuePendingDirectly("commitSession", ovSessionId, {});

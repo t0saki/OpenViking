@@ -22,7 +22,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { isPluginEnabled, loadConfig } from "./config.mjs";
 import { createLogger } from "./debug-log.mjs";
-import { deriveOvSessionId } from "./lib/ov-session.mjs";
+import { resolveSubagentOvSessionId } from "./lib/ov-session.mjs";
 import { getEffectivePeerId } from "./lib/workspace-peer.mjs";
 import { runHookStage } from "./shared/agent-hook-runtime.mjs";
 
@@ -65,7 +65,11 @@ runHookStage({
 
   // Isolated ovSessionId: append Claude's subagent id so the subagent has its
   // own OV session distinct from the parent.
-  const ovSessionId = deriveOvSessionId(sessionId, `subagent:${subagentId}`);
+  const ovSessionId = await resolveSubagentOvSessionId(sessionId, subagentId);
+  if (!ovSessionId) {
+    log("skip", { reason: "session_pin_unavailable" });
+    return;
+  }
 
   try {
     await mkdir(STATE_DIR, { recursive: true });

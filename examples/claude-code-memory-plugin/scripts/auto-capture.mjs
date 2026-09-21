@@ -27,7 +27,7 @@ import { createLogger } from "./debug-log.mjs";
 import { extractCaptureTurns, parseTranscript, sanitizeCapturedText } from "./cc-transcript.mjs";
 import {
   commitSession,
-  deriveOvSessionId,
+  resolveOvSessionId,
   enqueuePendingDirectly,
   getSession,
   isRetryableFailure,
@@ -232,7 +232,7 @@ async function main({ cfg, input, cwd }) {
   const transcriptPath = input.transcript_path;
   const sessionId = input.session_id || "unknown";
 
-  const ovSessionId = sessionId !== "unknown" ? deriveOvSessionId(sessionId) : null;
+  const ovSessionId = sessionId !== "unknown" ? await resolveOvSessionId(sessionId) : null;
   const effectivePeer = getEffectivePeerId(cfg, { sessionId, cwd });
   log("start", { sessionId, ovSessionId, transcriptPath, peerSource: effectivePeer.source });
 

@@ -11,7 +11,7 @@
 
 import { isPluginEnabled, loadConfig } from "./config.mjs";
 import { createLogger } from "./debug-log.mjs";
-import { deriveOvSessionId, makeFetchJSON } from "./lib/ov-session.mjs";
+import { resolveOvSessionId, makeFetchJSON } from "./lib/ov-session.mjs";
 import { writeJsonState } from "./lib/state.mjs";
 import { createHostCompressor } from "./lib/host-compressor.mjs";
 import { getEffectivePeerId } from "./lib/workspace-peer.mjs";
@@ -112,6 +112,8 @@ runHookStage({
     return;
   }
 
+  const ovSessionId = sessionId && sessionId !== "unknown" ? await resolveOvSessionId(sessionId, { mint: true, fetchJSON }) : "";
+
   const health = await fetchJSON("/health");
   if (!health.ok) {
     logError("health_check", "server unreachable");
@@ -121,7 +123,6 @@ runHookStage({
 
   // The OV session id is what unlocks server-side query expansion and the
   // cross-turn dedup ledger; it must match the id auto-capture writes to.
-  const ovSessionId = sessionId && sessionId !== "unknown" ? deriveOvSessionId(sessionId) : "";
   const recalled = await recall(cfg, userPrompt, effectivePeer, ovSessionId);
   if (!recalled.block) {
     log("skip", { reason: recalled.stage });

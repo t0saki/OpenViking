@@ -455,7 +455,7 @@ Claude Code has a built-in `MEMORY.md` file system. This plugin **complements** 
 
 There is no TypeScript build step and no runtime npm bootstrap. Hooks are plain `.mjs` files that talk to OpenViking over HTTP; MCP uses `servers/mcp-proxy.mjs` as a zero-dependency stdio bridge to the OpenViking server's `/mcp` endpoint.
 
-A persistent OpenViking session is created on first contact and reused for the entire Claude Code session. The OV session ID is `cc-<cc_session_id>` (the CC session_id verbatim, no hashing), so resume / compact / multi-hook events all target the same session. Archival + memory extraction is triggered client-side: the `Stop` hook commits when server-reported pending tokens cross `commitTokenThreshold` (default 20000), and `PreCompact` / `SessionEnd` / `SubagentStop` commit unconditionally.
+A persistent OpenViking session is created on first contact and reused for the entire Claude Code session. New IDs use `claude-<YYYYMMDD>-<HHMMSS>-<tail8>` (UTC, native ID's last eight alphanumeric characters in lowercase). Every hook reads the same immutable `~/.openviking/state/ov-session-<safe-native-id>.json` pin. Archival + memory extraction is triggered client-side: the `Stop` hook commits when server-reported pending tokens cross `commitTokenThreshold` (default 20000), and `PreCompact` / `SessionEnd` / `SubagentStop` commit unconditionally.
 
 ### Hook responsibilities
 
@@ -527,3 +527,9 @@ claude-code-memory-plugin/
 ## License
 
 Apache-2.0 — same as [OpenViking](https://github.com/volcengine/OpenViking).
+
+### Session identity persistence
+
+Only SessionStart and UserPromptSubmit may mint a readable ID. Startup/clear pins locally before health or injection checks; resume/compact and prompt hooks mint only after a definite 404 for the legacy `cc-<native-id>` session. Existing sessions, ambiguous responses and outages pin the legacy ID. Write hooks never mint: without a pin they publish the legacy ID first. Subagents append `__subagent-<agent-id>` to the pinned parent ID.
+
+Pins are private (0600) and published atomically by linking a complete temporary file; a concurrent winner is reused. A corrupt/unreadable pin, or failure to publish any pin, skips the current OV write without advancing the capture cursor. Recall can still search without a session ID when the pin is unreadable. Pins are never garbage-collected by age. Keep this state directory and OPENVIKING_HOME stable: deleting or moving it can split an active readable-ID session. New and legacy IDs coexist; downgrading during an active readable-ID session can leave it uncommitted.

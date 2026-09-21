@@ -24,7 +24,7 @@ import { createLogger } from "./debug-log.mjs";
 import { extractCaptureTurns, parseTranscript } from "./cc-transcript.mjs";
 import {
   commitSession,
-  deriveOvSessionId,
+  resolveSubagentOvSessionId,
   enqueuePendingDirectly,
   isRetryableFailure,
   makeFetchJSON,
@@ -159,7 +159,11 @@ async function main() {
     // Prefer state from SubagentStart (may carry ovSessionId from config snapshot);
     // fall back to live derivation if state file is missing.
     const state = await loadState(subagentId);
-    const ovSessionId = state?.ovSessionId || deriveOvSessionId(sessionId, `subagent:${subagentId}`);
+    const ovSessionId = state?.ovSessionId || await resolveSubagentOvSessionId(sessionId, subagentId);
+    if (!ovSessionId) {
+      log("skip", { reason: "session_pin_unavailable" });
+      return;
+    }
 
     let transcript;
     try {

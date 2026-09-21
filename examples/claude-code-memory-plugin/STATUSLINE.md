@@ -143,7 +143,7 @@ For an assistant adding a segment that consumes existing state. All files live u
   "committed": false,                // true on the turn a commit happened
   "commit_count": 2,                 // total archives in this session
   "total_message_count": 412,
-  "ov_session_id": "cc-62e5af67...",
+  "ov_session_id": "claude-20260922-104042-9e3a1c07",
   "cc_session_id": "ff875009-...",   // statusline filters by exact match
   "ts": 1778139288759
 }
@@ -155,7 +155,7 @@ For an assistant adding a segment that consumes existing state. All files live u
   "source": "resume" | "compact",
   "had_context": true,               // false when OV had no archive to inject
   "cc_session_id": "...",
-  "ov_session_id": "cc-...",
+  "ov_session_id": "claude-20260922-104042-9e3a1c07",
   "ts": 1778139288759
 }
 ```
@@ -176,3 +176,5 @@ If a request can't be served by an env var or a small local edit (a custom backe
 3. Suggest a feature branch and a quick eyeball test: `node "$PLUGIN/scripts/statusline.mjs" <<<'{"session_id":"...","cwd":"/tmp"}'`.
 
 Keep changes to `$PLUGIN/scripts/statusline.mjs` shallow; the value of this script is that it stays readable in one screen.
+
+The `ov_session_id` comes from the persistent session pin; both readable `claude-…` and legacy `cc-…` values are valid. Statusline matching still uses the native `cc_session_id`.

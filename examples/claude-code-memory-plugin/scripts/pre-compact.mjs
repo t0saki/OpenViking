@@ -12,7 +12,7 @@
 
 import { isPluginEnabled, loadConfig } from "./config.mjs";
 import { createLogger } from "./debug-log.mjs";
-import { commitSession, deriveOvSessionId, makeFetchJSON } from "./lib/ov-session.mjs";
+import { commitSession, resolveOvSessionId, makeFetchJSON } from "./lib/ov-session.mjs";
 import { runHookStage } from "./shared/agent-hook-runtime.mjs";
 
 if (!isPluginEnabled()) {
@@ -41,7 +41,11 @@ runHookStage({
     return;
   }
 
-  const ovSessionId = deriveOvSessionId(sessionId);
+  const ovSessionId = await resolveOvSessionId(sessionId);
+  if (!ovSessionId) {
+    log("skip", { reason: "session_pin_unavailable" });
+    return;
+  }
   const health = await fetchJSON("/health");
   if (!health.ok) {
     logError("health_check", "server unreachable");
