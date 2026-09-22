@@ -77,7 +77,6 @@ const agents = [
             <a class="home-button primary" :href="link('getting-started/02-quickstart')">{{ t('Get started', '快速开始') }} <span aria-hidden="true">↗</span></a>
             <a class="home-button secondary" href="#explore">{{ t('Explore the docs', '浏览文档') }} <span aria-hidden="true">↓</span></a>
           </div>
-          <p class="hero-footnote">{{ t('Context can be as clear as your files.', '上下文，也可以像文件一样清楚。') }}</p>
         </div>
         <div class="context-workspace">
           <div class="workspace-top"><span>OpenViking</span><span class="workspace-caption">{{ t('CONTEXT MODEL', '上下文结构示意') }}</span></div>
@@ -113,7 +112,7 @@ const agents = [
       </div>
 
       <section class="concept-section" aria-labelledby="concept-title">
-        <div class="section-intro"><p class="eyebrow">02 — {{ t('THE MENTAL MODEL', '理解工作方式') }}</p><h2 id="concept-title">{{ t('A filesystem you can reason about.', '上下文，也可以像文件一样清楚。') }}</h2><p>{{ t('Browse the structure. Read the summary. Load the detail when you need it.', '先看目录，再读摘要，需要时才加载全文。') }}</p></div>
+        <div class="section-intro"><p class="eyebrow">02 — {{ t('THE MENTAL MODEL', '理解工作方式') }}</p><h2 id="concept-title">{{ t('A filesystem you can reason about.', '上下文，像文件一样清楚。') }}</h2><p>{{ t('Browse the structure. Read the summary. Load the detail when you need it.', '先看目录，再读摘要，需要时才加载全文。') }}</p></div>
         <div class="layer-grid">
           <a :href="link('concepts/03-context-layers')" class="layer-item"><div class="layer-art abstract" aria-hidden="true"><span /><span /></div><div class="layer-heading"><code>L0</code><h3>{{ t('The abstract', '摘要') }}</h3></div><p>{{ t('A short description to decide whether a directory is relevant.', '用一段简述判断目录是否相关。') }}</p><span class="layer-file">.abstract.md <span>↗</span></span></a>
           <a :href="link('concepts/03-context-layers')" class="layer-item"><div class="layer-art overview" aria-hidden="true"><span /><span /><span /><span /></div><div class="layer-heading"><code>L1</code><h3>{{ t('The overview', '概览') }}</h3></div><p>{{ t('Structure and key points to plan what to read next.', '了解结构和要点，决定接下来读什么。') }}</p><span class="layer-file">.overview.md <span>↗</span></span></a>
