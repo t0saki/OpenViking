@@ -14,7 +14,7 @@ import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isCaptureEnabled } from "./shared/capture-utils.mjs";
 import { createLogger } from "./shared/debug-log.mjs";
-import { EXTENSION_VERSION, loadConfig, type OVConfig } from "./config.js";
+import { EXTENSION_VERSION, loadConfig, buildBridgeProxyConfig, type OVConfig } from "./config.js";
 import { OVClient } from "./client.js";
 import { RecallManager } from "./recall.js";
 import { RecallLedger } from "./lib/recall-ledger.mjs";
@@ -23,7 +23,6 @@ import { buildProfileBlock } from "./shared/profile-inject.mjs";
 import { isBypassed } from "./shared/session-model.mjs";
 import { guardVikingUriToolCall, noticeVikingUriToolResult } from "./lib/uri-guard-adapter.mjs";
 import { createMcpBridge, DEFAULT_HANDSHAKE_BUDGET_MS } from "./lib/mcp-bridge.mjs";
-import { buildBridgeProxyConfig } from "./lib/mcp-bridge-config.mjs";
 import { registerMcpTools } from "./tools.js";
 import { createTakeoverManager } from "./takeover.js";
 
@@ -61,21 +60,10 @@ export default async function (pi: ExtensionAPI) {
     log: (message: string) => logger.log("takeover", message),
   });
 
-  // The tool surface. One bridge per session; `bridge.state.tools` is the
-  // server's own `tools/list`, which is why this extension no longer keeps a
-  // tool catalogue of its own.
-  //
-  // `readConfig` re-runs `loadConfig` rather than closing over the snapshot
-  // above: the shared proxy core re-invokes it after a 401/403 so a rotated
-  // credential is picked up mid-session, and a snapshot would hand back the
-  // rejected key forever. Repeating the read is cheap and side-effect free —
-  // filesystem work only, no `git` subprocess (the workspace identity behind
-  // the peer is derived from files and cached on disk) — and the core asks for
-  // it twice in a healthy session: once at construction, once per reload.
+  // Re-read credentials before connecting or invoking a tool.
   const bridge = mcpEnabled
     ? createMcpBridge({
       readConfig: () => buildBridgeProxyConfig(loadConfig(cwd)),
-      loggerFactory: createLogger,
       // No "memory" in the name: every plugin identity is moving to plain
       // `openviking`, and a new identifier starts out on the new spelling.
       clientInfo: { name: "openviking-pi", version: EXTENSION_VERSION },
@@ -88,6 +76,9 @@ export default async function (pi: ExtensionAPI) {
   let profileBlock = "";
   let archiveOverview = "";
   let toolsReady = false;
+  let toolsRegistered = false;
+  let closed = false;
+  const marker = { dir: EXTENSION_DIR };
   const toolNames: string[] = [];
   let toolFailureNotified = false;
   let compacted = false;
@@ -108,11 +99,10 @@ export default async function (pi: ExtensionAPI) {
     ctx: any,
     state: { connected: boolean; error: string | null },
   ): void => {
-    if (!bridge) return;
+    if (!bridge || closed || toolsRegistered) return;
     if (state.connected) {
-      toolNames.push(...registerMcpTools(pi, bridge, {
-        log: (message: string) => logger.log("mcp_tools", message),
-      }));
+      toolNames.push(...registerMcpTools(pi, bridge));
+      toolsRegistered = true;
       toolsReady = toolNames.length > 0;
       logger.log("mcp_tools", { registered: toolNames.length });
       return;
@@ -142,7 +132,7 @@ export default async function (pi: ExtensionAPI) {
   // ================================================================
 
   const start = async (ctx: any): Promise<void> => {
-    if (started) return;
+    if (started || closed) return;
     if (startPromise) return startPromise;
 
     startPromise = (async () => {
@@ -155,6 +145,7 @@ export default async function (pi: ExtensionAPI) {
 
       // Health check
       connected = await client.health();
+      if (closed) return;
       if (!connected) {
         if (config.logLevel === "info") {
           ctx.ui.notify("OpenViking: server not reachable", "warning");
@@ -166,12 +157,9 @@ export default async function (pi: ExtensionAPI) {
       // session is live, independently of any tool: a /mcp 401/403 leaves this
       // extension with zero tools while it still writes the OpenViking session,
       // and that is exactly the case the fork must not join.
-      (globalThis as any).__OPENVIKING_PI_EXTENSION__ = { dir: EXTENSION_DIR };
+      (globalThis as any).__OPENVIKING_PI_EXTENSION__ = marker;
 
-      // Start the MCP handshake here so it runs alongside replayPending, the
-      // profile build and takeover recovery; it is joined at the end of this
-      // chain. It costs ~365ms against a remote server and never rejects, so it
-      // neither slows startup measurably nor can fail it.
+      // Discover tools alongside REST startup; failure leaves REST available.
       const handshake = bridge ? bridge.connect(DEFAULT_HANDSHAKE_BUDGET_MS) : null;
 
       // Ensure OV session
@@ -203,6 +191,7 @@ export default async function (pi: ExtensionAPI) {
       // Join the handshake and publish whatever the server listed (also needed
       // for pi -c continuations, which never fire session_start).
       if (handshake) adoptBridgeTools(ctx, await handshake);
+      if (closed) return;
       updateStatus(ctx, connected, 0, sync.sessionId, config, takeover.state, toolsReady);
 
       started = true;
@@ -249,12 +238,12 @@ export default async function (pi: ExtensionAPI) {
     // health check never gets here: bypass means this directory does not touch
     // OpenViking at all. `connect()` re-handshakes only after a failure; after
     // a success it hands back the state it already has.
-    if (bridge && wasStarted && connected && !bypassed && !toolsReady) {
+    if (bridge && wasStarted && connected && !bypassed && !closed && !toolsRegistered) {
       adoptBridgeTools(ctx, await bridge.connect(DEFAULT_HANDSHAKE_BUDGET_MS));
       updateStatus(ctx, connected, 0, sync.sessionId, config, takeover.state, toolsReady);
     }
 
-    if (!connected || bypassed) return;
+    if (!connected || bypassed || closed) return;
 
     // Queue recall for the context hook. Pi renders the user message before
     // that hook, so recall latency does not delay the message appearing.
@@ -382,9 +371,11 @@ export default async function (pi: ExtensionAPI) {
 
   // --- session_shutdown ---
   pi.on("session_shutdown", async (_event, ctx) => {
-    // Released first and unconditionally: closing a bridge that never
-    // connected is a no-op, leaking the upstream session is not, and a failure
-    // here must not cost the session its final commit.
+    closed = true;
+    if ((globalThis as any).__OPENVIKING_PI_EXTENSION__ === marker) {
+      delete (globalThis as any).__OPENVIKING_PI_EXTENSION__;
+    }
+    // Release MCP requests without preventing the final REST commit.
     if (bridge) {
       try {
         await bridge.close();

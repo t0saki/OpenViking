@@ -13,7 +13,7 @@ Long-term semantic memory and context takeover for [pi](https://github.com/earen
 ### Prerequisites
 
 - **pi coding agent** installed (`npm i -g @earendil-works/pi-coding-agent`)
-- **Node.js 18+** (for the extension's TypeScript runtime)
+- **Node.js 22.19.0+** and **npm**
 - **An OpenViking server** reachable — local or remote
 
 ### 1. Have an OpenViking server reachable
@@ -34,7 +34,16 @@ Use the shared installer:
 bash examples/memory-plugin-shared/install.sh --harness pi
 ```
 
-The installer copies the extension to `~/.pi/agent/extensions/openviking`, which is one of pi's auto-discovery roots, so pi loads it on the next `pi` invocation — no `packages` entry is needed. (Registering the same path with `pi install` would load it twice, so the installer avoids that and clears any stale entry left by older versions.)
+The installer installs the locked npm dependencies in a temporary directory before replacing the extension at `~/.pi/agent/extensions/openviking`, which is one of pi's auto-discovery roots, so pi loads it on the next `pi` invocation — no `packages` entry is needed. (Registering the same path with `pi install` would load it twice, so the installer avoids that and clears any stale entry left by older versions.)
+
+For a manual copy, generate the shared runtime first, copy the extension, and install its dependencies:
+
+```bash
+node examples/memory-plugin-shared/sync.mjs
+mkdir -p ~/.pi/agent/extensions/openviking
+cp -R examples/pi-coding-agent-extension/. ~/.pi/agent/extensions/openviking/
+npm ci --prefix ~/.pi/agent/extensions/openviking --omit=dev --ignore-scripts
+```
 
 ### 3. Configure (optional)
 
@@ -228,7 +237,11 @@ Bypass now runs through the same matcher every other OpenViking harness uses, so
             └──────────────────────────────────────┘
 ```
 
-The extension is a single directory of TypeScript files loaded by pi's `jiti` transpiler — no build step and no npm dependencies. Recall, session sync, context takeover and the startup health check go over HTTP to the OpenViking REST API. The model-facing tools do not: `lib/mcp-bridge.mjs` drives the shared stdio→HTTP MCP proxy core inside pi's own process — no subprocess, no MCP client library — and registers whatever the server's `/mcp` endpoint lists.
+The extension's TypeScript files are loaded by pi's `jiti` transpiler without a build step. Recall, session sync, context takeover and the startup health check use the REST API. Model-facing tools use the official `@modelcontextprotocol/client` SDK over Streamable HTTP and mirror the server's `/mcp` catalogue. Configuration and identity headers reuse the shared library.
+
+MCP initialization and tool discovery share a 5-second deadline. Each tool call uses `timeoutMs` (15 seconds by default), including any reconnection. Credentials and connection settings are reloaded before calls; a transport failure is returned immediately and the next call reconnects. Calls are never automatically replayed. Cancellation ends the client's wait and cannot undo a write already accepted by the server.
+
+Arguments are checked against the server's original schema before pi's own validation. Invalid nulls, scalar-to-array substitutions and stringified JSON are rejected rather than repaired. Text results share a 50 KiB / 2000-line limit across all content blocks.
 
 ### Event Flow
 
@@ -345,9 +358,8 @@ pi-coding-agent-extension/
 ├── recall.ts            # Synchronous recall with ranking + budget
 ├── takeover.ts          # Thin pi binding around lib/takeover-core.mjs
 ├── tools.ts             # Publishes the server's MCP tools as pi tools
-├── lib/mcp-bridge.mjs   # In-process MCP client over the shared proxy core
-├── lib/mcp-bridge-config.mjs # OVConfig → proxy config
-├── lib/mcp-arg-repair.mjs    # Schema-driven repair of model-emitted arguments
+├── lib/mcp-bridge.mjs   # Official SDK connection lifecycle
+├── lib/mcp-result.mjs   # pi content conversion and output limit
 ├── lib/takeover-core.mjs # Pure context-takeover state machine
 ├── lib/recall-ledger.mjs # Injected recall blocks, replayed to keep prompt caches warm
 ├── index.ts             # Extension entry point (event handlers + /viking command)
@@ -356,7 +368,7 @@ pi-coding-agent-extension/
 └── README.md
 ```
 
-All TypeScript files are loaded directly by pi's built-in `jiti` transpiler — zero dependencies beyond Node.js. That holds for the MCP bridge too: it reuses the proxy core already vendored into `shared/`, so reaching `/mcp` costs no npm package and no child process.
+TypeScript is loaded directly by pi's jiti transpiler. The official MCP client is installed from the committed npm lockfile; node_modules is not bundled in marketplace archives.
 
 ## Troubleshooting
 
