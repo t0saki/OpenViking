@@ -77,14 +77,14 @@ const agents = [
             <a class="home-button primary" :href="link('getting-started/02-quickstart')">{{ t('Get started', '快速开始') }} <span aria-hidden="true">↗</span></a>
             <a class="home-button secondary" href="#explore">{{ t('Explore the docs', '浏览文档') }} <span aria-hidden="true">↓</span></a>
           </div>
-          <p class="hero-footnote">{{ t('Open source. Inspectable context. Your infrastructure.', '开源 · 上下文可读可查 · 自主部署') }}</p>
+          <p class="hero-footnote">{{ t('Context can be as clear as your files.', '上下文，也可以像文件一样清楚。') }}</p>
         </div>
         <div class="context-workspace">
           <div class="workspace-top"><span>OpenViking</span><span class="workspace-caption">{{ t('CONTEXT MODEL', '上下文结构示意') }}</span></div>
           <div class="workspace-body">
             <div class="context-folders" :aria-label="t('Context types', '上下文类型')">
               <span class="tree-root">viking://</span>
-              <button v-for="key in ['resources', 'memories', 'agent']" :key="key" :aria-pressed="selected === key" :class="{ selected: selected === key }" @click="selected = key"><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M2.5 5.5h5l2 2h8v9h-15zM2.5 5.5v-2h5l2 2h8v2" stroke="currentColor" stroke-width="1.2" /></svg>{{ key === 'agent' ? 'agent/' : key }}<span aria-hidden="true">↗</span></button>
+              <button v-for="key in ['resources', 'memories', 'agent']" :key="key" :aria-pressed="selected === key" :class="{ selected: selected === key }" @click="selected = key"><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M2.5 5.5h5l2 2h8v9h-15zM2.5 5.5v-2h5l2 2h8v2" stroke="currentColor" stroke-width="1.2" /></svg>{{ key }}<span aria-hidden="true">↗</span></button>
               <div class="tree-legend"><span class="status-dot" />{{ t('One filesystem', '同一个文件系统') }}</div>
             </div>
             <div class="context-preview" aria-live="polite">
