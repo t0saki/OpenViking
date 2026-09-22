@@ -72,7 +72,7 @@ const agents = [
         <div class="hero-copy">
           <p class="eyebrow"><span class="status-dot" /> OPENVIKING <span class="eyebrow-separator">/</span> {{ t('DOCUMENTATION', '开发者文档') }}</p>
           <h1 id="home-title">{{ t('Context worth', '让上下文，') }}<br><em>{{ t('keeping.', '掌握在你自己手里') }}</em></h1>
-          <p class="hero-description">{{ t('The context database for AI agents.', '面向 AI Agent 的上下文数据库。') }}<br>{{ t('Bring knowledge, memory, and skills into one filesystem. Build agents that carry their context forward.', '用一个文件系统组织知识、记忆和技能，让 Agent 在每次任务中接着积累。') }}</p>
+          <p class="hero-description">{{ t('The context database for AI agents.', '面向 AI Agent 的上下文数据库。') }}<br>{{ t('Bring knowledge, memory, and skills into one filesystem. Build the second brain for agent-native teams.', '用一个文件系统组织知识、记忆和技能，做 agent native 团队的第二大脑。') }}</p>
           <div class="hero-actions">
             <a class="home-button primary" :href="link('getting-started/02-quickstart')">{{ t('Get started', '快速开始') }} <span aria-hidden="true">↗</span></a>
             <a class="home-button secondary" href="#explore">{{ t('Explore the docs', '浏览文档') }} <span aria-hidden="true">↓</span></a>
