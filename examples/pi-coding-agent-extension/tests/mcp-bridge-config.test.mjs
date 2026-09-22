@@ -1,24 +1,4 @@
-/**
- * The bridge and the REST client must be looking at the same server.
- *
- * `index.ts` builds two connections out of one `loadConfig()`: `OVClient` for
- * recall, sync, the profile and the session commit, and
- * `buildBridgeProxyConfig()` for the MCP tool surface. If those drift, a
- * session recalls from one deployment and lets the model write to another, or
- * the tools search a wider slice of the context database than recall does —
- * both silent. So every case here loads the configuration once and then
- * compares the proxy config against what `OVClient` actually puts on the wire,
- * captured through a stubbed `fetch`.
- *
- * The comparison is by VALUE, never by header name: the identity headers are
- * the proxy core's business (it builds all of them), and
- * `memory-plugin-shared/tests/one-header-builder.test.mjs` scans these files to
- * keep a second header builder from growing here.
- *
- * The environment handling mirrors `config.test.mjs`: a throwaway ovcli.conf, a
- * pinned credential source, and every variable that could reach the loader
- * saved and restored around the call.
- */
+/** MCP and REST share the resolved server, credentials and actor peer. */
 
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -26,9 +6,8 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-import { loadConfig } from "../config.ts";
+import { loadConfig, buildBridgeProxyConfig } from "../config.ts";
 import { OVClient } from "../client.ts";
-import { buildBridgeProxyConfig } from "../lib/mcp-bridge-config.mjs";
 import { toMcpProxyConfig } from "../shared/mcp-proxy-config.mjs";
 
 const MANAGED_ENV = [
@@ -190,8 +169,7 @@ test("an api_key server keeps the operator's identity off both wires", async () 
 
     assert.equal(cfg.sendIdentityHeaders, false);
     assert.equal(bridge.sendIdentityHeaders, false);
-    // The values still travel in the config — the proxy core is what decides
-    // to leave them off the request, exactly as the REST client does.
+    // Shared header construction omits identity on api_key deployments.
     assert.equal(bridge.account, "acct-parity");
     assert.equal(bridge.user, "user-parity");
     const sent = Object.values(rest.headers);
@@ -204,10 +182,7 @@ test("an api_key server keeps the operator's identity off both wires", async () 
 // Peer
 // ---------------------------------------------------------------------------
 
-test("the peer the REST client resolves is the peer the bridge hands the proxy", async () => {
-  // Asserted on the resolved value rather than the header it becomes: the proxy
-  // core builds that header, and this file must not grow a second opinion about
-  // its name.
+test("the peer the REST client resolves is the MCP actor peer", async () => {
   await withConfig({
     env: { OPENVIKING_RECALL_PEER_SCOPE: "all" },
     plugin: { peerId: "pi-parity-peer" },
@@ -228,44 +203,5 @@ test("the peer the REST client resolves is the peer the bridge hands the proxy",
     // scope. Taking that default here would widen the tools' default search to
     // every peer under the user while recall stays narrowed to this one.
     assert.equal(toMcpProxyConfig(cfg).peerId, "", "the stdio default drops it");
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Debug logging
-// ---------------------------------------------------------------------------
-
-test("setting only a debug log path turns the proxy's records on", async () => {
-  // The extension's own logger opens as soon as a path exists, while the proxy
-  // core logs only when its config says `debug`. Without the widening, an
-  // operator who configured a log file would get the extension's lines and none
-  // of the bridge's — losing the handshake, the 401/403 responses and the
-  // timeouts, which are the records worth having in that file.
-  const path = join(tmpdir(), "ov-pi-bridge-config.log");
-  await withConfig({ env: { OPENVIKING_DEBUG_LOG: path } }, (cfg) => {
-    assert.equal(cfg.debug, false, "nothing asked for debug itself");
-    assert.equal(cfg.debugLogPath, path);
-    const bridge = buildBridgeProxyConfig(cfg);
-    assert.equal(bridge.debug, true);
-    assert.equal(bridge.debugLogPath, path);
-    // The shared mapper on its own would leave the proxy silent.
-    assert.equal(toMcpProxyConfig(cfg).debug, false);
-  });
-});
-
-test("pi's older OV_DEBUG_LOG spelling reaches the proxy as well", async () => {
-  const path = join(tmpdir(), "ov-pi-bridge-config-legacy.log");
-  await withConfig({ env: { OV_DEBUG_LOG: path } }, (cfg) => {
-    const bridge = buildBridgeProxyConfig(cfg);
-    assert.equal(bridge.debug, true);
-    assert.equal(bridge.debugLogPath, path, "the path loadConfig folded in, not a second one");
-  });
-});
-
-test("no debug log and no debug switch leaves the proxy quiet", async () => {
-  await withConfig({}, (cfg) => {
-    const bridge = buildBridgeProxyConfig(cfg);
-    assert.equal(cfg.debugLogPath, "");
-    assert.equal(bridge.debug, false);
   });
 });

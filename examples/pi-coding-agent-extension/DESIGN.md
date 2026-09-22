@@ -42,7 +42,7 @@ pi-coding-agent-extension/
 └── tests/        # node --test suites
 ```
 
-Every `lib/*.mjs` ships a `.d.mts` beside it, which is what lets the TypeScript modules import it with types while `node --test` imports the implementation directly. That is also why the bridge lives in `lib/` rather than in `tools.ts`: CI cannot resolve pi's own package, so anything worth testing has to be importable without it.
+Modules imported by TypeScript have adjacent declarations; the result converter is internal to the JavaScript bridge. The bridge and tool registration can be tested without installing pi.
 
 ## Modules
 

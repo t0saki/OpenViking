@@ -1,5 +1,5 @@
 {
-  "_note": "Sample of the OpenViking MCP tools/list response, captured 2026-09-21 from a live openviking-server. It exists so the bridge tests can exercise real schema shapes. It is NOT the authoritative tool catalogue: the extension mirrors whatever the server returns at runtime and never ships a hard-coded list. Refresh it by re-running an MCP initialize + tools/list against a server (see the doc comment in tests/mcp-bridge.test.mjs) whenever a test needs newer schemas.",
+  "_note": "Sample of the OpenViking MCP tools/list response, captured 2026-09-21 from a live openviking-server. It exists so the bridge tests can exercise real schema shapes. It is NOT the authoritative tool catalogue: the extension mirrors whatever the server returns at runtime and never ships a hard-coded list. Refresh it by re-running an MCP initialize + tools/list against a server whenever a test needs newer schemas.",
   "tools": [
     {
       "name": "find",

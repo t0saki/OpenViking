@@ -1,25 +1,4 @@
-/**
- * The startup handshake is joined once per turn, never attempted twice.
- *
- * `start()` fires `bridge.connect()` so it runs alongside the rest of the
- * startup chain and joins it at the end. `before_agent_start` awaits `start()`
- * and then has its own retry branch for a session that came up toolless. Those
- * two must not overlap: the bridge nulls its in-flight promise the moment a
- * failed handshake settles, so a retry issued in the same turn is a *second*
- * round trip, not a cached one. Against a server that accepts and never
- * answers that doubles the first turn's block to two handshake budgets before
- * recall is even queued; against a 403 it posts `initialize` twice.
- *
- * So the assertion here is a count of `initialize` posts per turn: one on turn
- * one (the attempt `start()` already made), one more on turn two (the retry
- * doing its actual job).
- *
- * `index.ts` is TypeScript that imports its siblings with `.js` specifiers —
- * pi resolves those through the jiti it bundles. jiti is not installed in CI,
- * so this file uses Node's own type stripping plus a resolve hook that retries
- * a failed relative `.js` as `.ts`, which keeps the check running everywhere
- * `node --test` does.
- */
+/** Exercise the extension lifecycle with REST available and MCP refused. */
 
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -70,20 +49,13 @@ const MANAGED_ENV = [
   "OPENVIKING_PENDING_DIR",
 ];
 
-/**
- * A server that is healthy over REST and refuses `/mcp`.
- *
- * 403 is the cheapest deterministic handshake failure: the proxy core only
- * re-sends an auth failure when the watched credential files changed on disk,
- * and the credentials here come from the environment, so every failed
- * handshake is exactly one `initialize` post.
- */
 async function startServer() {
   const initializes = [];
+  const gate = { health: null };
   const server = createServer((req, res) => {
     const chunks = [];
     req.on("data", (chunk) => chunks.push(chunk));
-    req.on("end", () => {
+    req.on("end", async () => {
       const path = (req.url || "").split("?")[0];
       if (path === "/mcp") {
         let method = null;
@@ -97,6 +69,7 @@ async function startServer() {
         res.end(JSON.stringify({ detail: "root key cannot reach /mcp" }));
         return;
       }
+      if (path === "/health") await gate.health;
       // Everything the REST half touches during startup: /health, the profile
       // fetch, recall. An empty result keeps each of them a no-op.
       res.writeHead(200, { "content-type": "application/json" });
@@ -108,6 +81,7 @@ async function startServer() {
   return {
     url: `http://127.0.0.1:${port}`,
     initializes,
+    gate,
     close: () => new Promise((resolve) => server.close(resolve)),
   };
 }
@@ -185,12 +159,13 @@ async function withExtension(t, fn) {
     notified,
     statuses,
     ctx: fakeCtx(notified, statuses),
+    configPath: join(dir, "ovcli.conf"),
     turn: (prompt) => handlers.get("before_agent_start")(
       { type: "before_agent_start", prompt, systemPrompt: "BASE" },
       fakeCtx(notified, statuses),
     ),
     shutdown: () => handlers.get("session_shutdown")(
-      { type: "session_shutdown", reason: "quit" },
+      { type: "session_shutdown", reason: "reload" },
       fakeCtx(notified, statuses),
     ),
   });
@@ -238,3 +213,50 @@ test("a refused handshake still leaves the session working", async (t) => {
     await shutdown();
   });
 });
+
+test("reload clears only the owning extension's coexistence marker", async (t) => {
+  await withExtension(t, async ({ turn, shutdown }) => {
+    await turn("hello");
+    assert.ok(globalThis.__OPENVIKING_PI_EXTENSION__);
+    await shutdown();
+    assert.equal(globalThis.__OPENVIKING_PI_EXTENSION__, undefined);
+  });
+  await withExtension(t, async ({ turn, shutdown }) => {
+    await turn("hello");
+    const replacement = { dir: "another-instance" };
+    globalThis.__OPENVIKING_PI_EXTENSION__ = replacement;
+    await shutdown();
+    assert.equal(globalThis.__OPENVIKING_PI_EXTENSION__, replacement);
+    delete globalThis.__OPENVIKING_PI_EXTENSION__;
+  });
+});
+
+test("shutdown during health check cannot restore the marker or register tools", async (t) => {
+  await withExtension(t, async ({ server, turn, shutdown, tools }) => {
+    let release;
+    server.gate.health = new Promise((resolve) => { release = resolve; });
+    const starting = turn("hello");
+    await shutdown();
+    release();
+    await starting;
+    assert.equal(globalThis.__OPENVIKING_PI_EXTENSION__, undefined);
+    assert.deepEqual(tools, []);
+    assert.equal(server.initializes.length, 0);
+  });
+});
+
+for (const plugin of [{ mcpEnabled: false }, { bypassSession: true }]) {
+  test("MCP stays off for " + JSON.stringify(plugin), async (t) => {
+    await withExtension(t, async ({ server, turn, shutdown, configPath }) => {
+      // The instance loads configuration at construction, so reload it first.
+      await shutdown();
+      await writeFile(configPath, JSON.stringify({ plugin: { pi: plugin } }));
+      const { default: extension } = await import(join(EXTENSION_DIR, "index.ts"));
+      const { pi, handlers } = fakePi();
+      await extension(pi);
+      await handlers.get("before_agent_start")({ prompt: "hello", systemPrompt: "BASE" }, fakeCtx());
+      assert.equal(server.initializes.length, 0);
+      await handlers.get("session_shutdown")({}, fakeCtx());
+    });
+  });
+}
