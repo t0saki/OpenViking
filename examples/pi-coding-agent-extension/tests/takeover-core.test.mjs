@@ -28,6 +28,10 @@ function assistant(text, timestamp = 0) {
   return msg("assistant", text, timestamp);
 }
 
+function system(text, extra = {}) {
+  return { role: "system", content: text, timestamp: 0, ...extra };
+}
+
 function makeCore(overrides = {}) {
   const calls = {
     flushed: 0,
@@ -210,6 +214,84 @@ test("transformContext resets boundary on fingerprint mismatch", () => {
   const out = core.transformContext(messages);
   assert.equal(out, messages);
   assert.equal(core.state.coveredUserTurns, 0);
+});
+
+test("transformContext keeps covered-region system messages in original order", () => {
+  const { core } = makeCore();
+  core.restore([
+    {
+      type: "custom",
+      customType: TAKEOVER_ENTRY_TYPE,
+      data: { coveredUserTurns: 1, overview: "archived first turn", pendingTokens: 0 },
+    },
+  ]);
+  const baseSystem = system("BASE PROMPT", { toolsAdded: [{ name: "read" }] });
+  const midSystem = system("added a tool", { toolsAdded: [{ name: "openviking_search" }] });
+  const messages = [
+    baseSystem,
+    user("first", 10),
+    assistant("answer", 11),
+    midSystem,
+    user("second", 20),
+    assistant("answer 2", 21),
+  ];
+  const out = core.transformContext(messages);
+  // Both covered system messages survive, in order, ahead of the overview.
+  assert.equal(out[0], baseSystem);
+  assert.equal(out[1], midSystem);
+  assert.equal(out[2].role, "user");
+  assert.match(out[2].content, /archived first turn/);
+  assert.equal(out[3].content, "second");
+  // Nothing is dropped from the retained tail, and no system is duplicated.
+  assert.equal(out.filter((m) => m.role === "system").length, 2);
+});
+
+test("transformContext leaves a system message inside the retained tail in place", () => {
+  const { core } = makeCore();
+  core.restore([
+    {
+      type: "custom",
+      customType: TAKEOVER_ENTRY_TYPE,
+      data: { coveredUserTurns: 1, overview: "archived", pendingTokens: 0 },
+    },
+  ]);
+  const keptSystem = system("tool removed mid-tail", { toolsRemoved: [{ name: "read" }] });
+  const messages = [
+    system("BASE"),
+    user("first", 10),
+    assistant("answer", 11),
+    user("second", 20),
+    keptSystem,
+    assistant("answer 2", 21),
+  ];
+  const out = core.transformContext(messages);
+  // The covered BASE is hoisted before the overview; the tail system stays put.
+  assert.equal(out[0].content, "BASE");
+  assert.match(out[1].content, /archived/);
+  assert.equal(out[2].content, "second");
+  assert.equal(out[3], keptSystem);
+});
+
+test("transformContext with no system messages is unchanged from before (0.80.3)", () => {
+  const { core } = makeCore();
+  core.restore([
+    {
+      type: "custom",
+      customType: TAKEOVER_ENTRY_TYPE,
+      data: { coveredUserTurns: 1, overview: "archived first turn", pendingTokens: 0 },
+    },
+  ]);
+  const messages = [
+    user("first", 10),
+    assistant("answer", 11),
+    user("second", 20),
+    assistant("answer 2", 21),
+  ];
+  const out = core.transformContext(messages);
+  assert.equal(out.length, 3);
+  assert.equal(out[0].role, "user");
+  assert.match(out[0].content, /archived first turn/);
+  assert.equal(out[1].content, "second");
 });
 
 test("restore uses the last ov-takeover entry and restores syncedEntryCount", () => {

@@ -119,9 +119,11 @@ At startup the extension scans the branch from the end for the newest such entry
 4. The commit runs with `queueOnFailure: false`.
 5. The session context endpoint is polled until `latest_archive_overview` is available — `takeoverOverviewPollMax` attempts, `takeoverOverviewPollMs` apart. An empty overview is never injected; the boundary stays where it is and the token pressure resets so the next threshold crossing retries instead of re-committing every turn.
 6. On success the boundary advances to `lastSeenUserTurns - takeoverKeepRecentTurns`.
-7. The `context` hook then replaces every covered message with one synthetic user message beginning `[OpenViking Session Context]`, keeps the recent tail verbatim, and recall is injected into the newest kept user turn as usual.
+7. The `context` hook then replaces the covered *conversation* with one synthetic user message beginning `[OpenViking Session Context]`, keeps every covered `system` message in front of it in original order, keeps the recent tail verbatim, and recall is injected into the newest kept user turn as usual.
 
 The overview message's timestamp is derived from the first kept message, so the provider payload stays byte-stable between commits and can benefit from prompt caching.
+
+On pi ≥ 0.86 the transcript carries the base prompt and its tool declarations as the leading `system` message, and mid-conversation tool additions/removals, section updates and appended instructions as later `system` messages (`@earendil-works/pi-ai`'s `getCurrentTools` / `getCurrentSystemMessage`). Slicing those off with the covered turns would strip the model's tools and instructions, so they are preserved: the overview stands in for the conversation, never for the system state. A `system` message inside the retained tail is left where it is rather than hoisted. On 0.80.3 there are no `system` messages in the branch, so this preserves nothing and the behaviour is unchanged; on 0.87 the host reconciles the declared tools against the executable set on every request, so keeping the existing declarations introduces no duplicate.
 
 #### Compaction
 

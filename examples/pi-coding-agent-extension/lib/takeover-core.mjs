@@ -245,7 +245,24 @@ export class TakeoverCore {
 
     const kept = list.slice(boundaryIdx);
     const firstKeptTs = typeof kept[0]?.timestamp === "number" ? kept[0].timestamp : 1;
+    // Preserve every system message in the covered region, in its original
+    // order. On pi >= 0.86 the transcript carries the base prompt and its tool
+    // declarations as the leading `system` message, and mid-conversation tool
+    // additions/removals, section updates and appended instructions as later
+    // ones (see @earendil-works/pi-ai `getCurrentTools`/`getCurrentSystemMessage`).
+    // Slicing them off with the covered turns would strip the model's tools and
+    // instructions — the overview only stands in for the conversation, never for
+    // the system state. On 0.80.3 the transcript has no system messages here, so
+    // this preserves nothing and the behaviour is unchanged; on 0.87 the host
+    // reconciles tools against the executable set on every request, so keeping
+    // the existing declarations introduces no duplicate. System messages inside
+    // the retained tail are left where they are, not hoisted in front.
+    const coveredSystem = [];
+    for (let i = 0; i < boundaryIdx; i++) {
+      if (list[i]?.role === "system") coveredSystem.push(list[i]);
+    }
     return [
+      ...coveredSystem,
       buildOverviewMessage(this.overview, firstKeptTs, this.config.takeoverOverviewBudget),
       ...kept,
     ];
