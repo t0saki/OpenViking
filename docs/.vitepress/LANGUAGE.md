@@ -22,7 +22,7 @@ Cookie 和本站 localStorage 统一使用新键 `openviking-language-preference
 
 ## Verification / 验证
 
-The shared contract runs 30 cases in each repository. The Docs route suite adds 11 cases; widget locale tests add 4 cases that preserve the mounted view, inputs, selection, message history and connection, and verify the translated suggestion payload. The website has 82 passing tests, Blog 30, Docs 58, and Studio 499. All four site builds and widget typecheck/build pass; the widget is 18.97 KB gzipped. No coverage threshold is configured for this change.
+The shared contract runs 30 cases in each repository. The Docs route suite adds 11 cases; widget locale tests add 4 cases that preserve the mounted view, inputs, selection, message history and connection, and verify the translated suggestion payload. The website has 82 passing tests, Blog 30, Docs 58, and Studio 499. The built section-link check also passes; breadcrumbs link to existing section pages instead of retired home anchors. All four site builds and widget typecheck/build pass; the widget is 18.97 KB gzipped. No coverage threshold is configured for this change.
 
 Chromium checks use local production bundles served under the real `.ai`/`.net` hostnames through request interception, with a local widget and mocked chat transport. They cover both parent-domain cookie scopes and isolation, focus refresh, explicit URLs, legacy language records with retained theme, Blog legacy URLs, desktop/mobile keyboard controls, old widget compatibility, drafts across language changes, and Docs `DOCS_BASE=/guide/`. These are local integration checks, not production chat/backend validation.
 
