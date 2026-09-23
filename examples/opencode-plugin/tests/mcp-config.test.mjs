@@ -68,6 +68,7 @@ test("OpenCode v2 MCP config uses the local server schema", () => {
   assert.equal(entry.command[0], "node")
   assert.match(entry.command[1], /servers\/mcp-proxy\.mjs$/)
   assert.equal(entry.enabled, undefined)
+  assert.equal(entry.codemode, false)
   assert.deepEqual(entry.timeout, { startup: 15000, catalog: 15000, execution: 15000 })
 })
 

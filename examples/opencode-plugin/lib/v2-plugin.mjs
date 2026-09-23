@@ -1,7 +1,9 @@
 import { isRecallEnabled } from "./shared/recall-core.mjs"
 import { createOpenVikingV2McpConfig } from "./mcp-config.mjs"
-import { normalizeV2Event, userPromptEvents } from "./v2-events.mjs"
+import { contextMessageEvents, normalizeV2LifecycleEvent } from "./v2-events.mjs"
 import { log } from "./utils.mjs"
+
+const METADATA_KEY = "openviking"
 
 export async function startV2Plugin(ctx, runtime, { pluginRoot }) {
   const {
@@ -13,7 +15,7 @@ export async function startV2Plugin(ctx, runtime, { pluginRoot }) {
     vikingUriGuard,
     vikingUriNotice,
   } = runtime
-  const userMessageIds = new Set()
+  const captureCursors = new Map()
   const directory = ctx?.location?.project?.directory || ctx?.location?.directory
 
   if (config.mcp.enabled && ctx?.mcp?.transform) {
@@ -29,68 +31,80 @@ export async function startV2Plugin(ctx, runtime, { pluginRoot }) {
 
   if (ctx?.tool?.hook) {
     await ctx.tool.hook("execute.before", async (event) => {
+      await runtime.ready
       await vikingUriGuard(
         { tool: event.tool, args: event.input },
         { args: event.input },
       )
     })
     await ctx.tool.hook("execute.after", async (event) => {
-      await noticeV2Tool(event, vikingUriNotice)
+      try {
+        await runtime.ready
+        await noticeV2Tool(event, vikingUriNotice)
+      } catch (error) {
+        logHookError("tool.execute.after", error)
+      }
     })
   }
 
   if (ctx?.session?.hook) {
     await ctx.session.hook("prompt", async (event) => {
-      const captured = userPromptEvents({
-        sessionID: event?.sessionID,
-        messageID: event?.messageID,
-        text: event?.prompt?.text,
-      })
-      if (captured.length > 0 && event?.messageID) userMessageIds.add(event.messageID)
-      for (const normalized of captured) {
-        await sessionManager.handleEvent(normalized)
+      try {
+        await runtime.ready
+        await prepareV2Prompt(event, {
+          directory,
+          recall,
+          sessionInject,
+          recallEnabled: isRecallEnabled(config),
+        })
+      } catch (error) {
+        logHookError("session.prompt", error)
       }
     })
 
     await ctx.session.hook("context", async (event) => {
-      await injectV2Context(event, {
-        directory,
-        recall,
-        sessionInject,
-        repoContext,
-        recallEnabled: isRecallEnabled(config),
-      })
-    })
-
-    await ctx.session.hook("compaction", async (event) => {
-      log("INFO", "compaction", "OpenCode v2 session compacting", {
-        opencode_session: event?.sessionID,
-      })
-      await sessionManager.flushSession(event?.sessionID, {
-        commit: true,
-        reason: "session.compaction",
-      })
+      try {
+        await runtime.ready
+        injectV2Context(event, repoContext)
+      } catch (error) {
+        logHookError("session.context", error)
+      }
     })
   }
 
   const controller = new AbortController()
+  let eventTask = Promise.resolve()
   if (ctx?.event?.subscribe) {
-    void consumeEvents(ctx, controller.signal, async (event) => {
-      if (event?.type === "session.message.content.updated" && userMessageIds.has(event.data?.messageID)) {
-        return
+    eventTask = consumeEvents(ctx, controller.signal, async (event) => {
+      await runtime.ready
+      const sessionID = event?.data?.sessionID ?? event?.data?.sessionId
+      if (isExecutionBoundary(event?.type) && sessionID) {
+        try {
+          await captureV2Context(ctx, sessionManager, captureCursors, sessionID)
+        } catch (error) {
+          logHookError("session.context.capture", error)
+        }
       }
-      for (const normalized of normalizeV2Event(event)) {
+      for (const normalized of normalizeV2LifecycleEvent(event)) {
         await sessionManager.handleEvent(normalized)
         if (normalized.type === "session.created") {
           await repoContext.refreshRepos({ force: true })
         }
       }
+      if (event?.type === "session.deleted" && sessionID) captureCursors.delete(sessionID)
     })
   }
 
   return async () => {
     controller.abort()
-    await sessionManager.flushAll({ commit: true })
+    try {
+      await eventTask
+      await runtime.ready
+      await sessionManager.waitForBackground?.()
+      await sessionManager.flushAll({ commit: true })
+    } catch (error) {
+      logHookError("plugin.cleanup", error)
+    }
     log("INFO", "plugin", "OpenViking plugin disposed")
   }
 }
@@ -98,78 +112,101 @@ export async function startV2Plugin(ctx, runtime, { pluginRoot }) {
 async function consumeEvents(ctx, signal, handle) {
   try {
     for await (const event of ctx.event.subscribe({ signal })) {
-      await handle(event)
+      try {
+        await handle(event)
+      } catch (error) {
+        logHookError(`event.${event?.type || "unknown"}`, error)
+      }
     }
   } catch (error) {
     if (signal.aborted) return
-    log("WARN", "event", "OpenCode v2 event subscription ended", {
-      error: error?.message ?? String(error),
+    logHookError("event.subscribe", error)
+  }
+}
+
+export async function prepareV2Prompt(event, {
+  directory,
+  recall,
+  sessionInject,
+  recallEnabled,
+}) {
+  const sessionID = event?.sessionID
+  const messageID = event?.messageID
+  if (!sessionID || !messageID) return
+  const text = event?.prompt?.text
+  const parts = typeof text === "string" && text.trim() ? [{ type: "text", text }] : []
+  const input = { sessionID, messageID, directory }
+  const blocks = []
+  try {
+    const sessionBlock = await sessionInject.buildSessionContext(input)
+    if (sessionBlock) blocks.push(sessionBlock)
+  } catch (error) {
+    logHookError("session.prompt.profile", error)
+  }
+  if (recallEnabled) {
+    try {
+      const recallBlock = await recall.buildRelevantMemories(input, parts)
+      if (recallBlock) blocks.push(recallBlock)
+    } catch (error) {
+      logHookError("session.prompt.recall", error)
+    }
+  }
+  if (blocks.length === 0) return
+
+  event.metadata = event.metadata && typeof event.metadata === "object" ? event.metadata : {}
+  event.metadata[METADATA_KEY] = { context: blocks }
+}
+
+export function injectV2Context(event, repoContext) {
+  const repoPrompt = repoContext.getRepoSystemPrompt()
+  if (repoPrompt) pushSystem(event, repoPrompt)
+  if (!Array.isArray(event?.messages)) return
+
+  for (const message of event.messages) {
+    const blocks = message?.metadata?.[METADATA_KEY]?.context
+    if (message?.role !== "user" || !Array.isArray(blocks) || blocks.length === 0) continue
+    if (!Array.isArray(message.content)) message.content = []
+    if (message.content.some((part) => part?.metadata?.[METADATA_KEY] === true)) continue
+    message.content.unshift({
+      type: "text",
+      text: blocks.filter((block) => typeof block === "string" && block).join("\n\n"),
+      metadata: { [METADATA_KEY]: true },
     })
   }
 }
 
-export async function injectV2Context(event, {
-  directory,
-  recall,
-  sessionInject,
-  repoContext,
-  recallEnabled,
-}) {
-  const sessionID = event?.sessionID
-  if (!sessionID) return
-  const prompt = repoContext.getRepoSystemPrompt()
-  if (prompt) pushSystem(event, prompt)
+export async function captureV2Context(ctx, sessionManager, cursors, sessionID) {
+  const messages = await ctx.session.context({ sessionID })
+  if (!Array.isArray(messages)) return
+  const cursor = cursors.get(sessionID)
+  const cursorIndex = cursor ? messages.findIndex((message) => message?.id === cursor) : -1
+  const pending = cursorIndex >= 0 ? messages.slice(cursorIndex + 1) : messages
+  for (const message of pending) {
+    for (const normalized of contextMessageEvents(sessionID, message)) {
+      await sessionManager.handleEvent(normalized)
+    }
+  }
+  const last = messages.at(-1)?.id
+  if (last) cursors.set(sessionID, last)
+}
 
-  const query = latestUserText(event.messages)
-  const messageID = `ov-${sessionID}`
-  const output = {
-    parts: query ? [{ type: "text", text: query }] : [],
-    message: { sessionID, id: messageID },
-  }
-  const input = { sessionID, messageID, directory }
-  try {
-    await sessionInject.injectSessionContext(input, output)
-    if (recallEnabled) await recall.injectRelevantMemories(input, output)
-  } catch (error) {
-    log("WARN", "recall", "Auto recall failed", { error: error?.message ?? String(error) })
-    return
-  }
-  for (const part of output.parts) {
-    if (part?.synthetic && part.text) pushSystem(event, part.text)
-  }
+function isExecutionBoundary(type) {
+  return type === "session.execution.succeeded" ||
+    type === "session.execution.failed" ||
+    type === "session.execution.interrupted"
 }
 
 function pushSystem(event, text) {
   if (!text) return
   if (!Array.isArray(event.system)) event.system = []
+  if (event.system.some((part) => part?.type === "text" && part.text === text)) return
   event.system.push({ type: "text", text })
 }
 
-export function latestUserText(messages) {
-  if (!Array.isArray(messages)) return ""
-  for (let i = messages.length - 1; i >= 0; i -= 1) {
-    const message = messages[i]
-    const role = message?.role
-    if (role && role !== "user") continue
-    const text = messageText(message)
-    if (text) return text
-  }
-  return ""
-}
-
-function messageText(message) {
-  if (!message || typeof message !== "object") return ""
-  if (typeof message.content === "string") return message.content.trim()
-  const blocks = Array.isArray(message.content)
-    ? message.content
-    : Array.isArray(message.parts)
-      ? message.parts
-      : []
-  return blocks
-    .filter((block) => block && (block.type === "text" || block.type === undefined) && typeof block.text === "string")
-    .map((block) => block.text)
-    .join("\n")
-    .trim()
+function logHookError(hook, error) {
+  log("WARN", "v2", `OpenCode v2 ${hook} failed`, {
+    error: error?.message ?? String(error),
+  })
 }
 
 async function noticeV2Tool(event, vikingUriNotice) {

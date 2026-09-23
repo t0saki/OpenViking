@@ -1,4 +1,4 @@
-export function normalizeV2Event(event) {
+export function normalizeV2LifecycleEvent(event) {
   const type = event?.type
   const data = event?.data && typeof event.data === "object" ? event.data : {}
   const sessionID = data.sessionID ?? data.sessionId
@@ -10,7 +10,7 @@ export function normalizeV2Event(event) {
   if (type === "session.deleted") {
     return [sessionEvent("session.deleted", sessionID)]
   }
-  if (type === "session.compacted") {
+  if (type === "session.compaction.ended") {
     return [sessionEvent("session.compacted", sessionID)]
   }
   if (type === "session.execution.succeeded" || type === "session.execution.interrupted") {
@@ -22,70 +22,53 @@ export function normalizeV2Event(event) {
       error: data.error ?? data.message,
     }]
   }
-  if (type === "session.message.content.updated") {
-    return messageContentEvents(data)
-  }
   return []
 }
 
-export function userPromptEvents({ sessionID, messageID, text }) {
-  if (!sessionID || !messageID || typeof text !== "string" || !text.trim()) return []
-  return [
-    messageUpdated(sessionID, messageID, "user"),
-    partUpdated(sessionID, messageID, "prompt", { type: "text", text }),
-  ]
+export function contextMessageEvents(sessionID, message) {
+  if (!sessionID || !message?.id) return []
+  if (message.type === "user") {
+    if (typeof message.text !== "string" || !message.text.trim()) return []
+    return [
+      messageUpdated(sessionID, message.id, "user"),
+      partUpdated(sessionID, message.id, `${message.id}:text`, { type: "text", text: message.text }),
+    ]
+  }
+  if (message.type !== "assistant") return []
+
+  const events = [messageUpdated(sessionID, message.id, "assistant")]
+  for (const [index, block] of (message.content ?? []).entries()) {
+    const part = contentPart(block, index)
+    if (part) events.push(partUpdated(sessionID, message.id, part.id, part))
+  }
+  return events.length > 1 ? events : []
 }
 
 function sessionEvent(type, sessionID, info = {}) {
   return {
     type,
-    properties: {
-      info: {
-        id: sessionID,
-        sessionID,
-        ...info,
-      },
-    },
+    properties: { info: { id: sessionID, sessionID, ...info } },
   }
 }
 
-function messageContentEvents(data) {
-  const sessionID = data.sessionID ?? data.sessionId
-  const messageID = data.messageID ?? data.messageId
-  if (!sessionID || !messageID) return []
-  const events = [messageUpdated(sessionID, messageID, "assistant")]
-  const content = Array.isArray(data.content) ? data.content : []
-  content.forEach((block, index) => {
-    const part = contentPart(sessionID, messageID, block, index)
-    if (part) events.push(partUpdated(sessionID, messageID, part.id, part))
-  })
-  return events
-}
-
-function contentPart(sessionID, messageID, block, index) {
+function contentPart(block, index) {
   if (!block || typeof block !== "object") return null
   if (block.type === "text" || block.type === "reasoning") {
     return {
       id: `${block.type}:${index}`,
-      sessionID,
-      messageID,
       type: "text",
       text: typeof block.text === "string" ? block.text : "",
     }
   }
   if (block.type !== "tool") return null
-  const content = block.state?.content
-  const text = toolContentText(content) || block.state?.error?.message || ""
+  const output = toolContentText(block.state?.content) || errorText(block.state?.error)
   return {
     id: block.id || `tool:${index}`,
-    sessionID,
-    messageID,
     type: "tool",
-    name: block.name,
-    tool_use_id: block.id,
-    content,
-    text,
-    output: text,
+    callID: block.id,
+    tool: block.name,
+    state: block.state,
+    output,
   }
 }
 
@@ -97,20 +80,22 @@ function toolContentText(content) {
     .join("\n\n")
 }
 
+function errorText(error) {
+  if (typeof error === "string") return error
+  if (typeof error?.message === "string") return error.message
+  return ""
+}
+
 function messageUpdated(sessionID, messageID, role) {
   return {
     type: "message.updated",
-    properties: {
-      info: { sessionID, id: messageID, role },
-    },
+    properties: { info: { sessionID, id: messageID, role } },
   }
 }
 
 function partUpdated(sessionID, messageID, partId, part) {
   return {
     type: "message.part.updated",
-    properties: {
-      part: { ...part, id: partId, sessionID, messageID },
-    },
+    properties: { part: { ...part, id: partId, sessionID, messageID } },
   }
 }

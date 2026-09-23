@@ -15,6 +15,7 @@ export function createOpenVikingV2McpConfig(pluginRoot) {
   return {
     type: "local",
     command: ["node", resolvePath(pluginRoot, "servers", "mcp-proxy.mjs")],
+    codemode: false,
     timeout: {
       startup: 15000,
       catalog: 15000,

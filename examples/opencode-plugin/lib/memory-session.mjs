@@ -31,6 +31,7 @@ export function createMemorySessionManager({ config, pluginRoot }) {
   const statePath = path.join(pluginRoot, "openviking-session-state.json")
   const oldSessionMapPath = path.join(pluginRoot, "openviking-session-map.json")
   let saveTimer = null
+  let initBackground = Promise.resolve()
   // Serialize saves: concurrent saveState() calls (a debounced save racing
   // with flushAll / flushSession / session deletion) all share the same
   // `${statePath}.tmp` temp file, so one rename can fail with ENOENT after
@@ -46,16 +47,23 @@ export function createMemorySessionManager({ config, pluginRoot }) {
     return run
   }
 
-  async function init() {
+  async function init({ deferNetwork = false } = {}) {
     if (isCaptureEnabled(config)) await migrateLegacySessionMap()
     await loadState()
-    const health = await fetchJSON(config, "/health", {}, { timeoutMs: 5000 })
-    if (health.ok) {
+    initBackground = fetchJSON(config, "/health", {}, { timeoutMs: 5000 }).then(async (health) => {
+      if (!health.ok) return
       await replayPending(
         (endpoint, init = {}, options = {}) => fetchJSON(config, endpoint, init, options),
         (stage, data) => log("DEBUG", "pending", stage, data),
       )
-    }
+    }).catch((error) => {
+      log("WARN", "pending", "Pending replay failed during initialization", { error: error?.message })
+    })
+    if (!deferNetwork) await initBackground
+  }
+
+  async function waitForBackground() {
+    await initBackground
   }
 
   async function loadState() {
@@ -306,6 +314,7 @@ export function createMemorySessionManager({ config, pluginRoot }) {
 
   return {
     init,
+    waitForBackground,
     handleEvent,
     getMappedSessionId,
     commitSession,

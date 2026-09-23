@@ -7,7 +7,7 @@ import { loadConfig, resolveDataDir } from "./config.mjs"
 import { initializeRuntime } from "./runtime.mjs"
 import { initLogger, log } from "./utils.mjs"
 
-export async function createOpenVikingRuntime({ client, directory, pluginRoot }) {
+export function createOpenVikingRuntime({ client, directory, pluginRoot }) {
   const config = loadConfig(pluginRoot, directory)
   const dataDir = resolveDataDir(pluginRoot, config)
   initLogger(dataDir)
@@ -24,10 +24,17 @@ export async function createOpenVikingRuntime({ client, directory, pluginRoot })
   const vikingUriGuard = createVikingUriGuard()
   const vikingUriNotice = createVikingUriNotice()
 
-  await sessionManager.init()
-  Promise.resolve().then(async () => {
-    const ready = await initializeRuntime(config, client)
-    if (ready) await repoContext.refreshRepos({ force: true })
+  // OpenCode v2 has no v1 client object and waits for setup before accepting
+  // the first prompt. Load local state before hooks run, but keep health and
+  // pending replay off that activation path.
+  const ready = sessionManager.init({ deferNetwork: !client })
+  void ready.then(async () => {
+    const healthy = await initializeRuntime(config, client)
+    if (healthy) await repoContext.refreshRepos({ force: true })
+  }).catch((error) => {
+    log("WARN", "plugin", "OpenViking runtime initialization failed", {
+      error: error?.message ?? String(error),
+    })
   })
 
   return {
@@ -38,5 +45,6 @@ export async function createOpenVikingRuntime({ client, directory, pluginRoot })
     sessionInject,
     vikingUriGuard,
     vikingUriNotice,
+    ready,
   }
 }

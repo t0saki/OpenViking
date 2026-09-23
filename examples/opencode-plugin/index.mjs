@@ -9,8 +9,9 @@ import { log } from "./lib/utils.mjs"
 const pluginRoot = dirname(fileURLToPath(import.meta.url))
 
 export async function OpenVikingPlugin({ client, directory } = {}) {
-  const runtime = await createOpenVikingRuntime({ client, directory, pluginRoot })
+  const runtime = createOpenVikingRuntime({ client, directory, pluginRoot })
   if (!runtime) return {}
+  await runtime.ready
   return v1Hooks(runtime)
 }
 
@@ -84,7 +85,7 @@ const OpenVikingV2Plugin = {
   id: "openviking",
   async setup(ctx) {
     const directory = ctx?.location?.project?.directory || ctx?.location?.directory
-    const runtime = await createOpenVikingRuntime({ directory, pluginRoot })
+    const runtime = createOpenVikingRuntime({ directory, pluginRoot })
     if (!runtime) return
     return startV2Plugin(ctx, runtime, { pluginRoot })
   },
