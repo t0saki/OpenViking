@@ -8,6 +8,26 @@ export interface TakeoverMessage {
   [key: string]: any;
 }
 
+/**
+ * A commit that archived but whose Working Memory was not ready in time. While
+ * one is set, no second takeover commit runs — later turns re-check this same
+ * archive by its uri. Persisted so it survives `pi -c` / `pi -p`.
+ */
+export interface PendingArchive {
+  archiveUri: string;
+  taskId: string;
+  coveredUserTurns: number;
+  boundaryUserTurns: number;
+  fingerprint: string | null;
+  boundaryEntryId?: string;
+  branchEntryCount?: number;
+  branchTipEntryId?: string;
+  branchTipFingerprint?: string | null;
+  syncedEntryCount: number;
+  frozenTokens: number;
+  nativeCompaction?: boolean;
+}
+
 export interface TakeoverPersistedState {
   coveredUserTurns: number;
   overview: string;
@@ -15,6 +35,10 @@ export interface TakeoverPersistedState {
   pendingTokens: number;
   lastSeenUserTurns?: number;
   syncedEntryCount?: number;
+  /** A committed archive still waiting on its Working Memory, or null. */
+  pendingArchive?: PendingArchive | null;
+  /** A permanent delivery gap: the archive is missing messages. Blocks advance. */
+  captureGap?: boolean;
 }
 
 export interface TakeoverConfig {
@@ -26,14 +50,36 @@ export interface TakeoverConfig {
   takeoverOverviewPollMax?: number;
 }
 
+export interface SyncBranchResult {
+  added: number;
+  tokens: number;
+  allDelivered: boolean;
+  queued?: number;
+  permanentFailures?: number;
+}
+
 export interface TakeoverIo {
+  /** Deliver a pi branch to the server before committing. */
+  syncBranch?: (branch: any[]) => Promise<SyncBranchResult> | SyncBranchResult;
   flush?: () => Promise<boolean> | boolean;
   commit?: (opts?: { queueOnFailure?: boolean; keepRecentCount?: number }) => Promise<unknown> | unknown;
-  fetchOverview?: (tokenBudget?: number) => Promise<string | { latest_archive_overview?: string | null } | null> | string | { latest_archive_overview?: string | null } | null;
+  /** Read one archive's `.overview.md` by its uri; null until it is ready. */
+  readArchiveOverview?: (archiveUri: string) => Promise<string | null> | string | null;
+  /** Exact server keep_recent_count for a retained tail (message count). */
+  captureCount?: (branchSlice: any[]) => number;
   persistEntry?: (customType: string, data: TakeoverPersistedState) => void;
   getWatermark?: () => number;
+  /** Messages OpenViking will never receive; a capture gap when > 0. */
+  droppedCount?: () => number;
   sleep?: (ms: number) => Promise<void>;
   log?: (message: string) => void;
+}
+
+export interface CommitOutcome {
+  accepted: boolean;
+  reason: string;
+  archiveUri?: string;
+  taskId?: string;
 }
 
 export function flattenContent(msg: TakeoverMessage): string;
@@ -46,21 +92,29 @@ export function truncateToTokens(text: string, budget: number): string;
 export function estimatePayloadTokens(payload: any): number;
 export function buildOverviewMessage(overview: string, firstKeptTs?: number, budget?: number): TakeoverMessage;
 export function countUndeliveredForSession(pendingEntries: any[], sid: string): number;
+export function commitOutcome(committed: unknown): CommitOutcome;
+
+export type TakeoverState = TakeoverPersistedState & {
+  fingerprint: string | null;
+  lastSeenUserTurns: number;
+  syncedEntryCount: number;
+  committing: boolean;
+  pendingArchive: PendingArchive | null;
+  captureGap: boolean;
+};
 
 export class TakeoverCore {
   constructor(opts?: { config?: TakeoverConfig; io?: TakeoverIo });
   get enabled(): boolean;
-  get state(): TakeoverPersistedState & {
-    fingerprint: string | null;
-    lastSeenUserTurns: number;
-    syncedEntryCount: number;
-    committing: boolean;
-  };
-  restore(entries: any[]): this["state"];
+  get state(): TakeoverState;
+  restore(entries: any[]): TakeoverState;
   transformContext(messages: TakeoverMessage[]): TakeoverMessage[];
-  onTurnSynced(estTokens: number): Promise<boolean>;
-  commitAndAdvance(): Promise<boolean>;
-  handleBeforeCompact(preparation?: { firstKeptEntryId?: string; tokensBefore?: number }): Promise<
+  onTurnSynced(estTokens: number, branch?: any[] | (() => any[])): Promise<boolean>;
+  commitAndAdvance(branch?: any[] | (() => any[])): Promise<boolean>;
+  handleBeforeCompact(
+    preparation?: { firstKeptEntryId?: string; tokensBefore?: number; signal?: AbortSignal },
+    branch?: any[] | (() => any[]),
+  ): Promise<
     | {
         compaction: {
           summary: string;
@@ -74,7 +128,8 @@ export class TakeoverCore {
   shutdown(): Promise<void>;
   resetBoundary(reason?: string): void;
   truncatedOverview(): string;
+  recordCaptureGap(): void;
   persistedState(): TakeoverPersistedState;
   persist(): void;
-  pollOverview(): Promise<string>;
+  pollArchiveOverview(archiveUri: string, signal?: AbortSignal): Promise<string>;
 }

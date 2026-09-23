@@ -5,6 +5,7 @@ import {
   TAKEOVER_ENTRY_TYPE,
   TakeoverCore,
   buildOverviewMessage,
+  commitOutcome,
   countUndeliveredForSession,
   countUserTurns,
   estimatePayloadTokens,
@@ -34,14 +35,22 @@ function system(text, extra = {}) {
 
 function makeCore(overrides = {}) {
   const calls = {
+    synced: 0,
     flushed: 0,
     committed: 0,
     persisted: [],
     slept: [],
     logs: [],
+    overviewUris: [],
   };
   let watermark = overrides.watermark ?? 0;
+  let dropped = overrides.dropped ?? 0;
   const io = {
+    syncBranch: async (branch) => {
+      calls.synced++;
+      calls.lastSyncBranch = branch;
+      return overrides.syncResult ?? { added: 0, tokens: 0, allDelivered: true };
+    },
     flush: async () => {
       calls.flushed++;
       return overrides.flushResult ?? true;
@@ -49,19 +58,30 @@ function makeCore(overrides = {}) {
     commit: async (opts) => {
       calls.committed++;
       calls.lastCommitOpts = opts;
+      // Default: a healthy accepted commit whose archive_uri lives under
+      // A concrete archive URI lets the poller bind the summary to this commit.
       return overrides.commitResult === undefined
-        ? { task_id: "t-1", archive_uri: "viking://archive/1" }
+        ? {
+            status: "accepted",
+            archived: true,
+            task_id: "t-1",
+            archive_uri: "viking://user/x/sessions/s/history/archive_001",
+          }
         : overrides.commitResult;
     },
-    fetchOverview: async (budget) => {
-      calls.lastOverviewBudget = budget;
+    readArchiveOverview: async (uri) => {
+      calls.overviewUris.push(uri);
       const values = overrides.overviews ?? ["overview ready"];
       const value = values[Math.min(calls.overviewCalls || 0, values.length - 1)];
       calls.overviewCalls = (calls.overviewCalls || 0) + 1;
       return value;
     },
+    // The tests' branches are plain message arrays, so the retained tail's
+    // capture count is just its length.
+    captureCount: (slice) => (Array.isArray(slice) ? slice.length : 0),
     persistEntry: (type, data) => calls.persisted.push({ type, data }),
     getWatermark: () => watermark,
+    droppedCount: () => dropped,
     sleep: async (ms) => calls.slept.push(ms),
     log: (message) => calls.logs.push(message),
   };
@@ -77,7 +97,12 @@ function makeCore(overrides = {}) {
     },
     io: { ...io, ...overrides.io },
   });
-  return { core, calls, setWatermark: (n) => { watermark = n; } };
+  return {
+    core,
+    calls,
+    setWatermark: (n) => { watermark = n; },
+    setDropped: (n) => { dropped = n; },
+  };
 }
 
 test("flattenContent handles strings and text arrays", () => {
@@ -152,6 +177,26 @@ test("countUndeliveredForSession only counts addMessage for the same session", (
     { type: "addMessage", sessionId: "a" },
   ];
   assert.equal(countUndeliveredForSession(pending, "a"), 2);
+});
+
+test("commitOutcome requires this commit's archive URI", () => {
+  assert.deepEqual(commitOutcome(null), { accepted: false, reason: "no_result" });
+  assert.deepEqual(
+    commitOutcome({ status: "skipped", archived: false, archive_uri: null, reason: "no_messages" }),
+    { accepted: false, reason: "skipped:no_messages" },
+  );
+  assert.deepEqual(commitOutcome({ status: "accepted", archived: false, archive_uri: "viking://x" }), {
+    accepted: false, reason: "not_archived",
+  });
+  assert.deepEqual(commitOutcome({ status: "accepted", archived: true }), {
+    accepted: false, reason: "no_archive_uri",
+  });
+  assert.deepEqual(commitOutcome({ status: "failed", archived: true, archive_uri: "viking://bad" }), {
+    accepted: false, reason: "status:failed",
+  });
+  assert.deepEqual(commitOutcome({ archive_uri: "viking://user/u/sessions/s/history/archive_002", task_id: "t" }), {
+    accepted: true, reason: "accepted", archiveUri: "viking://user/u/sessions/s/history/archive_002", taskId: "t",
+  });
 });
 
 test("transformContext drops covered turns and injects overview before recall", () => {
@@ -308,25 +353,29 @@ test("restore uses the last ov-takeover entry and restores syncedEntryCount", ()
 
 test("onTurnSynced waits for threshold and enough user turns", async () => {
   const { core, calls } = makeCore({ config: { takeoverTokenThreshold: 50, takeoverKeepRecentTurns: 3 } });
-  core.transformContext([user("one"), user("two")]);
-  assert.equal(await core.onTurnSynced(60), false);
+  const short = [user("one"), user("two")];
+  core.transformContext(short);
+  assert.equal(await core.onTurnSynced(60, short), false);
   assert.equal(calls.committed, 0);
 
-  core.transformContext([user("one"), user("two"), user("three"), user("four")]);
-  assert.equal(await core.onTurnSynced(0), true);
+  const enough = [user("one"), user("two"), user("three"), user("four")];
+  core.transformContext(enough);
+  assert.equal(await core.onTurnSynced(0, enough), true);
   assert.equal(calls.committed, 1);
 });
 
 test("commitAndAdvance advances boundary and persists after overview is ready", async () => {
   const { core, calls, setWatermark } = makeCore({
     watermark: 4,
-    overviews: ["", { latest_archive_overview: "fresh overview" }],
+    overviews: ["", "fresh overview"],
   });
-  core.transformContext([user("one"), assistant("a"), user("two"), assistant("b"), user("three")]);
+  const branch = [user("one"), assistant("a"), user("two"), assistant("b"), user("three")];
+  core.transformContext(branch);
   setWatermark(5);
-  assert.equal(await core.onTurnSynced(120), true);
+  assert.equal(await core.onTurnSynced(120, branch), true);
   assert.equal(core.state.coveredUserTurns, 2);
   assert.equal(core.state.overview, "fresh overview");
+  assert.equal(core.state.fingerprint, fingerprintMessage(assistant("b")));
   assert.equal(core.state.pendingTokens, 0);
   assert.equal(core.state.syncedEntryCount, 5);
   assert.equal(calls.flushed, 1);
@@ -335,30 +384,256 @@ test("commitAndAdvance advances boundary and persists after overview is ready", 
   assert.deepEqual(calls.slept, [1]);
   assert.equal(calls.persisted.length, 1);
   assert.equal(calls.persisted[0].type, TAKEOVER_ENTRY_TYPE);
+  assert.deepEqual(calls.overviewUris, [
+    "viking://user/x/sessions/s/history/archive_001",
+    "viking://user/x/sessions/s/history/archive_001",
+  ]);
+});
+
+test("keep_recent_count counts captured messages instead of transcript entries", async () => {
+  const { core, calls } = makeCore({
+    config: { takeoverKeepRecentTurns: 1 },
+    io: { captureCount: (slice) => slice.filter((entry) => entry.role !== "system" && entry.type !== "custom").length },
+  });
+  const branch = [
+    system("base"), user("one"), assistant("one answer"),
+    { type: "custom", data: {} }, user("two"), assistant("tool one"), assistant("tool two"),
+  ];
+  assert.equal(await core.onTurnSynced(120, branch), true);
+  assert.equal(calls.lastCommitOpts.keepRecentCount, 3);
+});
+
+test("keepRecentTurns zero archives every captured message", async () => {
+  const { core, calls } = makeCore({ config: { takeoverKeepRecentTurns: 0 } });
+  const branch = [user("one"), assistant("answer")];
+  assert.equal(await core.onTurnSynced(120, branch), true);
+  assert.equal(calls.lastCommitOpts.keepRecentCount, 0);
+  assert.equal(core.state.coveredUserTurns, 1);
 });
 
 test("commitAndAdvance keeps pending tokens when flush fails", async () => {
   const { core, calls } = makeCore({ flushResult: false });
-  core.transformContext([user("one"), user("two")]);
-  assert.equal(await core.onTurnSynced(120), false);
+  const branch = [user("one"), user("two")];
+  core.transformContext(branch);
+  assert.equal(await core.onTurnSynced(120, branch), false);
   assert.equal(core.state.pendingTokens, 120);
   assert.equal(calls.committed, 0);
-  assert.equal(calls.persisted.length, 0);
+  assert.equal(calls.persisted.length, 1);
+  assert.equal(calls.persisted[0].data.coveredUserTurns, 0);
+  assert.equal(calls.persisted[0].data.pendingTokens, 120);
 });
 
-test("commitAndAdvance keeps boundary unchanged when overview is not ready", async () => {
+test("commitAndAdvance persists the same pending archive until its overview is ready", async () => {
   const { core, calls } = makeCore({ overviews: ["", "", ""] });
-  core.transformContext([user("one"), user("two")]);
-  assert.equal(await core.onTurnSynced(120), false);
+  const branch = [user("one"), user("two")];
+  core.transformContext(branch);
+  assert.equal(await core.onTurnSynced(120, branch), false);
   assert.equal(core.state.coveredUserTurns, 0);
-  // Token pressure resets so the retry waits for the next threshold crossing
-  // instead of re-committing (and spawning a new archive) on every turn.
-  assert.equal(core.state.pendingTokens, 0);
+  assert.equal(core.state.pendingTokens, 120);
+  assert.equal(core.state.pendingArchive.archiveUri, "viking://user/x/sessions/s/history/archive_001");
   assert.equal(calls.committed, 1);
-  assert.equal(calls.persisted.length, 0);
-  assert.equal(await core.onTurnSynced(10), false);
+  assert.equal(calls.persisted.length, 1);
+  assert.equal(await core.onTurnSynced(10, branch), false);
   assert.equal(calls.committed, 1);
-  assert.equal(core.state.pendingTokens, 10);
+  assert.equal(core.state.pendingTokens, 130);
+});
+
+test("pending archive survives restore and later advances without another commit", async () => {
+  const first = makeCore({ overviews: ["", "", ""] });
+  const branch = [user("one"), assistant("a"), user("two")];
+  assert.equal(await first.core.onTurnSynced(120, branch), false);
+  const saved = first.core.persistedState();
+
+  const resumed = makeCore({ overviews: ["restored overview"] });
+  resumed.core.restore([{ type: "custom", customType: TAKEOVER_ENTRY_TYPE, data: saved }]);
+  assert.equal(await resumed.core.onTurnSynced(7, branch), true);
+  assert.equal(resumed.calls.committed, 0);
+  assert.equal(resumed.core.state.pendingArchive, null);
+  assert.equal(resumed.core.state.pendingTokens, 7);
+});
+
+test("old state without archive fields remains compatible", () => {
+  const { core } = makeCore();
+  core.restore([{ type: "custom", customType: TAKEOVER_ENTRY_TYPE, data: {
+    coveredUserTurns: 1, overview: "legacy", pendingTokens: 4, syncedEntryCount: 2,
+  } }]);
+  assert.equal(core.state.pendingArchive, null);
+  assert.equal(core.state.captureGap, false);
+});
+
+test("capture gap survives restore and blocks takeover plus native compaction", async () => {
+  const { core, calls } = makeCore();
+  const branch = [user("one"), user("two")];
+  core.restore([{ type: "custom", customType: TAKEOVER_ENTRY_TYPE, data: {
+    coveredUserTurns: 0, overview: "", pendingTokens: 120, captureGap: true,
+  } }]);
+  assert.equal(await core.commitAndAdvance(branch), false);
+  assert.equal(await core.handleBeforeCompact({ firstKeptEntryId: "pi-kept" }, branch), undefined);
+  assert.equal(calls.committed, 0);
+});
+
+test("skipped, not archived and missing URI results never advance", async () => {
+  const branch = [user("one"), user("two")];
+  for (const commitResult of [
+    { status: "skipped", archived: false, archive_uri: null, reason: "no_messages" },
+    { status: "accepted", archived: false, archive_uri: "viking://bad" },
+    { status: "accepted", archived: true },
+  ]) {
+    const { core, calls } = makeCore({ commitResult });
+    assert.equal(await core.onTurnSynced(120, branch), false);
+    assert.equal(core.state.coveredUserTurns, 0);
+    assert.equal(calls.overviewUris.length, 0);
+  }
+});
+
+test("archive overview read failures are logged and keep the boundary pending", async () => {
+  const { core, calls } = makeCore({
+    io: { readArchiveOverview: async () => { throw new Error("storage failed"); } },
+  });
+  const branch = [user("one"), user("two")];
+  assert.equal(await core.onTurnSynced(120, branch), false);
+  assert.ok(core.state.pendingArchive);
+  assert.ok(calls.logs.some((line) => /overview read failed.*storage failed/.test(line)));
+});
+
+test("a delayed summary preserves token pressure from messages arriving while waiting", async () => {
+  const { core, calls } = makeCore({ overviews: ["", "", "", "ready"] });
+  const branch = [user("one"), user("two")];
+  assert.equal(await core.onTurnSynced(120, branch), false);
+  assert.equal(await core.onTurnSynced(17, branch), true);
+  assert.equal(calls.committed, 1);
+  assert.equal(core.state.pendingTokens, 17);
+});
+
+test("messages appended while an archive is pending are not included in its frozen boundary", async () => {
+  const { core, calls } = makeCore({ overviews: ["", "", "", "ready"] });
+  const initial = [user("one"), assistant("a"), user("two")];
+  assert.equal(await core.onTurnSynced(120, initial), false);
+  const extended = [...initial, assistant("b"), user("three")];
+  assert.equal(await core.onTurnSynced(9, extended), true);
+  assert.equal(core.state.coveredUserTurns, 1);
+  assert.equal(core.state.pendingTokens, 9);
+  assert.equal(calls.committed, 1);
+});
+
+test("queued transient capture is drained before commit", async () => {
+  const { core, calls } = makeCore({
+    syncResult: { added: 1, tokens: 5, allDelivered: false, queued: 1, permanentFailures: 0 },
+  });
+  const branch = [user("one"), user("two")];
+  assert.equal(await core.onTurnSynced(120, branch), true);
+  assert.equal(calls.flushed, 1);
+  assert.equal(calls.committed, 1);
+});
+
+test("permanent capture failure persists a gap and blocks later takeover", async () => {
+  const { core, calls } = makeCore({
+    syncResult: { added: 1, tokens: 5, allDelivered: false, queued: 0, permanentFailures: 1 },
+  });
+  const branch = [user("one"), user("two")];
+  assert.equal(await core.onTurnSynced(120, branch), false);
+  assert.equal(core.state.captureGap, true);
+  assert.equal(calls.committed, 0);
+  assert.equal(await core.onTurnSynced(120, branch), false);
+  assert.equal(calls.synced, 1);
+});
+
+test("frozen boundary is abandoned after the branch changes", async () => {
+  let active = [user("one"), assistant("old"), user("two")];
+  const { core, calls } = makeCore({
+    io: {
+      readArchiveOverview: async (uri) => {
+        calls.overviewUris.push(uri);
+        active = [user("one"), assistant("changed"), user("two")];
+        return "fresh overview";
+      },
+    },
+  });
+  assert.equal(await core.onTurnSynced(120, () => active), false);
+  assert.equal(core.state.coveredUserTurns, 0);
+  assert.equal(core.state.captureGap, true);
+  assert.match(calls.logs.at(-1), /boundary no longer/);
+});
+
+test("frozen boundary uses entry identity when two branches have the same content", async () => {
+  let active = [
+    { id: "u1", type: "message", message: user("one") },
+    { id: "a1", type: "message", message: assistant("same") },
+    { id: "u2", type: "message", message: user("two") },
+  ];
+  const { core, calls } = makeCore({
+    io: {
+      readArchiveOverview: async (uri) => {
+        calls.overviewUris.push(uri);
+        active = [
+          { id: "u1-fork", type: "message", message: user("one") },
+          { id: "a1-fork", type: "message", message: assistant("same") },
+          { id: "u2-fork", type: "message", message: user("two") },
+        ];
+        return "fresh overview";
+      },
+    },
+  });
+  assert.equal(await core.onTurnSynced(120, () => active), false);
+  assert.equal(core.state.coveredUserTurns, 0);
+  assert.equal(core.state.captureGap, true);
+});
+
+test("frozen boundary rejects a fork after the cut but accepts append-only growth", async () => {
+  const initial = [
+    { id: "u1", type: "message", message: user("one") },
+    { id: "a1", type: "message", message: assistant("answer one") },
+    { id: "u2", type: "message", message: user("two") },
+    { id: "a2", type: "message", message: assistant("answer two") },
+  ];
+  let active = initial;
+  const forked = makeCore({
+    io: {
+      readArchiveOverview: async (uri) => {
+        forked.calls.overviewUris.push(uri);
+        active = [...initial.slice(0, 2), { id: "u2-fork", type: "message", message: user("forked") }];
+        return "fresh overview";
+      },
+    },
+  });
+  assert.equal(await forked.core.onTurnSynced(120, () => active), false);
+  assert.equal(forked.core.state.coveredUserTurns, 0);
+
+  active = initial;
+  const appended = makeCore({
+    io: {
+      readArchiveOverview: async (uri) => {
+        appended.calls.overviewUris.push(uri);
+        active = [...initial, { id: "u3", type: "message", message: user("three") }];
+        return "fresh overview";
+      },
+    },
+  });
+  assert.equal(await appended.core.onTurnSynced(120, () => active), true);
+  assert.equal(appended.core.state.coveredUserTurns, 1);
+});
+
+test("two consecutive archives advance one complete user turn at a time", async () => {
+  let nextArchive = 0;
+  const { core, calls } = makeCore({
+    io: {
+      commit: async (opts) => {
+        calls.committed++;
+        calls.lastCommitOpts = opts;
+        nextArchive++;
+        return { status: "accepted", archived: true, archive_uri: `viking://user/x/sessions/s/history/archive_00${nextArchive}` };
+      },
+    },
+  });
+  const first = [user("one"), assistant("a"), user("two")];
+  assert.equal(await core.onTurnSynced(120, first), true);
+  assert.equal(core.state.coveredUserTurns, 1);
+
+  const second = [...first, assistant("b"), user("three")];
+  assert.equal(await core.onTurnSynced(120, second), true);
+  assert.equal(core.state.coveredUserTurns, 2);
+  assert.equal(calls.overviewUris.at(-1), "viking://user/x/sessions/s/history/archive_002");
+  assert.equal(calls.committed, 2);
 });
 
 test("concurrent commitAndAdvance calls are serialized", async () => {
@@ -373,9 +648,10 @@ test("concurrent commitAndAdvance calls are serialized", async () => {
       },
     },
   });
-  core.transformContext([user("one"), user("two")]);
-  const first = core.commitAndAdvance();
-  const second = core.commitAndAdvance();
+  const branch = [user("one"), user("two")];
+  core.transformContext(branch);
+  const first = core.commitAndAdvance(branch);
+  const second = core.commitAndAdvance(branch);
   assert.equal(await second, false);
   release();
   assert.equal(await first, true);
@@ -387,7 +663,8 @@ test("handleBeforeCompact returns OV summary and resets boundary", async () => {
   core.restore([
     { type: "custom", customType: TAKEOVER_ENTRY_TYPE, data: { coveredUserTurns: 2, overview: "old", pendingTokens: 50 } },
   ]);
-  const result = await core.handleBeforeCompact({ firstKeptEntryId: "entry-3", tokensBefore: 1234 });
+  const branch = [user("one"), assistant("a")];
+  const result = await core.handleBeforeCompact({ firstKeptEntryId: "entry-3", tokensBefore: 1234 }, branch);
   assert.equal(result.compaction.firstKeptEntryId, "entry-3");
   assert.equal(result.compaction.tokensBefore, 1234);
   assert.equal(result.compaction.details.source, "openviking");
@@ -400,6 +677,73 @@ test("handleBeforeCompact fail-opens without firstKeptEntryId or overview", asyn
   const { core } = makeCore({ overviews: [""] });
   assert.equal(await core.handleBeforeCompact({ tokensBefore: 1 }), undefined);
   assert.equal(await core.handleBeforeCompact({ firstKeptEntryId: "x", tokensBefore: 1 }), undefined);
+});
+
+test("handleBeforeCompact uses pi's keep position, archives all messages, and honours cancellation", async () => {
+  const branch = [user("one"), assistant("a"), user("two")];
+  const normal = makeCore({ overviews: ["native overview"] });
+  const result = await normal.core.handleBeforeCompact(
+    { firstKeptEntryId: "pi-kept", tokensBefore: 44, signal: new AbortController().signal },
+    branch,
+  );
+  assert.equal(result.compaction.firstKeptEntryId, "pi-kept");
+  assert.equal(normal.calls.lastCommitOpts.keepRecentCount, 0);
+  assert.equal(normal.calls.lastSyncBranch, branch);
+
+  const cancelled = makeCore();
+  const controller = new AbortController();
+  controller.abort();
+  assert.equal(await cancelled.core.handleBeforeCompact(
+    { firstKeptEntryId: "pi-kept", signal: controller.signal }, branch,
+  ), undefined);
+  assert.equal(cancelled.calls.committed, 0);
+});
+
+test("handleBeforeCompact cancels after an in-flight overview read", async () => {
+  const controller = new AbortController();
+  const { core } = makeCore({
+    io: { readArchiveOverview: async () => { controller.abort(); return "too late"; } },
+  });
+  assert.equal(await core.handleBeforeCompact(
+    { firstKeptEntryId: "pi-kept", signal: controller.signal }, [user("one")],
+  ), undefined);
+  assert.equal(core.state.overview, "");
+  assert.ok(core.state.pendingArchive);
+});
+
+test("handleBeforeCompact catches transport failures and returns control to pi", async () => {
+  const { core, calls } = makeCore({ io: { commit: async () => { throw new Error("offline"); } } });
+  assert.equal(await core.handleBeforeCompact(
+    { firstKeptEntryId: "pi-kept" }, [user("one")],
+  ), undefined);
+  assert.ok(calls.logs.some((line) => /native compaction archive failed.*offline/.test(line)));
+});
+
+test("native compaction does not start another archive while a takeover summary is pending", async () => {
+  const branch = [user("one"), user("two")];
+  const { core, calls } = makeCore({ overviews: ["", "", ""] });
+  await core.onTurnSynced(120, branch);
+  assert.ok(core.state.pendingArchive);
+  assert.equal(await core.handleBeforeCompact({ firstKeptEntryId: "pi-kept" }, branch), undefined);
+  assert.equal(calls.committed, 1);
+});
+
+test("a timed-out native archive is persisted but never reused as a takeover boundary", async () => {
+  const branch = [user("one"), assistant("a")];
+  const first = makeCore({ overviews: ["", "", ""] });
+  first.core.restore([{ type: "custom", customType: TAKEOVER_ENTRY_TYPE, data: {
+    coveredUserTurns: 1, overview: "old overview", pendingTokens: 20,
+  } }]);
+  assert.equal(await first.core.handleBeforeCompact({ firstKeptEntryId: "pi-kept" }, branch), undefined);
+  assert.equal(first.core.state.pendingArchive.nativeCompaction, true);
+  assert.equal(first.core.state.coveredUserTurns, 0);
+
+  const resumed = makeCore({ overviews: ["late native overview"] });
+  resumed.core.restore([{ type: "custom", customType: TAKEOVER_ENTRY_TYPE, data: first.core.persistedState() }]);
+  assert.equal(await resumed.core.onTurnSynced(5, branch), false);
+  assert.equal(resumed.calls.committed, 0);
+  assert.equal(resumed.core.state.coveredUserTurns, 0);
+  assert.equal(resumed.core.state.pendingArchive, null);
 });
 
 test("disabled takeover is a passthrough", async () => {

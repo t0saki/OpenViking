@@ -39,8 +39,18 @@ export interface OVSessionContext {
 }
 
 export interface OVCommitResult {
+  /**
+   * `accepted` = phase 1 wrote `history/archive_NNN/messages.jsonl` and a
+   * background task is generating the Working Memory; `skipped` = nothing to
+   * archive (see `reason`, e.g. `no_messages`). Older builds omit the field.
+   */
+  status?: "accepted" | "skipped" | string;
+  /** Whether phase 1 created an archive. */
+  archived?: boolean;
+  reason?: string;
   task_id?: string;
-  archive_uri?: string;
+  /** `null` on a `skipped` commit — the server sends the key either way. */
+  archive_uri?: string | null;
   trace_id?: string;
 }
 
@@ -128,4 +138,47 @@ export class OVClient {
       status: res.status,
     };
   }
+
+  /**
+   * Working Memory of one archive: `GET /content/read?uri=<archive_uri>/.overview.md`.
+   *
+   * This reads the Working Memory that belongs to a *specific* commit, keyed by
+   * the `archive_uri` that commit returned — unlike `getSessionContext`, whose
+   * `latest_archive_overview` reflects whatever the session's newest archive is
+   * and can point at an older `/context` summary that this takeover did not
+   * produce. Returns null until commit phase 2 writes the sidecar (the server
+   * answers 404 until then). Other read failures throw so takeover can log a
+   * read failure separately from an unfinished archive. The sidecar is stored as
+   * OKF Markdown — `---\n<yaml>\n---\n\n<body>\n` — and `content/read` only
+   * strips that framing for memory URIs, not session archives, so the
+   * frontmatter is removed here. A file present but empty counts as not ready
+   * (null), so a poller cannot be fooled by an empty write.
+   */
+  async readArchiveOverview(archiveUri: string): Promise<string | null> {
+    const base = String(archiveUri ?? "").trim().replace(/\/+$/, "");
+    if (!base) return null;
+    const res = await this.fetchJSON<string>(
+      `/api/v1/content/read?uri=${encodeURIComponent(`${base}/.overview.md`)}`,
+      undefined, { timeoutMs: 15000 },
+    );
+    if (!res.ok) {
+      if (res.status === 404) return null;
+      const detail = res.error?.message || res.error?.code || `HTTP ${res.status ?? 0}`;
+      throw new Error(`archive overview read failed: ${detail}`);
+    }
+    if (typeof res.result !== "string") return null;
+    const body = stripFrontmatter(res.result);
+    return body.trim() ? body : null;
+  }
+}
+
+/**
+ * Drop a leading `---` … `---` YAML frontmatter block, together with the blank
+ * line the server writes after it (its sidecars render as `---\n<yaml>\n---\n\n
+ * <body>\n`). Reused rule from the experimental fork's client.
+ */
+function stripFrontmatter(text: string): string {
+  const m = /^---[ \t]*\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/.exec(text);
+  if (!m) return text;
+  return text.slice(m[0].length).replace(/^(?:[ \t]*\r?\n)+/, "");
 }

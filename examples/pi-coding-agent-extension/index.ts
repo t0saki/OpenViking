@@ -172,18 +172,27 @@ export default async function (pi: ExtensionAPI) {
         }
         return;
       }
-      await sync.replayPending();
 
-      // Profile injection
-      profileBlock = await buildSessionProfileBlock(client, config);
-
+      // Restore takeover state — sync watermark, pending archive and capture
+      // gap — before replaying any queued messages, so recovery and replay
+      // cannot disagree about what has been delivered (plan §4).
       const branch = typeof ctx.sessionManager.getBranch === "function"
         ? ctx.sessionManager.getBranch()
         : [];
       if (config.takeoverEnabled) {
         takeover.restore(branch);
         sync.restoreWatermark(takeover.state.syncedEntryCount);
-      } else if (sync.sessionId) {
+      }
+
+      await sync.replayPending();
+      if (config.takeoverEnabled && sync.droppedCount > 0) {
+        takeover.recordCaptureGap();
+      }
+
+      // Profile injection
+      profileBlock = await buildSessionProfileBlock(client, config);
+
+      if (!config.takeoverEnabled && sync.sessionId) {
         // Resume rehydration — fetch archive overview if session was previously committed.
         archiveOverview = await fetchArchiveOverview(client, sync.sessionId, config);
       }
@@ -341,20 +350,29 @@ export default async function (pi: ExtensionAPI) {
     const branch = ctx.sessionManager.getBranch();
     const result = await sync.syncBranch(branch);
     logger.log("turn_end", { added: result.added, tokens: result.tokens });
-    await takeover.onTurnSynced(result.tokens);
+    if (result.permanentFailures > 0) takeover.recordCaptureGap();
+    // The branch is what the boundary is frozen against and re-confirmed on, so
+    // takeover needs it, not just the token delta.
+    await takeover.onTurnSynced(result.tokens, () => ctx.sessionManager.getBranch());
     updateStatus(ctx, connected, result.added, sync.sessionId, config, takeover.state, toolsReady);
   });
 
   // --- session_before_compact ---
-  pi.on("session_before_compact", async (event, _ctx) => {
+  pi.on("session_before_compact", async (event, ctx) => {
     if (!connected || bypassed) return;
 
     if (config.takeoverEnabled) {
       const prep = (event as any)?.preparation ?? {};
+      // Native compaction syncs the latest branch, archives all captured
+      // history and reuses pi's own firstKeptEntryId, so hand it the branch.
+      const branch = typeof ctx.sessionManager.getBranch === "function"
+        ? ctx.sessionManager.getBranch()
+        : [];
       return await takeover.handleBeforeCompact({
         firstKeptEntryId: prep.firstKeptEntryId,
         tokensBefore: prep.tokensBefore ?? 0,
-      });
+        signal: (event as any)?.signal,
+      }, () => ctx.sessionManager.getBranch());
     }
 
     const archiveId = await sync.commit();
@@ -414,8 +432,13 @@ export default async function (pi: ExtensionAPI) {
       if (args?.trim() === "commit") {
         await sync.shutdown();
         const commitResult = config.takeoverEnabled ? null : await sync.commit();
+        // Manual commit freezes and confirms the boundary against the current
+        // branch, exactly like the automatic path.
+        const branch = typeof ctx.sessionManager.getBranch === "function"
+          ? ctx.sessionManager.getBranch()
+          : [];
         const ok = config.takeoverEnabled
-          ? await takeover.commitAndAdvance()
+          ? await takeover.commitAndAdvance(() => ctx.sessionManager.getBranch())
           : commitResult !== null;
         if (ok) {
           ctx.ui.notify(

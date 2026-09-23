@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rename, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { SyncManager } from "../sync.ts";
@@ -172,6 +172,18 @@ test("other-session addMessage and commit queue entries do not block takeover ba
   });
 });
 
+test("a current-session processing entry keeps the takeover barrier closed", async () => {
+  await withPendingDir(async (dir) => {
+    const sync = new SyncManager(client({ connected: false }), config());
+    await sync.ensureSession("pi-session");
+    await enqueue("addMessage", sync.sessionId, { role: "user", content: "in flight" });
+    const [{ filename }] = await listPending();
+    await rename(join(dir, filename), join(dir, filename.replace(/\.json$/, ".processing")));
+
+    assert.equal(await sync.flushForTakeover(), false);
+  });
+});
+
 test("restoreWatermark prevents pi -c from re-syncing already captured entries", async () => {
   await withPendingDir(async () => {
     const calls = [];
@@ -282,8 +294,80 @@ test("non-retryable batch failure drops the payloads but still advances the sync
     assert.equal(result.added, 2);
     assert.equal(result.allDelivered, false);
     assert.equal(sync.syncedCount, 2);
+    assert.equal(sync.droppedCount, 2);
+    assert.equal(result.permanentFailures, 2);
     assert.equal(calls.length, 1);
     assert.equal((await listPending()).length, 0);
+  });
+});
+
+test("retry queue write failure records a permanent capture gap", async () => {
+  const previous = process.env.OPENVIKING_PENDING_DIR;
+  process.env.OPENVIKING_PENDING_DIR = "/dev/null/unwritable";
+  try {
+    const { c } = batchClient({ respond: () => ({ ok: false, status: 500, error: { message: "offline" } }) });
+    const sync = new SyncManager(c, config());
+    await sync.ensureSession("pi-session");
+    const result = await sync.syncBranch([
+      { type: "message", message: { role: "user", content: "Cannot reach disk queue." } },
+    ]);
+    assert.equal(result.added, 1);
+    assert.equal(result.permanentFailures, 1);
+    assert.equal(sync.droppedCount, 1);
+    assert.equal(sync.syncedCount, 1);
+  } finally {
+    if (previous === undefined) delete process.env.OPENVIKING_PENDING_DIR;
+    else process.env.OPENVIKING_PENDING_DIR = previous;
+  }
+});
+
+test("takeover startup replay records a non-retryable current-session gap", async () => {
+  await withPendingDir(async () => {
+    const c = client({ fetchJSON: async () => ({ ok: false, status: 400, error: { message: "bad" } }) });
+    const sync = new SyncManager(c, config());
+    await sync.ensureSession("pi-session");
+    await enqueue("addMessage", sync.sessionId, { role: "user", content: "poison" });
+
+    await sync.replayPending();
+    assert.equal(sync.droppedCount, 1);
+    assert.equal((await listPending()).length, 0);
+  });
+});
+
+test("takeover startup replay records retry exhaustion", async () => {
+  await withPendingDir(async () => {
+    const previous = process.env.OPENVIKING_PENDING_MAX_RETRIES;
+    process.env.OPENVIKING_PENDING_MAX_RETRIES = "0";
+    try {
+      const c = client({ fetchJSON: async () => ({ ok: false, status: 500 }) });
+      const sync = new SyncManager(c, config());
+      await sync.ensureSession("pi-session");
+      await enqueue("addMessage", sync.sessionId, { role: "user", content: "exhaust now" });
+
+      await sync.replayPending();
+      assert.equal(sync.droppedCount, 1);
+      assert.equal((await listPending()).length, 0);
+    } finally {
+      if (previous === undefined) delete process.env.OPENVIKING_PENDING_MAX_RETRIES;
+      else process.env.OPENVIKING_PENDING_MAX_RETRIES = previous;
+    }
+  });
+});
+
+test("takeover startup leaves other sessions out of its delivery decision", async () => {
+  await withPendingDir(async () => {
+    const seen = [];
+    const c = client({
+      fetchJSON: async (path) => { seen.push(String(path)); return { ok: true, status: 200, result: {} }; },
+    });
+    const sync = new SyncManager(c, config());
+    await sync.ensureSession("pi-session");
+    await enqueue("addMessage", "different-session", { role: "user", content: "other" });
+
+    await sync.replayPending();
+    assert.equal(seen.some((path) => path.includes("different-session/messages")), false);
+    assert.equal((await listPending()).length, 1);
+    assert.equal(sync.droppedCount, 0);
   });
 });
 
