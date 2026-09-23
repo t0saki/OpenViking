@@ -653,6 +653,12 @@ html[lang="zh"] :is(.b-hero__title, .b-post__title, .b-card__title, .b-post__nav
 }
 
 @media (min-width: 900px) {
+  html.ov-assistant-open .b-topbar__inner {
+    padding-right: calc(24px + var(--ov-rail));
+  }
+
+  html.ov-assistant-open .b-brand__sub { display: none; }
+
   html.ov-assistant-open .b-shell__main {
     padding-right: var(--ov-rail);
   }
@@ -679,3 +685,12 @@ html.ov-assistant-pill .b-shell__main {
     padding-bottom: calc(86px + env(safe-area-inset-bottom, 0px));
   }
 }
+
+/* Language choices remain actionable even when the current URL overrides them. */
+.b-language { position: relative; border: 1px solid var(--th-line); border-radius: 999px; }
+.b-language summary { display: flex; align-items: center; gap: 5px; padding: 5px 8px; cursor: pointer; font: 11px/1.6 monospace; list-style: none; }
+.b-language summary::-webkit-details-marker { display: none; }
+.b-language__menu { position: absolute; right: 0; top: calc(100% + 6px); z-index: 90; min-width: 170px; padding: 5px; border: 1px solid var(--th-line); border-radius: 10px; background: var(--th-bg); box-shadow: 0 4px 16px #0002; }
+.b-language__menu button { display: block; width: 100%; text-align: left; padding: 8px 10px; border: 0; border-radius: 5px; background: transparent; color: inherit; cursor: pointer; }
+.b-language__menu button[aria-pressed=true] { font-weight: 700; }
+.b-language button:focus-visible, .b-language summary:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }

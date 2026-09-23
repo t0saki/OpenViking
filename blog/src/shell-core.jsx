@@ -1,4 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
+import { createLanguagePreference } from './language-preference.js';
+export const languagePreference = createLanguagePreference();
 
 /* ---------- pathname router ---------- */
 
@@ -88,7 +90,7 @@ export function useSiteRouter() {
   const setQuery = useCallback((patch) => {
     const next = { ...state.query, ...patch };
     Object.keys(next).forEach(k => { if (next[k] == null || next[k] === '') delete next[k]; });
-    const path = buildPath(state.route, next);
+    const path = buildPath(state.route, next) + (location.hash.startsWith('#/') ? '' : location.hash);
     if (`${location.pathname}${location.search}` !== path) history.pushState(null, '', path);
     setState({ route: state.route, query: next, raw: path });
   }, [state]);
@@ -132,6 +134,7 @@ export const SHELL_STRINGS = {
     notFoundTitle: 'Nothing here',
     notFoundBody: 'That essay does not exist. It may have been a dream.',
     langLabel: 'Language',
+    followBrowser: 'Follow browser',
     themeLabel: 'Theme',
     notAvailableLang: 'This essay is not yet translated. Showing the available language.',
     tags: 'Tags',
@@ -164,6 +167,7 @@ export const SHELL_STRINGS = {
     notFoundTitle: '此处空空如也',
     notFoundBody: '这篇文章不存在,也许只是一场梦。',
     langLabel: '语言',
+    followBrowser: '跟随浏览器',
     themeLabel: '主题',
     notAvailableLang: '本文尚未翻译，显示当前可用版本。',
     tags: '标签',
@@ -213,10 +217,6 @@ function isBrowser() {
   return typeof window !== 'undefined' && typeof document !== 'undefined';
 }
 
-function isLanguage(value) {
-  return LANGS.some(lang => lang.code === value);
-}
-
 function isBlogTheme(value) {
   return value === THEME_LIGHT || value === THEME_DARK;
 }
@@ -239,7 +239,6 @@ export function blogThemeToSharedTheme(theme) {
 
 function mergePreferences(base, incoming) {
   return {
-    lang: incoming.lang ?? base.lang,
     theme: incoming.theme ?? base.theme,
   };
 }
@@ -247,10 +246,9 @@ function mergePreferences(base, incoming) {
 function readLocalPreferences() {
   if (!isBrowser()) return {};
 
-  const lang = localStorage.getItem('blog.lang');
-  const theme = localStorage.getItem('blog.theme');
+  let theme;
+  try { theme = localStorage.getItem('blog.theme'); } catch { /* Use system theme. */ }
   return {
-    lang: isLanguage(lang) ? lang : undefined,
     theme: isBlogTheme(theme) ? blogThemeToSharedTheme(theme) : undefined,
   };
 }
@@ -258,7 +256,9 @@ function readLocalPreferences() {
 export function readCookiePreferences() {
   if (!isBrowser()) return {};
 
-  const cookie = document.cookie
+  let cookies = '';
+  try { cookies = document.cookie; } catch { return {}; }
+  const cookie = cookies
     .split('; ')
     .find(item => item.startsWith(`${PREFERENCE_COOKIE_KEY}=`));
 
@@ -267,7 +267,6 @@ export function readCookiePreferences() {
   try {
     const preference = JSON.parse(decodeURIComponent(cookie.slice(PREFERENCE_COOKIE_KEY.length + 1)));
     return {
-      lang: isLanguage(preference.lang) ? preference.lang : undefined,
       theme: isSharedTheme(preference.theme) ? preference.theme : undefined,
     };
   } catch {
@@ -287,13 +286,13 @@ export function writeCookiePreferences(preference) {
   if (!isBrowser()) return;
 
   const nextPreference = mergePreferences(readCookiePreferences(), preference);
-  document.cookie = [
+  try { document.cookie = [
     `${PREFERENCE_COOKIE_KEY}=${encodeURIComponent(JSON.stringify(nextPreference))}`,
     'Path=/',
     'Max-Age=31536000',
     'SameSite=Lax',
     cookieDomain(),
-  ].filter(Boolean).join('; ');
+  ].filter(Boolean).join('; '); } catch { /* Theme remains usable in-page. */ }
 }
 
 export function readPersistedPreferences() {
@@ -301,8 +300,7 @@ export function readPersistedPreferences() {
 }
 
 export function getInitialLang(queryLang) {
-  if (isLanguage(queryLang)) return queryLang;
-  return readPersistedPreferences().lang || 'en';
+  return languagePreference.resolve(queryLang, true);
 }
 
 export function getSystemTheme() {

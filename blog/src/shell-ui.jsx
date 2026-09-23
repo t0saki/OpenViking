@@ -4,7 +4,7 @@ import {
   getAllPosts, getAllTags, getPostBySlug, neighbors,
 } from './blog-components';
 import {
-  LANGS, THEME_LIGHT, THEME_DARK,
+  LANGS, THEME_LIGHT, THEME_DARK, languagePreference,
   useSiteRouter, useShellStrings, makeFormatDate, applyTheme, getInitialTheme, isDark,
   buildPath, postPath, estimateReadingMinutes, getInitialLang, readPersistedPreferences,
   sharedThemeToBlogTheme, blogThemeToSharedTheme, writeCookiePreferences,
@@ -14,8 +14,9 @@ import { trackPageView } from './track';
 
 /* ---------- topbar ---------- */
 
-function Topbar({ lang, theme, onLang, onToggleTheme, onHome, S }) {
+function Topbar({ lang, preference, theme, onLang, onToggleTheme, onHome, S }) {
   const dark = isDark(theme);
+  const languageMenu = useRef(null);
   return (
     <header className="b-topbar">
       <div className="b-topbar__inner">
@@ -32,11 +33,21 @@ function Topbar({ lang, theme, onLang, onToggleTheme, onHome, S }) {
           <span className="b-brand__sub">// {S.siteSub}</span>
         </a>
         <div className="b-topbar__nav">
-          <div className="b-seg" role="tablist" aria-label={S.langLabel}>
-            {LANGS.map(l => (
-              <button key={l.code} className={lang === l.code ? 'is-active' : ''} onClick={() => onLang(l.code)}>{l.short}</button>
-            ))}
-          </div>
+          <details className="b-language" ref={languageMenu}
+            onKeyDown={event => { if (event.key === 'Escape') { languageMenu.current.open = false; languageMenu.current.querySelector('summary').focus(); } }}
+            onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) languageMenu.current.open = false; }}>
+            <summary aria-label={S.langLabel}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><path d="M3 5h12M9 3v2m4 0c-1 7-5 10-10 12m2-9c1 4 4 7 8 9m0 4 5-13 5 13m-8-4h6"/></svg>
+              {lang === 'zh' ? '中' : 'EN'}{preference === 'auto' ? (lang === 'zh' ? ' · 自动' : ' · Auto') : ''}
+            </summary>
+            <div className="b-language__menu">
+              {[{ code: 'auto', label: S.followBrowser }, ...LANGS].map(item => (
+                <button key={item.code} type="button" aria-pressed={preference === item.code} onClick={() => { onLang(item.code); languageMenu.current.open = false; }}>
+                  {item.label}
+                </button>
+              ))}
+            </div>
+          </details>
           <button
             className="b-mode-toggle"
             aria-label={dark ? 'Switch to light mode' : 'Switch to dark mode'}
@@ -335,12 +346,12 @@ function Footer({ S }) {
 
 /* ---------- root app ---------- */
 
-export function BlogShell({ router, lang, theme, onLang = () => {}, onToggleTheme = () => {}, S, formatDate, t }) {
+export function BlogShell({ router, lang, preference = 'auto', theme, onLang = () => {}, onToggleTheme = () => {}, S, formatDate, t }) {
   const onHome = () => router.navigate(buildPath({ name: 'index' }, router.query));
 
   return (
     <div className="b-shell">
-      <Topbar lang={lang} theme={theme} onLang={onLang} onToggleTheme={onToggleTheme} onHome={onHome} S={S} />
+      <Topbar lang={lang} preference={preference} theme={theme} onLang={onLang} onToggleTheme={onToggleTheme} onHome={onHome} S={S} />
       {router.route.name === 'index'
         ? <IndexView lang={lang} t={t} theme={theme} navigate={router.navigate} S={S} formatDate={formatDate} />
         : <PostView slug={router.route.slug} lang={lang} theme={theme} navigate={router.navigate} S={S} formatDate={formatDate} t={t} />}
@@ -354,42 +365,37 @@ export default function App() {
   const router = useSiteRouter();
   const [lang, setLang] = useState(() => getInitialLang(router.query.lang));
   const [theme, setTheme] = useState(getInitialTheme);
+  const [preference, setPreference] = useState(languagePreference.read);
 
   useEffect(() => {
     applyTheme(theme);
-    localStorage.setItem('blog.theme', theme);
+    try { localStorage.setItem('blog.theme', theme); } catch { /* Optional persistence. */ }
     writeCookiePreferences({ theme: blogThemeToSharedTheme(theme) });
   }, [theme]);
 
   useEffect(() => {
     document.documentElement.lang = lang;
-    localStorage.setItem('blog.lang', lang);
-    writeCookiePreferences({ lang });
+    document.documentElement.classList.remove('blog-language-pending');
   }, [lang]);
 
   useEffect(() => {
-    const queryLang = router.query.lang;
-    if (LANGS.some(l => l.code === queryLang) && queryLang !== lang) setLang(queryLang);
+    const sync = () => {
+      setLang(getInitialLang(languagePreference.query()));
+      setPreference(languagePreference.read());
+      const nextTheme = sharedThemeToBlogTheme(readPersistedPreferences().theme);
+      if (nextTheme) setTheme(nextTheme);
+    };
+    sync();
+    return languagePreference.subscribe(sync);
   }, [router.query.lang]);
 
-  useEffect(() => {
-    const syncFromSharedPreferences = () => {
-      const preference = readPersistedPreferences();
-      if (preference.lang && preference.lang !== lang) setLang(preference.lang);
-
-      const nextTheme = sharedThemeToBlogTheme(preference.theme);
-      if (nextTheme && nextTheme !== theme) setTheme(nextTheme);
-    };
-
-    window.addEventListener('pageshow', syncFromSharedPreferences);
-    window.addEventListener('focus', syncFromSharedPreferences);
-    return () => {
-      window.removeEventListener('pageshow', syncFromSharedPreferences);
-      window.removeEventListener('focus', syncFromSharedPreferences);
-    };
-  }, [lang, theme]);
-
-  const onLang = (code) => { setLang(code); router.setQuery({ lang: code }); };
+  const onLang = (code) => {
+    languagePreference.clearQuery();
+    languagePreference.save(code);
+    setLang(getInitialLang());
+    setPreference(languagePreference.read());
+    router.setQuery({ lang: null });
+  };
   const onToggleTheme = () => setTheme(t => t === THEME_LIGHT ? THEME_DARK : THEME_LIGHT);
 
   useEffect(() => { window.scrollTo({ top: 0, behavior: 'instant' in window ? 'instant' : 'auto' }); }, [router.route.name, router.route.slug]);
@@ -400,5 +406,5 @@ export default function App() {
   const formatDate = useMemo(() => makeFormatDate(lang), [lang]);
   const t = (m) => pickLocale(m, lang);
 
-  return <BlogShell router={router} lang={lang} theme={theme} onLang={onLang} onToggleTheme={onToggleTheme} S={S} formatDate={formatDate} t={t} />;
+  return <BlogShell router={router} lang={lang} preference={preference} theme={theme} onLang={onLang} onToggleTheme={onToggleTheme} S={S} formatDate={formatDate} t={t} />;
 }

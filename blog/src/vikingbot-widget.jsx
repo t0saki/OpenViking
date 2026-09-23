@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 
 /**
  * Mounts the shared VikingBot embed widget on the blog.
@@ -58,6 +58,9 @@ function whenIdle(run) {
 }
 
 export function VikingBotWidget({ lang }) {
+  const locale = useRef(lang);
+  locale.current = lang;
+  useEffect(() => { window.VikingBotWidget?.setLocale?.(lang === 'zh' ? 'zh' : 'en'); }, [lang]);
   useEffect(() => {
     let cancelled = false;
     const cancelIdle = whenIdle(() => {
@@ -70,7 +73,7 @@ export function VikingBotWidget({ lang }) {
           }
           widget.mount({
             site: 'blog',
-            locale: lang === 'zh' ? 'zh' : 'en',
+            locale: locale.current === 'zh' ? 'zh' : 'en',
             trigger: 'composer',
             layout: 'push',
             // zouk derives the guest name from this; readers should read as
@@ -90,7 +93,7 @@ export function VikingBotWidget({ lang }) {
       cancelIdle();
       window.VikingBotWidget?.unmount();
     };
-  }, [lang]);
+  }, []);
 
   return null;
 }
