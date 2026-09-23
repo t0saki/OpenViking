@@ -82,7 +82,7 @@ The OV session id is `pi-<pi session id>`, derived locally by the shared `derive
 
 **Delivery.** Payloads leave in one batched request through the shared `sendSessionMessages`. Retryable failures are written to the shared disk pending queue and replayed later. The result distinguishes delivered, queued and permanently lost payloads. A non-retryable rejection or failed enqueue advances the capture watermark to avoid duplicate replay, but also records a persistent capture gap; takeover never trims across that gap. The watermark only moves when the whole extraction has either been delivered, queued or recorded as permanently lost.
 
-**Backlog drain.** `flushForTakeover` is the barrier takeover waits on, and it needs the queue empty for this session. Startup restores takeover state before replay, then routes the current session through the tracked Pi drainer rather than the generic replay path. Sync drains queued `addMessage` entries through the batch endpoint, `BATCH_LIMIT` per request, and also treats active `.processing` files as undelivered. The drain is bounded by wall time (`OPENVIKING_PENDING_DRAIN_BUDGET_MS`, 60s by default) and optionally by batch count, so a huge backlog cannot block `turn_end` indefinitely; the remainder drains on later turns. Other sessions can replay afterward but never affect this session's barrier.
+**Backlog drain.** `flushForTakeover` is the barrier takeover waits on, and it needs the queue empty for this session. Startup restores takeover state before replay, then routes the current session through the tracked Pi drainer rather than the generic replay path. Sync drains queued `addMessage` entries through the batch endpoint, `BATCH_LIMIT` per request, and also treats active `.processing` files as undelivered. The drain is bounded by wall time (`OPENVIKING_PENDING_DRAIN_BUDGET_MS`, 60s by default) and optionally by batch count, so a huge backlog cannot block `turn_end` indefinitely; the remainder drains on later turns. Once this session's queue is empty, startup hands other sessions' entries to the generic replay; while this session still has a backlog they wait for a later start, because the generic path drops rejected entries without recording whose gap they are. Other sessions never affect this session's barrier. The same generic replay runs in every OpenViking harness plugin on the machine over the same queue, so a gap is guaranteed to be recorded only for losses this session's own drainer sees.
 
 **Commit.** Outside takeover, sync asks the server for `pending_tokens` after each accepted turn and commits when it crosses `commitTokenThreshold` — server-side accounting, not a local estimate. A failed commit is queued for replay unless the caller passes `queueOnFailure: false`, which takeover always does, because a commit that lands later cannot justify a boundary that moved now.
 
@@ -96,11 +96,11 @@ Context takeover makes OpenViking the authoritative long-term store for a pi ses
 
 | Field | Meaning |
 |---|---|
-| `coveredUserTurns` | Real user turns already covered by the archive overview |
-| `overview` | Latest archive overview returned by the session context endpoint |
-| `fingerprint` | Fingerprint of the last covered message, for branch-mismatch detection |
+| `coveredThroughEntryId` | The boundary: id of the pi entry the covered prefix ends at, inclusive |
+| `coveredUserTurns` | User turns the boundary covers in the active context (display only) |
+| `overview` | Overview of the archive the boundary advanced behind, read from `<archive_uri>/.overview.md` |
 | `pendingTokens` | Estimated synced token pressure since the last successful advance |
-| `lastSeenUserTurns` | User turns counted in the most recent `context` hook |
+| `lastSeenUserTurns` | User turns counted in the most recent `context` hook (display only) |
 | `syncedEntryCount` | Pi branch watermark, restored across `pi -p` / `pi -c` processes |
 | `archiveUri` / `historyUri` | Exact archive and parent history directory used by the recovery hint |
 | `pendingArchive` | Accepted archive whose own overview is not ready yet, including its frozen boundary |
@@ -112,18 +112,24 @@ State is persisted as a pi custom entry:
 pi.appendEntry("ov-takeover", state)
 ```
 
-At startup the extension scans the branch from the end for the newest such entry and restores both the boundary and `SyncManager`'s watermark, so a `pi -c` continuation does not resend branch entries OpenViking already has.
+It is written on state transitions — an advance, a pending archive, a capture gap — and at shutdown, not on every turn, since each entry carries the overview. At startup the extension scans the branch from the end for the newest such entry and restores both the boundary and `SyncManager`'s watermark, so a `pi -c` continuation does not resend branch entries OpenViking already has. A 0.4.0 entry holds its boundary as a user-turn count plus an optional fingerprint instead; the first `context` hook locates it the way 0.4.0 did and converts it to the entry id in front of the first kept turn, or drops it when it no longer matches.
+
+#### Boundary identity
+
+The boundary is an entry id because pi shows takeover two views of the same session that do not line up. `getBranch()` holds every entry on the path: the `ov-takeover` state entries takeover itself appends between turns, model and thinking-level changes, and after a pi compaction the whole compacted-away prefix. The `context` hook's messages hold none of those. A user-turn count or a "last covered message" fingerprint taken on one view lands somewhere else on the other — the state entry in front of every user turn alone makes a branch-side fingerprint disagree with the context on the next request. An entry id names the same entry in both.
+
+Takeover therefore works on pi's context projection of the branch (`projectContextEntries`: after the latest compaction only its kept entries and what follows, minus entries a context edit removed — pi's own `buildContextEntries`, which pi < 0.86 does not expose). The boundary is the entry in front of the oldest kept user turn. In the `context` hook, the first user entry after it is matched onto the hook's messages by its timestamp, which content rewrites leave alone, and the cut goes there. Whatever sits between the boundary and that turn — what a run appended after a `takeoverKeepRecentTurns` 0 commit, or a branch summary `/tree` left at the boundary — is covered by no archive and stays: the cut steps back over those messages role by role, and when the roles disagree with the hook's messages nothing is trimmed. When the boundary entry is not in the active context — `/tree` moved to another branch, or pi compacted past it — the full context is sent and the boundary is kept, so returning to the branch applies it again.
 
 #### Runtime flow
 
 1. `turn_end` captures new branch entries into the OpenViking session, falling back to the disk pending queue when the server is unreachable.
 2. When `pendingTokens` reaches `takeoverTokenThreshold`, and there are more user turns than `takeoverKeepRecentTurns`, takeover tries to advance.
-3. Takeover freezes the candidate boundary, its entry id or fingerprint, the capture watermark, token pressure and the exact number of capture payloads in the retained tail.
+3. On one branch snapshot, takeover freezes the candidate boundary entry, token pressure and the exact number of capture payloads the branch holds after the boundary. A candidate no later than the current boundary is not worth an archive.
 4. It syncs the latest branch and drains this session's queue. A transient queued failure may proceed after the drain succeeds; a permanent rejection, enqueue failure or retry exhaustion persists `captureGap` and blocks takeover for this session.
 5. The commit runs with `queueOnFailure: false` and the retained payload count as `keep_recent_count`. A skipped commit, `archived: false` or missing `archive_uri` cannot advance the boundary.
 6. The extension polls `<archive_uri>/.overview.md` directly — `takeoverOverviewPollMax` attempts, `takeoverOverviewPollMs` apart. It never substitutes an older session-context overview. A timeout persists the pending archive and frozen boundary; later turns poll that archive instead of committing again.
-7. Once the overview is non-empty, takeover confirms the frozen boundary still belongs to the active branch. Only then does it advance; token pressure accumulated while waiting remains for the next archive.
-8. The `context` hook then replaces the covered *conversation* with one synthetic user message beginning `[OpenViking Session Context]`, keeps every covered `system` message in front of it in original order, keeps the recent tail verbatim, and recall is injected into the newest kept user turn as usual.
+7. Once the overview is non-empty, takeover confirms the frozen boundary entry is still in the active context. Only then does it advance; token pressure accumulated while waiting remains for the next archive.
+8. The `context` hook then replaces the covered *conversation* with one synthetic user message beginning `[OpenViking Session Context]`, keeps every covered `system` message in front of it in original order, keeps the recent tail verbatim, and recall is injected into the newest kept user turn as usual. With `takeoverKeepRecentTurns` 0 the boundary is the tip at commit time and applies from the next user turn; conversation the run added after that commit is never trimmed, because no archive covers it.
 
 The overview message's timestamp is derived from the first kept message, so the provider payload stays byte-stable between commits and can benefit from prompt caching.
 
@@ -155,7 +161,8 @@ If any step fails the handler returns nothing and pi's default compaction runs. 
 | Permanent delivery failure | Persist `captureGap`; takeover stays disabled for this session and Pi owns compaction |
 | Commit fails or is skipped | Boundary is not advanced; pending token pressure is retained |
 | Overview not ready | Persist this archive and frozen boundary; later turns poll it without another commit |
-| Frozen boundary no longer matches | Discard the pending boundary and leave local history with Pi |
+| Frozen boundary left the active context while waiting | Discard the pending boundary and leave local history with Pi |
+| Boundary not in the active context (other branch, pi compaction) | Send the full context; keep the boundary for a return to that branch |
 | Compaction takeover fails | Returns nothing; pi's default compaction proceeds |
 
 Successful ordinary and compaction summaries share a recovery footer when the
@@ -168,6 +175,8 @@ summary budget cannot remove the recovery entry point.
 #### Live gate
 
 `scripts/e2e-live.sh` drives a real pi binary, a real OpenViking server and a real LLM endpoint (its required and optional environment variables are documented at the top of `scripts/e2e-live.mjs`). It runs three `pi -p` / `pi -c` turns with a tiny takeover threshold and asserts that the third provider payload carries `[OpenViking Session Context]` while the padding from the first turn is gone from the raw conversation history. The third turn also calls a built-in tool, lists the archive with `openviking_list`, and reads `messages.jsonl` with paginated `openviking_read` arguments before recovering the archived detail. Nothing in the unit suites covers that end to end, so it stays a manual gate.
+
+Between the two, `tests/takeover-session-manager.test.mjs` drives the core against pi's real `SessionManager` — takeover's own state entries between turns, a pi compaction, `/tree` away from and back to the covered branch — and checks which prompts actually go out trimmed. It resolves pi from a local or global install (`PI_SESSION_MANAGER` overrides) and skips when none is found.
 
 ### MCP tools
 

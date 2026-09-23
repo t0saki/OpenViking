@@ -31,14 +31,80 @@ function asEntry(value) {
   return value.entry && typeof value.entry === "object" ? value.entry : value;
 }
 
-/** Unwrap a branch entry to the message it carries, for turn counting. */
-function entryMessage(entry) {
-  if (!entry || typeof entry !== "object") return null;
-  if (entry.type === "message" && entry.message && typeof entry.message === "object") {
-    return entry.message;
+function isUserEntry(entry) {
+  return entry?.type === "message" && isUserTurnStart(entry.message);
+}
+
+/** The role of the non-system message an entry puts into the context, or "". */
+function contextRole(entry) {
+  if (entry?.type === "message") {
+    const role = entry.message?.role;
+    return typeof role === "string" && role !== "system" ? role : "";
   }
-  if (entry.message && typeof entry.message === "object") return entry.message;
-  return entry;
+  if (entry?.type === "custom_message") return "custom";
+  if (entry?.type === "branch_summary" && entry.summary) return "branchSummary";
+  return "";
+}
+
+/**
+ * The branch entries pi builds the model context from, in context order —
+ * pi's own `buildContextEntries` projection, reimplemented because pi < 0.86
+ * does not expose it. After the latest compaction only the compaction entry,
+ * the entries from its `firstKeptEntryId` (system messages excluded) and
+ * everything after it remain; entries a context edit removed are dropped.
+ * `getBranch()` itself still holds the compacted-away prefix and every custom
+ * entry, so turn positions must never be counted on it directly.
+ */
+export function projectContextEntries(branch) {
+  const path = (Array.isArray(branch) ? branch : []).filter((entry) => entry && typeof entry === "object");
+  let compactionIdx = -1;
+  for (let i = path.length - 1; i >= 0; i--) {
+    if (path[i].type === "compaction") {
+      compactionIdx = i;
+      break;
+    }
+  }
+  let entries = path;
+  if (compactionIdx >= 0) {
+    const compaction = path[compactionIdx];
+    const keptIdx = path.findIndex((entry, i) => i < compactionIdx && entry.id === compaction.firstKeptEntryId);
+    const kept = keptIdx >= 0
+      ? path.slice(keptIdx, compactionIdx).filter((entry) => !(entry.type === "message" && entry.message?.role === "system"))
+      : [];
+    entries = [compaction, ...kept, ...path.slice(compactionIdx + 1)];
+  }
+  const removed = new Set();
+  for (const entry of entries) {
+    if (entry.type === "context_edit" && entry.replacement === null && typeof entry.targetId === "string") {
+      removed.add(entry.targetId);
+    }
+  }
+  return removed.size ? entries.filter((entry) => !removed.has(entry.id)) : entries;
+}
+
+/**
+ * Position of a user entry's message among the `context` hook's messages.
+ * Matched on pi's per-message timestamp, which context edits and other
+ * extensions' content rewrites leave alone; the content fingerprint stands in
+ * only when a timestamp is missing. When several messages match, the one at
+ * the expected user-turn ordinal wins.
+ */
+function findUserMessage(messages, message, ordinal) {
+  const ts = message?.timestamp;
+  const byTime = typeof ts === "number" && Number.isFinite(ts);
+  const fp = byTime ? "" : fingerprintMessage(message);
+  let first = -1;
+  let seen = 0;
+  for (let i = 0; i < messages.length; i++) {
+    if (!isUserTurnStart(messages[i])) continue;
+    const match = byTime ? messages[i].timestamp === ts : fingerprintMessage(messages[i]) === fp;
+    if (match) {
+      if (seen === ordinal) return i;
+      if (first < 0) first = i;
+    }
+    seen++;
+  }
+  return first;
 }
 
 function currentBranch(branchOrGetter) {
@@ -257,9 +323,14 @@ export class TakeoverCore {
       sleep: io.sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms))),
       log: io.log || (() => {}),
     };
+    // The covered prefix ends at this pi entry, inclusive. Entry ids survive
+    // restarts, compaction and branch navigation and identify one entry in
+    // every view of the session, so the boundary needs no turn count or content
+    // fingerprint — the same reason the recall ledger keys on them.
+    this.coveredThroughEntryId = "";
+    // Display only: user turns the boundary covers in the active context.
     this.coveredUserTurns = 0;
     this.overview = "";
-    this.fingerprint = null;
     this.pendingTokens = 0;
     this.lastSeenUserTurns = 0;
     this.syncedEntryCount = 0;
@@ -268,13 +339,20 @@ export class TakeoverCore {
     this.archiveUri = "";
     this.historyUri = "";
     // A commit that archived but whose Working Memory was not ready in time:
-    // { archiveUri, taskId, coveredUserTurns, boundaryUserTurns, fingerprint,
-    //   syncedEntryCount, frozenTokens }. While set, no second
-    // takeover commit runs — later turns only re-check this same archive.
+    // { archiveUri, taskId, historyUri, coveredThroughEntryId, coveredUserTurns,
+    //   frozenTokens, nativeCompaction? }. While set, no second takeover commit
+    // runs — later turns only re-check this same archive.
     this.pendingArchive = null;
     // A permanent delivery gap in this session: the archive is missing messages,
     // so the boundary must never advance past it. Survives restart.
     this.captureGap = false;
+    // A 0.4.0 boundary — the first N user turns of the context, plus the
+    // fingerprint of the last covered message once it was learned — converted
+    // to an entry id the first time the context hook sees the session.
+    this.legacyBoundary = null;
+    // Whether the last context actually carried the boundary, so leaving and
+    // re-entering the covered branch is logged once, not on every request.
+    this.boundaryApplied = false;
   }
 
   get enabled() {
@@ -283,9 +361,9 @@ export class TakeoverCore {
 
   get state() {
     return {
+      coveredThroughEntryId: this.coveredThroughEntryId,
       coveredUserTurns: this.coveredUserTurns,
       overview: this.overview,
-      fingerprint: this.fingerprint,
       pendingTokens: this.pendingTokens,
       lastSeenUserTurns: this.lastSeenUserTurns,
       syncedEntryCount: this.syncedEntryCount,
@@ -307,9 +385,15 @@ export class TakeoverCore {
       const data = isTakeoverEntry ? entry.data : null;
       if (!data || typeof data !== "object") continue;
 
+      this.coveredThroughEntryId = typeof data.coveredThroughEntryId === "string" ? data.coveredThroughEntryId : "";
       this.coveredUserTurns = Math.max(0, Math.floor(Number(data.coveredUserTurns) || 0));
+      this.legacyBoundary = !this.coveredThroughEntryId && this.coveredUserTurns > 0
+        ? {
+            coveredUserTurns: this.coveredUserTurns,
+            fingerprint: typeof data.fingerprint === "string" ? data.fingerprint : null,
+          }
+        : null;
       this.overview = typeof data.overview === "string" ? data.overview : "";
-      this.fingerprint = typeof data.fingerprint === "string" ? data.fingerprint : null;
       this.pendingTokens = Math.max(0, Math.floor(Number(data.pendingTokens) || 0));
       this.lastSeenUserTurns = Math.max(0, Math.floor(Number(data.lastSeenUserTurns) || 0));
       this.syncedEntryCount = Math.max(0, Math.floor(Number(data.syncedEntryCount) || 0));
@@ -320,7 +404,8 @@ export class TakeoverCore {
       this.historyUri = typeof data.historyUri === "string" ? data.historyUri : "";
       this.lastPersisted = JSON.stringify(this.persistedState());
       this.log(
-        `takeover: restored boundary at ${this.coveredUserTurns} user turns, ${this.pendingTokens} pending tokens` +
+        `takeover: restored boundary ${this.coveredThroughEntryId || (this.legacyBoundary ? `at ${this.coveredUserTurns} user turns (0.4.0)` : "none")}` +
+          `, ${this.pendingTokens} pending tokens` +
           (this.pendingArchive ? `, pending archive ${this.pendingArchive.archiveUri}` : "") +
           (this.captureGap ? ", capture gap set" : ""),
       );
@@ -329,29 +414,32 @@ export class TakeoverCore {
     return this.state;
   }
 
-  transformContext(messages) {
+  /**
+   * Replace the covered prefix of the `context` hook's messages with the
+   * archive overview. `branch` is pi's `getBranch()`: the boundary is an entry
+   * id, found in pi's context projection of the branch and mapped onto the
+   * messages through the first user turn it keeps.
+   */
+  transformContext(messages, branch = []) {
     const list = Array.isArray(messages) ? messages : [];
     this.lastSeenUserTurns = countUserTurns(list);
 
-    if (!this.enabled) return list;
-    if (this.coveredUserTurns <= 0 || !this.overview) return list;
+    if (!this.enabled || !this.overview) return list;
+    const entries = projectContextEntries(currentBranch(branch));
+    if (this.legacyBoundary) this.adoptLegacyBoundary(list, entries);
+    if (!this.coveredThroughEntryId) return list;
 
-    const boundaryIdx = findBoundaryIndex(list, this.coveredUserTurns);
-    if (boundaryIdx <= 0) {
-      this.resetBoundary("history shorter than boundary");
+    const cut = this.locateCut(list, entries);
+    if (cut <= 0) {
+      if (this.boundaryApplied) {
+        this.log("takeover: covered prefix is not in the active context; sending it in full");
+      }
+      this.boundaryApplied = false;
       return list;
     }
+    this.boundaryApplied = true;
 
-    const lastCovered = list[boundaryIdx - 1];
-    const fp = fingerprintMessage(lastCovered);
-    if (this.fingerprint === null) {
-      this.fingerprint = fp;
-    } else if (this.fingerprint !== fp) {
-      this.resetBoundary("fingerprint mismatch");
-      return list;
-    }
-
-    const kept = list.slice(boundaryIdx);
+    const kept = list.slice(cut);
     const firstKeptTs = typeof kept[0]?.timestamp === "number" ? kept[0].timestamp : 1;
     // Preserve every system message in the covered region, in its original
     // order. On pi >= 0.86 the transcript carries the base prompt and its tool
@@ -366,7 +454,7 @@ export class TakeoverCore {
     // the existing declarations introduces no duplicate. System messages inside
     // the retained tail are left where they are, not hoisted in front.
     const coveredSystem = [];
-    for (let i = 0; i < boundaryIdx; i++) {
+    for (let i = 0; i < cut; i++) {
       if (list[i]?.role === "system") coveredSystem.push(list[i]);
     }
     return [
@@ -378,23 +466,83 @@ export class TakeoverCore {
     ];
   }
 
+  /**
+   * Index in `messages` of the first message kept after the covered prefix,
+   * or -1 when the prefix is not in the active context (another branch, or pi
+   * compacted past it) or no user turn follows it yet. It never clears the
+   * boundary, so returning to the covered branch applies it again.
+   */
+  locateCut(messages, entries) {
+    const through = entries.findIndex((entry) => entry?.id === this.coveredThroughEntryId);
+    if (through < 0) return -1;
+    let covered = 0;
+    for (let i = 0; i <= through; i++) {
+      if (isUserEntry(entries[i])) covered++;
+    }
+    // Messages can sit between the prefix and the next user turn: what a run
+    // added after a keepRecentTurns-0 commit, or a branch summary `/tree` left
+    // at the boundary. No archive covers them, so they are kept.
+    const between = [];
+    for (let i = through + 1; i < entries.length; i++) {
+      const entry = entries[i];
+      if (!isUserEntry(entry)) {
+        const role = contextRole(entry);
+        if (role) between.push(role);
+        continue;
+      }
+      let cut = findUserMessage(messages, entry.message, covered);
+      if (cut <= 0) return -1;
+      // Step back over them role by role; the hook shows no system messages on
+      // pi >= 0.87 and hoisted ones stay put anyway. A mismatch means the two
+      // views disagree, and nothing is trimmed.
+      for (let j = between.length - 1; j >= 0; j--) {
+        do cut--; while (cut >= 0 && messages[cut]?.role === "system");
+        if (cut < 0 || messages[cut]?.role !== between[j]) return -1;
+      }
+      if (cut > 0) this.coveredUserTurns = covered;
+      return cut;
+    }
+    return -1;
+  }
+
+  /**
+   * Convert a 0.4.0 boundary to an entry id: locate it the way 0.4.0 did — the
+   * (N+1)-th user turn of the context, checked against the learned fingerprint
+   * of the message before it — then take the entry in front of that turn. A
+   * boundary that no longer matches is dropped, as 0.4.0 itself would have.
+   */
+  adoptLegacyBoundary(messages, entries) {
+    const { coveredUserTurns, fingerprint } = this.legacyBoundary;
+    this.legacyBoundary = null;
+    const cut = findBoundaryIndex(messages, coveredUserTurns);
+    if (cut <= 0 || (fingerprint !== null && fingerprintMessage(messages[cut - 1]) !== fingerprint)) {
+      this.resetBoundary("0.4.0 boundary no longer matches the context");
+      return;
+    }
+    const users = entries.filter(isUserEntry);
+    const kept = findUserMessage(users.map((entry) => entry.message), messages[cut], coveredUserTurns);
+    const keptIdx = kept >= 0 ? entries.indexOf(users[kept]) : -1;
+    const throughId = keptIdx > 0 ? entries[keptIdx - 1]?.id : undefined;
+    if (typeof throughId !== "string" || !throughId) {
+      this.resetBoundary("0.4.0 boundary has no entry id");
+      return;
+    }
+    this.coveredThroughEntryId = throughId;
+    this.coveredUserTurns = coveredUserTurns;
+    this.log(`takeover: 0.4.0 boundary adopted through entry ${throughId}`);
+  }
+
   async onTurnSynced(estTokens, branch = []) {
     if (!this.enabled) return false;
-    const turnTokens = Math.max(0, Math.floor(Number(estTokens) || 0));
     // A commit already archived and is only waiting for its Working Memory:
     // account for this turn, then finish that one instead of opening another.
     // finishArchive subtracts only the frozen token snapshot, leaving this new
     // pressure for the next boundary.
-    this.pendingTokens += turnTokens;
+    this.pendingTokens += Math.max(0, Math.floor(Number(estTokens) || 0));
     if (this.pendingArchive) return this.commitAndAdvance(branch);
-    if (this.pendingTokens < this.config.takeoverTokenThreshold) {
-      this.syncedEntryCount = Math.max(0, Math.floor(Number(this.io.getWatermark()) || 0));
-      this.persist();
-      return false;
-    }
-    // Whether there are enough user turns to leave a keep-recent tail is decided
-    // authoritatively by freezeBoundary against the branch, not by the
-    // transformed `lastSeenUserTurns` count.
+    if (this.pendingTokens < this.config.takeoverTokenThreshold) return false;
+    // Whether the branch has enough user turns to leave a keep-recent tail is
+    // decided by freezeBoundary on pi's context projection of the branch.
     return this.commitAndAdvance(branch);
   }
 
@@ -413,8 +561,6 @@ export class TakeoverCore {
       this.log(`takeover: archive preparation failed (${errorMessage(error)}); boundary held`);
       return false;
     } finally {
-      this.syncedEntryCount = Math.max(0, Math.floor(Number(this.io.getWatermark()) || 0));
-      this.persist();
       this.committing = false;
     }
   }
@@ -426,8 +572,11 @@ export class TakeoverCore {
       return false;
     }
 
-    const branchSnapshot = currentBranch(branch);
-    const frozen = this.freezeBoundary(branchSnapshot);
+    // One snapshot is frozen, synced and counted, so the archive and
+    // keep_recent_count describe the same entries even if pi appends more
+    // while this commit is in flight.
+    const snapshot = currentBranch(branch);
+    const frozen = this.freezeBoundary(snapshot);
     if (!frozen) {
       this.log("takeover: no advanceable boundary; commit skipped");
       return false;
@@ -435,7 +584,7 @@ export class TakeoverCore {
 
     // Sync this branch, then drain the queue: an empty queue alone does not
     // prove delivery — the just-extracted turn may not have been sent yet.
-    const synced = await this.io.syncBranch(branchSnapshot);
+    const synced = await this.io.syncBranch(snapshot);
     if ((synced?.permanentFailures || 0) > 0 || this.io.droppedCount() > 0) {
       this.markCaptureGap();
       return false;
@@ -455,7 +604,6 @@ export class TakeoverCore {
       this.log("takeover: flush barrier closed; commit postponed");
       return false;
     }
-    frozen.syncedEntryCount = Math.max(0, Math.floor(Number(this.io.getWatermark()) || 0));
 
     const committed = await this.io.commit({
       queueOnFailure: false,
@@ -496,9 +644,16 @@ export class TakeoverCore {
       this.pendingArchive = null;
       this.pendingTokens = Math.max(0, this.pendingTokens - (Number(pending.frozenTokens) || 0));
       this.archiveUri = pending.archiveUri;
-      this.historyUri = typeof pending.historyUri === "string" ? pending.historyUri : "";
+      this.historyUri = pending.historyUri;
       this.persist();
       this.log(`takeover: native-compaction archive completed at ${pending.archiveUri}`);
+      return false;
+    }
+    if (!pending.coveredThroughEntryId) {
+      // Unreleased pre-0.4.1 pending shape: it names no entry to trim to.
+      this.pendingArchive = null;
+      this.persist();
+      this.log(`takeover: pending archive ${pending.archiveUri} has no boundary; dropped`);
       return false;
     }
     return await this.finishArchive(branch, pending, { committed: true });
@@ -506,7 +661,7 @@ export class TakeoverCore {
 
   /**
    * Poll the archive's own `.overview.md`, then advance — but only after
-   * re-checking that the frozen boundary is still part of the current branch.
+   * re-checking that the frozen prefix is still part of the active context.
    */
   async finishArchive(branch, frozen, { committed = false } = {}) {
     const overview = await this.pollArchiveOverview(frozen.archiveUri);
@@ -517,15 +672,9 @@ export class TakeoverCore {
       this.pendingArchive = {
         archiveUri: frozen.archiveUri,
         taskId: frozen.taskId || "",
-        coveredUserTurns: frozen.coveredUserTurns,
-        boundaryUserTurns: frozen.boundaryUserTurns,
-        fingerprint: frozen.fingerprint,
-        boundaryEntryId: frozen.boundaryEntryId || "",
-        branchEntryCount: frozen.branchEntryCount,
-        branchTipEntryId: frozen.branchTipEntryId || "",
-        branchTipFingerprint: frozen.branchTipFingerprint,
-        syncedEntryCount: frozen.syncedEntryCount,
         historyUri: frozen.historyUri || "",
+        coveredThroughEntryId: frozen.coveredThroughEntryId,
+        coveredUserTurns: frozen.coveredUserTurns,
         frozenTokens: frozen.frozenTokens,
       };
       this.persist();
@@ -536,105 +685,75 @@ export class TakeoverCore {
       return false;
     }
 
-    // The archive is summarized. Confirm the frozen boundary still describes the
-    // current history before trimming to it — a branch switch during the wait
-    // must abandon this advance, not cut somewhere else.
-    if (!this.boundaryStillValid(branch, frozen)) {
+    // The archive is summarized. A branch switch or a pi compaction during the
+    // wait can take the frozen prefix out of the active context; the advance is
+    // then abandoned, never moved somewhere else.
+    const entries = projectContextEntries(currentBranch(branch));
+    if (!entries.some((entry) => entry?.id === frozen.coveredThroughEntryId)) {
       this.pendingArchive = null;
       this.persist();
       this.log("takeover: frozen boundary no longer in history; advance abandoned");
       return false;
     }
 
-    if (frozen.coveredUserTurns > this.coveredUserTurns) {
-      this.coveredUserTurns = frozen.coveredUserTurns;
-      // Persist the identity of the exact covered prefix. Leaving this null
-      // would let the next process learn a fingerprint from whichever branch
-      // happened to be active after restart.
-      this.fingerprint = frozen.fingerprint;
-    }
+    this.coveredThroughEntryId = frozen.coveredThroughEntryId;
+    this.coveredUserTurns = frozen.coveredUserTurns;
+    this.legacyBoundary = null;
     this.overview = overview;
     this.archiveUri = frozen.archiveUri;
-    // Fresh pending records already carry a derived history URI. Do not guess
-    // one while restoring an older state shape that lacks this new field.
-    this.historyUri = typeof frozen.historyUri === "string" ? frozen.historyUri : "";
+    this.historyUri = frozen.historyUri || "";
     this.pendingArchive = null;
     // Subtract only the pressure this trim froze; tokens accrued while waiting
     // for the summary belong to the next boundary and are not cleared.
     this.pendingTokens = Math.max(0, this.pendingTokens - (Number(frozen.frozenTokens) || 0));
     this.syncedEntryCount = Math.max(0, Math.floor(Number(this.io.getWatermark()) || 0));
     this.persist();
-    this.log(`takeover: boundary advanced to ${this.coveredUserTurns} user turns via ${frozen.archiveUri}`);
+    this.log(
+      `takeover: boundary advanced to ${this.coveredUserTurns} user turns ` +
+        `(through ${this.coveredThroughEntryId}) via ${frozen.archiveUri}`,
+    );
     return true;
   }
 
   /**
-   * Compute the candidate boundary from the branch: keep the last
-   * `takeoverKeepRecentTurns` user turns, archive the rest. Returns the frozen
-   * boundary (position, fingerprint, exact keep_recent_count, watermark, token
-   * snapshot) or null when there is nothing new to archive.
+   * Compute the candidate boundary on pi's context projection of the branch:
+   * keep the last `takeoverKeepRecentTurns` user turns, archive the rest.
+   * Returns the entry the covered prefix ends at, the exact keep_recent_count
+   * and the token snapshot, or null when there is nothing new to archive.
    */
   freezeBoundary(branch) {
-    const entries = currentBranch(branch);
-    const messages = entries.map(entryMessage);
-    const branchUserTurns = countUserTurns(messages);
-    const boundaryUserTurns = branchUserTurns - this.config.takeoverKeepRecentTurns;
-    if (boundaryUserTurns <= 0) return null;
-    if (boundaryUserTurns <= this.coveredUserTurns) return null;
+    const raw = currentBranch(branch);
+    const entries = projectContextEntries(raw);
+    const users = [];
+    entries.forEach((entry, i) => {
+      if (isUserEntry(entry)) users.push(i);
+    });
+    const keep = this.config.takeoverKeepRecentTurns;
+    if (users.length <= keep) return null;
 
-    // With keepRecentTurns=0, the cut is after the final message rather than at
-    // the start of a following user turn.
-    const boundaryIdx = boundaryUserTurns === branchUserTurns
-      ? messages.length
-      : findBoundaryIndex(messages, boundaryUserTurns);
-    if (boundaryIdx <= 0) return null;
+    // The prefix ends right in front of the oldest kept user turn, or at the
+    // tip when nothing is kept; it then applies from the next user turn on.
+    const through = keep > 0 ? users[users.length - keep] - 1 : entries.length - 1;
+    const id = entries[through]?.id;
+    if (typeof id !== "string" || !id) return null;
+    // Only a prefix longer than the current one is worth an archive. A current
+    // boundary outside the active context (another branch, or compacted away)
+    // does not hold the new one back.
+    if (this.coveredThroughEntryId &&
+      entries.findIndex((entry) => entry?.id === this.coveredThroughEntryId) >= through) {
+      return null;
+    }
 
+    // keep_recent_count is a server message count: the capture payloads the
+    // branch holds after the covered prefix, in the order sync sent them —
+    // system, custom and filtered entries excluded.
+    const rawThrough = raw.findIndex((entry) => entry?.id === id);
     return {
-      coveredUserTurns: boundaryUserTurns,
-      boundaryUserTurns,
-      fingerprint: fingerprintMessage(messages[boundaryIdx - 1]),
-      boundaryEntryId: typeof entries[boundaryIdx - 1]?.id === "string"
-        ? entries[boundaryIdx - 1].id
-        : "",
-      branchEntryCount: entries.length,
-      branchTipEntryId: typeof entries[entries.length - 1]?.id === "string"
-        ? entries[entries.length - 1].id
-        : "",
-      branchTipFingerprint: entries.length
-        ? fingerprintMessage(messages[messages.length - 1])
-        : null,
-      // keep_recent_count is a server message count: how many captured payloads
-      // the retained tail produces, system/custom/filtered entries excluded.
-      keepRecentCount: Math.max(0, Math.floor(Number(this.io.captureCount(entries.slice(boundaryIdx))) || 0)),
-      syncedEntryCount: Math.max(0, Math.floor(Number(this.io.getWatermark()) || 0)),
+      coveredThroughEntryId: id,
+      coveredUserTurns: users.length - keep,
+      keepRecentCount: Math.max(0, Math.floor(Number(this.io.captureCount(raw.slice(rawThrough + 1))) || 0)),
       frozenTokens: this.pendingTokens,
     };
-  }
-
-  /** Whether the frozen boundary still names the same last-covered message. */
-  boundaryStillValid(branch, frozen) {
-    const entries = currentBranch(branch);
-    const messages = entries.map(entryMessage);
-    const frozenCount = Math.max(0, Math.floor(Number(frozen.branchEntryCount) || 0));
-    if (frozenCount > 0) {
-      if (entries.length < frozenCount) return false;
-      const frozenTip = entries[frozenCount - 1];
-      if (frozen.branchTipEntryId) {
-        if (frozenTip?.id !== frozen.branchTipEntryId) return false;
-      } else if (frozen.branchTipFingerprint &&
-        fingerprintMessage(entryMessage(frozenTip)) !== frozen.branchTipFingerprint) {
-        return false;
-      }
-    }
-    const totalTurns = countUserTurns(messages);
-    const boundaryIdx = frozen.boundaryUserTurns === totalTurns
-      ? messages.length
-      : findBoundaryIndex(messages, frozen.boundaryUserTurns);
-    if (boundaryIdx <= 0) return false;
-    if (frozen.boundaryEntryId) {
-      return entries[boundaryIdx - 1]?.id === frozen.boundaryEntryId;
-    }
-    return fingerprintMessage(messages[boundaryIdx - 1]) === frozen.fingerprint;
   }
 
   markCaptureGap() {
@@ -663,11 +782,10 @@ export class TakeoverCore {
 
     this.committing = true;
     try {
-      const branchSnapshot = currentBranch(branch);
       // Sync the latest branch first; native compaction archives all captured
       // history (keepRecentCount 0) and hands pi its own firstKeptEntryId, so
       // the summary and the retained tail may overlap.
-      const synced = await this.io.syncBranch(branchSnapshot);
+      const synced = await this.io.syncBranch(currentBranch(branch));
       if ((synced?.permanentFailures || 0) > 0 || this.io.droppedCount() > 0) {
         this.markCaptureGap();
         return undefined;
@@ -694,38 +812,23 @@ export class TakeoverCore {
         return undefined;
       }
 
+      const historyUri = deriveHistoryUri(outcome.archiveUri);
       const overview = await this.pollArchiveOverview(outcome.archiveUri, preparation.signal);
       if (!overview) {
         // The server accepted the archive, but this compaction attempt cannot
         // wait indefinitely. Remember it so ordinary takeover will not create
         // a second archive, while this call falls back to native compaction.
-        const nativeMessages = branchSnapshot.map(entryMessage);
         this.pendingArchive = {
           archiveUri: outcome.archiveUri,
           taskId: outcome.taskId || "",
-          coveredUserTurns: this.coveredUserTurns,
-          boundaryUserTurns: countUserTurns(nativeMessages),
-          fingerprint: nativeMessages.length
-            ? fingerprintMessage(nativeMessages[nativeMessages.length - 1])
-            : null,
-          boundaryEntryId: typeof branchSnapshot[branchSnapshot.length - 1]?.id === "string"
-            ? branchSnapshot[branchSnapshot.length - 1].id
-            : "",
-          branchEntryCount: branchSnapshot.length,
-          branchTipEntryId: typeof branchSnapshot[branchSnapshot.length - 1]?.id === "string"
-            ? branchSnapshot[branchSnapshot.length - 1].id
-            : "",
-          branchTipFingerprint: nativeMessages.length
-            ? fingerprintMessage(nativeMessages[nativeMessages.length - 1])
-            : null,
-          syncedEntryCount: Math.max(0, Math.floor(Number(this.io.getWatermark()) || 0)),
-          historyUri: deriveHistoryUri(outcome.archiveUri),
+          historyUri,
+          coveredThroughEntryId: "",
+          coveredUserTurns: 0,
           frozenTokens: this.pendingTokens,
           nativeCompaction: true,
         };
-        // Returning undefined hands this compaction to Pi. Drop the takeover
-        // boundary immediately so Pi's rewritten branch is never transformed
-        // against the stale pre-compaction cut on the next request.
+        // Returning undefined hands this compaction to Pi. Pi's compaction now
+        // owns the context, so the takeover boundary is dropped with it.
         this.resetBoundary("pi native compaction owns boundary");
         this.persist();
         return undefined;
@@ -733,7 +836,7 @@ export class TakeoverCore {
 
       this.overview = overview;
       this.archiveUri = outcome.archiveUri;
-      this.historyUri = deriveHistoryUri(outcome.archiveUri);
+      this.historyUri = historyUri;
       this.resetBoundary("pi compaction absorbed boundary");
       this.pendingTokens = 0;
       this.syncedEntryCount = Math.max(0, Math.floor(Number(this.io.getWatermark()) || 0));
@@ -743,7 +846,7 @@ export class TakeoverCore {
         compaction: {
           summary:
             `${OVERVIEW_MARKER}\n${this.truncatedOverview()}` +
-            this.recoveryHint(outcome.archiveUri, deriveHistoryUri(outcome.archiveUri)),
+            this.recoveryHint(outcome.archiveUri, historyUri),
           firstKeptEntryId: preparation.firstKeptEntryId,
           tokensBefore: Number(preparation.tokensBefore) || 0,
           details: { source: "openviking" },
@@ -764,11 +867,13 @@ export class TakeoverCore {
   }
 
   resetBoundary(reason = "reset") {
-    if (this.coveredUserTurns !== 0 || this.fingerprint !== null) {
+    if (this.coveredThroughEntryId || this.legacyBoundary) {
       this.log(`takeover: boundary reset (${reason})`);
     }
+    this.coveredThroughEntryId = "";
     this.coveredUserTurns = 0;
-    this.fingerprint = null;
+    this.legacyBoundary = null;
+    this.boundaryApplied = false;
   }
 
   truncatedOverview() {
@@ -800,9 +905,12 @@ export class TakeoverCore {
       ? Math.max(0, Math.floor(rawWatermark))
       : this.syncedEntryCount;
     return {
+      coveredThroughEntryId: this.coveredThroughEntryId,
+      // Also what a 0.4.0 reader restores its boundary from after a downgrade.
       coveredUserTurns: this.coveredUserTurns,
+      // A 0.4.0 boundary not yet adopted keeps its fingerprint across restarts.
+      ...(this.legacyBoundary ? { fingerprint: this.legacyBoundary.fingerprint } : {}),
       overview: truncateToTokens(this.overview, this.config.takeoverOverviewBudget),
-      fingerprint: this.fingerprint,
       pendingTokens: this.pendingTokens,
       lastSeenUserTurns: this.lastSeenUserTurns,
       syncedEntryCount: watermark,
@@ -865,19 +973,11 @@ function restorePendingArchive(value) {
   return {
     archiveUri,
     taskId: typeof value.taskId === "string" ? value.taskId : "",
-    coveredUserTurns: Math.max(0, Math.floor(Number(value.coveredUserTurns) || 0)),
-    boundaryUserTurns: Math.max(0, Math.floor(Number(value.boundaryUserTurns) || 0)),
-    fingerprint: typeof value.fingerprint === "string" ? value.fingerprint : null,
-    boundaryEntryId: typeof value.boundaryEntryId === "string" ? value.boundaryEntryId : "",
-    branchEntryCount: Math.max(0, Math.floor(Number(value.branchEntryCount) || 0)),
-    branchTipEntryId: typeof value.branchTipEntryId === "string" ? value.branchTipEntryId : "",
-    branchTipFingerprint: typeof value.branchTipFingerprint === "string"
-      ? value.branchTipFingerprint
-      : null,
-    syncedEntryCount: Math.max(0, Math.floor(Number(value.syncedEntryCount) || 0)),
     historyUri: typeof value.historyUri === "string" ? value.historyUri : "",
+    coveredThroughEntryId: typeof value.coveredThroughEntryId === "string" ? value.coveredThroughEntryId : "",
+    coveredUserTurns: Math.max(0, Math.floor(Number(value.coveredUserTurns) || 0)),
     frozenTokens: Math.max(0, Math.floor(Number(value.frozenTokens) || 0)),
-    nativeCompaction: value.nativeCompaction === true,
+    ...(value.nativeCompaction === true ? { nativeCompaction: true } : {}),
   };
 }
 

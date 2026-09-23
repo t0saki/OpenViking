@@ -5,6 +5,7 @@ import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  OVERVIEW_MARKER,
   TAKEOVER_ENTRY_TYPE,
   TakeoverCore,
 } from "../lib/takeover-core.mjs";
@@ -50,7 +51,22 @@ function findTranscriptModule() {
 
 const TRANSCRIPT_PATH = findTranscriptModule();
 
-function makeCore(overrides = {}) {
+/**
+ * Run the takeover cut over `messages` as a pi >= 0.86 branch (every message,
+ * system ones included, is a `message` entry), with the covered prefix ending
+ * right before the user turn `keptText`. Asserts the cut really happened, so a
+ * passing tool check can never come from an untrimmed context.
+ */
+function cut(messages, keptText) {
+  const branch = messages.map((message, i) => ({ id: `e${i}`, type: "message", message }));
+  const kept = messages.findIndex((message) => message.role === "user" && message.content === keptText);
+  const out = makeCore(branch[kept - 1].id).transformContext(messages, branch);
+  assert.ok(out.some((message) => String(message.content).startsWith(OVERVIEW_MARKER)));
+  assert.ok(out.length < messages.length);
+  return out;
+}
+
+function makeCore(coveredThroughEntryId, overrides = {}) {
   const core = new TakeoverCore({
     config: {
       takeoverEnabled: true,
@@ -66,7 +82,7 @@ function makeCore(overrides = {}) {
     {
       type: "custom",
       customType: TAKEOVER_ENTRY_TYPE,
-      data: { coveredUserTurns: 1, overview: "archived first turn", pendingTokens: 0 },
+      data: { coveredThroughEntryId, coveredUserTurns: 1, overview: "archived first turn", pendingTokens: 0 },
     },
   ]);
   return core;
@@ -75,11 +91,12 @@ function makeCore(overrides = {}) {
 function sys(content, extra = {}) {
   return { role: "system", content, timestamp: 0, ...extra };
 }
-function user(content, timestamp = 0) {
-  return { role: "user", content, timestamp };
+let clock = 0;
+function user(content) {
+  return { role: "user", content, timestamp: ++clock };
 }
-function assistant(content, timestamp = 0) {
-  return { role: "assistant", content, timestamp };
+function assistant(content) {
+  return { role: "assistant", content, timestamp: ++clock };
 }
 
 test("transformContext preserves tool declarations, replacements, sections and appended instructions", async (t) => {
@@ -97,8 +114,8 @@ test("transformContext preserves tool declarations, replacements, sections and a
     // The leading system message: base prompt + the initial tools, exactly the
     // shape @earendil-works/pi-ai's normalizeContext folds Context into.
     sys("BASE PROMPT", { toolsAdded: [readTool], sections: { style: "be terse", obsolete: "drop me" } }),
-    user("first", 10),
-    assistant("answer", 11),
+    user("first"),
+    assistant("answer"),
     // A mid-conversation tool addition and a section update, both in the covered
     // region — this is what a naive slice would strip.
     sys("APPENDED INSTRUCTION", {
@@ -106,14 +123,14 @@ test("transformContext preserves tool declarations, replacements, sections and a
       toolsAdded: [updatedReadTool, searchTool],
       sections: { style: "be exact", obsolete: null, extra: "note" },
     }),
-    user("second", 20),
-    assistant("answer 2", 21),
+    user("second"),
+    assistant("answer 2"),
   ];
 
   const before = new Set(getCurrentTools(messages).map((tt) => tt.name));
   assert.deepEqual([...before].sort(), ["openviking_search", "read"]);
 
-  const out = makeCore().transformContext(messages);
+  const out = cut(messages, "second");
   const after = new Set(getCurrentTools(out).map((tt) => tt.name));
 
   // The model's tools are unchanged by the takeover cut.
@@ -141,16 +158,16 @@ test("transformContext preserves a mid-conversation tool removal", async (t) => 
 
   const messages = [
     sys("BASE", { toolsAdded: [readTool, writeTool] }),
-    user("first", 10),
-    assistant("answer", 11),
+    user("first"),
+    assistant("answer"),
     // `write` is removed mid-conversation, in the covered region.
     sys("", { toolsRemoved: [{ name: "write" }] }),
-    user("second", 20),
-    assistant("answer 2", 21),
+    user("second"),
+    assistant("answer 2"),
   ];
 
   assert.deepEqual(getCurrentTools(messages).map((tt) => tt.name), ["read"]);
-  const out = makeCore().transformContext(messages);
+  const out = cut(messages, "second");
   // Without preserving the removal, `write` would come back to life.
   assert.deepEqual(getCurrentTools(out).map((tt) => tt.name), ["read"]);
 });
@@ -164,14 +181,14 @@ test("dropping covered system messages loses tools (regression witness)", async 
   const readTool = { name: "read", description: "read", parameters: { type: "object" } };
   const messages = [
     sys("BASE", { toolsAdded: [readTool] }),
-    user("first", 10),
-    assistant("answer", 11),
-    user("second", 20),
+    user("first"),
+    assistant("answer"),
+    user("second"),
   ];
   // What the pre-fix slice produced: covered system messages gone entirely.
   const naive = messages.slice(3);
   assert.deepEqual(getCurrentTools(naive), []);
   // The fix keeps them, so pi still sees the tool.
-  const out = makeCore().transformContext(messages);
+  const out = cut(messages, "second");
   assert.deepEqual(getCurrentTools(out).map((tt) => tt.name), ["read"]);
 });

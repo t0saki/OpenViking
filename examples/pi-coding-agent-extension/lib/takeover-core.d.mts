@@ -16,22 +16,21 @@ export interface TakeoverMessage {
 export interface PendingArchive {
   archiveUri: string;
   taskId: string;
-  coveredUserTurns: number;
-  boundaryUserTurns: number;
-  fingerprint: string | null;
-  boundaryEntryId?: string;
-  branchEntryCount?: number;
-  branchTipEntryId?: string;
-  branchTipFingerprint?: string | null;
-  syncedEntryCount: number;
   historyUri: string;
+  /** The entry the frozen covered prefix ends at; "" for a native-compaction archive. */
+  coveredThroughEntryId: string;
+  coveredUserTurns: number;
   frozenTokens: number;
   nativeCompaction?: boolean;
 }
 
 export interface TakeoverPersistedState {
+  /** The pi entry id the covered prefix ends at (inclusive); "" when none. */
+  coveredThroughEntryId?: string;
+  /** Display count; also the whole boundary of a 0.4.0 state. */
   coveredUserTurns: number;
   overview: string;
+  /** 0.4.0 only: fingerprint of the last covered context message. */
   fingerprint?: string | null;
   pendingTokens: number;
   lastSeenUserTurns?: number;
@@ -91,6 +90,8 @@ export function fingerprintMessage(msg: TakeoverMessage): string;
 export function isUserTurnStart(msg: TakeoverMessage): boolean;
 export function countUserTurns(messages: TakeoverMessage[]): number;
 export function findBoundaryIndex(messages: TakeoverMessage[], coveredUserTurns: number): number;
+/** pi's context projection of `getBranch()`: compaction-aware, context edits applied. */
+export function projectContextEntries(branch: any[]): any[];
 export function estimateTokens(text: string): number;
 export function truncateToTokens(text: string, budget: number): string;
 export function estimatePayloadTokens(payload: any): number;
@@ -100,7 +101,7 @@ export function deriveHistoryUri(archiveUri: string): string;
 export function commitOutcome(committed: unknown): CommitOutcome;
 
 export type TakeoverState = TakeoverPersistedState & {
-  fingerprint: string | null;
+  coveredThroughEntryId: string;
   lastSeenUserTurns: number;
   syncedEntryCount: number;
   committing: boolean;
@@ -115,7 +116,8 @@ export class TakeoverCore {
   get enabled(): boolean;
   get state(): TakeoverState;
   restore(entries: any[]): TakeoverState;
-  transformContext(messages: TakeoverMessage[]): TakeoverMessage[];
+  /** `branch` is pi's `getBranch()`; the boundary is located on its context projection. */
+  transformContext(messages: TakeoverMessage[], branch?: any[] | (() => any[])): TakeoverMessage[];
   onTurnSynced(estTokens: number, branch?: any[] | (() => any[])): Promise<boolean>;
   commitAndAdvance(branch?: any[] | (() => any[])): Promise<boolean>;
   handleBeforeCompact(

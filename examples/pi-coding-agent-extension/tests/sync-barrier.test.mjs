@@ -354,19 +354,48 @@ test("takeover startup replay records retry exhaustion", async () => {
   });
 });
 
-test("takeover startup leaves other sessions out of its delivery decision", async () => {
+test("takeover startup replays other sessions after its own, outside its gap accounting", async () => {
   await withPendingDir(async () => {
     const seen = [];
     const c = client({
-      fetchJSON: async (path) => { seen.push(String(path)); return { ok: true, status: 200, result: {} }; },
+      fetchJSON: async (path) => {
+        seen.push(String(path));
+        // Another session's entry is rejected for good: its loss, not this session's gap.
+        if (String(path).includes("different-session")) {
+          return { ok: false, status: 400, error: { message: "bad" } };
+        }
+        return { ok: true, status: 200, result: {} };
+      },
     });
     const sync = new SyncManager(c, config());
     await sync.ensureSession("pi-session");
+    await enqueue("addMessage", sync.sessionId, { role: "user", content: "mine" });
+    await enqueue("addMessage", "different-session", { role: "user", content: "other" });
+    await enqueue("commitSession", "different-session", {});
+
+    await sync.replayPending();
+    assert.ok(seen.some((path) => path.includes("different-session/messages")));
+    assert.ok(seen.some((path) => path.includes("different-session/commit")));
+    assert.equal((await listPending()).length, 0);
+    assert.equal(sync.droppedCount, 0);
+  });
+});
+
+test("takeover startup leaves other sessions queued while its own backlog remains", async () => {
+  await withPendingDir(async () => {
+    const seen = [];
+    const c = client({
+      fetchJSON: async (path) => { seen.push(String(path)); return { ok: false, status: 500 }; },
+    });
+    const sync = new SyncManager(c, config());
+    await sync.ensureSession("pi-session");
+    await enqueue("addMessage", sync.sessionId, { role: "user", content: "mine" });
     await enqueue("addMessage", "different-session", { role: "user", content: "other" });
 
     await sync.replayPending();
-    assert.equal(seen.some((path) => path.includes("different-session/messages")), false);
-    assert.equal((await listPending()).length, 1);
+    // The generic replay could drop this session's entry untracked, so it waits.
+    assert.equal(seen.some((path) => path.includes("different-session")), false);
+    assert.equal((await listPending()).length, 2);
     assert.equal(sync.droppedCount, 0);
   });
 });

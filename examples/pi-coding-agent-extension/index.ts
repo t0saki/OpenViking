@@ -319,8 +319,13 @@ export default async function (pi: ExtensionAPI) {
       }
     }
 
+    // Takeover's boundary is a branch entry id; it maps it onto these messages
+    // through pi's context projection of the branch.
     const afterTakeover = config.takeoverEnabled
-      ? takeover.transformContext(event.messages as any)
+      ? takeover.transformContext(
+          event.messages as any,
+          typeof sessionManager?.getBranch === "function" ? sessionManager.getBranch() : [],
+        )
       : event.messages;
     const messages = recall.injectRecall(
       afterTakeover,
@@ -365,9 +370,6 @@ export default async function (pi: ExtensionAPI) {
       const prep = (event as any)?.preparation ?? {};
       // Native compaction syncs the latest branch, archives all captured
       // history and reuses pi's own firstKeptEntryId, so hand it the branch.
-      const branch = typeof ctx.sessionManager.getBranch === "function"
-        ? ctx.sessionManager.getBranch()
-        : [];
       return await takeover.handleBeforeCompact({
         firstKeptEntryId: prep.firstKeptEntryId,
         tokensBefore: prep.tokensBefore ?? 0,
@@ -434,9 +436,6 @@ export default async function (pi: ExtensionAPI) {
         const commitResult = config.takeoverEnabled ? null : await sync.commit();
         // Manual commit freezes and confirms the boundary against the current
         // branch, exactly like the automatic path.
-        const branch = typeof ctx.sessionManager.getBranch === "function"
-          ? ctx.sessionManager.getBranch()
-          : [];
         const ok = config.takeoverEnabled
           ? await takeover.commitAndAdvance(() => ctx.sessionManager.getBranch())
           : commitResult !== null;

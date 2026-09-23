@@ -86,7 +86,12 @@ export class SyncManager {
       // without reporting which session lost them. Takeover needs that fact to
       // block trimming, so its current session always uses the tracked drainer.
       await this.drainSessionBacklog();
-      return;
+      // Other sessions' backlog still goes through the generic replay, but only
+      // once none of this session's entries are left for it to drop untracked;
+      // otherwise it waits for a later start.
+      const sid = this.ovSessionId;
+      if (sid && countUndeliveredForSession(await listPending(), sid) > 0) return;
+      if (sid && await hasProcessingMessage(sid)) return;
     }
     await replayPending(
       (path: string, init?: any) => this.client.fetchJSON(path, init),
