@@ -425,7 +425,7 @@ JS 系 harness 的召回逻辑均由 `recall-core.mjs` 中的三级降级链处�
 | claude-code | 不接管 | PreCompact 同步 commit（唯一不 detach 的写路径，因为 CC 随后立刻重写 transcript） | `source="compact"` 的 SessionStart 会把 OV 的 `latest_archive_overview` + ≤5 条 abstracts 重新注回 |
 | codex / trae-cli | 不接管 | PreCompact 补齐未捕获轮次 → 全量 commit → `ovSessionId=null`（补齐不全时不 commit，留待重试）；无 PostCompact 接线，依靠 Stop 的转录收缩做防御性纠偏 | resume 时注入 archive digest |
 | cursor / trae×2 / zcode | 不接管 | cursor：preCompact 无条件 commit（trae×2/zcode 上游无该事件） | — |
-| opencode | 不接管 | v1 compacting 前 flush+commit；v2 无前置 hook | v1 `session.compacted` 再提交一次；v2 `session.compaction.ended` 后提交一次 |
+| opencode | 不接管 | v1 compacting 前 flush+commit；v2 在压缩前捕获对话 | v1 `session.compacted` 再提交一次；v2 `session.compaction.ended` 后提交一次 |
 | dsh | 不感知（不监听 compaction 事件；注入走 pre-step user 消息，随宿主压缩一起收缩，profile 不重投） | — | — |
 | pi | **takeover 双层接管**（默认开，[§3.4.2](#_3-4-2-pi-takeover)） | `session_before_compact`：flush → commit → pollOverview。成功则返回自定义 compaction 摘要覆盖 pi 的；失败则 fail-open 回退到 pi 默认压缩 | 成功后 resetBoundary |
 | openclaw | **全接管**：`ownsCompaction: true`，宿主不再跑自己的摘要（[§3.4.3](#_3-4-3-openclaw-contextengine)） | `compact()` = commit(wait=true, keep 0) → 读回 overview 当 summary | 主 assemble 用 `[Session History Summary]` 重建上下文 |

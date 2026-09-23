@@ -48,9 +48,10 @@ export function createMemorySessionManager({ config, pluginRoot }) {
   }
 
   async function init({ deferNetwork = false } = {}) {
-    if (isCaptureEnabled(config)) await migrateLegacySessionMap()
     await loadState()
-    initBackground = fetchJSON(config, "/health", {}, { timeoutMs: 5000 }).then(async (health) => {
+    initBackground = Promise.resolve().then(async () => {
+      if (isCaptureEnabled(config)) await migrateLegacySessionMap()
+      const health = await fetchJSON(config, "/health", {}, { timeoutMs: 5000 })
       if (!health.ok) return
       await replayPending(
         (endpoint, init = {}, options = {}) => fetchJSON(config, endpoint, init, options),

@@ -28,7 +28,7 @@ export function createOpenVikingRuntime({ client, directory, pluginRoot }) {
   // the first prompt. Load local state before hooks run, but keep health and
   // pending replay off that activation path.
   const ready = sessionManager.init({ deferNetwork: !client })
-  void ready.then(async () => {
+  const background = ready.then(async () => {
     const healthy = await initializeRuntime(config, client)
     if (healthy) await repoContext.refreshRepos({ force: true })
   }).catch((error) => {
@@ -46,5 +46,6 @@ export function createOpenVikingRuntime({ client, directory, pluginRoot }) {
     vikingUriGuard,
     vikingUriNotice,
     ready,
+    background,
   }
 }

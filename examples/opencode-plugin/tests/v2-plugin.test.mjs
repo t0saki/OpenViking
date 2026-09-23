@@ -1,6 +1,7 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 import { captureV2Context, injectV2Context, prepareV2Prompt, startV2Plugin } from "../lib/v2-plugin.mjs"
+import { createVikingUriNotice } from "../lib/viking-uri-guard.mjs"
 
 function runtimeFixture(overrides = {}) {
   const events = []
@@ -59,8 +60,63 @@ test("startV2Plugin registers direct MCP tools and all v2 hooks", async () => {
   assert.equal(registered[0][0], "openviking")
   assert.equal(registered[0][1].type, "local")
   assert.equal(registered[0][1].codemode, false)
-  assert.deepEqual(Object.keys(hooks).sort(), ["context", "execute.after", "execute.before", "prompt"])
+  assert.deepEqual(Object.keys(hooks).sort(), ["compaction", "context", "execute.after", "execute.before", "prompt"])
   await cleanup()
+})
+
+test("compaction captures messages before the host drops them and contains read failures", async () => {
+  const { runtime, events } = runtimeFixture()
+  const messages = [
+    { id: "user", type: "user", text: "run the build" },
+    { id: "assistant", type: "assistant", content: [
+      { type: "tool", id: "build", name: "shell", state: { status: "completed", input: { command: "make" }, content: [{ type: "text", text: "built" }] } },
+    ] },
+  ]
+  const { ctx, hooks } = contextFixture(messages)
+  const cleanup = await startV2Plugin(ctx, runtime, { pluginRoot: "/tmp/ov" })
+  await hooks.compaction({ sessionID: "ses_1" })
+  assert.equal(events.filter((event) => event.type === "message.updated").length, 2)
+  assert.equal(events.at(-1).properties.part.output, "built")
+  messages.length = 0
+  await hooks.compaction({ sessionID: "ses_1" })
+  assert.equal(events.filter((event) => event.type === "message.updated").length, 2)
+  ctx.session.context = async () => { throw new Error("host unavailable") }
+  await assert.doesNotReject(() => hooks.compaction({ sessionID: "ses_1" }))
+  await cleanup()
+})
+
+test("shell notice preserves multiple text and media blocks without duplicating output", async () => {
+  const { runtime } = runtimeFixture({ vikingUriNotice: createVikingUriNotice() })
+  const { ctx, hooks } = contextFixture()
+  const cleanup = await startV2Plugin(ctx, runtime, { pluginRoot: "/tmp/ov" })
+  const original = [
+    { type: "text", text: "command output", metadata: { source: "stdout" } },
+    { type: "image", data: "test" },
+    { type: "text", text: "Exited with code 1" },
+  ]
+  const result = { content: structuredClone(original) }
+  await hooks["execute.after"]({ status: "completed", tool: "shell", input: { command: "cat viking://resources/test" }, result })
+  assert.deepEqual(result.content.slice(0, 3), original)
+  assert.equal(result.content.length, 4)
+  assert.match(result.content[3].text, /openviking_read/)
+  assert.doesNotMatch(result.content[3].text, /Exited with code 1/)
+  await cleanup()
+})
+
+test("cleanup waits for background initialization before flushing", async () => {
+  let completeBackground
+  let flushed = false
+  const background = new Promise((resolve) => { completeBackground = resolve })
+  const { runtime } = runtimeFixture({ background })
+  runtime.sessionManager.flushAll = async () => { flushed = true }
+  const { ctx } = contextFixture()
+  const cleanup = await startV2Plugin(ctx, runtime, { pluginRoot: "/tmp/ov" })
+  const cleaning = cleanup()
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(flushed, false)
+  completeBackground()
+  await cleaning
+  assert.equal(flushed, true)
 })
 
 test("prompt metadata is persisted and context injection is stable across model steps", async () => {

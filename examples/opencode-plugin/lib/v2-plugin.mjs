@@ -16,6 +16,14 @@ export async function startV2Plugin(ctx, runtime, { pluginRoot }) {
     vikingUriNotice,
   } = runtime
   const captureCursors = new Map()
+  // Compaction hooks can run while lifecycle events are still flushing. Keep
+  // capture and flush ordered so the same pending message is never sent twice.
+  let sessionTask = Promise.resolve()
+  const serializeSession = (operation) => {
+    const task = sessionTask.then(operation)
+    sessionTask = task.catch(() => {})
+    return task
+  }
   const directory = ctx?.location?.project?.directory || ctx?.location?.directory
 
   if (config.mcp.enabled && ctx?.mcp?.transform) {
@@ -70,12 +78,23 @@ export async function startV2Plugin(ctx, runtime, { pluginRoot }) {
         logHookError("session.context", error)
       }
     })
+
+    await ctx.session.hook("compaction", async (event) => {
+      try {
+        await runtime.ready
+        // context() drops the old transcript as soon as compaction completes.
+        // Capture it now; the ended event below owns the commit.
+        await serializeSession(() => captureV2Context(ctx, sessionManager, captureCursors, event.sessionID))
+      } catch (error) {
+        logHookError("session.compaction.capture", error)
+      }
+    })
   }
 
   const controller = new AbortController()
   let eventTask = Promise.resolve()
   if (ctx?.event?.subscribe) {
-    eventTask = consumeEvents(ctx, controller.signal, async (event) => {
+    eventTask = consumeEvents(ctx, controller.signal, (event) => serializeSession(async () => {
       await runtime.ready
       const sessionID = event?.data?.sessionID ?? event?.data?.sessionId
       if (isExecutionBoundary(event?.type) && sessionID) {
@@ -92,14 +111,16 @@ export async function startV2Plugin(ctx, runtime, { pluginRoot }) {
         }
       }
       if (event?.type === "session.deleted" && sessionID) captureCursors.delete(sessionID)
-    })
+    }))
   }
 
   return async () => {
     controller.abort()
     try {
       await eventTask
+      await sessionTask
       await runtime.ready
+      await runtime.background
       await sessionManager.waitForBackground?.()
       await sessionManager.flushAll({ commit: true })
     } catch (error) {
@@ -235,7 +256,8 @@ function writeToolResultText(result, text) {
     return
   }
   if (!Array.isArray(result.content)) return
-  const existing = result.content.find((item) => item?.type === "text" && typeof item.text === "string")
-  if (existing) existing.text = text
-  else result.content.push({ type: "text", text })
+  // Preserve the original text/media blocks and append only the new notice.
+  const before = toolResultText(result)
+  const notice = text.startsWith(before) ? text.slice(before.length).trimStart() : text
+  if (notice) result.content.push({ type: "text", text: notice })
 }

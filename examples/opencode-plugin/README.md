@@ -205,7 +205,7 @@ call and points it to the OpenViking MCP tools. A `bash` command that contains a
 an HTTP payload); the command runs and the plugin appends a notice naming the
 MCP tools to its output.
 
-OpenCode v2 has no plugin toast API. Service availability and other non-fatal notices are written to `openviking-memory.log`. The plugin checks the commit threshold after successful or interrupted executions, and forces a commit after failed executions, completed compaction, session deletion, and cleanup.
+OpenCode v2 has no plugin toast API. Service availability and other non-fatal notices are written to `openviking-memory.log`. The plugin captures the transcript before compaction discards it, checks the commit threshold after successful or interrupted executions, and forces a commit after failed executions, completed compaction, session deletion, and cleanup.
 
 ## MCP Tools
 
