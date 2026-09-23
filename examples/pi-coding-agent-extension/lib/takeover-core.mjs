@@ -158,7 +158,12 @@ export function estimatePayloadTokens(payload) {
   return 0;
 }
 
-export function buildOverviewMessage(overview, firstKeptTs = 0, budget = DEFAULT_CONFIG.takeoverOverviewBudget) {
+export function buildOverviewMessage(
+  overview,
+  firstKeptTs = 0,
+  budget = DEFAULT_CONFIG.takeoverOverviewBudget,
+  recoveryHint = "",
+) {
   const raw = String(overview || "");
   const truncated = truncateToTokens(raw, budget);
   const body = truncated === raw ? raw : `${truncated}\n...(truncated)`;
@@ -167,7 +172,7 @@ export function buildOverviewMessage(overview, firstKeptTs = 0, budget = DEFAULT
     role: "user",
     content:
       `${OVERVIEW_MARKER} Earlier conversation was archived to OpenViking and summarized below. ` +
-      `Use openviking_search for details.\n\n${body}`,
+      `Use OpenViking for related context when its tools are available.\n\n${body}${recoveryHint}`,
     timestamp,
   };
 }
@@ -182,11 +187,13 @@ export function countUndeliveredForSession(pendingEntries, sid) {
   return count;
 }
 
-/**
- * `viking://…/sessions/x/history/archive_003` → `viking://…/sessions/x/history`.
- * The history directory holds every archive; the recovery hint (commit 3) lists
- * it. Returns "" when the shape is not the expected one rather than guessing.
- */
+/** Derive the parent history directory only for the server's archive shape. */
+export function deriveHistoryUri(archiveUri) {
+  const cleaned = String(archiveUri || "").trim().replace(/\/+$/, "");
+  const m = /^(.*\/history)\/archive_\d+$/.exec(cleaned);
+  return m ? m[1] : "";
+}
+
 /**
  * Read a commit response and decide whether it archived what this takeover
  * meant to trim.
@@ -246,6 +253,7 @@ export class TakeoverCore {
       // Messages OpenViking will never receive (4xx / retries exhausted): a
       // capture gap that must stop takeover cutting across it.
       droppedCount: io.droppedCount || (() => 0),
+      availableTools: io.availableTools || (() => []),
       sleep: io.sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms))),
       log: io.log || (() => {}),
     };
@@ -257,6 +265,8 @@ export class TakeoverCore {
     this.syncedEntryCount = 0;
     this.committing = false;
     this.lastPersisted = "";
+    this.archiveUri = "";
+    this.historyUri = "";
     // A commit that archived but whose Working Memory was not ready in time:
     // { archiveUri, taskId, coveredUserTurns, boundaryUserTurns, fingerprint,
     //   syncedEntryCount, frozenTokens }. While set, no second
@@ -282,6 +292,8 @@ export class TakeoverCore {
       committing: this.committing,
       pendingArchive: this.pendingArchive,
       captureGap: this.captureGap,
+      archiveUri: this.archiveUri,
+      historyUri: this.historyUri,
     };
   }
 
@@ -304,6 +316,8 @@ export class TakeoverCore {
       // New fields default to safe absences so an old persisted entry restores.
       this.pendingArchive = restorePendingArchive(data.pendingArchive);
       this.captureGap = data.captureGap === true;
+      this.archiveUri = typeof data.archiveUri === "string" ? data.archiveUri : "";
+      this.historyUri = typeof data.historyUri === "string" ? data.historyUri : "";
       this.lastPersisted = JSON.stringify(this.persistedState());
       this.log(
         `takeover: restored boundary at ${this.coveredUserTurns} user turns, ${this.pendingTokens} pending tokens` +
@@ -357,7 +371,9 @@ export class TakeoverCore {
     }
     return [
       ...coveredSystem,
-      buildOverviewMessage(this.overview, firstKeptTs, this.config.takeoverOverviewBudget),
+      buildOverviewMessage(
+        this.overview, firstKeptTs, this.config.takeoverOverviewBudget, this.recoveryHint(),
+      ),
       ...kept,
     ];
   }
@@ -463,6 +479,7 @@ export class TakeoverCore {
       ...frozen,
       archiveUri: outcome.archiveUri,
       taskId: outcome.taskId,
+      historyUri: deriveHistoryUri(outcome.archiveUri),
     });
   }
 
@@ -478,6 +495,8 @@ export class TakeoverCore {
       // second takeover boundary over Pi's new context.
       this.pendingArchive = null;
       this.pendingTokens = Math.max(0, this.pendingTokens - (Number(pending.frozenTokens) || 0));
+      this.archiveUri = pending.archiveUri;
+      this.historyUri = typeof pending.historyUri === "string" ? pending.historyUri : "";
       this.persist();
       this.log(`takeover: native-compaction archive completed at ${pending.archiveUri}`);
       return false;
@@ -506,6 +525,7 @@ export class TakeoverCore {
         branchTipEntryId: frozen.branchTipEntryId || "",
         branchTipFingerprint: frozen.branchTipFingerprint,
         syncedEntryCount: frozen.syncedEntryCount,
+        historyUri: frozen.historyUri || "",
         frozenTokens: frozen.frozenTokens,
       };
       this.persist();
@@ -520,7 +540,8 @@ export class TakeoverCore {
     // current history before trimming to it — a branch switch during the wait
     // must abandon this advance, not cut somewhere else.
     if (!this.boundaryStillValid(branch, frozen)) {
-      this.markCaptureGap();
+      this.pendingArchive = null;
+      this.persist();
       this.log("takeover: frozen boundary no longer in history; advance abandoned");
       return false;
     }
@@ -533,6 +554,10 @@ export class TakeoverCore {
       this.fingerprint = frozen.fingerprint;
     }
     this.overview = overview;
+    this.archiveUri = frozen.archiveUri;
+    // Fresh pending records already carry a derived history URI. Do not guess
+    // one while restoring an older state shape that lacks this new field.
+    this.historyUri = typeof frozen.historyUri === "string" ? frozen.historyUri : "";
     this.pendingArchive = null;
     // Subtract only the pressure this trim froze; tokens accrued while waiting
     // for the summary belong to the next boundary and are not cleared.
@@ -694,6 +719,7 @@ export class TakeoverCore {
             ? fingerprintMessage(nativeMessages[nativeMessages.length - 1])
             : null,
           syncedEntryCount: Math.max(0, Math.floor(Number(this.io.getWatermark()) || 0)),
+          historyUri: deriveHistoryUri(outcome.archiveUri),
           frozenTokens: this.pendingTokens,
           nativeCompaction: true,
         };
@@ -706,6 +732,8 @@ export class TakeoverCore {
       }
 
       this.overview = overview;
+      this.archiveUri = outcome.archiveUri;
+      this.historyUri = deriveHistoryUri(outcome.archiveUri);
       this.resetBoundary("pi compaction absorbed boundary");
       this.pendingTokens = 0;
       this.syncedEntryCount = Math.max(0, Math.floor(Number(this.io.getWatermark()) || 0));
@@ -713,7 +741,9 @@ export class TakeoverCore {
 
       return {
         compaction: {
-          summary: `${OVERVIEW_MARKER}\n${this.truncatedOverview()}`,
+          summary:
+            `${OVERVIEW_MARKER}\n${this.truncatedOverview()}` +
+            this.recoveryHint(outcome.archiveUri, deriveHistoryUri(outcome.archiveUri)),
           firstKeptEntryId: preparation.firstKeptEntryId,
           tokensBefore: Number(preparation.tokensBefore) || 0,
           details: { source: "openviking" },
@@ -747,6 +777,23 @@ export class TakeoverCore {
     return truncated === raw ? raw : `${truncated}\n...(truncated)`;
   }
 
+  /** Append a non-budgeted source recovery hint only when both required tools exist. */
+  recoveryHint(archiveUri = this.archiveUri, historyUri = this.historyUri) {
+    const tools = new Set(this.io.availableTools());
+    if (!tools.has("openviking_list") || !tools.has("openviking_read")) return "";
+    const archive = String(archiveUri || "").trim();
+    const history = String(historyUri || "").trim();
+    if (!archive || !history) return "";
+    return (
+      `\n\nArchived capture: ${archive}\n` +
+      `This contains captured historical messages, not the unfiltered Pi transcript. ` +
+      `Semantic search does not retrieve archive source verbatim. Use openviking_list on ${history} ` +
+      `to locate archives, then openviking_read with uris=["${archive}/messages.jsonl"], ` +
+      `offset and limit to read it in chunks.` +
+      (tools.has("openviking_grep") ? ` Use openviking_grep only as an optional locator.` : "")
+    );
+  }
+
   persistedState() {
     const rawWatermark = Number(this.io.getWatermark());
     const watermark = Number.isFinite(rawWatermark)
@@ -761,6 +808,8 @@ export class TakeoverCore {
       syncedEntryCount: watermark,
       pendingArchive: this.pendingArchive,
       captureGap: this.captureGap,
+      archiveUri: this.archiveUri,
+      historyUri: this.historyUri,
     };
   }
 
@@ -826,6 +875,7 @@ function restorePendingArchive(value) {
       ? value.branchTipFingerprint
       : null,
     syncedEntryCount: Math.max(0, Math.floor(Number(value.syncedEntryCount) || 0)),
+    historyUri: typeof value.historyUri === "string" ? value.historyUri : "",
     frozenTokens: Math.max(0, Math.floor(Number(value.frozenTokens) || 0)),
     nativeCompaction: value.nativeCompaction === true,
   };

@@ -24,6 +24,7 @@ export interface PendingArchive {
   branchTipEntryId?: string;
   branchTipFingerprint?: string | null;
   syncedEntryCount: number;
+  historyUri: string;
   frozenTokens: number;
   nativeCompaction?: boolean;
 }
@@ -39,6 +40,8 @@ export interface TakeoverPersistedState {
   pendingArchive?: PendingArchive | null;
   /** A permanent delivery gap: the archive is missing messages. Blocks advance. */
   captureGap?: boolean;
+  archiveUri?: string;
+  historyUri?: string;
 }
 
 export interface TakeoverConfig {
@@ -71,6 +74,7 @@ export interface TakeoverIo {
   getWatermark?: () => number;
   /** Messages OpenViking will never receive; a capture gap when > 0. */
   droppedCount?: () => number;
+  availableTools?: () => string[];
   sleep?: (ms: number) => Promise<void>;
   log?: (message: string) => void;
 }
@@ -90,8 +94,9 @@ export function findBoundaryIndex(messages: TakeoverMessage[], coveredUserTurns:
 export function estimateTokens(text: string): number;
 export function truncateToTokens(text: string, budget: number): string;
 export function estimatePayloadTokens(payload: any): number;
-export function buildOverviewMessage(overview: string, firstKeptTs?: number, budget?: number): TakeoverMessage;
+export function buildOverviewMessage(overview: string, firstKeptTs?: number, budget?: number, recoveryHint?: string): TakeoverMessage;
 export function countUndeliveredForSession(pendingEntries: any[], sid: string): number;
+export function deriveHistoryUri(archiveUri: string): string;
 export function commitOutcome(committed: unknown): CommitOutcome;
 
 export type TakeoverState = TakeoverPersistedState & {
@@ -101,6 +106,8 @@ export type TakeoverState = TakeoverPersistedState & {
   committing: boolean;
   pendingArchive: PendingArchive | null;
   captureGap: boolean;
+  archiveUri: string;
+  historyUri: string;
 };
 
 export class TakeoverCore {
@@ -128,6 +135,7 @@ export class TakeoverCore {
   shutdown(): Promise<void>;
   resetBoundary(reason?: string): void;
   truncatedOverview(): string;
+  recoveryHint(archiveUri?: string, historyUri?: string): string;
   recordCaptureGap(): void;
   persistedState(): TakeoverPersistedState;
   persist(): void;

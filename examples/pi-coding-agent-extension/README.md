@@ -186,9 +186,18 @@ integrations should configure category `quotas` when they need exact ceilings.
 ### Context takeover
 
 Takeover is enabled by default. OpenViking commits archived history, polls the
-session overview, then the `context` hook replaces covered conversation turns
-with a synthetic `[OpenViking Session Context]` user message while keeping the
-recent live tail.
+overview of that exact archive, then the `context` hook replaces covered
+conversation turns with a synthetic `[OpenViking Session Context]` user message
+while keeping the recent live tail. The boundary advances only after every
+captured message in the cut has reached the server and the new archive has a
+non-empty overview. Permanent capture gaps leave the local history with Pi.
+
+When `openviking_list` and `openviking_read` are active, the injected overview
+also includes the archive URI and a short recovery instruction. `openviking_list`
+locates the archive and `openviking_read` reads `messages.jsonl` in `offset` /
+`limit` chunks. This file contains captured historical messages; semantic search
+does not return the archive source verbatim, and capture may have sanitized,
+filtered or truncated the original Pi transcript.
 
 | Field                    | Default    | Description                                                              |
 |--------------------------|------------|--------------------------------------------------------------------------|
@@ -310,6 +319,12 @@ That table is a snapshot of one server, not a contract; `/viking` reports how ma
 The canonical `/viking` command (type `/viking` in pi's chat) displays connection status, session info, how many tools registered — or the handshake error when none did — and accepts `commit` for manual synchronous commit.
 
 ## Upgrading from 0.3.x
+
+0.4.1 makes context takeover conservative: it keeps Pi's system/tool state,
+waits for confirmed capture delivery, reads the overview belonging to the exact
+new archive, and exposes a paginated archive-recovery hint when the required MCP
+tools are active. Sessions with a permanent capture gap stay on Pi's native
+compaction.
 
 0.4.0 replaces the seven hand-written `viking_*` REST tools with the server's own MCP tool surface. There is no alias period: the old names are gone.
 

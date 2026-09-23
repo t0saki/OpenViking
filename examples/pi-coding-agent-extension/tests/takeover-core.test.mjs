@@ -14,6 +14,7 @@ import {
   fingerprintMessage,
   flattenContent,
   isUserTurnStart,
+  deriveHistoryUri,
   truncateToTokens,
 } from "../lib/takeover-core.mjs";
 
@@ -42,6 +43,7 @@ function makeCore(overrides = {}) {
     slept: [],
     logs: [],
     overviewUris: [],
+    tools: overrides.tools ?? [],
   };
   let watermark = overrides.watermark ?? 0;
   let dropped = overrides.dropped ?? 0;
@@ -82,6 +84,7 @@ function makeCore(overrides = {}) {
     persistEntry: (type, data) => calls.persisted.push({ type, data }),
     getWatermark: () => watermark,
     droppedCount: () => dropped,
+    availableTools: () => calls.tools,
     sleep: async (ms) => calls.slept.push(ms),
     log: (message) => calls.logs.push(message),
   };
@@ -163,9 +166,9 @@ test("buildOverviewMessage is byte-stable for the same inputs", () => {
   assert.match(a.content, /\[OpenViking Session Context\]/);
 });
 
-test("buildOverviewMessage points the model at the openviking_search tool", () => {
+test("buildOverviewMessage does not promise an unavailable tool", () => {
   const message = buildOverviewMessage("summary", 1, 1000);
-  assert.match(message.content, /Use openviking_search for details\./);
+  assert.doesNotMatch(message.content, /openviking_search/);
   assert.doesNotMatch(message.content, /viking_archive_expand/);
 });
 
@@ -197,6 +200,8 @@ test("commitOutcome requires this commit's archive URI", () => {
   assert.deepEqual(commitOutcome({ archive_uri: "viking://user/u/sessions/s/history/archive_002", task_id: "t" }), {
     accepted: true, reason: "accepted", archiveUri: "viking://user/u/sessions/s/history/archive_002", taskId: "t",
   });
+  assert.equal(deriveHistoryUri("viking://user/u/sessions/s/history/archive_002"), "viking://user/u/sessions/s/history");
+  assert.equal(deriveHistoryUri("viking://unexpected/archive"), "");
 });
 
 test("transformContext drops covered turns and injects overview before recall", () => {
@@ -459,6 +464,10 @@ test("old state without archive fields remains compatible", () => {
   } }]);
   assert.equal(core.state.pendingArchive, null);
   assert.equal(core.state.captureGap, false);
+  assert.equal(core.state.archiveUri, "");
+  assert.equal(core.state.historyUri, "");
+  const out = core.transformContext([user("one"), assistant("a"), user("two")]);
+  assert.doesNotMatch(out[0].content, /openviking_list/);
 });
 
 test("capture gap survives restore and blocks takeover plus native compaction", async () => {
@@ -551,7 +560,7 @@ test("frozen boundary is abandoned after the branch changes", async () => {
   });
   assert.equal(await core.onTurnSynced(120, () => active), false);
   assert.equal(core.state.coveredUserTurns, 0);
-  assert.equal(core.state.captureGap, true);
+  assert.equal(core.state.captureGap, false);
   assert.match(calls.logs.at(-1), /boundary no longer/);
 });
 
@@ -576,7 +585,7 @@ test("frozen boundary uses entry identity when two branches have the same conten
   });
   assert.equal(await core.onTurnSynced(120, () => active), false);
   assert.equal(core.state.coveredUserTurns, 0);
-  assert.equal(core.state.captureGap, true);
+  assert.equal(core.state.captureGap, false);
 });
 
 test("frozen boundary rejects a fork after the cut but accepts append-only growth", async () => {
@@ -744,6 +753,43 @@ test("a timed-out native archive is persisted but never reused as a takeover bou
   assert.equal(resumed.calls.committed, 0);
   assert.equal(resumed.core.state.coveredUserTurns, 0);
   assert.equal(resumed.core.state.pendingArchive, null);
+  assert.equal(resumed.core.state.archiveUri, "viking://user/x/sessions/s/history/archive_001");
+});
+
+test("recovery hint is outside the overview budget and requires list plus read", () => {
+  const archiveUri = "viking://user/x/sessions/s/history/archive_001";
+  const both = makeCore({ tools: ["openviking_list", "openviking_read", "openviking_grep"] });
+  both.core.restore([{ type: "custom", customType: TAKEOVER_ENTRY_TYPE, data: {
+    coveredUserTurns: 1, overview: "x".repeat(1000), archiveUri,
+    historyUri: "viking://user/x/sessions/s/history",
+  } }]);
+  const out = both.core.transformContext([user("one"), assistant("a"), user("two")]);
+  assert.match(out[0].content, /openviking_list/);
+  assert.match(out[0].content, /openviking_read/);
+  assert.match(out[0].content, /offset and limit/);
+  assert.match(out[0].content, /captured historical messages/);
+  assert.ok(out[0].content.length > 1000);
+
+  const missingRead = makeCore({ tools: ["openviking_list"] });
+  missingRead.core.restore([{ type: "custom", customType: TAKEOVER_ENTRY_TYPE, data: {
+    coveredUserTurns: 1, overview: "summary", archiveUri,
+    historyUri: "viking://user/x/sessions/s/history",
+  } }]);
+  const noHint = missingRead.core.transformContext([user("one"), assistant("a"), user("two")]);
+  assert.doesNotMatch(noHint[0].content, /openviking_list/);
+});
+
+test("native compaction summary uses the same recovery hint", async () => {
+  const { core } = makeCore({
+    tools: ["openviking_list", "openviking_read"],
+    overviews: ["compact overview"],
+  });
+  const result = await core.handleBeforeCompact(
+    { firstKeptEntryId: "pi-kept", tokensBefore: 100 }, [user("one")],
+  );
+  assert.match(result.compaction.summary, /captured historical messages/);
+  assert.match(result.compaction.summary, /openviking_list/);
+  assert.match(result.compaction.summary, /openviking_read/);
 });
 
 test("disabled takeover is a passthrough", async () => {
