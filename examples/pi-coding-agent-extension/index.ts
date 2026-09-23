@@ -25,6 +25,7 @@ import { guardVikingUriToolCall, noticeVikingUriToolResult } from "./lib/uri-gua
 import { createMcpBridge, DEFAULT_HANDSHAKE_BUDGET_MS } from "./lib/mcp-bridge.mjs";
 import { registerMcpTools } from "./tools.js";
 import { createTakeoverManager } from "./takeover.js";
+import { HANDLER_BUDGET_MS } from "./lib/takeover-core.mjs";
 
 /** This extension's directory, published for the experimental fork's probe. */
 const EXTENSION_DIR = dirname(fileURLToPath(import.meta.url));
@@ -228,6 +229,7 @@ export default async function (pi: ExtensionAPI) {
 
   // --- before_agent_start ---
   pi.on("before_agent_start", async (event, ctx) => {
+    const deadline = Date.now() + HANDLER_BUDGET_MS;
     // Read before awaiting, because this is what separates the retry below
     // from the attempt start() makes: on the turn that runs the startup chain
     // this is false, and from the next turn on it is true. Testing `started`
@@ -253,6 +255,12 @@ export default async function (pi: ExtensionAPI) {
     }
 
     if (!connected || bypassed || closed) return;
+
+    // A summary that finished since the last turn — or in the last `pi -p`
+    // process — trims this prompt's request already.
+    if (config.takeoverEnabled) {
+      await takeover.resumePending(() => ctx.sessionManager.getBranch(), { deadline });
+    }
 
     // Queue recall for the context hook. Pi renders the user message before
     // that hook, so recall latency does not delay the message appearing.
@@ -352,13 +360,15 @@ export default async function (pi: ExtensionAPI) {
   pi.on("turn_end", async (event, ctx) => {
     if (!connected || bypassed || !isCaptureEnabled(config)) return;
 
+    // The host's 30s cap covers this whole handler, sync included.
+    const deadline = Date.now() + HANDLER_BUDGET_MS;
     const branch = ctx.sessionManager.getBranch();
     const result = await sync.syncBranch(branch);
     logger.log("turn_end", { added: result.added, tokens: result.tokens });
     if (result.permanentFailures > 0) takeover.recordCaptureGap();
     // The branch is what the boundary is frozen against and re-confirmed on, so
     // takeover needs it, not just the token delta.
-    await takeover.onTurnSynced(result.tokens, () => ctx.sessionManager.getBranch());
+    await takeover.onTurnSynced(result.tokens, () => ctx.sessionManager.getBranch(), { deadline });
     updateStatus(ctx, connected, result.added, sync.sessionId, config, takeover.state, toolsReady);
   });
 
@@ -367,6 +377,7 @@ export default async function (pi: ExtensionAPI) {
     if (!connected || bypassed) return;
 
     if (config.takeoverEnabled) {
+      const deadline = Date.now() + HANDLER_BUDGET_MS;
       const prep = (event as any)?.preparation ?? {};
       // Native compaction syncs the latest branch, archives all captured
       // history and reuses pi's own firstKeptEntryId, so hand it the branch.
@@ -374,7 +385,7 @@ export default async function (pi: ExtensionAPI) {
         firstKeptEntryId: prep.firstKeptEntryId,
         tokensBefore: prep.tokensBefore ?? 0,
         signal: (event as any)?.signal,
-      }, () => ctx.sessionManager.getBranch());
+      }, () => ctx.sessionManager.getBranch(), { deadline });
     }
 
     const archiveId = await sync.commit();
@@ -439,7 +450,12 @@ export default async function (pi: ExtensionAPI) {
         const ok = config.takeoverEnabled
           ? await takeover.commitAndAdvance(() => ctx.sessionManager.getBranch())
           : commitResult !== null;
-        if (ok) {
+        if (!ok && config.takeoverEnabled && takeover.state.pendingArchive) {
+          ctx.ui.notify(
+            "OpenViking: committed; the context is trimmed once the archive summary is ready",
+            "info",
+          );
+        } else if (ok) {
           ctx.ui.notify(
             "OpenViking: committed successfully" +
               (commitResult?.trace_id ? ` (trace_id=${commitResult.trace_id})` : ""),

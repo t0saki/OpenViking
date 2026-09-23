@@ -391,7 +391,7 @@ test("transformContext finds the kept turn when pi 0.87 hides system messages fr
   assert.equal(out[1].content, "second");
 });
 
-test("a 0.4.0 boundary is adopted as the entry in front of its first kept turn", () => {
+test("a count-based boundary is adopted as the entry in front of its first kept turn", () => {
   const { core } = makeCore();
   const branch = branchOf(user("first"), assistant("answer"), STATE, user("second"), assistant("answer 2"));
   const messages = contextOf(branch);
@@ -406,7 +406,7 @@ test("a 0.4.0 boundary is adopted as the entry in front of its first kept turn",
   assert.equal("fingerprint" in core.persistedState(), false);
 });
 
-test("a 0.4.0 boundary whose fingerprint no longer matches is dropped", () => {
+test("a count-based boundary whose fingerprint no longer matches is dropped", () => {
   const { core } = makeCore();
   const branch = branchOf(user("first"), assistant("new answer"), user("second"));
   core.restore([{ type: "custom", customType: TAKEOVER_ENTRY_TYPE, data: {
@@ -451,7 +451,12 @@ test("commitAndAdvance advances to an entry id and the next context is trimmed",
   });
   const branch = branchOf(user("one"), assistant("a"), STATE, user("two"), assistant("b"), STATE, user("three"));
   setWatermark(7);
-  assert.equal(await core.onTurnSynced(120, branch), true);
+  // The summary is not there right after the commit; turn_end does not wait.
+  assert.equal(await core.onTurnSynced(120, branch), false);
+  assert.ok(core.state.pendingArchive);
+  assert.deepEqual(calls.slept, []);
+  // The next turn reads it once and advances.
+  assert.equal(await core.onTurnSynced(0, branch), true);
   assert.equal(core.state.coveredThroughEntryId, branch[5].id);
   assert.equal(core.state.coveredUserTurns, 2);
   assert.equal(core.state.overview, "fresh overview");
@@ -461,10 +466,11 @@ test("commitAndAdvance advances to an entry id and the next context is trimmed",
   assert.equal(calls.committed, 1);
   assert.equal(calls.lastCommitOpts.queueOnFailure, false);
   assert.equal(calls.lastCommitOpts.keepRecentCount, 1);
-  assert.deepEqual(calls.slept, [1]);
-  assert.equal(calls.persisted.length, 1);
-  assert.equal(calls.persisted[0].type, TAKEOVER_ENTRY_TYPE);
-  assert.equal(calls.persisted[0].data.coveredThroughEntryId, branch[5].id);
+  assert.deepEqual(calls.slept, []);
+  // Once for the pending archive, once for the advance.
+  assert.equal(calls.persisted.length, 2);
+  assert.equal(calls.persisted[1].type, TAKEOVER_ENTRY_TYPE);
+  assert.equal(calls.persisted[1].data.coveredThroughEntryId, branch[5].id);
   assert.deepEqual(calls.overviewUris, [
     "viking://user/x/sessions/s/history/archive_001",
     "viking://user/x/sessions/s/history/archive_001",
@@ -632,7 +638,7 @@ test("archive overview read failures are logged and keep the boundary pending", 
 });
 
 test("a delayed summary preserves token pressure from messages arriving while waiting", async () => {
-  const { core, calls } = makeCore({ overviews: ["", "", "", "ready"] });
+  const { core, calls } = makeCore({ overviews: ["", "ready"] });
   const branch = branchOf(user("one"), user("two"));
   assert.equal(await core.onTurnSynced(120, branch), false);
   assert.equal(await core.onTurnSynced(17, branch), true);
@@ -641,7 +647,7 @@ test("a delayed summary preserves token pressure from messages arriving while wa
 });
 
 test("messages appended while an archive is pending are not included in its frozen boundary", async () => {
-  const { core, calls } = makeCore({ overviews: ["", "", "", "ready"] });
+  const { core, calls } = makeCore({ overviews: ["", "ready"] });
   const initial = branchOf(user("one"), assistant("a"), STATE, user("two"));
   assert.equal(await core.onTurnSynced(120, initial), false);
   const extended = [...initial, ...branchOf(assistant("b"), STATE, user("three"))];
@@ -840,24 +846,146 @@ test("native compaction does not start another archive while a takeover summary 
   assert.equal(calls.committed, 1);
 });
 
-test("a timed-out native archive is persisted but never reused as a takeover boundary", async () => {
+test("a native archive not summarized in time leaves the takeover boundary alone", async () => {
   const branch = branchOf(user("one"), assistant("a"));
   const first = makeCore({ overviews: ["", "", ""] });
   first.core.restore([{ type: "custom", customType: TAKEOVER_ENTRY_TYPE, data: {
     coveredThroughEntryId: branch[0].id, coveredUserTurns: 1, overview: "old overview", pendingTokens: 20,
+    archiveUri: "viking://user/x/sessions/s/history/archive_000", historyUri: "viking://user/x/sessions/s/history",
   } }]);
   assert.equal(await first.core.handleBeforeCompact({ firstKeptEntryId: "pi-kept" }, branch), undefined);
   assert.equal(first.core.state.pendingArchive.nativeCompaction, true);
-  assert.equal(first.core.state.coveredThroughEntryId, "");
+  // Pi may still cancel or fail its own compaction, so the boundary stays.
+  assert.equal(first.core.state.coveredThroughEntryId, branch[0].id);
+  assert.equal(first.core.state.overview, "old overview");
 
   const resumed = makeCore({ overviews: ["late native overview"] });
   resumed.core.restore([{ type: "custom", customType: TAKEOVER_ENTRY_TYPE, data: first.core.persistedState() }]);
   assert.equal(await resumed.core.onTurnSynced(5, branch), false);
   assert.equal(resumed.calls.committed, 0);
-  assert.equal(resumed.core.state.coveredThroughEntryId, "");
   assert.equal(resumed.core.state.pendingArchive, null);
-  assert.equal(resumed.core.state.archiveUri, "viking://user/x/sessions/s/history/archive_001");
-  assert.equal(resumed.core.state.historyUri, "viking://user/x/sessions/s/history");
+  assert.equal(resumed.core.state.coveredThroughEntryId, branch[0].id);
+  // The recovery hint keeps naming the archive the current overview came from.
+  assert.equal(resumed.core.state.archiveUri, "viking://user/x/sessions/s/history/archive_000");
+});
+
+test("turn_end never sleeps waiting for a summary", async () => {
+  const { core, calls } = makeCore({ overviews: [""] });
+  const branch = branchOf(user("one"), user("two"));
+  assert.equal(await core.onTurnSynced(120, branch), false);
+  assert.equal(await core.onTurnSynced(5, branch), false);
+  assert.equal(await core.onTurnSynced(5, branch), false);
+  assert.deepEqual(calls.slept, []);
+  assert.equal(calls.overviewUris.length, 3);
+  assert.equal(calls.committed, 1);
+});
+
+test("a pending archive whose task ended without a summary is dropped once", async () => {
+  const statuses = [];
+  const { core, calls } = makeCore({
+    overviews: [""],
+    io: { taskStatus: async (id) => { statuses.push(id); return "completed"; } },
+  });
+  const branch = branchOf(user("one"), user("two"));
+  assert.equal(await core.onTurnSynced(120, branch), false);
+  assert.ok(core.state.pendingArchive);
+  assert.equal(await core.onTurnSynced(10, branch), false);
+  assert.deepEqual(statuses, ["t-1"]);
+  assert.equal(core.state.pendingArchive, null);
+  assert.equal(core.state.coveredThroughEntryId, "");
+  // Its frozen pressure is spent, so the next archive waits for fresh pressure.
+  assert.equal(core.state.pendingTokens, 10);
+  assert.equal(await core.onTurnSynced(10, branch), false);
+  assert.equal(calls.committed, 1);
+  assert.ok(calls.logs.some((line) => /task completed without Working Memory/.test(line)));
+});
+
+test("a summary that lands just as its task ends still advances", async () => {
+  const { core } = makeCore({
+    overviews: ["", "", "late but ready"],
+    io: { taskStatus: async () => "completed" },
+  });
+  const branch = branchOf(user("one"), user("two"));
+  assert.equal(await core.onTurnSynced(120, branch), false);
+  assert.equal(await core.onTurnSynced(0, branch), true);
+  assert.equal(core.state.overview, "late but ready");
+});
+
+test("a pending archive is kept while its task runs or cannot be asked", async () => {
+  for (const status of ["running", null]) {
+    const { core } = makeCore({ overviews: [""], io: { taskStatus: async () => status } });
+    const branch = branchOf(user("one"), user("two"));
+    await core.onTurnSynced(120, branch);
+    await core.onTurnSynced(0, branch);
+    assert.ok(core.state.pendingArchive, String(status));
+  }
+});
+
+test("a pending archive whose boundary left the context is dropped without a read", async () => {
+  const initial = branchOf(user("one"), assistant("a"), user("two"));
+  const { core, calls } = makeCore({ overviews: [""] });
+  assert.equal(await core.onTurnSynced(120, initial), false);
+  const reads = calls.overviewUris.length;
+  const forked = [initial[0], ...branchOf(assistant("other"), user("two"))];
+  assert.equal(await core.onTurnSynced(0, forked), false);
+  assert.equal(calls.overviewUris.length, reads);
+  assert.equal(core.state.pendingArchive, null);
+});
+
+test("resumePending advances before the next prompt", async () => {
+  const { core, calls } = makeCore({ overviews: ["", "ready"] });
+  const branch = branchOf(user("one"), assistant("a"), user("two"), assistant("b"));
+  assert.equal(await core.onTurnSynced(120, branch), false);
+  const next = [...branch, ...branchOf(user("three"))];
+  assert.equal(await core.resumePending(next), true);
+  assert.equal(calls.committed, 1);
+  const out = core.transformContext(contextOf(next), next);
+  assert.deepEqual(out.slice(1).map((message) => message.content), ["two", "b", "three"]);
+  assert.equal(await core.resumePending(next), false);
+});
+
+test("the drain and the commit only get what is left of the handler budget", async () => {
+  let clock = 1_000_000;
+  const flushBudgets = [];
+  const { core, calls } = makeCore({
+    io: {
+      now: () => clock,
+      flush: async (budgetMs) => { flushBudgets.push(budgetMs); clock += 4_000; return true; },
+    },
+  });
+  const branch = branchOf(user("one"), user("two"));
+  assert.equal(await core.onTurnSynced(120, branch, { deadline: clock + 25_000 }), true);
+  assert.deepEqual(flushBudgets, [15_000]);
+  assert.equal(calls.lastCommitOpts.timeoutMs, 16_000);
+});
+
+test("a commit that would run past the handler deadline is postponed", async () => {
+  let clock = 1_000_000;
+  const { core, calls } = makeCore({
+    io: { now: () => clock, flush: async () => { clock += 18_000; return true; } },
+  });
+  const branch = branchOf(user("one"), user("two"));
+  assert.equal(await core.onTurnSynced(120, branch, { deadline: clock + 25_000 }), false);
+  assert.equal(calls.committed, 0);
+  assert.equal(core.state.pendingTokens, 120);
+  assert.ok(calls.logs.some((line) => /budget spent before commit/.test(line)));
+});
+
+test("native compaction polls only until the handler deadline", async () => {
+  let clock = 1_000_000;
+  const deadline = clock + 25_000;
+  const branch = branchOf(user("one"), assistant("a"), user("two"));
+  const { core, calls } = makeCore({
+    overviews: [""],
+    config: { takeoverOverviewPollMs: 2_000, takeoverOverviewPollMax: 15 },
+    io: { now: () => clock, sleep: async (ms) => { calls.slept.push(ms); clock += ms; } },
+  });
+  restoreBoundary(core, branch[1].id);
+  assert.equal(await core.handleBeforeCompact({ firstKeptEntryId: "pi-kept" }, branch, { deadline }), undefined);
+  assert.ok(clock <= deadline);
+  assert.ok(calls.slept.length < 14);
+  assert.equal(core.state.coveredThroughEntryId, branch[1].id);
+  assert.equal(core.state.pendingArchive.nativeCompaction, true);
 });
 
 test("recovery hint is outside the overview budget and requires list plus read", () => {

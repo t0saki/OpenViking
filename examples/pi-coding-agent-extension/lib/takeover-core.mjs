@@ -10,6 +10,19 @@ const DEFAULT_CONFIG = {
   takeoverOverviewPollMax: 15,
 };
 
+// pi hosts cap every extension event handler at 30s; omp logs `handler timed
+// out after 30000ms`, discards the result and lets the handler run on (#5275).
+// Takeover's work in one handler stays inside this budget.
+export const HANDLER_BUDGET_MS = 25_000;
+// What a commit plus one overview read needs; with less left, the commit waits
+// for a later turn instead of running past the host's cap.
+const COMMIT_RESERVE_MS = 10_000;
+// One overview read (the client caps it at 5s) with room to spare.
+const READ_RESERVE_MS = 5_000;
+// Task states after which a commit's summary will not appear any more;
+// "missing" is a task the server no longer knows.
+const TERMINAL_TASK_STATUSES = new Set(["completed", "failed", "cancelled", "missing"]);
+
 function numberOr(value, fallback) {
   const next = Number(value);
   return Number.isFinite(next) ? next : fallback;
@@ -310,6 +323,9 @@ export class TakeoverCore {
       // Read the Working Memory of a SPECIFIC archive by its uri, so the summary
       // provably belongs to this commit and not to an older /context archive.
       readArchiveOverview: io.readArchiveOverview || (async () => null),
+      // Status of the commit's background task ("missing" once the server no
+      // longer knows it, null when it cannot be asked).
+      taskStatus: io.taskStatus || (async () => null),
       // How many messages the capture path would actually send for a slice of
       // the branch — the server keep_recent_count is a message count, not a
       // user-turn count, and it must exclude system/custom/filtered entries.
@@ -321,6 +337,7 @@ export class TakeoverCore {
       droppedCount: io.droppedCount || (() => 0),
       availableTools: io.availableTools || (() => []),
       sleep: io.sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms))),
+      now: io.now || (() => Date.now()),
       log: io.log || (() => {}),
     };
     // The covered prefix ends at this pi entry, inclusive. Entry ids survive
@@ -346,7 +363,7 @@ export class TakeoverCore {
     // A permanent delivery gap in this session: the archive is missing messages,
     // so the boundary must never advance past it. Survives restart.
     this.captureGap = false;
-    // A 0.4.0 boundary — the first N user turns of the context, plus the
+    // A count-based boundary (0.4.1 and earlier) — the first N user turns of the context, plus the
     // fingerprint of the last covered message once it was learned — converted
     // to an entry id the first time the context hook sees the session.
     this.legacyBoundary = null;
@@ -404,7 +421,7 @@ export class TakeoverCore {
       this.historyUri = typeof data.historyUri === "string" ? data.historyUri : "";
       this.lastPersisted = JSON.stringify(this.persistedState());
       this.log(
-        `takeover: restored boundary ${this.coveredThroughEntryId || (this.legacyBoundary ? `at ${this.coveredUserTurns} user turns (0.4.0)` : "none")}` +
+        `takeover: restored boundary ${this.coveredThroughEntryId || (this.legacyBoundary ? `at ${this.coveredUserTurns} user turns (count-based)` : "none")}` +
           `, ${this.pendingTokens} pending tokens` +
           (this.pendingArchive ? `, pending archive ${this.pendingArchive.archiveUri}` : "") +
           (this.captureGap ? ", capture gap set" : ""),
@@ -506,17 +523,17 @@ export class TakeoverCore {
   }
 
   /**
-   * Convert a 0.4.0 boundary to an entry id: locate it the way 0.4.0 did — the
+   * Convert a count-based boundary to an entry id: locate it the way 0.4.1 did — the
    * (N+1)-th user turn of the context, checked against the learned fingerprint
    * of the message before it — then take the entry in front of that turn. A
-   * boundary that no longer matches is dropped, as 0.4.0 itself would have.
+   * boundary that no longer matches is dropped, as 0.4.1 itself would have.
    */
   adoptLegacyBoundary(messages, entries) {
     const { coveredUserTurns, fingerprint } = this.legacyBoundary;
     this.legacyBoundary = null;
     const cut = findBoundaryIndex(messages, coveredUserTurns);
     if (cut <= 0 || (fingerprint !== null && fingerprintMessage(messages[cut - 1]) !== fingerprint)) {
-      this.resetBoundary("0.4.0 boundary no longer matches the context");
+      this.resetBoundary("count-based boundary no longer matches the context");
       return;
     }
     const users = entries.filter(isUserEntry);
@@ -524,39 +541,66 @@ export class TakeoverCore {
     const keptIdx = kept >= 0 ? entries.indexOf(users[kept]) : -1;
     const throughId = keptIdx > 0 ? entries[keptIdx - 1]?.id : undefined;
     if (typeof throughId !== "string" || !throughId) {
-      this.resetBoundary("0.4.0 boundary has no entry id");
+      this.resetBoundary("count-based boundary has no entry id");
       return;
     }
     this.coveredThroughEntryId = throughId;
     this.coveredUserTurns = coveredUserTurns;
-    this.log(`takeover: 0.4.0 boundary adopted through entry ${throughId}`);
+    this.log(`takeover: count-based boundary adopted through entry ${throughId}`);
   }
 
-  async onTurnSynced(estTokens, branch = []) {
+  async onTurnSynced(estTokens, branch = [], { deadline } = {}) {
     if (!this.enabled) return false;
     // A commit already archived and is only waiting for its Working Memory:
-    // account for this turn, then finish that one instead of opening another.
-    // finishArchive subtracts only the frozen token snapshot, leaving this new
+    // account for this turn, then check that one instead of opening another.
+    // Its resolution subtracts only the frozen token snapshot, leaving this new
     // pressure for the next boundary.
     this.pendingTokens += Math.max(0, Math.floor(Number(estTokens) || 0));
-    if (this.pendingArchive) return this.commitAndAdvance(branch);
+    if (this.pendingArchive) return this.commitAndAdvance(branch, { deadline });
     if (this.pendingTokens < this.config.takeoverTokenThreshold) return false;
     // Whether the branch has enough user turns to leave a keep-recent tail is
     // decided by freezeBoundary on pi's context projection of the branch.
-    return this.commitAndAdvance(branch);
+    return this.commitAndAdvance(branch, { deadline });
+  }
+
+  /**
+   * Check a pending archive once, outside `turn_end` — `before_agent_start`
+   * calls this so a summary that finished between prompts (or between `pi -p`
+   * / `pi -c` processes) trims the very next request.
+   */
+  async resumePending(branch = [], { deadline } = {}) {
+    if (!this.enabled || this.committing || !this.pendingArchive) return false;
+    const until = this.deadlineFrom(deadline);
+    if (this.remaining(until) < 2 * READ_RESERVE_MS) return false;
+    this.committing = true;
+    try {
+      return await this.resolvePendingArchive(branch);
+    } catch (error) {
+      this.log(`takeover: pending archive check failed (${errorMessage(error)}); boundary held`);
+      return false;
+    } finally {
+      this.committing = false;
+    }
   }
 
   /**
    * Advance the boundary behind a confirmed archive, or resume the archive a
    * previous attempt left pending. Never advances across a capture gap and
    * never reuses an old /context summary.
+   *
+   * Everything here runs inside a pi event handler, and hosts cap those at
+   * 30s: omp logs `handler timed out`, drops the result and lets the handler
+   * run on (#5275). So nothing waits for a summary — the archive is committed,
+   * its overview read once, and later turns check it again — and the drain and
+   * the commit only get what is left of `deadline`.
    */
-  async commitAndAdvance(branch = []) {
+  async commitAndAdvance(branch = [], { deadline } = {}) {
     if (!this.enabled || this.committing) return false;
+    const until = this.deadlineFrom(deadline);
     this.committing = true;
     try {
       if (this.pendingArchive) return await this.resolvePendingArchive(branch);
-      return await this.beginArchive(branch);
+      return await this.beginArchive(branch, until);
     } catch (error) {
       this.log(`takeover: archive preparation failed (${errorMessage(error)}); boundary held`);
       return false;
@@ -565,8 +609,8 @@ export class TakeoverCore {
     }
   }
 
-  /** Freeze a boundary, confirm delivery, commit, and read this archive's summary. */
-  async beginArchive(branch) {
+  /** Freeze a boundary, confirm delivery, commit, and read this archive's summary once. */
+  async beginArchive(branch, until) {
     if (this.captureGap) {
       this.log("takeover: capture gap present; boundary held, native compaction stays with pi");
       return false;
@@ -582,32 +626,18 @@ export class TakeoverCore {
       return false;
     }
 
-    // Sync this branch, then drain the queue: an empty queue alone does not
-    // prove delivery — the just-extracted turn may not have been sent yet.
-    const synced = await this.io.syncBranch(snapshot);
-    if ((synced?.permanentFailures || 0) > 0 || this.io.droppedCount() > 0) {
-      this.markCaptureGap();
-      return false;
-    }
-    // A queued transient failure is allowed to proceed to the bounded drainer;
-    // only the barrier's final state proves that every current-session message
-    // reached the server.
-    const flushed = await this.io.flush();
-    // The drain may have exhausted retries or failed to rewrite a queue entry.
-    // Record that permanent gap even when an orphaned processing file keeps the
-    // barrier closed.
-    if (this.io.droppedCount() > 0) {
-      this.markCaptureGap();
-      return false;
-    }
-    if (!flushed) {
-      this.log("takeover: flush barrier closed; commit postponed");
-      return false;
-    }
+    const delivered = await this.confirmDelivery(snapshot, until);
+    if (!delivered) return false;
 
+    const left = this.remaining(until);
+    if (left < COMMIT_RESERVE_MS) {
+      this.log("takeover: handler budget spent before commit; commit postponed");
+      return false;
+    }
     const committed = await this.io.commit({
       queueOnFailure: false,
       keepRecentCount: frozen.keepRecentCount,
+      timeoutMs: left - READ_RESERVE_MS,
     });
     const outcome = commitOutcome(committed);
     if (!outcome.accepted) {
@@ -623,73 +653,117 @@ export class TakeoverCore {
       return false;
     }
 
-    return await this.finishArchive(branch, {
+    const archive = {
       ...frozen,
       archiveUri: outcome.archiveUri,
       taskId: outcome.taskId,
       historyUri: deriveHistoryUri(outcome.archiveUri),
-    });
+    };
+    // Phase 2 writes the summary in the background and usually needs longer
+    // than a handler may wait, so this is one read, not a poll.
+    const overview = this.remaining(until) >= READ_RESERVE_MS
+      ? await this.readOverviewOnce(archive.archiveUri)
+      : "";
+    if (overview) return this.advanceTo(branch, archive, overview);
+
+    // Accepted but not summarized yet: remember exactly this archive and its
+    // frozen boundary, keep local history, and let later turns and prompts
+    // re-check the SAME archive rather than committing again.
+    this.pendingArchive = {
+      archiveUri: archive.archiveUri,
+      taskId: archive.taskId || "",
+      historyUri: archive.historyUri,
+      coveredThroughEntryId: archive.coveredThroughEntryId,
+      coveredUserTurns: archive.coveredUserTurns,
+      frozenTokens: archive.frozenTokens,
+    };
+    this.persist();
+    this.log(`takeover: ${archive.archiveUri} committed, Working Memory not ready; checking on later turns`);
+    return false;
   }
 
-  /** Re-check the archive a prior attempt committed; advance once its summary lands. */
+  /**
+   * Sync the snapshot, then drain the queue: an empty queue alone does not
+   * prove delivery — the just-extracted turn may not have been sent yet. A
+   * permanent loss on either step records the capture gap.
+   */
+  async confirmDelivery(snapshot, until) {
+    const synced = await this.io.syncBranch(snapshot);
+    if ((synced?.permanentFailures || 0) > 0 || this.io.droppedCount() > 0) {
+      this.markCaptureGap();
+      return false;
+    }
+    // A queued transient failure is allowed to proceed to the bounded drainer,
+    // which gets the handler time the commit does not need; only the barrier's
+    // final state proves that every current-session message reached the server.
+    const flushed = await this.io.flush(Math.max(0, this.remaining(until) - COMMIT_RESERVE_MS));
+    // The drain may have exhausted retries or failed to rewrite a queue entry.
+    // Record that permanent gap even when an orphaned processing file keeps the
+    // barrier closed.
+    if (this.io.droppedCount() > 0) {
+      this.markCaptureGap();
+      return false;
+    }
+    if (!flushed) {
+      this.log("takeover: flush barrier closed; commit postponed");
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * One check of the archive a prior attempt committed: advance once its
+   * summary is there, and drop it once its task has ended without one — a
+   * failed summary, or a server with Working Memory disabled, would otherwise
+   * hold takeover on this archive for the rest of the session.
+   */
   async resolvePendingArchive(branch) {
     const pending = this.pendingArchive;
     if (!pending) return false;
+    // A branch switch or a pi compaction during the wait can take the frozen
+    // prefix out of the active context; the advance is then abandoned, never
+    // moved somewhere else.
+    if (!pending.nativeCompaction && !this.inActiveContext(branch, pending.coveredThroughEntryId)) {
+      this.pendingArchive = null;
+      this.persist();
+      this.log("takeover: frozen boundary no longer in history; advance abandoned");
+      return false;
+    }
+
+    let overview = await this.readOverviewOnce(pending.archiveUri);
+    if (!overview) {
+      const status = pending.taskId ? await this.io.taskStatus(pending.taskId) : null;
+      if (!TERMINAL_TASK_STATUSES.has(status)) return false;
+      // The summary may have landed between the two reads.
+      overview = await this.readOverviewOnce(pending.archiveUri);
+      if (!overview) {
+        this.pendingArchive = null;
+        // Wait for fresh pressure before the next archive, so a server that
+        // never writes Working Memory does not get a commit on every turn.
+        this.pendingTokens = Math.max(0, this.pendingTokens - (Number(pending.frozenTokens) || 0));
+        this.persist();
+        this.log(`takeover: ${pending.archiveUri} task ${status} without Working Memory; boundary held`);
+        return false;
+      }
+    }
+
     if (pending.nativeCompaction) {
-      const overview = await this.pollArchiveOverview(pending.archiveUri);
-      if (!overview) return false;
       // Pi already ran its own compaction after the earlier hook returned
-      // undefined. This archive is useful for recovery, but must not install a
-      // second takeover boundary over Pi's new context.
+      // undefined. This archive must not install a second takeover boundary
+      // over Pi's new context, and the recovery hint keeps naming the archive
+      // the current overview came from.
       this.pendingArchive = null;
       this.pendingTokens = Math.max(0, this.pendingTokens - (Number(pending.frozenTokens) || 0));
-      this.archiveUri = pending.archiveUri;
-      this.historyUri = pending.historyUri;
       this.persist();
       this.log(`takeover: native-compaction archive completed at ${pending.archiveUri}`);
       return false;
     }
-    if (!pending.coveredThroughEntryId) {
-      // Unreleased pre-0.4.1 pending shape: it names no entry to trim to.
-      this.pendingArchive = null;
-      this.persist();
-      this.log(`takeover: pending archive ${pending.archiveUri} has no boundary; dropped`);
-      return false;
-    }
-    return await this.finishArchive(branch, pending, { committed: true });
+    return this.advanceTo(branch, pending, overview);
   }
 
-  /**
-   * Poll the archive's own `.overview.md`, then advance — but only after
-   * re-checking that the frozen prefix is still part of the active context.
-   */
-  async finishArchive(branch, frozen, { committed = false } = {}) {
-    const overview = await this.pollArchiveOverview(frozen.archiveUri);
-    if (!overview) {
-      // Accepted but not summarized yet: remember exactly this archive and its
-      // frozen boundary, keep local history, and let a later turn re-check the
-      // SAME archive rather than committing again.
-      this.pendingArchive = {
-        archiveUri: frozen.archiveUri,
-        taskId: frozen.taskId || "",
-        historyUri: frozen.historyUri || "",
-        coveredThroughEntryId: frozen.coveredThroughEntryId,
-        coveredUserTurns: frozen.coveredUserTurns,
-        frozenTokens: frozen.frozenTokens,
-      };
-      this.persist();
-      this.log(
-        `takeover: ${frozen.archiveUri} committed, Working Memory not ready; ` +
-          (committed ? "still waiting" : "waiting on later turns"),
-      );
-      return false;
-    }
-
-    // The archive is summarized. A branch switch or a pi compaction during the
-    // wait can take the frozen prefix out of the active context; the advance is
-    // then abandoned, never moved somewhere else.
-    const entries = projectContextEntries(currentBranch(branch));
-    if (!entries.some((entry) => entry?.id === frozen.coveredThroughEntryId)) {
+  /** Move the boundary to a summarized archive, re-checking the frozen prefix first. */
+  advanceTo(branch, frozen, overview) {
+    if (!this.inActiveContext(branch, frozen.coveredThroughEntryId)) {
       this.pendingArchive = null;
       this.persist();
       this.log("takeover: frozen boundary no longer in history; advance abandoned");
@@ -713,6 +787,20 @@ export class TakeoverCore {
         `(through ${this.coveredThroughEntryId}) via ${frozen.archiveUri}`,
     );
     return true;
+  }
+
+  inActiveContext(branch, entryId) {
+    if (!entryId) return false;
+    return projectContextEntries(currentBranch(branch)).some((entry) => entry?.id === entryId);
+  }
+
+  deadlineFrom(deadline) {
+    const value = Number(deadline);
+    return Number.isFinite(value) ? value : this.io.now() + HANDLER_BUDGET_MS;
+  }
+
+  remaining(until) {
+    return until - this.io.now();
   }
 
   /**
@@ -768,7 +856,14 @@ export class TakeoverCore {
     this.markCaptureGap();
   }
 
-  async handleBeforeCompact(preparation = {}, branch = []) {
+  /**
+   * Answer pi's compaction with this session's own archive summary. Pi needs
+   * the summary now, so this is the one place that polls — but only until the
+   * handler deadline. Unless it returns a compaction, it changes no takeover
+   * state: pi may still cancel or fail its own compaction, and the boundary
+   * must then keep applying to the uncompacted context.
+   */
+  async handleBeforeCompact(preparation = {}, branch = [], { deadline } = {}) {
     if (!this.enabled || this.committing) return undefined;
     if (!preparation.firstKeptEntryId) return undefined;
     // A gap means the archive is missing messages, so an OpenViking summary
@@ -780,26 +875,23 @@ export class TakeoverCore {
     if (this.pendingArchive) return undefined;
     if (preparation.signal?.aborted) return undefined;
 
+    const until = this.deadlineFrom(deadline);
     this.committing = true;
     try {
       // Sync the latest branch first; native compaction archives all captured
       // history (keepRecentCount 0) and hands pi its own firstKeptEntryId, so
       // the summary and the retained tail may overlap.
-      const synced = await this.io.syncBranch(currentBranch(branch));
-      if ((synced?.permanentFailures || 0) > 0 || this.io.droppedCount() > 0) {
-        this.markCaptureGap();
-        return undefined;
-      }
-      if (preparation.signal?.aborted) return undefined;
-      const flushed = await this.io.flush();
-      if (this.io.droppedCount() > 0) {
-        this.markCaptureGap();
-        return undefined;
-      }
-      if (!flushed) return undefined;
+      if (!(await this.confirmDelivery(currentBranch(branch), until))) return undefined;
       if (preparation.signal?.aborted) return undefined;
 
-      const committed = await this.io.commit({ queueOnFailure: false, keepRecentCount: 0 });
+      const left = this.remaining(until);
+      if (left < COMMIT_RESERVE_MS) {
+        this.log("takeover: handler budget spent before native compaction commit; using pi compaction");
+        return undefined;
+      }
+      const committed = await this.io.commit({
+        queueOnFailure: false, keepRecentCount: 0, timeoutMs: left - READ_RESERVE_MS,
+      });
       const outcome = commitOutcome(committed);
       if (!outcome.accepted) {
         if (outcome.reason === "no_result") {
@@ -813,11 +905,11 @@ export class TakeoverCore {
       }
 
       const historyUri = deriveHistoryUri(outcome.archiveUri);
-      const overview = await this.pollArchiveOverview(outcome.archiveUri, preparation.signal);
-      if (!overview) {
+      const overview = await this.pollArchiveOverview(outcome.archiveUri, preparation.signal, until);
+      if (!overview || this.remaining(until) <= 0) {
         // The server accepted the archive, but this compaction attempt cannot
-        // wait indefinitely. Remember it so ordinary takeover will not create
-        // a second archive, while this call falls back to native compaction.
+        // wait any longer. Remember it so ordinary takeover will not create a
+        // second archive, and hand this compaction back to pi.
         this.pendingArchive = {
           archiveUri: outcome.archiveUri,
           taskId: outcome.taskId || "",
@@ -827,10 +919,8 @@ export class TakeoverCore {
           frozenTokens: this.pendingTokens,
           nativeCompaction: true,
         };
-        // Returning undefined hands this compaction to Pi. Pi's compaction now
-        // owns the context, so the takeover boundary is dropped with it.
-        this.resetBoundary("pi native compaction owns boundary");
         this.persist();
+        this.log(`takeover: ${outcome.archiveUri} not summarized in time; using pi compaction`);
         return undefined;
       }
 
@@ -906,9 +996,9 @@ export class TakeoverCore {
       : this.syncedEntryCount;
     return {
       coveredThroughEntryId: this.coveredThroughEntryId,
-      // Also what a 0.4.0 reader restores its boundary from after a downgrade.
+      // Also what a 0.4.1 reader restores its boundary from after a downgrade.
       coveredUserTurns: this.coveredUserTurns,
-      // A 0.4.0 boundary not yet adopted keeps its fingerprint across restarts.
+      // A count-based boundary not yet adopted keeps its fingerprint across restarts.
       ...(this.legacyBoundary ? { fingerprint: this.legacyBoundary.fingerprint } : {}),
       overview: truncateToTokens(this.overview, this.config.takeoverOverviewBudget),
       pendingTokens: this.pendingTokens,
@@ -933,25 +1023,32 @@ export class TakeoverCore {
     }
   }
 
-  /** Poll one archive's `.overview.md` until its non-empty body lands. */
-  async pollArchiveOverview(archiveUri, signal) {
+  /** One read of an archive's `.overview.md`; "" until its non-empty body lands. */
+  async readOverviewOnce(archiveUri) {
     const uri = String(archiveUri || "").trim();
     if (!uri) return "";
+    try {
+      const value = await this.io.readArchiveOverview(uri);
+      return typeof value === "string" ? value.trim() : "";
+    } catch (error) {
+      this.log(`takeover: archive overview read failed for ${uri} (${errorMessage(error)})`);
+      return "";
+    }
+  }
+
+  /**
+   * Poll one archive's `.overview.md` — `takeoverOverviewPollMax` reads,
+   * `takeoverOverviewPollMs` apart — and stop early at `until`.
+   */
+  async pollArchiveOverview(archiveUri, signal, until = Infinity) {
     for (let i = 0; i < this.config.takeoverOverviewPollMax; i++) {
       if (signal?.aborted) return "";
-      let value = null;
-      try {
-        value = await this.io.readArchiveOverview(uri);
-      } catch (error) {
-        this.log(`takeover: archive overview read failed for ${uri} (${errorMessage(error)})`);
-        value = null;
-      }
-      const overview = typeof value === "string" ? value.trim() : "";
+      const overview = await this.readOverviewOnce(archiveUri);
       if (signal?.aborted) return "";
       if (overview) return overview;
-      if (i < this.config.takeoverOverviewPollMax - 1 && this.config.takeoverOverviewPollMs > 0) {
-        await this.io.sleep(this.config.takeoverOverviewPollMs);
-      }
+      if (i === this.config.takeoverOverviewPollMax - 1 || this.config.takeoverOverviewPollMs <= 0) break;
+      if (this.remaining(until) < this.config.takeoverOverviewPollMs + READ_RESERVE_MS) break;
+      await this.io.sleep(this.config.takeoverOverviewPollMs);
     }
     return "";
   }

@@ -27,10 +27,10 @@ export interface PendingArchive {
 export interface TakeoverPersistedState {
   /** The pi entry id the covered prefix ends at (inclusive); "" when none. */
   coveredThroughEntryId?: string;
-  /** Display count; also the whole boundary of a 0.4.0 state. */
+  /** Display count; also the whole boundary of a 0.4.1-or-earlier state. */
   coveredUserTurns: number;
   overview: string;
-  /** 0.4.0 only: fingerprint of the last covered context message. */
+  /** 0.4.1 and earlier only: fingerprint of the last covered context message. */
   fingerprint?: string | null;
   pendingTokens: number;
   lastSeenUserTurns?: number;
@@ -63,10 +63,13 @@ export interface SyncBranchResult {
 export interface TakeoverIo {
   /** Deliver a pi branch to the server before committing. */
   syncBranch?: (branch: any[]) => Promise<SyncBranchResult> | SyncBranchResult;
-  flush?: () => Promise<boolean> | boolean;
-  commit?: (opts?: { queueOnFailure?: boolean; keepRecentCount?: number }) => Promise<unknown> | unknown;
+  /** Drain this session's queue within `budgetMs`; true once nothing of it is undelivered. */
+  flush?: (budgetMs?: number) => Promise<boolean> | boolean;
+  commit?: (opts?: { queueOnFailure?: boolean; keepRecentCount?: number; timeoutMs?: number }) => Promise<unknown> | unknown;
   /** Read one archive's `.overview.md` by its uri; null until it is ready. */
   readArchiveOverview?: (archiveUri: string) => Promise<string | null> | string | null;
+  /** A background task's status; "missing" when the server no longer knows it, null when unknown. */
+  taskStatus?: (taskId: string) => Promise<string | null> | string | null;
   /** Exact server keep_recent_count for a retained tail (message count). */
   captureCount?: (branchSlice: any[]) => number;
   persistEntry?: (customType: string, data: TakeoverPersistedState) => void;
@@ -75,7 +78,17 @@ export interface TakeoverIo {
   droppedCount?: () => number;
   availableTools?: () => string[];
   sleep?: (ms: number) => Promise<void>;
+  /** Clock for handler deadlines; defaults to Date.now. */
+  now?: () => number;
   log?: (message: string) => void;
+}
+
+/** Budget for takeover work inside one pi event handler (hosts cap them at 30s). */
+export const HANDLER_BUDGET_MS: number;
+
+/** Absolute epoch-ms deadline for the handler a call runs in. */
+export interface HandlerDeadline {
+  deadline?: number;
 }
 
 export interface CommitOutcome {
@@ -118,11 +131,14 @@ export class TakeoverCore {
   restore(entries: any[]): TakeoverState;
   /** `branch` is pi's `getBranch()`; the boundary is located on its context projection. */
   transformContext(messages: TakeoverMessage[], branch?: any[] | (() => any[])): TakeoverMessage[];
-  onTurnSynced(estTokens: number, branch?: any[] | (() => any[])): Promise<boolean>;
-  commitAndAdvance(branch?: any[] | (() => any[])): Promise<boolean>;
+  onTurnSynced(estTokens: number, branch?: any[] | (() => any[]), opts?: HandlerDeadline): Promise<boolean>;
+  /** One check of a pending archive, e.g. before a prompt; true when the boundary advanced. */
+  resumePending(branch?: any[] | (() => any[]), opts?: HandlerDeadline): Promise<boolean>;
+  commitAndAdvance(branch?: any[] | (() => any[]), opts?: HandlerDeadline): Promise<boolean>;
   handleBeforeCompact(
     preparation?: { firstKeptEntryId?: string; tokensBefore?: number; signal?: AbortSignal },
     branch?: any[] | (() => any[]),
+    opts?: HandlerDeadline,
   ): Promise<
     | {
         compaction: {
@@ -141,5 +157,6 @@ export class TakeoverCore {
   recordCaptureGap(): void;
   persistedState(): TakeoverPersistedState;
   persist(): void;
-  pollArchiveOverview(archiveUri: string, signal?: AbortSignal): Promise<string>;
+  readOverviewOnce(archiveUri: string): Promise<string>;
+  pollArchiveOverview(archiveUri: string, signal?: AbortSignal, until?: number): Promise<string>;
 }

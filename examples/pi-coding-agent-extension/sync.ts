@@ -99,12 +99,13 @@ export class SyncManager {
     );
   }
 
-  async flushForTakeover(): Promise<boolean> {
+  async flushForTakeover(budgetMs?: number): Promise<boolean> {
     if (!this.ovSessionId) return false;
-    // Drain is bounded (time / max batches). Remaining undelivered entries —
-    // including any still claimed as `.processing` — keep the barrier closed
-    // until a later turn finishes draining them.
-    if (this.client.connected) await this.drainSessionBacklog();
+    // Drain is bounded (time / max batches), and takeover passes what is left
+    // of its handler budget. Remaining undelivered entries — including any
+    // still claimed as `.processing` — keep the barrier closed until a later
+    // turn finishes draining them.
+    if (this.client.connected) await this.drainSessionBacklog(budgetMs);
     const pending = await listPending();
     if (countUndeliveredForSession(pending, this.ovSessionId) !== 0) return false;
     // listPending intentionally exposes only `.json` entries. A fresh
@@ -122,15 +123,18 @@ export class SyncManager {
    * Entries are claimed one batch at a time so a failed batch only costs a
    * retry for the entries it contained.
    *
-   * Bounded per call via OPENVIKING_PENDING_DRAIN_BUDGET_MS (default 60s) and
+   * Bounded per call via OPENVIKING_PENDING_DRAIN_BUDGET_MS (default 10s) and
    * optional OPENVIKING_PENDING_DRAIN_MAX_BATCHES so a huge backlog cannot
    * block turn_end for an unbounded wall time; remainder drains on later turns.
+   * Every caller runs inside a pi event handler, which hosts cap at 30s, so a
+   * caller can narrow the budget further with `budgetMs`.
    */
-  private async drainSessionBacklog(): Promise<void> {
+  private async drainSessionBacklog(budgetMs?: number): Promise<void> {
     const sid = this.ovSessionId;
     if (!sid) return;
     const budgetRaw = Number(process.env.OPENVIKING_PENDING_DRAIN_BUDGET_MS);
-    const timeBudgetMs = Number.isFinite(budgetRaw) && budgetRaw >= 0 ? budgetRaw : 60_000;
+    const configured = Number.isFinite(budgetRaw) && budgetRaw >= 0 ? budgetRaw : 10_000;
+    const timeBudgetMs = Number.isFinite(budgetMs) ? Math.max(0, Math.min(configured, Number(budgetMs))) : configured;
     const maxRaw = Number(process.env.OPENVIKING_PENDING_DRAIN_MAX_BATCHES);
     const maxBatches =
       Number.isFinite(maxRaw) && maxRaw > 0 ? Math.floor(maxRaw) : Number.POSITIVE_INFINITY;
@@ -280,11 +284,14 @@ export class SyncManager {
     }
   }
 
-  async commit(opts: { queueOnFailure?: boolean; keepRecentCount?: number } = {}): Promise<any | null> {
+  async commit(
+    opts: { queueOnFailure?: boolean; keepRecentCount?: number; timeoutMs?: number } = {},
+  ): Promise<any | null> {
     if (!this.ovSessionId) return null;
     const response = await this.client.commitSessionResponse(
       this.ovSessionId,
       opts.keepRecentCount,
+      opts.timeoutMs,
     );
     const result = response.result;
     if (!result) {

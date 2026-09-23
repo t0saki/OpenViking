@@ -423,3 +423,20 @@ test("drainSessionBacklog stops after maxBatches and leaves remainder for later 
     }
   });
 });
+
+test("the takeover barrier drains only within the budget it is given", async () => {
+  await withPendingDir(async () => {
+    const { c, calls } = batchClient();
+    const sync = new SyncManager(c, config());
+    await sync.ensureSession("pi-session");
+    await enqueue("addMessage", sync.sessionId, { role: "user", content: "queued while offline" });
+
+    // No handler time left: nothing is sent and the barrier stays closed.
+    assert.equal(await sync.flushForTakeover(0), false);
+    assert.equal(calls.length, 0);
+    assert.equal((await listPending()).length, 1);
+
+    assert.equal(await sync.flushForTakeover(), true);
+    assert.equal(calls.length, 1);
+  });
+});

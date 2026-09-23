@@ -61,3 +61,21 @@ test("readArchiveOverview surfaces non-404 read failures", async () => {
     );
   });
 });
+
+test("getTaskStatus reports the task state, a forgotten task, and an unreachable server apart", async () => {
+  await withFetch(async (url) => {
+    if (String(url).endsWith("/tasks/t-done")) return { body: { status: "ok", result: { task_id: "t-done", status: "completed" } } };
+    if (String(url).endsWith("/tasks/t-gone")) {
+      return { status: 404, body: { status: "error", error: { code: "NOT_FOUND", message: "Task not found or expired" } } };
+    }
+    return { status: 500, body: { status: "error", error: { code: "INTERNAL", message: "boom" } } };
+  }, async (calls) => {
+    const client = makeClient();
+    assert.equal(await client.getTaskStatus("t-done"), "completed");
+    assert.equal(await client.getTaskStatus("t-gone"), "missing");
+    assert.equal(await client.getTaskStatus("t-broken"), null);
+    assert.equal(await client.getTaskStatus(""), null);
+    assert.equal(calls.length, 3);
+    assert.match(calls[0].url, /\/api\/v1\/tasks\/t-done$/);
+  });
+});

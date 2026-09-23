@@ -122,11 +122,12 @@ export class OVClient {
   async commitSessionResponse(
     sessionId: string,
     keepRecentCount = this.cfg.commitKeepRecentCount,
+    timeoutMs = 30000,
   ): Promise<OVCommitResponse> {
     const res = await this.fetchJSON<OVCommitResult>(
       `/api/v1/sessions/${encodeURIComponent(sessionId)}/commit`,
       { method: "POST", body: JSON.stringify({ keep_recent_count: keepRecentCount }) },
-      { timeoutMs: 30000 },
+      { timeoutMs },
     );
     if (res.ok && res.result && !res.result.trace_id && res.traceId) {
       res.result.trace_id = res.traceId;
@@ -152,14 +153,15 @@ export class OVClient {
    * OKF Markdown — `---\n<yaml>\n---\n\n<body>\n` — and `content/read` only
    * strips that framing for memory URIs, not session archives, so the
    * frontmatter is removed here. A file present but empty counts as not ready
-   * (null), so a poller cannot be fooled by an empty write.
+   * (null), so a poller cannot be fooled by an empty write. Takeover reads it
+   * inside pi event handlers, so one read is capped well below their budget.
    */
   async readArchiveOverview(archiveUri: string): Promise<string | null> {
     const base = String(archiveUri ?? "").trim().replace(/\/+$/, "");
     if (!base) return null;
     const res = await this.fetchJSON<string>(
       `/api/v1/content/read?uri=${encodeURIComponent(`${base}/.overview.md`)}`,
-      undefined, { timeoutMs: 15000 },
+      undefined, { timeoutMs: 5000 },
     );
     if (!res.ok) {
       if (res.status === 404) return null;
@@ -169,6 +171,24 @@ export class OVClient {
     if (typeof res.result !== "string") return null;
     const body = stripFrontmatter(res.result);
     return body.trim() ? body : null;
+  }
+
+  /**
+   * Status of a background task: `GET /api/v1/tasks/{id}`. A commit's task
+   * runs the archive summary, so once it is `completed`, `failed` or
+   * `cancelled` an archive still without `.overview.md` will not get one (the
+   * server may also have Working Memory disabled). Returns "missing" when the
+   * server no longer knows the task (unknown or expired), null when it could
+   * not be asked.
+   */
+  async getTaskStatus(taskId: string): Promise<string | null> {
+    const id = String(taskId ?? "").trim();
+    if (!id) return null;
+    const res = await this.fetchJSON<{ status?: string }>(
+      `/api/v1/tasks/${encodeURIComponent(id)}`, undefined, { timeoutMs: 5000 },
+    );
+    if (!res.ok) return res.status === 404 || res.error?.code === "NOT_FOUND" ? "missing" : null;
+    return typeof res.result?.status === "string" ? res.result.status : null;
   }
 }
 
