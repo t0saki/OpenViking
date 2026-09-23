@@ -24,7 +24,7 @@ export function createTakeoverManager(opts: {
       // archive this takeover did not create.
       readArchiveOverview: (archiveUri: string) => client.readArchiveOverview(archiveUri),
       // Whether a still-unsummarized archive can get its summary at all.
-      taskStatus: (taskId: string) => client.getTaskStatus(taskId),
+      archiveState: (archiveUri: string) => client.getArchiveState(archiveUri),
       // The exact server keep_recent_count for the retained tail (message count,
       // not user-turn count): system, custom and filtered entries excluded.
       captureCount: (branchSlice: any[]) => sync.captureCount(branchSlice),

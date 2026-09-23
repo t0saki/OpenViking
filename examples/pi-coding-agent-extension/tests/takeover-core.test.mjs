@@ -880,30 +880,31 @@ test("turn_end never sleeps waiting for a summary", async () => {
   assert.equal(calls.committed, 1);
 });
 
-test("a pending archive whose task ended without a summary is dropped once", async () => {
-  const statuses = [];
+test("a pending archive that is terminal without a summary is dropped once", async () => {
+  const asked = [];
   const { core, calls } = makeCore({
     overviews: [""],
-    io: { taskStatus: async (id) => { statuses.push(id); return "completed"; } },
+    // `.done` without Working Memory: the server has it disabled.
+    io: { archiveState: async (uri) => { asked.push(uri); return "completed"; } },
   });
   const branch = branchOf(user("one"), user("two"));
   assert.equal(await core.onTurnSynced(120, branch), false);
   assert.ok(core.state.pendingArchive);
   assert.equal(await core.onTurnSynced(10, branch), false);
-  assert.deepEqual(statuses, ["t-1"]);
+  assert.deepEqual(asked, ["viking://user/x/sessions/s/history/archive_001"]);
   assert.equal(core.state.pendingArchive, null);
   assert.equal(core.state.coveredThroughEntryId, "");
   // Its frozen pressure is spent, so the next archive waits for fresh pressure.
   assert.equal(core.state.pendingTokens, 10);
   assert.equal(await core.onTurnSynced(10, branch), false);
   assert.equal(calls.committed, 1);
-  assert.ok(calls.logs.some((line) => /task completed without Working Memory/.test(line)));
+  assert.ok(calls.logs.some((line) => /completed without Working Memory/.test(line)));
 });
 
-test("a summary that lands just as its task ends still advances", async () => {
+test("a summary that lands just as its archive completes still advances", async () => {
   const { core } = makeCore({
     overviews: ["", "", "late but ready"],
-    io: { taskStatus: async () => "completed" },
+    io: { archiveState: async () => "completed" },
   });
   const branch = branchOf(user("one"), user("two"));
   assert.equal(await core.onTurnSynced(120, branch), false);
@@ -911,9 +912,9 @@ test("a summary that lands just as its task ends still advances", async () => {
   assert.equal(core.state.overview, "late but ready");
 });
 
-test("a pending archive is kept while its task runs or cannot be asked", async () => {
-  for (const status of ["running", null]) {
-    const { core } = makeCore({ overviews: [""], io: { taskStatus: async () => status } });
+test("a pending archive is kept while it is pending or cannot be asked", async () => {
+  for (const status of ["pending", null]) {
+    const { core } = makeCore({ overviews: [""], io: { archiveState: async () => status } });
     const branch = branchOf(user("one"), user("two"));
     await core.onTurnSynced(120, branch);
     await core.onTurnSynced(0, branch);

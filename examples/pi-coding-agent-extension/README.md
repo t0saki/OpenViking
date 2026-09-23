@@ -194,9 +194,9 @@ non-empty overview. Permanent capture gaps leave the local history with Pi.
 
 Takeover never waits for the summary inside a turn: pi hosts cap each extension
 event handler at 30s, so a summary that is not ready yet is checked once per
-later turn and before the next prompt. An archive whose task ends without a
-summary (for example with Working Memory disabled on the server) is dropped
-instead of being checked forever.
+later turn and before the next prompt. An archive the server marks finished
+or failed without a summary (for example with Working Memory disabled) is
+dropped instead of being checked forever.
 
 When `openviking_list` and `openviking_read` are active, the injected overview
 also includes the archive URI and a short recovery instruction. `openviking_list`

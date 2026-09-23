@@ -19,9 +19,9 @@ export const HANDLER_BUDGET_MS = 25_000;
 const COMMIT_RESERVE_MS = 10_000;
 // One overview read (the client caps it at 5s) with room to spare.
 const READ_RESERVE_MS = 5_000;
-// Task states after which a commit's summary will not appear any more;
-// "missing" is a task the server no longer knows.
-const TERMINAL_TASK_STATUSES = new Set(["completed", "failed", "cancelled", "missing"]);
+// Archive states after which its summary will not appear any more: the
+// server's `.done` / `.failed.json` markers (idea from #5320).
+const TERMINAL_ARCHIVE_STATES = new Set(["completed", "failed"]);
 
 function numberOr(value, fallback) {
   const next = Number(value);
@@ -323,9 +323,9 @@ export class TakeoverCore {
       // Read the Working Memory of a SPECIFIC archive by its uri, so the summary
       // provably belongs to this commit and not to an older /context archive.
       readArchiveOverview: io.readArchiveOverview || (async () => null),
-      // Status of the commit's background task ("missing" once the server no
-      // longer knows it, null when it cannot be asked).
-      taskStatus: io.taskStatus || (async () => null),
+      // An archive's terminal state from its server markers: "completed",
+      // "failed", "pending", or null when it cannot be asked.
+      archiveState: io.archiveState || (async () => null),
       // How many messages the capture path would actually send for a slice of
       // the branch — the server keep_recent_count is a message count, not a
       // user-turn count, and it must exclude system/custom/filtered entries.
@@ -713,7 +713,7 @@ export class TakeoverCore {
 
   /**
    * One check of the archive a prior attempt committed: advance once its
-   * summary is there, and drop it once its task has ended without one — a
+   * summary is there, and drop it once the archive is terminal without one — a
    * failed summary, or a server with Working Memory disabled, would otherwise
    * hold takeover on this archive for the rest of the session.
    */
@@ -732,8 +732,8 @@ export class TakeoverCore {
 
     let overview = await this.readOverviewOnce(pending.archiveUri);
     if (!overview) {
-      const status = pending.taskId ? await this.io.taskStatus(pending.taskId) : null;
-      if (!TERMINAL_TASK_STATUSES.has(status)) return false;
+      const state = await this.io.archiveState(pending.archiveUri);
+      if (!TERMINAL_ARCHIVE_STATES.has(state)) return false;
       // The summary may have landed between the two reads.
       overview = await this.readOverviewOnce(pending.archiveUri);
       if (!overview) {
@@ -742,7 +742,7 @@ export class TakeoverCore {
         // never writes Working Memory does not get a commit on every turn.
         this.pendingTokens = Math.max(0, this.pendingTokens - (Number(pending.frozenTokens) || 0));
         this.persist();
-        this.log(`takeover: ${pending.archiveUri} task ${status} without Working Memory; boundary held`);
+        this.log(`takeover: ${pending.archiveUri} ${state} without Working Memory; boundary held`);
         return false;
       }
     }

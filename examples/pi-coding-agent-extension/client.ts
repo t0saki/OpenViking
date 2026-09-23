@@ -174,21 +174,25 @@ export class OVClient {
   }
 
   /**
-   * Status of a background task: `GET /api/v1/tasks/{id}`. A commit's task
-   * runs the archive summary, so once it is `completed`, `failed` or
-   * `cancelled` an archive still without `.overview.md` will not get one (the
-   * server may also have Working Memory disabled). Returns "missing" when the
-   * server no longer knows the task (unknown or expired), null when it could
-   * not be asked.
+   * Terminal state of one archive, from the markers the server itself uses
+   * (`Session._archive_terminal_state`): `.done` once commit phase 2 completed
+   * — it is written last, after the Working Memory when that is enabled, and
+   * records `working_memory_enabled: false` when it is not — and `.failed.json`
+   * once phase 2 failed for good. "pending" while neither exists; null when the
+   * server could not be asked. Unlike task records, the markers do not expire.
    */
-  async getTaskStatus(taskId: string): Promise<string | null> {
-    const id = String(taskId ?? "").trim();
-    if (!id) return null;
-    const res = await this.fetchJSON<{ status?: string }>(
-      `/api/v1/tasks/${encodeURIComponent(id)}`, undefined, { timeoutMs: 5000 },
-    );
-    if (!res.ok) return res.status === 404 || res.error?.code === "NOT_FOUND" ? "missing" : null;
-    return typeof res.result?.status === "string" ? res.result.status : null;
+  async getArchiveState(archiveUri: string): Promise<"completed" | "failed" | "pending" | null> {
+    const base = String(archiveUri ?? "").trim().replace(/\/+$/, "");
+    if (!base) return null;
+    for (const [marker, state] of [[".done", "completed"], [".failed.json", "failed"]] as const) {
+      const res = await this.fetchJSON<string>(
+        `/api/v1/content/read?uri=${encodeURIComponent(`${base}/${marker}`)}`,
+        undefined, { timeoutMs: 5000 },
+      );
+      if (res.ok) return state;
+      if (res.status !== 404) return null;
+    }
+    return "pending";
   }
 }
 

@@ -62,20 +62,26 @@ test("readArchiveOverview surfaces non-404 read failures", async () => {
   });
 });
 
-test("getTaskStatus reports the task state, a forgotten task, and an unreachable server apart", async () => {
+test("getArchiveState reads the server's terminal markers for one archive", async () => {
+  const archive = "viking://user/u/sessions/s/history/archive_003";
+  const files = new Map();
   await withFetch(async (url) => {
-    if (String(url).endsWith("/tasks/t-done")) return { body: { status: "ok", result: { task_id: "t-done", status: "completed" } } };
-    if (String(url).endsWith("/tasks/t-gone")) {
-      return { status: 404, body: { status: "error", error: { code: "NOT_FOUND", message: "Task not found or expired" } } };
+    const uri = new URL(String(url)).searchParams.get("uri");
+    if (uri === "viking://user/u/sessions/broken/history/archive_001/.done") {
+      return { status: 500, body: { status: "error", error: { code: "INTERNAL", message: "boom" } } };
     }
-    return { status: 500, body: { status: "error", error: { code: "INTERNAL", message: "boom" } } };
+    return files.has(uri)
+      ? { body: { status: "ok", result: files.get(uri) } }
+      : { status: 404, body: { status: "error", error: { code: "NOT_FOUND", message: "missing" } } };
   }, async (calls) => {
     const client = makeClient();
-    assert.equal(await client.getTaskStatus("t-done"), "completed");
-    assert.equal(await client.getTaskStatus("t-gone"), "missing");
-    assert.equal(await client.getTaskStatus("t-broken"), null);
-    assert.equal(await client.getTaskStatus(""), null);
-    assert.equal(calls.length, 3);
-    assert.match(calls[0].url, /\/api\/v1\/tasks\/t-done$/);
+    assert.equal(await client.getArchiveState(archive), "pending");
+    files.set(`${archive}/.failed.json`, "{\"error\":\"llm\"}");
+    assert.equal(await client.getArchiveState(archive), "failed");
+    files.set(`${archive}/.done`, "{\"working_memory_enabled\":false}");
+    assert.equal(await client.getArchiveState(`${archive}/`), "completed");
+    assert.equal(await client.getArchiveState("viking://user/u/sessions/broken/history/archive_001"), null);
+    assert.equal(await client.getArchiveState(""), null);
+    assert.match(calls[0].url, /content\/read\?uri=.*archive_003%2F\.done$/);
   });
 });

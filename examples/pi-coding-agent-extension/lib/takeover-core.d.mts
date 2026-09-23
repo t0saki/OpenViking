@@ -68,8 +68,8 @@ export interface TakeoverIo {
   commit?: (opts?: { queueOnFailure?: boolean; keepRecentCount?: number; timeoutMs?: number }) => Promise<unknown> | unknown;
   /** Read one archive's `.overview.md` by its uri; null until it is ready. */
   readArchiveOverview?: (archiveUri: string) => Promise<string | null> | string | null;
-  /** A background task's status; "missing" when the server no longer knows it, null when unknown. */
-  taskStatus?: (taskId: string) => Promise<string | null> | string | null;
+  /** An archive's terminal state from its `.done` / `.failed.json` markers; null when unknown. */
+  archiveState?: (archiveUri: string) => Promise<"completed" | "failed" | "pending" | null> | string | null;
   /** Exact server keep_recent_count for a retained tail (message count). */
   captureCount?: (branchSlice: any[]) => number;
   persistEntry?: (customType: string, data: TakeoverPersistedState) => void;
