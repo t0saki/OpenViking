@@ -13,14 +13,14 @@ export function normalizeV2LifecycleEvent(event) {
   if (type === "session.compaction.ended") {
     return [sessionEvent("session.compacted", sessionID)]
   }
-  if (type === "session.execution.succeeded" || type === "session.execution.interrupted") {
+  // A failed execution ends one turn, not the session, so it keeps state like
+  // the other terminal outcomes instead of taking v1's session.error path.
+  if (
+    type === "session.execution.succeeded" ||
+    type === "session.execution.interrupted" ||
+    type === "session.execution.failed"
+  ) {
     return [sessionEvent("session.idle", sessionID)]
-  }
-  if (type === "session.execution.failed") {
-    return [{
-      ...sessionEvent("session.error", sessionID),
-      error: data.error ?? data.message,
-    }]
   }
   return []
 }
@@ -53,9 +53,10 @@ function sessionEvent(type, sessionID, info = {}) {
 
 function contentPart(block, index) {
   if (!block || typeof block !== "object") return null
-  if (block.type === "text" || block.type === "reasoning") {
+  // Reasoning is dropped, matching v1 parts and the shared capture filter.
+  if (block.type === "text") {
     return {
-      id: `${block.type}:${index}`,
+      id: `text:${index}`,
       type: "text",
       text: typeof block.text === "string" ? block.text : "",
     }

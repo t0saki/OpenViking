@@ -19,7 +19,7 @@ test("normalizeV2LifecycleEvent maps the v2 lifecycle onto the v1 handler shape"
   assert.equal(normalizeV2LifecycleEvent({
     type: "session.execution.failed",
     data: { sessionID: "ses_1", error: { message: "boom" } },
-  })[0].type, "session.error")
+  })[0].type, "session.idle")
   assert.equal(normalizeV2LifecycleEvent({
     type: "session.compaction.ended",
     data: { sessionID: "ses_1" },
@@ -59,6 +59,24 @@ test("contextMessageEvents converts v2 user and assistant messages", () => {
   assert.equal(assistant[2].properties.part.tool, "read")
   assert.equal(assistant[2].properties.part.state.content[0].text, "file body")
   assert.equal(extractPartsFromPayload(assistant[2].properties.part)[0].tool_output, "file body")
+})
+
+test("contextMessageEvents drops reasoning like the v1 capture path", () => {
+  const events = contextMessageEvents("ses_1", {
+    id: "msg_assistant",
+    type: "assistant",
+    content: [
+      { type: "reasoning", text: "private chain of thought" },
+      { type: "text", text: "final answer" },
+    ],
+  })
+  const texts = events.slice(1).map((event) => event.properties.part.text)
+  assert.deepEqual(texts, ["final answer"])
+  assert.deepEqual(contextMessageEvents("ses_1", {
+    id: "msg_reasoning_only",
+    type: "assistant",
+    content: [{ type: "reasoning", text: "thinking" }],
+  }), [])
 })
 
 test("contextMessageEvents ignores non-conversation context entries", () => {
