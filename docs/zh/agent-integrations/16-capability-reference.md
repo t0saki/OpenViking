@@ -356,7 +356,7 @@ JS 系 harness 的召回逻辑均由 `recall-core.mjs` 中的三级降级链处�
 | cursor | stop：`capturedSinceCommit ≥ 8`（按消息条数计算，≈4 轮问答；纯客户端计数），keep 0 | sessionEnd：已注册该事件（但实践中不触达，见 [§3.3.3](#_3-3-3-关闭方式-×-harness-终局矩阵)） | preCompact：无条件触发 |
 | trae / trae-cn | 每个有内容的 Stop 都 commit（无阈值），keep 0 | — | 无（上游无 PreCompact 事件） |
 | zcode | 同 trae（每 Stop 都 commit，keep 0；rollout 增量游标保守推进，若有漏掉的轮次，将在同会话的下个 Stop 补齐） | — | 无（上游无 PreCompact 事件） |
-| opencode | v1 `session.idle` / v2 execution 结束：flush 后 `pending_tokens ≥ 20000` 才 commit，keep 10 | `session.deleted` / `session.error`：强制 commit；v1 dispose / v2 cleanup：强制 commit | v1 在 compacting 前与 compacted 后触发；v2 只在 `session.compaction.ended` 后触发 |
+| opencode | v1 `session.idle` / v2 execution 结束：flush 后 `pending_tokens ≥ 20000` 才 commit，keep 10 | `session.deleted` / v1 `session.error`：强制 commit；v1 dispose / v2 cleanup：强制 commit | v1 在 compacting 前与 compacted 后触发；v2 只在 `session.compaction.ended` 后触发 |
 | dsh | `turn/end`：`pending_tokens ≥ 20000`（30s 超时），keep 10 | teardown（见 [§3.3.3](#_3-3-3-关闭方式-×-harness-终局矩阵)） | 无（不监听 compaction 事件） |
 | pi（takeover 默认开） | `onTurnSynced`：本地估算 `pendingTokens ≥ 30000` 且 `lastSeenUserTurns > 3` 时，执行 commitAndAdvance（keep 3；overview 15×2s 轮询，拿不到则边界不推进，但 pendingTokens 会清零，重新累计后重试） | 手动执行 `/viking commit` | `session_before_compact`（需 `firstKeptEntryId` 非空） |
 | pi（takeover off） | syncBranch 执行后：服务端 `pending_tokens ≥ 20000`，keep 10 | `session_shutdown`：无条件 commit；手动执行 `/viking commit` | `session_before_compact`：无条件 commit |
@@ -587,7 +587,7 @@ MCP `write` / REST `content/write` 的三道 guard（`content_write.py`）：可
 - **集成文档**：[OpenCode 插件](./10-opencode.md)
 - **形态**：npm 插件 `@openviking/opencode-plugin` 0.5.0，同一入口支持 OpenCode v1 ≥1.15.7 与 v2 ≥2.0.15。v1 保留原有 hooks；v2 使用 `setup(ctx)`、prompt/context/tool hooks 和结构化生命周期事件。MCP 工具保持 `openviking_*` 前缀，v2 显式设置 `codemode:false`。
 - **能力亮点**：v2 在 prompt hook 只召回一次并把上下文存进用户消息 metadata，后续每个模型 step 注入同一份内容，避免重复请求和 prompt cache 失效；execution 结束后通过 `session.context()` 捕获完整的用户、助手和工具消息。repo 列表继续进入 system prompt（[§3.2.3](#_3-2-3-profile-开场注入)）。
-- **行为要点**：`commitTokenThreshold=20000`，commit 超时 30000ms。v2 在 execution succeeded/interrupted 后按阈值提交，failed/deleted/compaction ended/cleanup 强制提交；用户主动 interrupted 仍保留状态。v2 cleanup 会在 60 分钟无活动、服务停止和本地插件热重载时触发；v2 没有 toast API，只写日志。开场注入每会话尝试一次（[§3.2.3](#_3-2-3-profile-开场注入)）。
+- **行为要点**：`commitTokenThreshold=20000`，commit 超时 30000ms。v2 在每次 execution 结束（succeeded、failed、interrupted）后按阈值提交，session 删除、compaction ended 和 cleanup 时强制提交；failed 与 interrupted 都保留状态。v2 只处理本 location 的 session，捕获游标存放在插件 storage 中。v2 cleanup 会在 60 分钟无活动、服务停止和本地插件热重载时触发；v2 没有 toast API，只写日志。开场注入每会话尝试一次（[§3.2.3](#_3-2-3-profile-开场注入)）。
 - **配置**：env + ovcli.conf `plugin.opencode` + workspace 文件。
 - **维度索引**：工具面 [§2.1](#_2-1-服务端-mcp-工具面) ｜召回 [§3.2](#_3-2-自动召回与注入) ｜commit [§3.3.2](#_3-3-2-常规-commit-触发条件)/[§3.3.3](#_3-3-3-关闭方式-×-harness-终局矩阵) ｜subagent [§3.3.5](#_3-3-5-subagent-会话对照)。
 
