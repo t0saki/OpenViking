@@ -203,3 +203,90 @@ test("v2 prompt, context, after-tool, and event failures are contained", async (
   }))
   await cleanup()
 })
+
+function eventLoopFixture({ events, contexts, locations, storage = new Map() }) {
+  const contextCalls = []
+  return {
+    contextCalls,
+    storage,
+    ctx: {
+      location: { directory: "/repo/a" },
+      session: {
+        hook: async () => {},
+        context: async ({ sessionID }) => {
+          contextCalls.push(sessionID)
+          return contexts[sessionID] ?? []
+        },
+        get: async ({ sessionID }) => ({ data: { id: sessionID, location: { directory: locations[sessionID] } } }),
+      },
+      storage: {
+        get: async (key) => storage.get(key),
+        set: async (key, value) => { storage.set(key, value) },
+        remove: async (key) => { storage.delete(key) },
+      },
+      event: { subscribe: () => (async function* replay() { yield* events })() },
+    },
+  }
+}
+
+const conversation = [
+  { id: "msg_user", type: "user", text: "question" },
+  { id: "msg_assistant", type: "assistant", content: [{ type: "text", text: "answer" }] },
+]
+
+test("event loop handles only sessions that belong to this location", async () => {
+  const { runtime, events: handled } = runtimeFixture()
+  const { ctx, contextCalls } = eventLoopFixture({
+    events: [
+      { type: "session.created", data: { sessionID: "ses_a", location: { directory: "/repo/a" } } },
+      { type: "session.created", data: { sessionID: "ses_b", location: { directory: "/repo/b" } } },
+      { type: "session.execution.succeeded", data: { sessionID: "ses_a" } },
+      { type: "session.execution.succeeded", data: { sessionID: "ses_b" } },
+      { type: "session.execution.succeeded", data: { sessionID: "ses_c" } },
+      { type: "session.execution.failed", data: { sessionID: "ses_a", error: { message: "rate limited" } } },
+    ],
+    contexts: { ses_a: conversation, ses_b: conversation, ses_c: conversation },
+    locations: { ses_c: "/repo/b" },
+  })
+  const cleanup = await startV2Plugin(ctx, runtime, { pluginRoot: "/tmp/ov" })
+  await cleanup()
+
+  assert.deepEqual(contextCalls, ["ses_a", "ses_a"])
+  const sessionOf = (event) => event.properties.info?.sessionID ?? event.properties.part?.sessionID
+  assert.ok(handled.every((event) => sessionOf(event) === "ses_a"))
+  assert.deepEqual(
+    handled.filter((event) => event.type.startsWith("session.")).map((event) => event.type),
+    ["session.created", "session.idle", "session.idle"],
+  )
+  assert.equal(handled.filter((event) => event.type === "message.updated").length, 2)
+})
+
+test("a new plugin instance resumes from the stored capture cursor", async () => {
+  const storage = new Map()
+  const first = runtimeFixture()
+  const firstLoop = eventLoopFixture({
+    events: [{ type: "session.execution.succeeded", data: { sessionID: "ses_a" } }],
+    contexts: { ses_a: conversation },
+    locations: { ses_a: "/repo/a" },
+    storage,
+  })
+  await (await startV2Plugin(firstLoop.ctx, first.runtime, { pluginRoot: "/tmp/ov" }))()
+  assert.equal(first.events.filter((event) => event.type === "message.updated").length, 2)
+
+  const second = runtimeFixture()
+  const followUp = { id: "msg_follow_up", type: "user", text: "next question" }
+  const secondLoop = eventLoopFixture({
+    events: [
+      { type: "session.execution.succeeded", data: { sessionID: "ses_a" } },
+      { type: "session.deleted", data: { sessionID: "ses_a" } },
+    ],
+    contexts: { ses_a: [...conversation, followUp] },
+    locations: { ses_a: "/repo/a" },
+    storage,
+  })
+  await (await startV2Plugin(secondLoop.ctx, second.runtime, { pluginRoot: "/tmp/ov" }))()
+
+  const captured = second.events.filter((event) => event.type === "message.updated")
+  assert.deepEqual(captured.map((event) => event.properties.info.id), ["msg_follow_up"])
+  assert.equal(storage.size, 0)
+})

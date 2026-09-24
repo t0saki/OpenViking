@@ -4,6 +4,15 @@ import { contextMessageEvents, normalizeV2LifecycleEvent } from "./v2-events.mjs
 import { log } from "./utils.mjs"
 
 const METADATA_KEY = "openviking"
+const CURSOR_KEY_PREFIX = "capture-cursor/"
+const LIFECYCLE_EVENTS = new Set([
+  "session.created",
+  "session.deleted",
+  "session.execution.succeeded",
+  "session.execution.failed",
+  "session.execution.interrupted",
+  "session.compaction.ended",
+])
 
 export async function startV2Plugin(ctx, runtime, { pluginRoot }) {
   const {
@@ -16,6 +25,7 @@ export async function startV2Plugin(ctx, runtime, { pluginRoot }) {
     vikingUriNotice,
   } = runtime
   const captureCursors = new Map()
+  const sessionOwnership = new Map()
   // Compaction hooks can run while lifecycle events are still flushing. Keep
   // capture and flush ordered so the same pending message is never sent twice.
   let sessionTask = Promise.resolve()
@@ -94,24 +104,37 @@ export async function startV2Plugin(ctx, runtime, { pluginRoot }) {
   const controller = new AbortController()
   let eventTask = Promise.resolve()
   if (ctx?.event?.subscribe) {
-    eventTask = consumeEvents(ctx, controller.signal, (event) => serializeSession(async () => {
-      await runtime.ready
+    eventTask = consumeEvents(ctx, controller.signal, async (event) => {
       const sessionID = event?.data?.sessionID ?? event?.data?.sessionId
-      if (isExecutionBoundary(event?.type) && sessionID) {
-        try {
-          await captureV2Context(ctx, sessionManager, captureCursors, sessionID)
-        } catch (error) {
-          logHookError("session.context.capture", error)
+      if (!LIFECYCLE_EVENTS.has(event?.type) || !sessionID) return
+      if (!(await ownsSession(ctx, sessionOwnership, event, sessionID))) return
+      await serializeSession(async () => {
+        await runtime.ready
+        if (event.type === "session.execution.failed") {
+          log("WARN", "v2", "OpenCode v2 execution failed", {
+            opencode_session: sessionID,
+            error: event.data?.error?.message ?? event.data?.error,
+          })
         }
-      }
-      for (const normalized of normalizeV2LifecycleEvent(event)) {
-        await sessionManager.handleEvent(normalized)
-        if (normalized.type === "session.created") {
-          await repoContext.refreshRepos({ force: true })
+        if (isExecutionBoundary(event.type)) {
+          try {
+            await captureV2Context(ctx, sessionManager, captureCursors, sessionID)
+          } catch (error) {
+            logHookError("session.context.capture", error)
+          }
         }
-      }
-      if (event?.type === "session.deleted" && sessionID) captureCursors.delete(sessionID)
-    }))
+        for (const normalized of normalizeV2LifecycleEvent(event)) {
+          await sessionManager.handleEvent(normalized)
+          if (normalized.type === "session.created") {
+            await repoContext.refreshRepos({ force: true })
+          }
+        }
+        if (event.type === "session.deleted") {
+          sessionOwnership.delete(sessionID)
+          await forgetCursor(ctx, captureCursors, sessionID)
+        }
+      })
+    })
   }
 
   return async () => {
@@ -196,10 +219,44 @@ export function injectV2Context(event, repoContext) {
   }
 }
 
+// The plugin event stream carries every location served by the process, and
+// execution events have no envelope location, so ownership comes from the
+// session itself. An unresolvable session is handled rather than dropped.
+async function ownsSession(ctx, ownership, event, sessionID) {
+  if (event.type === "session.created") {
+    const owned = sameLocation(event.location ?? event.data?.location, ctx.location)
+    ownership.set(sessionID, owned)
+    return owned
+  }
+  if (event.location) return sameLocation(event.location, ctx.location)
+  if (ownership.has(sessionID)) return ownership.get(sessionID)
+  if (event.type === "session.deleted" || !ctx.session?.get) return true
+  try {
+    const result = await ctx.session.get({ sessionID })
+    const location = (result?.data ?? result)?.location
+    if (location?.directory) {
+      const owned = sameLocation(location, ctx.location)
+      ownership.set(sessionID, owned)
+      return owned
+    }
+  } catch (error) {
+    logHookError("session.get", error)
+  }
+  return true
+}
+
+function sameLocation(ref, location) {
+  if (!ref?.directory || !location?.directory) return true
+  if (ref.directory !== location.directory) return false
+  return !ref.workspaceID || !location.workspaceID || ref.workspaceID === location.workspaceID
+}
+
 export async function captureV2Context(ctx, sessionManager, cursors, sessionID) {
   const messages = await ctx.session.context({ sessionID })
   if (!Array.isArray(messages)) return
-  const cursor = cursors.get(sessionID)
+  // The cursor lives in host storage because the session state file is shared
+  // by every location instance and cannot prove what was already captured.
+  const cursor = cursors.get(sessionID) ?? await readCursor(ctx, sessionID)
   const cursorIndex = cursor ? messages.findIndex((message) => message?.id === cursor) : -1
   const pending = cursorIndex >= 0 ? messages.slice(cursorIndex + 1) : messages
   for (const message of pending) {
@@ -208,7 +265,39 @@ export async function captureV2Context(ctx, sessionManager, cursors, sessionID) 
     }
   }
   const last = messages.at(-1)?.id
-  if (last) cursors.set(sessionID, last)
+  if (!last) return
+  cursors.set(sessionID, last)
+  if (last !== cursor) await writeCursor(ctx, sessionID, last)
+}
+
+async function readCursor(ctx, sessionID) {
+  if (!ctx?.storage?.get) return undefined
+  try {
+    const value = await ctx.storage.get(CURSOR_KEY_PREFIX + sessionID)
+    return typeof value === "string" ? value : undefined
+  } catch (error) {
+    logHookError("storage.get", error)
+    return undefined
+  }
+}
+
+async function writeCursor(ctx, sessionID, cursor) {
+  if (!ctx?.storage?.set) return
+  try {
+    await ctx.storage.set(CURSOR_KEY_PREFIX + sessionID, cursor)
+  } catch (error) {
+    logHookError("storage.set", error)
+  }
+}
+
+async function forgetCursor(ctx, cursors, sessionID) {
+  cursors.delete(sessionID)
+  if (!ctx?.storage?.remove) return
+  try {
+    await ctx.storage.remove(CURSOR_KEY_PREFIX + sessionID)
+  } catch (error) {
+    logHookError("storage.remove", error)
+  }
 }
 
 function isExecutionBoundary(type) {
