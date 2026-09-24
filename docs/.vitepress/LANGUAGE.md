@@ -2,7 +2,7 @@
 
 The interface follows the browser's **first** preferred language. Chinese tags use Chinese; the website additionally supports Traditional Chinese, Japanese, Korean and Spanish. Other sites use English for unsupported languages. IP location, top-level domain and secondary browser languages do not affect this decision.
 
-Choose a language in the language menu to remember it, including when it is already displayed. Choose **Follow browser** to resume automatic selection and remove the language query override. Only menu choices persist. `?lang=en` and other supported language tags control the current page without changing the saved choice; Studio also accepts `?lng=`. On Docs, `/en/` and `/zh/` paths take precedence over queries and saved preferences. The root opens the introduction automatically; the static language links remain available without JavaScript.
+Choose a language in the language menu to remember it, including when it is already displayed. Choose **Follow browser** to resume automatic selection and remove the language query override. Only menu choices persist. `?lang=en` and other supported language tags control the current page without changing the saved choice; Studio also accepts `?lng=`. On Docs, `/en/` and `/zh/` paths take precedence over queries and saved preferences. The root opens the localized documentation homepage automatically; the localized homepages remain stable URLs.
 
 The shared cookie and each origin's fallback localStorage key are `openviking-language-preference`. Values are `auto`, `en`, `zh`, `zh-TW`, `ja`, `ko`, or `es`. No value means `auto`. The cookie wins over localStorage, including when its value is `auto`. Production cookies use the matching `.openviking.ai` or `.openviking.net` parent domain, `Path=/`, a one-year lifetime, `SameSite=Lax`, and `Secure` on HTTPS. The two parent domains remain independent. A bilingual site may display English for a saved `ja` choice without changing that original choice. Old language records (`openviking-preferences.lang`, `i18nextLng`, `blog.lang`, sessionStorage and window.name) are ignored; theme behavior is retained. Disabled storage still permits changes for the current page.
 
@@ -14,7 +14,7 @@ Publish the compatible widget before releasing host integrations. Hosts mount it
 
 界面默认只读取浏览器的首选语言；中文标签使用中文。官网还支持繁体中文、日语、韩语和西班牙语，其他站点遇到未支持语言时显示英语。自动判断不使用 IP、所在地区、顶级域名或浏览器第二语言。
 
-在语言菜单中点击具体语言会保存选择，即使当前已经显示该语言。选择“跟随浏览器”会恢复自动判断，并清除 URL 的语言覆盖。只有菜单操作保存偏好；`?lang=` 只决定当前页面，Studio 兼容 `?lng=`。Docs 的 `/en/`、`/zh/` 路径优先于查询参数和保存的偏好；根入口自动打开对应语言简介页，无 JavaScript 时仍有静态链接可用。Docs 手动切换尽量保留当前文档，缺少译文时回退到目标语言简介页，不存在的锚点回到页首。
+在语言菜单中点击具体语言会保存选择，即使当前已经显示该语言。选择“跟随浏览器”会恢复自动判断，并清除 URL 的语言覆盖。只有菜单操作保存偏好；`?lang=` 只决定当前页面，Studio 兼容 `?lng=`。Docs 的 `/en/`、`/zh/` 路径优先于查询参数和保存的偏好；根入口自动打开对应语言的文档首页，两个语言首页都是稳定地址。Docs 手动切换尽量保留当前文档，缺少译文时回退到目标语言简介页，不存在的锚点回到页首。
 
 Cookie 和本站 localStorage 统一使用新键 `openviking-language-preference`，取值为 `auto` 或上述六种官网语言代码，无记录等同于自动。Cookie 优先于 localStorage，显式 `auto` 也优先。正式域名在各自父域共享 Cookie，一年有效，`Path=/`、`SameSite=Lax`，HTTPS 下启用 `Secure`；`.ai` 与 `.net` 相互独立。不支持的语言只在显示时回退，不覆盖原始选择。旧语言记录不迁移，主题偏好保留；存储不可用时仍可在本页切换。重新获得焦点、历史恢复和浏览器语言变化时重读偏好，显式页面语言继续优先。
 
@@ -22,7 +22,7 @@ Cookie 和本站 localStorage 统一使用新键 `openviking-language-preference
 
 ## Verification / 验证
 
-The shared contract runs 30 cases in each repository. The Docs route suite adds 11 cases; widget locale tests add 4 cases that preserve the mounted view, inputs, selection, message history and connection, and verify the translated suggestion payload. The website has 82 passing tests, Blog 30, Docs 58, and Studio 499. The built section-link check also passes; breadcrumbs link to existing section pages instead of retired home anchors. All four site builds and widget typecheck/build pass; the widget is 18.97 KB gzipped. No coverage threshold is configured for this change.
+The shared contract runs 30 cases in each repository. The Docs route suite covers root-to-homepage routing and document language switching; widget locale tests preserve the mounted view, inputs, selection, message history and connection, and verify the translated suggestion payload. The built section-link check also verifies that homepage section anchors remain valid. No coverage threshold is configured for this change.
 
 Chromium checks use local production bundles served under the real `.ai`/`.net` hostnames through request interception, with a local widget and mocked chat transport. They cover both parent-domain cookie scopes and isolation, focus refresh, explicit URLs, legacy language records with retained theme, Blog legacy URLs, desktop/mobile keyboard controls, old widget compatibility, drafts across language changes, and Docs `DOCS_BASE=/guide/`. These are local integration checks, not production chat/backend validation.
 

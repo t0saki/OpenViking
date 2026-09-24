@@ -1,8 +1,8 @@
 ---
-layout: page
-title: OpenViking Documentation
+layout: home
+markdownStyles: false
+title: Documentation
+description: Build with OpenViking. Get started, connect your agent, and explore the context filesystem, memory, retrieval, and APIs.
 ---
 
-# OpenViking Documentation
-
-[Introduction](./getting-started/01-introduction)
+<DocsHome />
