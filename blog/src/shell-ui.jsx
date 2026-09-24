@@ -38,7 +38,7 @@ function Topbar({ lang, preference, theme, onLang, onToggleTheme, onHome, S }) {
             onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) languageMenu.current.open = false; }}>
             <summary aria-label={S.langLabel}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><path d="M3 5h12M9 3v2m4 0c-1 7-5 10-10 12m2-9c1 4 4 7 8 9m0 4 5-13 5 13m-8-4h6"/></svg>
-              {lang === 'zh' ? '中' : 'EN'}{preference === 'auto' ? (lang === 'zh' ? ' · 自动' : ' · Auto') : ''}
+              {lang === 'zh' ? '中' : 'EN'}
             </summary>
             <div className="b-language__menu">
               {[{ code: 'auto', label: S.followBrowser }, ...LANGS].map(item => (
