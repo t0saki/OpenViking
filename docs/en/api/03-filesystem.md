@@ -32,6 +32,11 @@ List directory contents.
 
 `tags` uses AND semantics and is applied before `offset` and `limit`. Tags are included for filtered responses; for an unfiltered response, request `include_tags=true` (CLI: `-f tags`).
 
+For `ls` and `tree` with `output="agent"`, readable files include their existing
+indexed abstract, capped at `abs_limit` characters. Files without an indexed
+abstract, or whose abstract lookup fails, remain listed with `abstract=""`.
+Summaries are loaded only for the returned page; `output="original"` is unchanged.
+
 **Entry Structure**
 
 ```python

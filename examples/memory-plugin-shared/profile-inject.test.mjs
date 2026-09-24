@@ -176,6 +176,44 @@ const HEAVY_PROFILE = Array.from({ length: 40 }, (_, i) => `- 2026-09-${String(i
 const HEAVY_MEMORIES = Array.from({ length: 300 }, (_, i) => ({ name: `owner/pref-${i}.md`, rel_path: `owner/pref-${i}.md`, isDir: false, abstract: "" }));
 const HEAVY_SKILLS = Array.from({ length: 150 }, (_, i) => skill(i % 3 ? OWN : SHARED, `skill-${i}`, "按团队清单审查 PR — 检查测试与迁移。"));
 
+test("the memory index keeps files with and without abstracts and caps each description", async () => {
+  const { fetchJSON, calls } = fakeServer({ memories: [
+    { rel_path: "owner/long.md", isDir: false, abstract: "摘要".repeat(1000) },
+    { rel_path: "owner/empty.md", isDir: false, abstract: "" },
+    { rel_path: "owner/missing.md", isDir: false },
+    { rel_path: "owner/short.md", isDir: false, abstract: " First line.\n  Second line. " },
+    { rel_path: "owner", isDir: true, abstract: "Directory summary" },
+  ] });
+
+  const result = await buildProfileBlock(fetchJSON, 2000);
+
+  assert.equal(result.prefCount, 4);
+  assert.equal(result.droppedPref, 0);
+  assert.ok(result.tokens <= 2000);
+  assert.match(result.block, /\n    - owner\/empty\.md\n/);
+  assert.match(result.block, /\n    - owner\/missing\.md\n/);
+  assert.ok(result.block.includes(`    - owner/long.md — ${"摘要".repeat(100)}\n`));
+  assert.match(result.block, /owner\/short\.md — First line\. Second line\./);
+  assert.doesNotMatch(result.block, /Directory summary/);
+  assert.ok(calls.some((path) => path.includes("output=agent&recursive=true")));
+  assert.ok(calls.every((path) => !path.includes("/search/")));
+});
+
+test("long CJK memory abstracts stay within the startup budget and report omitted files", async () => {
+  const { fetchJSON } = fakeServer({ memories: HEAVY_MEMORIES.map((entry) => ({
+    ...entry, abstract: "中文记忆摘要。".repeat(1000),
+  })) });
+
+  const result = await buildProfileBlock(fetchJSON, 2000, "", { sessionStartMaxBytes: 4000 });
+
+  assert.ok(result.tokens <= 2000);
+  assert.ok(Buffer.byteLength(result.block) <= 4000);
+  assert.equal(result.prefCount, HEAVY_MEMORIES.length);
+  assert.ok(result.droppedPref > 0 && result.droppedPref < result.prefCount);
+  assert.match(result.block, new RegExp(`\\.\\.\\. \\+${result.droppedPref} more`));
+  assert.match(result.block, / — 中文记忆摘要/);
+});
+
 test("a byte cap keeps the whole block under it with profile, index and catalog", async () => {
   const { fetchJSON } = fakeServer({ profile: HEAVY_PROFILE, memories: HEAVY_MEMORIES, skills: HEAVY_SKILLS });
   for (const cap of [9500, 20000]) {

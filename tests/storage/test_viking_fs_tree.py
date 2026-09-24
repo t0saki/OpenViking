@@ -3,6 +3,7 @@
 
 from datetime import datetime, timezone
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -594,6 +595,7 @@ async def test_tree_original_dfs_order(monkeypatch, fs):
         ),
     ]
     patch_tree_env(monkeypatch, fs, entries)
+
     async def acl_enabled(_account_id):
         return True
 
@@ -650,15 +652,88 @@ async def test_tree_agent_dir_size_zero(monkeypatch, fs):
 
 
 @pytest.mark.asyncio
-async def test_tree_agent_non_dir_abstract_empty(monkeypatch, fs):
-    """PY-AGENT-004: Non-directory entries have empty abstract."""
+async def test_tree_agent_unindexed_file_abstract_empty(monkeypatch, fs):
+    """Files without a vector store remain listed with an empty abstract."""
     entries = [
         make_entry("/local/test_account/resources/a", "a", size=100, mode=0o644, is_dir=False)
     ]
-    patch_tree_env(monkeypatch, fs, entries, batch_fetch=default_batch_fetch)
+    patch_tree_env(monkeypatch, fs, entries)
 
     result = await fs._tree_agent("viking://resources", abs_limit=256, ctx=_default_ctx())
     assert result[0]["abstract"] == ""
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("recursive", [False, True])
+async def test_agent_listing_loads_only_visible_page_file_abstracts(monkeypatch, fs, recursive):
+    entries = [
+        make_entry(f"/local/test_account/resources/{name}.md", is_dir=False)
+        for name in ["a", "b", "c", "restricted", "z"]
+    ]
+    patch_tree_env(monkeypatch, fs, entries)
+    monkeypatch.setattr(fs, "_ensure_access", AsyncMock())
+    monkeypatch.setattr(fs, "_ls_entries", AsyncMock(return_value=[e["info"] for e in entries]))
+    fs.acl_manager = SimpleNamespace(is_enabled=AsyncMock(return_value=True))
+
+    async def can_access_many(uris, _ctx):
+        return {uri: not uri.endswith("restricted.md") for uri in uris}
+
+    monkeypatch.setattr(fs, "_can_access_many", can_access_many)
+    lookup = AsyncMock(return_value={"viking://resources/b.md": "文件摘要用于判断相关性。" * 100})
+    fs.vector_store = SimpleNamespace(get_l2_abstracts_by_uris=lookup)
+    listing = fs.tree if recursive else fs.ls
+    ctx = _default_ctx()
+    kwargs = {"offset": 1, "node_limit": 3, "abs_limit": 12, "ctx": ctx}
+
+    result = await listing("viking://resources", output="agent", **kwargs)
+
+    assert [entry["uri"] for entry in result] == [
+        f"viking://resources/{name}.md" for name in ["b", "c", "restricted"]
+    ]
+    assert result[0]["abstract"] == "文件摘要用于判断相..."
+    assert result[1]["abstract"] == ""
+    assert result[2]["access"] == "denied"
+    assert "abstract" not in result[2]
+    lookup.assert_awaited_once_with(["viking://resources/b.md", "viking://resources/c.md"], ctx=ctx)
+
+    lookup.reset_mock()
+    original = await listing("viking://resources", output="original", **kwargs)
+    assert all("abstract" not in entry for entry in original)
+    lookup.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("abs_limit", [0, 1, 2, 3, 12])
+async def test_file_and_directory_abstracts_respect_small_limits(monkeypatch, fs, abs_limit):
+    uri = "viking://user/alice/memories/preferences/writing.md"
+    entries = [{"uri": uri, "isDir": False}, {"uri": "viking://resources/docs", "isDir": True}]
+    fs.vector_store = SimpleNamespace(
+        get_l2_abstracts_by_uris=AsyncMock(return_value={uri: "摘要" * 1000})
+    )
+    monkeypatch.setattr(fs, "_read_abstract_for_known_dir", AsyncMock(return_value="目录" * 1000))
+
+    await fs._batch_fetch_abstracts(entries, abs_limit, ctx=_default_ctx())
+
+    assert all(len(entry["abstract"]) <= abs_limit for entry in entries)
+    if abs_limit > 3:
+        assert entries[0]["abstract"] == "摘要摘要摘要摘要摘..."
+        assert entries[1]["abstract"] == "目录目录目录目录目..."
+
+
+@pytest.mark.asyncio
+async def test_file_abstract_lookup_failure_preserves_listing(monkeypatch, fs):
+    entries = [make_entry("/local/test_account/resources/a.md", is_dir=False)]
+    patch_tree_env(monkeypatch, fs, entries)
+    fs.vector_store = SimpleNamespace(
+        get_l2_abstracts_by_uris=AsyncMock(side_effect=RuntimeError("index unavailable"))
+    )
+
+    result = await fs._tree_agent("viking://resources", abs_limit=256, ctx=_default_ctx())
+
+    assert [(entry["uri"], entry["abstract"]) for entry in result] == [
+        ("viking://resources/a.md", "")
+    ]
+    fs.vector_store.get_l2_abstracts_by_uris.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -724,6 +799,7 @@ async def test_ls_agent_modtime_is_raw_utc_iso(monkeypatch, fs):
     monkeypatch.setattr(fs, "_is_accessible", lambda _uri, _ctx: True)
     monkeypatch.setattr(fs, "_batch_fetch_abstracts", default_batch_fetch)
     monkeypatch.setattr(viking_fs_module, "datetime", _FixedDatetime)
+
     async def acl_enabled(_account_id):
         return True
 

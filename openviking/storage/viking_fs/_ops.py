@@ -1587,7 +1587,8 @@ class _OpsMixin:
     ) -> None:
         """Batch fetch abstracts for entries using a fixed-size worker pool.
 
-        Non-directory entries receive an empty abstract immediately.
+        File entries use existing L2 abstracts, looked up by exact URI after
+        visibility filtering and pagination. Missing summaries stay empty.
         Directory entries are processed concurrently via a worker pool,
         using _read_abstract_for_known_dir to skip redundant stat() calls.
 
@@ -1595,21 +1596,34 @@ class _OpsMixin:
             entries: List of entries to fetch abstracts for
             abs_limit: Maximum length for abstract truncation
         """
+        if abs_limit <= 0:
+            for entry in entries:
+                entry["abstract"] = ""
+            return
+
+        file_uris = [entry["uri"] for entry in entries if not entry.get("isDir", False)]
+        file_abstracts: Dict[str, str] = {}
+        vector_store = self._get_vector_store()
+        if file_uris and vector_store is not None:
+            try:
+                file_abstracts = await vector_store.get_l2_abstracts_by_uris(
+                    file_uris, ctx=self._ctx_or_default(ctx)
+                )
+            except Exception as exc:
+                logger.warning("Failed to load listing file abstracts: %s", exc)
+
+        results: Dict[int, str] = {}
         dir_jobs = []
         for index, entry in enumerate(entries):
             if not entry.get("isDir", False):
-                entry["abstract"] = ""
+                results[index] = file_abstracts.get(entry["uri"], "")
                 continue
             dir_jobs.append((index, entry))
-
-        if not dir_jobs:
-            return
 
         worker_count = min(_ABSTRACT_WORKER_COUNT, len(dir_jobs))
 
         cursor = 0
         cursor_lock = asyncio.Lock()
-        results: Dict[int, str] = {}
 
         async def worker() -> None:
             nonlocal cursor
@@ -1631,7 +1645,7 @@ class _OpsMixin:
 
         for index, abstract in results.items():
             if len(abstract) > abs_limit:
-                abstract = abstract[: abs_limit - 3] + "..."
+                abstract = "." * abs_limit if abs_limit <= 3 else abstract[: abs_limit - 3] + "..."
             entries[index]["abstract"] = abstract
 
     async def _finalize_listing_entries(

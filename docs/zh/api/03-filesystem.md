@@ -32,6 +32,10 @@ OpenViking 提供类 Unix 的文件系统操作来管理上下文。
 
 `tags` 使用 AND 语义，并在 `offset` 和 `limit` 前应用。带 tags 过滤的响应会返回 `tags`；未过滤时需传 `include_tags=true`（CLI：`-f tags`）才返回它们。HTTP 的 `simple=true` 保持仅返回路径；CLI 同时指定 `--simple` 和 `--fields` 时会获取条目对象，再按指定列输出。
 
+`ls` 和 `tree` 使用 `output="agent"` 时，会为可读文件返回已有的索引摘要，
+长度不超过 `abs_limit` 个字符。文件没有索引摘要或摘要查询失败时，仍会保留
+该条目，并返回 `abstract=""`。只为当前返回页读取摘要；`output="original"` 不变。
+
 **条目结构**
 
 ```python
