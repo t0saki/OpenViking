@@ -44,6 +44,17 @@ test("records separate excluded startup messages at their old indices", () => {
   assert.deepEqual(turns.map((turn) => turn.text), ["Real question"]);
 });
 
+test("excludes the legacy path-qualified AGENTS.md startup block", () => {
+  const legacyAgents = "# AGENTS.md instructions for /tmp/project\n\n<INSTRUCTIONS>\nUse Chinese for answers.\n</INSTRUCTIONS>";
+  const { turns, excludedLegacyTurnIndices } = extractCaptureTranscript([
+    userEntry(legacyAgents),
+    { type: "turn_context", payload: {} },
+    userEntry("Real question"),
+  ], CAPTURE_CONFIG);
+  assert.deepEqual(excludedLegacyTurnIndices, [0]);
+  assert.deepEqual(turns.map((turn) => turn.text), ["Real question"]);
+});
+
 test("preserves user text mixed into a startup message", () => {
   const { turns, excludedLegacyTurnIndices } = extractCaptureTranscript([
     userEntry(`${startupBlocks[0]}\nPlease explain this plugin list.`, startupBlocks[1], startupBlocks[2]),

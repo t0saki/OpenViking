@@ -357,7 +357,7 @@ function normalizeCodexCompletedToolEvents(rolloutEntries) {
 // turn_context. Match the complete wrapper, not a tag mentioned by a user.
 const STARTUP_BLOCKS = [
   /^<recommended_plugins>\r?\nHere is a list of plugins that are available but not installed\.[\s\S]*?\r?\n<\/recommended_plugins>$/,
-  /^# AGENTS\.md instructions\r?\n\r?\n<INSTRUCTIONS>\r?\n[\s\S]*?\r?\n<\/INSTRUCTIONS>$/,
+  /^# AGENTS\.md instructions(?: for [^\r\n]+)?\r?\n\r?\n<INSTRUCTIONS>\r?\n[\s\S]*?\r?\n<\/INSTRUCTIONS>$/,
   /^<environment_context>\r?\n\s*<cwd>[^\r\n]*<\/cwd>\r?\n\s*<shell>[^\r\n]*<\/shell>\r?\n\s*<current_date>[^\r\n]*<\/current_date>\r?\n\s*<timezone>[^\r\n]*<\/timezone>[\s\S]*?<\/environment_context>$/,
 ];
 
@@ -367,7 +367,7 @@ function stripStartupBlocks(text) {
   // block starts on its own line and ends there or at end of text.
   const candidates = [
     /<recommended_plugins>\r?\nHere is a list of plugins that are available but not installed\.[\s\S]*?\r?\n<\/recommended_plugins>/g,
-    /# AGENTS\.md instructions\r?\n\r?\n<INSTRUCTIONS>\r?\n[\s\S]*?\r?\n<\/INSTRUCTIONS>/g,
+    /# AGENTS\.md instructions(?: for [^\r\n]+)?\r?\n\r?\n<INSTRUCTIONS>\r?\n[\s\S]*?\r?\n<\/INSTRUCTIONS>/g,
     /<environment_context>\r?\n\s*<cwd>[^\r\n]*<\/cwd>\r?\n\s*<shell>[^\r\n]*<\/shell>\r?\n\s*<current_date>[^\r\n]*<\/current_date>\r?\n\s*<timezone>[^\r\n]*<\/timezone>[\s\S]*?<\/environment_context>/g,
   ];
   const matches = [];
