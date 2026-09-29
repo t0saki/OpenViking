@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
@@ -307,6 +308,39 @@ test("no doctor wrapper redefines a name doctor-core already exports", () => {
     const declared = [...read(rel).matchAll(/^(?:export )?(?:async function|function|const) (\w+)\s*[(=]/gm)].map((m) => m[1]);
     const clashes = declared.filter((name) => exported.has(name));
     assert.deepEqual(clashes, [], `${rel} redeclares doctor-core exports: ${clashes.join(", ")}`);
+  }
+});
+
+test("the hook hosts' doctor weighs the prompt hook against the request timeout", () => {
+  const home = mkdtempSync(join(tmpdir(), "ov-doctor-hosts-"));
+  const doctor = fileURLToPath(new URL("../agent-hook-plugin/scripts/ov-memory-doctor.mjs", import.meta.url));
+  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("OPENVIKING_")));
+  const budgetWarnings = (client, extra = {}) => {
+    const run = spawnSync(process.execPath, [doctor, client, "--offline", "--json"], {
+      cwd: home,
+      // Only node on PATH, so the doctor's `<client> --version` probe never
+      // starts a host editor installed on the machine running the suite.
+      env: { ...env, ...extra, HOME: home, PATH: dirname(process.execPath) },
+      encoding: "utf8",
+    });
+    const config = JSON.parse(run.stdout).sections.find((section) => section.title === "Configuration");
+    return config.findings.filter((finding) => finding.level === "warn" && finding.title.includes("hook budget"));
+  };
+  try {
+    for (const [client, event] of [
+      ["cursor", "beforeSubmitPrompt"],
+      ["trae", "UserPromptSubmit"],
+      ["trae-cn", "UserPromptSubmit"],
+      ["zcode", "UserPromptSubmit"],
+    ]) {
+      assert.deepEqual(budgetWarnings(client), [], `${client}: the defaults fit every hook budget`);
+      const raised = budgetWarnings(client, { OPENVIKING_TIMEOUT_MS: "25000" })
+        .find((finding) => finding.title.includes(` ${event} `));
+      assert.equal(raised?.title, `request timeout 25000ms exceeds the ${event} hook budget 20000ms`, client);
+      assert.equal(raised.fix, "lower OPENVIKING_TIMEOUT_MS");
+    }
+  } finally {
+    rmSync(home, { recursive: true, force: true });
   }
 });
 

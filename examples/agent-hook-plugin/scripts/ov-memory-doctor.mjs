@@ -48,7 +48,9 @@ const REQUIRED_PLUGIN_FILES = ["plugin.json", "scripts/hook.mjs", "scripts/uri-g
  * Where each client keeps the two things the installer writes.
  *
  * ZCode reads both out of one config file; the rest keep hooks and MCP apart,
- * and TRAE's MCP path is the editor's platform-specific user directory.
+ * and TRAE's MCP path is the editor's platform-specific user directory. The
+ * prompt hook's recall requests run on `timeoutMs`; `recallTimeoutMs` bounds
+ * nothing these hosts run.
  */
 const CLIENTS = {
   cursor: {
@@ -61,7 +63,7 @@ const CLIENTS = {
       join(homedir(), ".cursor", "skills", "openviking-memory", "SKILL.md"),
       join(homedir(), ".cursor", "skills", "openviking-skills", "SKILL.md"),
     ],
-    timeoutBudgets: { beforeSubmitPrompt: "recallTimeoutMs", stop: "captureTimeoutMs" },
+    timeoutBudgets: { beforeSubmitPrompt: "timeoutMs", stop: "captureTimeoutMs" },
   },
   trae: {
     cliName: "trae",
@@ -70,7 +72,7 @@ const CLIENTS = {
     mcp: () => (process.platform === "darwin"
       ? join(homedir(), "Library", "Application Support", "Trae", "User", "mcp.json")
       : join(homedir(), ".trae", "mcp.json")),
-    timeoutBudgets: { UserPromptSubmit: "recallTimeoutMs", Stop: "captureTimeoutMs" },
+    timeoutBudgets: { UserPromptSubmit: "timeoutMs", Stop: "captureTimeoutMs" },
   },
   "trae-cn": {
     cliName: "trae",
@@ -79,14 +81,14 @@ const CLIENTS = {
     mcp: () => (process.platform === "darwin"
       ? join(homedir(), "Library", "Application Support", "Trae CN", "User", "mcp.json")
       : join(homedir(), ".trae-cn", "mcp.json")),
-    timeoutBudgets: { UserPromptSubmit: "recallTimeoutMs", Stop: "captureTimeoutMs" },
+    timeoutBudgets: { UserPromptSubmit: "timeoutMs", Stop: "captureTimeoutMs" },
   },
   zcode: {
     cliName: "zcode",
     launcherHint: "ZCode",
     hooks: () => join(homedir(), ".zcode", "cli", "config.json"),
     mcp: () => join(homedir(), ".zcode", "cli", "config.json"),
-    timeoutBudgets: { UserPromptSubmit: "recallTimeoutMs", Stop: "captureTimeoutMs" },
+    timeoutBudgets: { UserPromptSubmit: "timeoutMs", Stop: "captureTimeoutMs" },
   },
 };
 
