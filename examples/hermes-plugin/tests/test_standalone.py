@@ -1023,6 +1023,116 @@ def test_live_commit_does_not_block_next_turn_or_lose_its_pending_marker(externa
     assert len(commits) == 2
 
 
+def _wire_live_client(provider, sid, pending_tokens=1):
+    from unittest.mock import Mock
+
+    client = Mock()
+    client.get.return_value = {"pending_tokens": pending_tokens}
+    client.post.return_value = {}
+    provider._session_id = sid
+    provider._client = client
+    provider._ensure_client = lambda: True
+    provider._new_client = lambda: client
+    return client
+
+
+def test_soft_eviction_cycles_do_not_grow_exit_registry(external_provider, monkeypatch):
+    """Gateway soft eviction ends a session without shutdown(); the dropped provider must be collectable."""
+    import atexit
+    import gc
+    import weakref
+
+    home, first, module, _ = external_provider("exit-registry")
+    monkeypatch.setenv("OPENVIKING_ENDPOINT", "http://127.0.0.1:19531")
+    monkeypatch.setattr(module, "_classify_runtime_openviking_health", lambda *_: ("healthy", ""))
+    hooks = []
+    monkeypatch.setattr(atexit, "register", hooks.append)
+    assert not module._exit_hook_registered and len(module._exit_registry) == 0
+
+    dropped = []
+    for cycle in range(5):
+        provider = type(first)()
+        provider.initialize(f"evicted-{cycle}", hermes_home=str(home))
+        assert provider in module._exit_registry
+        client = _wire_live_client(provider, f"evicted-{cycle}")
+        _finish_turn(provider, sid=f"evicted-{cycle}")
+        provider.on_session_end([])
+        assert client.post.call_args.args[0] == f"/api/v1/sessions/evicted-{cycle}/commit"
+        assert provider not in module._exit_registry
+        dropped.append(weakref.ref(provider))
+        del provider, client
+        gc.collect()
+
+    assert len(module._exit_registry) == 0
+    assert [ref() for ref in dropped] == [None] * 5
+    assert hooks == [module._atexit_commit_sessions]
+
+
+def test_exit_registry_keeps_uncommitted_primary_only(external_provider, monkeypatch):
+    home, provider, module = _live_provider(external_provider, monkeypatch, "exit-uncommitted")
+    client = _wire_live_client(provider, "live-sid")
+
+    def commit_down(path, payload=None, **kwargs):
+        if path.endswith("/commit"):
+            raise RuntimeError("down")
+        return {}
+
+    client.post.side_effect = commit_down
+    _finish_turn(provider)
+    provider.on_session_end([])
+    assert provider in module._exit_registry  # the failed commit leaves the turn pending
+
+    client.post.side_effect = None
+    provider.on_session_end([])
+    assert provider not in module._exit_registry
+    _finish_turn(provider, "later turn")
+    assert provider in module._exit_registry  # a later write re-registers
+
+    provider.shutdown()
+    assert provider not in module._exit_registry
+    reader = type(provider)()
+    monkeypatch.setattr(module, "_classify_runtime_openviking_health", lambda *_: ("healthy", ""))
+    monkeypatch.setenv("OPENVIKING_ENDPOINT", "http://127.0.0.1:19531")
+    reader.initialize("cron-sid", hermes_home=str(home), agent_context="cron")
+    try:
+        assert reader not in module._exit_registry
+    finally:
+        reader.shutdown()
+
+
+def test_exit_hook_stops_starting_commits_when_the_budget_is_spent(external_provider, monkeypatch):
+    import time
+
+    home, provider, module = _live_provider(external_provider, monkeypatch, "exit-budget")
+    other = type(provider)()
+    other._hermes_home = str(home)
+    other._acquire_run_lock()
+    providers = (provider, other)
+    commits = []
+
+    def slow_commit(path, payload=None, **kwargs):
+        if path.endswith("/commit"):
+            commits.append(kwargs.get("timeout"))
+            time.sleep(0.3)
+        return {}
+
+    for index, each in enumerate(providers):
+        client = _wire_live_client(each, f"exit-sid-{index}")
+        client.post.side_effect = slow_commit
+        _finish_turn(each, sid=f"exit-sid-{index}")
+    assert all(each in module._exit_registry for each in providers)
+
+    monkeypatch.setattr(module, "_EXIT_COMMIT_BUDGET", 0.2)
+    module._atexit_commit_sessions()
+
+    assert len(commits) == 1 and 0 < commits[0] <= 0.2
+    assert len(module._exit_registry) == 0
+    assert all(each._run_lock_path is None for each in providers)
+    markers = [each._state_path("pending", f"exit-sid-{index}").exists() for index, each in enumerate(providers)]
+    assert sorted(markers) == [False, True]  # the skipped session stays pending for recovery
+    other.shutdown()
+
+
 @pytest.fixture
 def reload_provider(external_provider, monkeypatch):
     from unittest.mock import Mock

@@ -26,6 +26,7 @@ import tempfile
 import threading
 import time
 import uuid
+import weakref
 import zipfile
 from collections import OrderedDict
 from contextlib import suppress
@@ -253,28 +254,54 @@ def _preview(value: Any, limit: int = 160) -> str:
     return text[:limit] + "..." if len(text) > limit else text
 
 
-# atexit safety net: commit pending sessions even if shutdown_memory_provider
+# atexit safety net: commit the current session even if shutdown_memory_provider
 # never runs (gateway crash, exception in the session expiry watcher, ...).
-# One entry per Hermes home: a multiplexed gateway initializes a provider per profile and every
-# one of them holds pending sessions worth committing, not just the last to initialize.
-_active_providers_by_home: Dict[str, "OpenVikingMemoryProvider"] = {}
+# Only primary providers are held, and only weakly: a multiplexed gateway keeps one per
+# profile, and a provider dropped by soft eviction must stay collectable. The hook is
+# registered on the first primary initialize(), never at import.
+_exit_registry: "weakref.WeakSet[OpenVikingMemoryProvider]" = weakref.WeakSet()
+_exit_registry_lock = threading.Lock()
+_exit_hook_registered = False
+# The CLI's exit watchdog os._exit()s 30 s after cleanup starts
+# (hermes:hermes_cli/cli_shutdown.py:51-99), and memory shutdown runs inside that window.
+_EXIT_COMMIT_BUDGET = 20.0
+
+
+def _register_for_exit(provider: "OpenVikingMemoryProvider") -> None:
+    global _exit_hook_registered
+    with _exit_registry_lock:
+        if provider._shutting_down:
+            return
+        if not _exit_hook_registered:
+            atexit.register(_atexit_commit_sessions)
+            _exit_hook_registered = True
+        _exit_registry.add(provider)
+
+
+def _deregister_for_exit(provider: "OpenVikingMemoryProvider") -> None:
+    with _exit_registry_lock:
+        _exit_registry.discard(provider)
 
 
 def _atexit_commit_sessions():
-    providers = list(_active_providers_by_home.values())
-    _active_providers_by_home.clear()
+    deadline = time.monotonic() + _EXIT_COMMIT_BUDGET
+    with _exit_registry_lock:
+        providers = list(_exit_registry)
+        _exit_registry.clear()
     for provider in providers:
         try:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                # No new commit once the budget is spent; the marker stays for the next run's recovery.
+                logger.warning("OpenViking exit budget used up; leaving session %s pending", provider._session_id)
+                continue
             with suppress(Exception):  # best-effort at shutdown time
-                provider.on_session_end([])
+                provider._end_session(min(_SESSION_DRAIN_TIMEOUT, remaining), deadline=deadline)
         finally:
-            # ``finally`` (as on main): the run lock is released even when on_session_end
+            # ``finally`` (as on main): the run lock is released even when the commit
             # dies of a BaseException (KeyboardInterrupt during atexit).
             with suppress(Exception):
                 provider._release_run_lock()
-
-
-atexit.register(_atexit_commit_sessions)
 
 
 def _get_httpx():
@@ -1729,7 +1756,10 @@ class OpenVikingMemoryProvider(MemoryProvider):
             self._conn_snapshot = self._settings_tuple()
             self._recover_pending_sessions()
 
-        _active_providers_by_home[self._hermes_home] = self  # atexit safety net
+        if self._writes_enabled:
+            _register_for_exit(self)
+        else:
+            _deregister_for_exit(self)
 
     def _ensure_client(self) -> Optional["_VikingClient"]:
         """Active client, rebuilt if the resolved config changed.
@@ -2685,6 +2715,7 @@ class OpenVikingMemoryProvider(MemoryProvider):
                     else:
                         turn_count = 1
                 self._mark_session_committed(sid, committed=False, scope=scope)
+                _register_for_exit(self)
                 self._mark_session_pending(sid, scope=scope)
                 client = upload.run()
             if client is not None:
@@ -2960,7 +2991,8 @@ class OpenVikingMemoryProvider(MemoryProvider):
         except Exception as e:
             logger.warning("OpenViking live commit check failed for %s: %s", sid, e)
 
-    def _session_needs_commit(self, sid: str, turn_count: int, *, scope: Optional[_CommitScope] = None) -> bool:
+    def _session_needs_commit(self, sid: str, turn_count: int, *, scope: Optional[_CommitScope] = None,
+                              request_timeout: Optional[float] = None) -> bool:
         # The committed-guard wins over turn_count: a racing sync_turn can re-increment
         # _turn_count after a commit+reset.
         scope = scope or self._capture_commit_scope()
@@ -2969,17 +3001,19 @@ class OpenVikingMemoryProvider(MemoryProvider):
         if turn_count > 0:
             return True
         try:
-            session = self._unwrap_result(scope.client.get(f"/api/v1/sessions/{sid}"))
+            timeout = {} if request_timeout is None else {"timeout": request_timeout}
+            session = self._unwrap_result(scope.client.get(f"/api/v1/sessions/{sid}", **timeout))
             return isinstance(session, dict) and int(session.get("pending_tokens") or 0) > 0
         except Exception:
             return False
 
     def _commit_session(self, sid: str, turn_count: int, *, context: str, clear_missing: bool = False,
                         client: Optional[_VikingClient] = None, scope: Optional[_CommitScope] = None,
-                        pending_path: Optional[Path] = None) -> bool:
+                        pending_path: Optional[Path] = None, request_timeout: Optional[float] = None) -> bool:
         scope = scope or self._capture_commit_scope()
         try:
-            (client or scope.client).post(f"/api/v1/sessions/{sid}/commit", {"keep_recent_count": 0})
+            timeout = {} if request_timeout is None else {"timeout": request_timeout}
+            (client or scope.client).post(f"/api/v1/sessions/{sid}/commit", {"keep_recent_count": 0}, **timeout)
             self._mark_session_committed(sid, scope=scope)
             self._clear_pending_session(sid, scope=scope, pending_path=pending_path)
             with self._session_state_lock:
@@ -3024,6 +3058,11 @@ class OpenVikingMemoryProvider(MemoryProvider):
     def on_session_end(self, messages: List[Dict[str, Any]]) -> None:
         """Commit the session (synchronously — it must land before process exit) to
         trigger extraction of profile/preferences/entities/events/cases/patterns."""
+        self._end_session(_SESSION_DRAIN_TIMEOUT)
+
+    def _end_session(self, drain_timeout: float, *, deadline: Optional[float] = None) -> None:
+        """Commit the current session; ``deadline`` (monotonic) caps every request at exit.
+        Drops the atexit entry when nothing uncommitted is left behind."""
         if not self._writes_enabled:
             return
         if not self._ensure_client():
@@ -3031,15 +3070,36 @@ class OpenVikingMemoryProvider(MemoryProvider):
         with self._session_state_lock:
             scope = self._capture_commit_scope()
             sid = self._session_id
-        if not self._drain_writers(sid, timeout=_SESSION_DRAIN_TIMEOUT):
+        if not self._drain_writers(sid, timeout=drain_timeout):
             logger.warning("OpenViking writer for %s still alive after drain — skipping commit", sid)
             return
+
+        def remaining() -> Optional[float]:
+            return None if deadline is None else deadline - time.monotonic()
+
+        def expired() -> bool:
+            return deadline is not None and remaining() <= 0
+
         with self._writer_commit_lock:
             with self._session_state_lock:
                 turn_count = self._turn_count if self._session_id == sid and self._commit_scope is scope else 0
-            if not self._session_needs_commit(sid, turn_count, scope=scope):
+            if expired():
                 return
-            self._commit_session(sid, turn_count, context="on session end", scope=scope)
+            if self._session_needs_commit(sid, turn_count, scope=scope, request_timeout=remaining()):
+                if expired() or not self._commit_session(
+                        sid, turn_count, context="on session end", scope=scope, request_timeout=remaining()):
+                    return
+            # Under the write lock: a later writer re-registers before it marks its sid pending.
+            if not self._has_uncommitted_data(scope):
+                _deregister_for_exit(self)
+
+    def _has_uncommitted_data(self, scope: _CommitScope) -> bool:
+        """A writer still running, or a turn or pending marker of this connection generation not committed."""
+        with self._inflight_lock:
+            if any(t.is_alive() for group in self._inflight_writers.values() for t in group):
+                return True
+        with self._session_state_lock:
+            return bool(scope.pending) or self._turn_count > 0
 
     def on_session_switch(self, new_session_id: str, *, parent_session_id: str = "", reset: bool = False, **kwargs) -> None:
         """Rotate cached state to the new session_id; commit only when writes are enabled.
@@ -3193,8 +3253,7 @@ class OpenVikingMemoryProvider(MemoryProvider):
             if t.is_alive():
                 t.join(timeout=5.0)
         # Clear so atexit doesn't double-commit.
-        if _active_providers_by_home.get(self._hermes_home) is self:
-            del _active_providers_by_home[self._hermes_home]
+        _deregister_for_exit(self)
         self._release_run_lock()
 
     @staticmethod
