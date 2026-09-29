@@ -125,6 +125,47 @@ class _HeaderOnlyTransport:
     """Satisfies ``_VikingClient``'s transport check when only its header builder is used."""
 
 
+def _mcp_connection(settings: Dict[str, str], client: Any, deps: Any):
+    """MCP connection on ``client``'s endpoint and identity when it is a REST client, else on ``settings``."""
+    from .http import _VikingClient
+    from .mcp_bridge import McpConnection
+
+    # The REST client's header builder, so MCP requests carry the same identity.
+    if not (hasattr(client, "_headers") and isinstance(getattr(client, "_endpoint", None), str)):
+        client = _VikingClient(settings["endpoint"], settings["api_key"], account=settings["account"],
+                               user=settings["user"], agent=settings["agent"], transport=_HeaderOnlyTransport())
+    return McpConnection(
+        url=client._endpoint.rstrip("/") + _MCP_PATH,
+        headers=client._headers,
+        spawn=spawn_context_thread,
+        session_factory=deps.mcp_session,
+    )
+
+
+def prime_tool_cache(hermes_home: str, deps: Any) -> bool:
+    """Fill the disk tool cache for ``hermes_home``'s saved connection; the setup wizard calls this."""
+    from .connection import (
+        _load_hermes_openviking_config,
+        _profile_openviking_env,
+        _resolve_connection_settings,
+    )
+    from .mcp_bridge import list_tools
+
+    try:
+        env = _profile_openviking_env(hermes_home)
+        resolved = _resolve_connection_settings(_load_hermes_openviking_config(hermes_home, env=env), env=env)
+        settings = {k: str(resolved.get(k) or "") for k in ("endpoint", "api_key", "account", "user", "agent")}
+        if not settings["endpoint"]:
+            return False
+        tools = list_tools(_mcp_connection(settings, None, deps), timeout=tool_catalog.LIVE_LIST_BUDGET_SECONDS)
+    except Exception as exc:
+        logger.debug("OpenViking tool cache priming failed: %s", exc)
+        return False
+    key = tool_catalog.fingerprint(*(settings[k] for k in ("endpoint", "api_key", "account", "user", "agent")))
+    tool_catalog.remember(key, hermes_home, settings["endpoint"], tools)
+    return True
+
+
 class ToolsMixin:
     """The ``openviking_*`` tools of ``OpenVikingMemoryProvider``; mixed into that class."""
 
@@ -174,20 +215,7 @@ class ToolsMixin:
         return tool_catalog.parse_extra_tools(value)
 
     def _mcp_connection(self, settings: Dict[str, str], client: Any = None):
-        """MCP connection on ``client``'s endpoint and identity when it is a REST client, else on ``settings``."""
-        from .http import _VikingClient
-        from .mcp_bridge import McpConnection
-
-        # The REST client's header builder, so MCP requests carry the same identity.
-        if not (hasattr(client, "_headers") and isinstance(getattr(client, "_endpoint", None), str)):
-            client = _VikingClient(settings["endpoint"], settings["api_key"], account=settings["account"],
-                                   user=settings["user"], agent=settings["agent"], transport=_HeaderOnlyTransport())
-        return McpConnection(
-            url=client._endpoint.rstrip("/") + _MCP_PATH,
-            headers=client._headers,
-            spawn=spawn_context_thread,
-            session_factory=self._deps.mcp_session,
-        )
+        return _mcp_connection(settings, client, self._deps)
 
     def _catalog_key(self, settings: Dict[str, str]) -> str:
         return tool_catalog.fingerprint(*(settings[k] for k in ("endpoint", "api_key", "account", "user", "agent")))

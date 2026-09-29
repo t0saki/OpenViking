@@ -206,3 +206,21 @@ def test_transport_error_carries_http_status(wired):
     result = json.loads(provider.handle_tool_call("openviking_remember", {"content": "x"}))
     assert result["http_status"] == 401
     assert "401" in result["error"]
+
+
+def test_setup_priming_fills_the_disk_cache(external_provider, fake_mcp, core_module):
+    home, provider, module, _ = external_provider("tools-prime")
+    catalog = core_module(module, "tool_catalog")
+    catalog.clear_memory_cache()
+    (home / ".env").write_text("OPENVIKING_ENDPOINT=http://127.0.0.1:19534\nOPENVIKING_API_KEY=k\n", encoding="utf-8")
+    fake_mcp.tools = SERVER_TOOLS
+    deps = type(provider._deps)(**{**provider._deps.__dict__, "mcp_session": fake_mcp.factory})
+
+    assert core_module(module, "tools").prime_tool_cache(str(home), deps) is True
+
+    cached = json.loads(catalog.cache_path(home).read_text())
+    assert cached["endpoint"] == "http://127.0.0.1:19534"
+    assert [t["name"] for t in cached["tools"]] == [t["name"] for t in SERVER_TOOLS]
+    assert fake_mcp.sessions[0]["url"] == "http://127.0.0.1:19534/mcp"
+    assert fake_mcp.sessions[0]["headers"]["X-API-Key"] == "k"
+    catalog.clear_memory_cache()

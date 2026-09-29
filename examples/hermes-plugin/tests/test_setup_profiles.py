@@ -43,6 +43,8 @@ def setup_state(external_provider, monkeypatch, inject_deps, *, route="local", l
         discover_profiles=lambda: profiles,
         validate_reachability=lambda *_: (True, "ok"),
         validate_setup_values=lambda *_, **__: (True, "ok", None),
+        # Tool cache priming after setup must not reach a real server.
+        mcp_session=lambda *_: (_ for _ in ()).throw(ConnectionError("no MCP in setup tests")),
     )
     monkeypatch.setattr(
         setup,

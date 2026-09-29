@@ -463,6 +463,10 @@ def run_setup(hermes_home: str, config: dict, deps=None) -> None:
         _ov()._write_env_vars(env_path, {}, remove_keys=("OPENVIKING_RECALL_SCOPE",))
         os.environ.pop("OPENVIKING_RECALL_SCOPE", None)
         save_config(config)
+        # The first session's tool list is fixed before initialize(); a primed cache avoids a live call.
+        from .core.tools import prime_tool_cache
+
+        prime_tool_cache(hermes_home, deps)
         if usage_profile == _SHARED_PROFILE:
             _say("Restart the Hermes gateway to apply the shared session settings.")
         else:
