@@ -3,6 +3,7 @@
 import os
 import shutil
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -53,3 +54,23 @@ def external_provider(tmp_path, monkeypatch):
     yield load
     for provider in providers:
         provider.shutdown()
+
+
+@pytest.fixture
+def inject_deps():
+    """Swap plugin dependencies through ``Deps`` instead of patching module globals.
+
+    ``inject(module, *providers, **fields)`` replaces ``fields`` in each given
+    provider's Deps and in the module default, which later providers and helpers
+    called without a provider read. Module defaults are restored at teardown.
+    """
+    previous = []
+
+    def inject(module, *providers, **fields):
+        previous.append((module, module.set_default_deps(replace(module.default_deps(), **fields))))
+        for provider in providers:
+            provider._deps = replace(provider._deps, **fields)
+
+    yield inject
+    for module, deps in reversed(previous):
+        module.set_default_deps(deps)

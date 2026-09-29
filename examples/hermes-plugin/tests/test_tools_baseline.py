@@ -9,9 +9,9 @@ import json
 import os
 import re
 import tempfile
+import uuid
 import zipfile
 from pathlib import Path
-from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -48,12 +48,12 @@ class Backend:
 
 
 @pytest.fixture
-def wired(external_provider, monkeypatch):
+def wired(external_provider, inject_deps):
     _, provider, module, _ = external_provider("tools-baseline")
     backend = Backend()
     http = httpx.Client(transport=httpx.MockTransport(backend))
-    monkeypatch.setattr(module, "_get_httpx", lambda: http)
-    provider._client = module._VikingClient(ENDPOINT, account="acme", user="alice", agent="hermes")
+    inject_deps(module, provider, transport=lambda: http)
+    provider._client = module._VikingClient(ENDPOINT, account="acme", user="alice", agent="hermes", transport=http)
     try:
         yield provider, module, backend
     finally:
@@ -444,7 +444,7 @@ RECOVERY_NOTE = (
 @pytest.fixture
 def remember(wired, monkeypatch):
     provider, module, backend = wired
-    monkeypatch.setattr(module, "uuid", SimpleNamespace(uuid4=lambda: SimpleNamespace(hex="0123456789abcdef")))
+    monkeypatch.setattr(uuid, "uuid4", lambda: uuid.UUID(hex="0123456789abcdef" + "0" * 16))
     backend.route("GET", "/api/v1/system/status", ok({"user": "alice"}))
     return provider, backend
 

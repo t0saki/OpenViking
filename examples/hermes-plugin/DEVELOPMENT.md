@@ -125,6 +125,11 @@ confirmation, cancellation, profile-local persistence, connection routes, and
 actual Hermes session keys.
 Provider-specific regression tests belong here and must use the shared external
 loader fixture. Generic Hermes framework tests remain in Hermes.
+Inject fakes for the REST transport or client, the clock, the health probe and
+the setup wizard's profile discovery and validators through `Deps`, using the
+`inject_deps` fixture, instead of patching names on the plugin module. A patched
+module global stops reaching the code that reads it once that code moves into
+`core/`.
 
 For compatibility checks while Hermes still bundles OpenViking, also run its
 provider tests. These load the bundled copy unless explicitly routed through the

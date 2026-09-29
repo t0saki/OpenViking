@@ -24,7 +24,7 @@ def _home_scope(home):
 
 
 @pytest.fixture
-def recall(external_provider, monkeypatch):
+def recall(external_provider, inject_deps):
     home, provider, module, _ = external_provider("recall-status")
     (home / "config.yaml").write_text(
         "memory:\n  provider: openviking\n  openviking:\n"
@@ -61,9 +61,7 @@ def recall(external_provider, monkeypatch):
         return httpx.Response(200, json={"result": {"memories": search}})
 
     with httpx.Client(transport=httpx.MockTransport(handle)) as client:
-        monkeypatch.setattr(httpx, "get", client.get)
-        monkeypatch.setattr(httpx, "post", client.post)
-        monkeypatch.setattr(module, "_classify_runtime_openviking_health", lambda *_: ("healthy", ""))
+        inject_deps(module, provider, transport=lambda: client, health=lambda *_: ("healthy", ""))
         provider.initialize("s1", hermes_home=str(home), platform="telegram", user_id="alice")
         yield provider, module, behavior
 
@@ -97,14 +95,14 @@ def test_failed_or_empty_recall_has_no_indicator(recall, search, outcome):
     assert provider.last_recall_outcome("s1") == outcome
 
 
-def test_unreachable_server_is_unavailable(external_provider, monkeypatch):
+def test_unreachable_server_is_unavailable(external_provider, inject_deps):
     home, provider, module, _ = external_provider("recall-status-down")
     (home / "config.yaml").write_text(
         "memory:\n  provider: openviking\n  openviking:\n"
         "    endpoint: http://openviking.test\n    use_ovcli_config: false\n",
         encoding="utf-8",
     )
-    monkeypatch.setattr(module, "_classify_runtime_openviking_health", lambda *_: ("responded", "down"))
+    inject_deps(module, provider, health=lambda *_: ("responded", "down"))
     provider.initialize("s1", hermes_home=str(home), platform="telegram")
     assert provider.prefetch("what do I drink", session_id="s1") == ""
     assert provider.recall_status() is None

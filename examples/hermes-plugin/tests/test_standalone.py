@@ -25,7 +25,7 @@ def test_external_discovery_preserves_profile_config_and_relative_setup(external
     assert (home_a / "config.yaml").read_bytes() == before
 
 
-def test_initialized_profile_owns_connection_and_recall_across_other_profile(external_provider, monkeypatch):
+def test_initialized_profile_owns_connection_and_recall_across_other_profile(external_provider, monkeypatch, inject_deps):
     from agent.secret_scope import build_profile_secret_scope, reset_secret_scope, set_secret_scope
     from hermes_constants import reset_hermes_home_override, set_hermes_home_override
 
@@ -82,7 +82,7 @@ def test_initialized_profile_owns_connection_and_recall_across_other_profile(ext
                 f"OPENVIKING_AGENT=peer-{label}\nOV_TEST_BUDGET={budget}\n", encoding="utf-8"
             )
 
-        monkeypatch.setattr(module, "_classify_runtime_openviking_health", lambda *_: ("healthy", ""))
+        inject_deps(module, provider, health=lambda *_: ("healthy", ""))
         with profile_scope(home_a):
             provider.initialize("session-a", hermes_home=str(home_a))
             assert provider._client._api_key == "key-a"
@@ -932,14 +932,14 @@ def test_session_switch_commits_below_live_threshold(external_provider, monkeypa
 
 
 @pytest.mark.parametrize("agent_context", ["cron", "subagent", "flush"])
-def test_non_primary_contexts_skip_writes(external_provider, monkeypatch, agent_context):
+def test_non_primary_contexts_skip_writes(external_provider, monkeypatch, inject_deps, agent_context):
     """cron/subagent/flush contexts stay read-only: no turn uploads, commits, or mirroring."""
     from unittest.mock import Mock
 
     home, provider, module, _ = external_provider(f"non-primary-{agent_context}")
     monkeypatch.setenv("HERMES_HOME", str(home))
     monkeypatch.setenv("OPENVIKING_ENDPOINT", "http://127.0.0.1:19531")
-    monkeypatch.setattr(module, "_classify_runtime_openviking_health", lambda *_: ("healthy", ""))
+    inject_deps(module, provider, health=lambda *_: ("healthy", ""))
     provider.initialize("live-sid", hermes_home=str(home))
     assert (provider._agent_context, provider._writes_enabled) == ("primary", True)
     provider.initialize("live-sid", hermes_home=str(home), agent_context=agent_context)
@@ -961,7 +961,7 @@ def test_non_primary_contexts_skip_writes(external_provider, monkeypatch, agent_
 
 
 @pytest.mark.parametrize("agent_context", ["cron", "subagent", "flush"])
-def test_non_primary_session_switch_keeps_search_on_current_session(external_provider, monkeypatch, agent_context):
+def test_non_primary_session_switch_keeps_search_on_current_session(external_provider, monkeypatch, inject_deps, agent_context):
     """A read-only provider must still follow session changes for recall."""
     from unittest.mock import Mock
 
@@ -969,7 +969,7 @@ def test_non_primary_session_switch_keeps_search_on_current_session(external_pro
 
     home, provider, module, _ = external_provider(f"read-only-switch-{agent_context}")
     monkeypatch.setenv("OPENVIKING_ENDPOINT", "http://127.0.0.1:19531")
-    monkeypatch.setattr(module, "_classify_runtime_openviking_health", lambda *_: ("healthy", ""))
+    inject_deps(module, provider, health=lambda *_: ("healthy", ""))
     provider.initialize("old-sid", hermes_home=str(home), agent_context=agent_context)
     client = Mock()
     client.post.return_value = {"result": {"memories": []}}
@@ -1036,7 +1036,7 @@ def _wire_live_client(provider, sid, pending_tokens=1):
     return client
 
 
-def test_soft_eviction_cycles_do_not_grow_exit_registry(external_provider, monkeypatch):
+def test_soft_eviction_cycles_do_not_grow_exit_registry(external_provider, monkeypatch, inject_deps):
     """Gateway soft eviction ends a session without shutdown(); the dropped provider must be collectable."""
     import atexit
     import gc
@@ -1044,7 +1044,8 @@ def test_soft_eviction_cycles_do_not_grow_exit_registry(external_provider, monke
 
     home, first, module, _ = external_provider("exit-registry")
     monkeypatch.setenv("OPENVIKING_ENDPOINT", "http://127.0.0.1:19531")
-    monkeypatch.setattr(module, "_classify_runtime_openviking_health", lambda *_: ("healthy", ""))
+    # The module default reaches the providers constructed below.
+    inject_deps(module, first, health=lambda *_: ("healthy", ""))
     hooks = []
     monkeypatch.setattr(atexit, "register", hooks.append)
     assert not module._exit_hook_registered and len(module._exit_registry) == 0
@@ -1068,7 +1069,7 @@ def test_soft_eviction_cycles_do_not_grow_exit_registry(external_provider, monke
     assert hooks == [module._atexit_commit_sessions]
 
 
-def test_exit_registry_keeps_uncommitted_primary_only(external_provider, monkeypatch):
+def test_exit_registry_keeps_uncommitted_primary_only(external_provider, monkeypatch, inject_deps):
     home, provider, module = _live_provider(external_provider, monkeypatch, "exit-uncommitted")
     client = _wire_live_client(provider, "live-sid")
 
@@ -1091,7 +1092,7 @@ def test_exit_registry_keeps_uncommitted_primary_only(external_provider, monkeyp
     provider.shutdown()
     assert provider not in module._exit_registry
     reader = type(provider)()
-    monkeypatch.setattr(module, "_classify_runtime_openviking_health", lambda *_: ("healthy", ""))
+    inject_deps(module, reader, health=lambda *_: ("healthy", ""))
     monkeypatch.setenv("OPENVIKING_ENDPOINT", "http://127.0.0.1:19531")
     reader.initialize("cron-sid", hermes_home=str(home), agent_context="cron")
     try:
@@ -1122,8 +1123,7 @@ def test_exit_hook_stops_starting_commits_when_the_budget_is_spent(external_prov
         _finish_turn(each, sid=f"exit-sid-{index}")
     assert all(each in module._exit_registry for each in providers)
 
-    monkeypatch.setattr(module, "_EXIT_COMMIT_BUDGET", 0.2)
-    module._atexit_commit_sessions()
+    module._atexit_commit_sessions(budget=0.2)
 
     assert len(commits) == 1 and 0 < commits[0] <= 0.2
     assert len(module._exit_registry) == 0
@@ -1153,10 +1153,9 @@ def test_exit_hook_bounds_the_wait_for_the_commit_lock(external_provider, monkey
     holder = threading.Thread(target=hold_lock, daemon=True)
     holder.start()
     assert held.wait(2)
-    monkeypatch.setattr(module, "_EXIT_COMMIT_BUDGET", 0.3)
     try:
         started = time.monotonic()
-        module._atexit_commit_sessions()
+        module._atexit_commit_sessions(budget=0.3)
         elapsed = time.monotonic() - started
     finally:
         release.set()
@@ -1170,7 +1169,7 @@ def test_exit_hook_bounds_the_wait_for_the_commit_lock(external_provider, monkey
 
 
 @pytest.fixture
-def reload_provider(external_provider, monkeypatch):
+def reload_provider(external_provider, monkeypatch, inject_deps):
     from unittest.mock import Mock
 
     home, provider, module, _ = external_provider("connection-reload")
@@ -1186,8 +1185,7 @@ def reload_provider(external_provider, monkeypatch):
             self.get = backends[user].get
             self.post = backends[user].post
 
-    monkeypatch.setattr(module, "_VikingClient", Client)
-    monkeypatch.setattr(module, "_classify_runtime_openviking_health", lambda *_: ("healthy", ""))
+    inject_deps(module, provider, client=Client, health=lambda *_: ("healthy", ""))
 
     def reload(user, endpoint="http://127.0.0.1:19531"):
         monkeypatch.setenv("OPENVIKING_USER", user)

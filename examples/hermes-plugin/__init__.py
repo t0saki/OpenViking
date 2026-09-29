@@ -283,14 +283,15 @@ def _deregister_for_exit(provider: "OpenVikingMemoryProvider") -> None:
         _exit_registry.discard(provider)
 
 
-def _atexit_commit_sessions():
-    deadline = time.monotonic() + _EXIT_COMMIT_BUDGET
+def _atexit_commit_sessions(budget: float = _EXIT_COMMIT_BUDGET):
+    monotonic = default_deps().monotonic
+    deadline = monotonic() + budget
     with _exit_registry_lock:
         providers = list(_exit_registry)
         _exit_registry.clear()
     for provider in providers:
         try:
-            remaining = deadline - time.monotonic()
+            remaining = deadline - monotonic()
             if remaining <= 0:
                 # No new commit once the budget is spent; the marker stays for the next run's recovery.
                 logger.warning("OpenViking exit budget used up; leaving session %s pending", provider._session_id)
@@ -347,7 +348,7 @@ class _VikingClient:
     def __init__(self, endpoint: str, api_key: str = "",
                  account: Optional[str] | object = _IDENTITY_UNSET,
                  user: Optional[str] | object = _IDENTITY_UNSET,
-                 agent: Optional[str] | object = _IDENTITY_UNSET):
+                 agent: Optional[str] | object = _IDENTITY_UNSET, transport: Any = None):
         self._endpoint = endpoint.rstrip("/")
         self._api_key = api_key
         # Account/user are local/trusted-mode tenant identity. API-key requests
@@ -359,7 +360,8 @@ class _VikingClient:
         self._agent = (get_secret("OPENVIKING_AGENT", "") or _DEFAULT_AGENT) if agent is _IDENTITY_UNSET or agent is None else agent
         # Every client owns its resolved identity, including clients retained across reloads.
         self._conn_snapshot = (self._endpoint, self._api_key, self._account, self._user, self._agent)
-        self._httpx = _get_httpx()
+        # ``transport`` has httpx's get/post/delete; without one, the default Deps supplies it.
+        self._httpx = transport if transport is not None else default_deps().transport()
         if self._httpx is None:
             raise ImportError("httpx is required for OpenViking: pip install httpx")
 
@@ -1208,16 +1210,18 @@ def _start_local_openviking_server(endpoint: str) -> tuple[str, str]:
     return _LOCAL_SERVER_STARTED, f"Started openviking-server on {host}:{port} in the background. Logs: {log_path}"
 
 
-def _wait_for_openviking_health(endpoint: str, *, timeout_seconds: float = 15.0, should_stop=None) -> bool:
-    deadline = time.monotonic() + timeout_seconds
-    while time.monotonic() < deadline:
+def _wait_for_openviking_health(endpoint: str, *, timeout_seconds: float = 15.0, should_stop=None,
+                                deps: Optional["Deps"] = None) -> bool:
+    deps = deps if deps is not None else default_deps()
+    deadline = deps.monotonic() + timeout_seconds
+    while deps.monotonic() < deadline:
         # Bail promptly on teardown so the daemon waiter can be join()ed at shutdown
         # (a worker alive at interpreter exit aborts CPython in Py_FinalizeEx).
         if should_stop is not None and should_stop():
             return False
-        if _validate_openviking_reachability(endpoint)[0]:
+        if deps.validate_reachability(endpoint)[0]:
             return True
-        time.sleep(0.5)
+        deps.sleep(0.5)
     return False
 
 
@@ -1251,6 +1255,61 @@ def _classify_runtime_openviking_health(client: _VikingClient, endpoint: str) ->
     except Exception:
         pass
     return "unreachable", ""
+
+
+@dataclass(frozen=True)
+class Deps:
+    """Everything the plugin reaches outside the process through, as one injectable value.
+
+    Each provider holds one (``self._deps``) and passes it to the module-level
+    helpers it calls. Helpers called without a provider read ``default_deps()``.
+    Tests swap a dependency by building a Deps (``dataclasses.replace``) rather
+    than patching names in this module, so the fake still reaches the code that
+    reads it after that code moves to another module.
+    """
+
+    # REST transport factory: returns an object with httpx's get/post/delete, or None without httpx.
+    transport: Callable[[], Any] = _get_httpx
+    # REST client factory, called like ``_VikingClient`` without ``transport``.
+    # None builds a ``_VikingClient`` over ``transport()``.
+    client: Optional[Callable[..., Any]] = None
+    # MCP session factory; unused until the MCP bridge is wired in.
+    mcp_session: Optional[Callable[..., Any]] = None
+    monotonic: Callable[[], float] = time.monotonic
+    wall: Callable[[], float] = time.time
+    sleep: Callable[[float], None] = time.sleep
+    # (client, endpoint) -> ("healthy" | "responded" | "unreachable", message)
+    health: Callable[[Any, str], tuple[str, str]] = _classify_runtime_openviking_health
+    # Used by the setup wizard.
+    discover_profiles: Callable[[], List[Any]] = _discover_ovcli_profiles
+    validate_reachability: Callable[[str], tuple[bool, str]] = _validate_openviking_reachability
+    validate_setup_values: Callable[..., tuple[bool, str, Optional[str]]] = _validate_openviking_setup_values
+
+
+_default_deps = Deps()
+
+
+def default_deps() -> Deps:
+    """The Deps a new provider starts from, also read by helpers called without a provider."""
+    return _default_deps
+
+
+def set_default_deps(deps: Deps) -> Deps:
+    """Replace the module default and return the previous one.
+
+    This is the one supported way to swap a dependency plugin-wide; tests restore
+    the returned value afterwards. Providers constructed earlier keep their own Deps.
+    """
+    global _default_deps
+    previous, _default_deps = _default_deps, deps
+    return previous
+
+
+def _rest_client(deps: Deps, endpoint: str, api_key: str = "", **identity) -> "_VikingClient":
+    """A REST client from ``deps``: its client factory, or ``_VikingClient`` over its transport."""
+    if deps.client is not None:
+        return deps.client(endpoint, api_key, **identity)
+    return _VikingClient(endpoint, api_key, transport=deps.transport(), **identity)
 
 
 from . import _setup  # noqa: E402  (needs the helpers above at call time)
@@ -1443,7 +1502,8 @@ class OpenVikingMemoryProvider(MemoryProvider):
         except Exception:
             return []
 
-    def __init__(self):
+    def __init__(self, deps: Optional[Deps] = None):
+        self._deps = deps if deps is not None else default_deps()
         self._client: Optional[_VikingClient] = None
         self._endpoint = self._api_key = self._account = self._user = self._agent = ""
         # The gateway sender is a peer within the configured OpenViking user.
@@ -1594,7 +1654,7 @@ class OpenVikingMemoryProvider(MemoryProvider):
 
         token = set_hermes_home_override(hermes_home)
         try:
-            _setup.run_setup(hermes_home, config)
+            _setup.run_setup(hermes_home, config, deps=self._deps)
         finally:
             reset_hermes_home_override(token)
 
@@ -1614,7 +1674,7 @@ class OpenVikingMemoryProvider(MemoryProvider):
 
     def _build_client(self, endpoint: Optional[str] = None) -> _VikingClient:
         endpoint, api_key, account, user, agent = self._settings_tuple(endpoint)
-        return _VikingClient(endpoint, api_key, account=account, user=user, agent=agent)
+        return _rest_client(self._deps, endpoint, api_key, account=account, user=user, agent=agent)
 
     def _publish_client(self, client: _VikingClient, endpoint: str) -> None:
         with self._session_state_lock:
@@ -1642,7 +1702,8 @@ class OpenVikingMemoryProvider(MemoryProvider):
         def stale() -> bool:
             return self._shutting_down or self._endpoint != endpoint
 
-        if not _wait_for_openviking_health(endpoint, timeout_seconds=_LOCAL_OPENVIKING_AUTOSTART_TIMEOUT, should_stop=stale):
+        if not _wait_for_openviking_health(endpoint, timeout_seconds=_LOCAL_OPENVIKING_AUTOSTART_TIMEOUT, should_stop=stale,
+                                           deps=self._deps):
             if not stale():
                 _emit_runtime(_runtime_openviking_timeout_message(endpoint), warning_callback)
             return
@@ -1737,12 +1798,12 @@ class OpenVikingMemoryProvider(MemoryProvider):
 
         self._client = None
         if connection_error:
-            self._failed_refresh = (("invalid-endpoint", connection_error), time.monotonic())
+            self._failed_refresh = (("invalid-endpoint", connection_error), self._deps.monotonic())
             _emit_runtime(f"{connection_error} {_FIX_ENDPOINT}", warning_callback)
         else:
             try:
                 self._client = self._build_client()
-                health_state, health_message = _classify_runtime_openviking_health(self._client, self._endpoint)
+                health_state, health_message = self._deps.health(self._client, self._endpoint)
                 if health_state == "unreachable":
                     self._handle_runtime_openviking_unreachable(status_callback=status_callback, warning_callback=warning_callback)
                 elif health_state != "healthy":
@@ -1788,7 +1849,7 @@ class OpenVikingMemoryProvider(MemoryProvider):
 
     def _in_cooldown(self, failed_key) -> bool:
         failed = self._failed_refresh
-        return failed is not None and failed[0] == failed_key and time.monotonic() - failed[1] < _FAILED_CONFIG_RETRY_COOLDOWN_SECONDS
+        return failed is not None and failed[0] == failed_key and self._deps.monotonic() - failed[1] < _FAILED_CONFIG_RETRY_COOLDOWN_SECONDS
 
     def _ensure_client_locked(self) -> Optional["_VikingClient"]:
         """Resolve and publish one client/config state under the refresh lock."""
@@ -1801,7 +1862,7 @@ class OpenVikingMemoryProvider(MemoryProvider):
             failed_key = ("invalid-endpoint", str(exc))
             if not self._in_cooldown(failed_key):
                 logger.warning("%s %s", exc, _FIX_ENDPOINT)
-            self._failed_refresh = (failed_key, time.monotonic())
+            self._failed_refresh = (failed_key, self._deps.monotonic())
             self._client = None
             return None
         settings_key = tuple(settings[k] for k in _CONNECTION_KEYS)
@@ -1824,11 +1885,11 @@ class OpenVikingMemoryProvider(MemoryProvider):
             self._client = None
             return None
 
-        health_state, health_message = _classify_runtime_openviking_health(client, settings_key[0])
+        health_state, health_message = self._deps.health(client, settings_key[0])
         if health_state == "healthy":
             self._publish_client(client, settings_key[0])
             return self._client
-        self._failed_refresh = (settings_key, time.monotonic())
+        self._failed_refresh = (settings_key, self._deps.monotonic())
         if health_state == "responded":
             logger.warning(
                 "%s OpenViking memory is temporarily unavailable; Hermes will retry on a later access (after cooldown) or when the config changes.",
@@ -1849,7 +1910,7 @@ class OpenVikingMemoryProvider(MemoryProvider):
         if not isinstance(snapshot, tuple):
             snapshot = self._conn_snapshot or self._settings_tuple()
         endpoint, api_key, account, user, agent = snapshot
-        return _VikingClient(endpoint, api_key, account=account, user=user, agent=agent)
+        return _rest_client(self._deps, endpoint, api_key, account=account, user=user, agent=agent)
 
     # -- prompt / prefetch ---------------------------------------------------
 
@@ -1907,7 +1968,7 @@ class OpenVikingMemoryProvider(MemoryProvider):
         One deadline covers all three. A part that misses it is dropped from this
         turn's result (outcome ``timeout``) and the other part is still returned.
         """
-        started = time.monotonic()
+        started = self._deps.monotonic()
         query_text = _derive_openviking_user_text(query).strip()
         if not self._ensure_client():
             probe.fail(outcome=_RECALL_UNAVAILABLE)
@@ -1945,8 +2006,7 @@ class OpenVikingMemoryProvider(MemoryProvider):
                 texts.append(result[0])
         return "## OpenViking Context\n" + "\n\n".join(texts) if texts else ""
 
-    @staticmethod
-    def _run_prefetch_parts(parts: List[tuple[str, _RecallProbe, Callable[[_RecallProbe], Any]]],
+    def _run_prefetch_parts(self, parts: List[tuple[str, _RecallProbe, Callable[[_RecallProbe], Any]]],
                             deadline: float) -> List[Optional[tuple]]:
         """Run each part on a one-shot context-bound thread and wait for them until ``deadline``.
 
@@ -1957,7 +2017,7 @@ class OpenVikingMemoryProvider(MemoryProvider):
         done = threading.Condition()
         results: List[Optional[tuple]] = [None] * len(parts)
         # Read the budget once; the wait below then runs on the Condition's clock.
-        wait = max(0.0, deadline - time.monotonic())
+        wait = max(0.0, deadline - self._deps.monotonic())
 
         def run(index: int, part_probe: _RecallProbe, part: Callable[[_RecallProbe], Any]) -> None:
             value = None
@@ -2060,22 +2120,19 @@ class OpenVikingMemoryProvider(MemoryProvider):
         """OpenViking recall is current-query only; post-turn warming is unused."""
         return
 
-    @staticmethod
-    def _remaining_recall_timeout(deadline: float, per_request_timeout: float) -> float:
-        remaining = deadline - time.monotonic()
+    def _remaining_recall_timeout(self, deadline: float, per_request_timeout: float) -> float:
+        remaining = deadline - self._deps.monotonic()
         if remaining <= _RECALL_MIN_TIMEOUT_SECONDS:
             raise TimeoutError("OpenViking recall budget exhausted")
         return min(per_request_timeout, remaining)
 
-    @staticmethod
-    def _fallback_request_timeout(deadline: float, per_request_timeout: float) -> Optional[float]:
+    def _fallback_request_timeout(self, deadline: float, per_request_timeout: float) -> Optional[float]:
         """Timeout for a request that still has a fallback after it, keeping
         ``_RECALL_FALLBACK_RESERVE_SECONDS`` for that fallback; None when too little is left."""
-        remaining = deadline - time.monotonic() - _RECALL_FALLBACK_RESERVE_SECONDS
+        remaining = deadline - self._deps.monotonic() - _RECALL_FALLBACK_RESERVE_SECONDS
         return None if remaining <= _RECALL_MIN_TIMEOUT_SECONDS else min(per_request_timeout, remaining)
 
-    @classmethod
-    def _post_prefetch_search(cls, client: _VikingClient, query: str, session_id: str, *, limit: int,
+    def _post_prefetch_search(self, client: _VikingClient, query: str, session_id: str, *, limit: int,
                               context_type: str | List[str], deadline: float, request_timeout: float,
                               target_uri: Optional[List[str]] = None) -> dict:
         """Session-aware search first, falling back to search/find (budget errors propagate).
@@ -2087,7 +2144,7 @@ class OpenVikingMemoryProvider(MemoryProvider):
         base_payload = {"query": query, "limit": limit, "score_threshold": 0, "context_type": context_type}
         if target_uri:
             base_payload["target_uri"] = target_uri
-        timeout = cls._fallback_request_timeout(deadline, request_timeout) if session_id else None
+        timeout = self._fallback_request_timeout(deadline, request_timeout) if session_id else None
         if session_id and timeout is None:
             logger.debug("OpenViking recall budget left no time for session-aware search, using search/find")
         elif session_id:
@@ -2097,7 +2154,7 @@ class OpenVikingMemoryProvider(MemoryProvider):
                 raise
             except Exception as e:
                 logger.debug("OpenViking session-aware prefetch failed, falling back to search/find: %s", e)
-        return client.post("/api/v1/search/find", base_payload, timeout=cls._remaining_recall_timeout(deadline, request_timeout))
+        return client.post("/api/v1/search/find", base_payload, timeout=self._remaining_recall_timeout(deadline, request_timeout))
 
     def _search_prefetch_context(self, query: str, *, session_id: str = "", client: Optional[_VikingClient] = None,
                                  probe: Optional[_RecallProbe] = None, deadline: Optional[float] = None) -> str:
@@ -2124,13 +2181,13 @@ class OpenVikingMemoryProvider(MemoryProvider):
         try:
             cfg = self._recall_config()
             if deadline is None:
-                deadline = time.monotonic() + self._recall_budget(cfg)
+                deadline = self._deps.monotonic() + self._recall_budget(cfg)
             scope = cfg["scope"]
             target_uri = None
             if scope in ("shared", "peer"):
                 endpoint, api_key, account, user, _agent = client._conn_snapshot
-                client = _VikingClient(endpoint, api_key, account=account, user=user,
-                                       agent=sender_peer if scope == "peer" else "")
+                client = _rest_client(self._deps, endpoint, api_key, account=account, user=user,
+                                      agent=sender_peer if scope == "peer" else "")
             if scope == "peer":
                 # Explicit roots also constrain fallback searches when there is
                 # no sender. An actor-less user-root search includes all peers.
@@ -2756,18 +2813,18 @@ class OpenVikingMemoryProvider(MemoryProvider):
                 workers().discard(thread)
                 logger.debug("OpenViking %s worker failed to start: %s", name, e)
 
-    @staticmethod
-    def _join_all(alive: Callable[[], List[threading.Thread]], timeout: float, *, slice_cap: Optional[float] = None) -> bool:
+    def _join_all(self, alive: Callable[[], List[threading.Thread]], timeout: float, *, slice_cap: Optional[float] = None) -> bool:
         """Join threads from ``alive()`` until none remain or the shared budget runs out."""
-        deadline = time.monotonic() + timeout
+        monotonic = self._deps.monotonic
+        deadline = monotonic() + timeout
         while True:
             workers = alive()
             if not workers:
                 return True
-            if deadline - time.monotonic() <= 0:
+            if deadline - monotonic() <= 0:
                 return False
             for t in workers:
-                slice_left = deadline - time.monotonic()
+                slice_left = deadline - monotonic()
                 if slice_left <= 0:
                     break
                 t.join(timeout=min(slice_left, slice_cap) if slice_cap else slice_left)
@@ -3075,7 +3132,7 @@ class OpenVikingMemoryProvider(MemoryProvider):
             return
 
         def remaining() -> Optional[float]:
-            return None if deadline is None else deadline - time.monotonic()
+            return None if deadline is None else deadline - self._deps.monotonic()
 
         def expired() -> bool:
             return deadline is not None and remaining() <= 0

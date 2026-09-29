@@ -11,7 +11,7 @@ import pytest
 
 
 @pytest.fixture
-def recall_provider(external_provider, monkeypatch):
+def recall_provider(external_provider, inject_deps):
     home, provider, module, _ = external_provider("recall-timeout")
     (home / "config.yaml").write_text(
         "memory:\n  provider: openviking\n  openviking:\n"
@@ -43,9 +43,7 @@ def recall_provider(external_provider, monkeypatch):
         )
 
     with httpx.Client(transport=httpx.MockTransport(handle)) as client:
-        monkeypatch.setattr(httpx, "get", client.get)
-        monkeypatch.setattr(httpx, "post", client.post)
-        monkeypatch.setattr(module, "_classify_runtime_openviking_health", lambda *_: ("healthy", ""))
+        inject_deps(module, provider, transport=lambda: client, health=lambda *_: ("healthy", ""))
         provider.initialize(
             "recall-session", hermes_home=str(home), platform="telegram", user_id="private-sender"
         )
@@ -134,14 +132,12 @@ def test_public_peer_identity_timeout_warns_and_stops(
 @pytest.mark.parametrize("compress", ["off", "server", "auto"])
 @pytest.mark.parametrize("scope", ["shared", "peer"])
 def test_public_prefetch_exhausted_budget_warns_without_fallback_request(
-    recall_provider, monkeypatch, caplog, compress, scope
+    recall_provider, inject_deps, caplog, compress, scope
 ):
     provider, module, requests, behavior = recall_provider
     configure_query_recall(provider, behavior, scope=scope, compress=compress)
     clock = SimpleNamespace(now=100.0)
-    local_time = SimpleNamespace(**vars(module.time))
-    local_time.monotonic = lambda: clock.now
-    monkeypatch.setattr(module, "time", local_time)
+    inject_deps(module, provider, monotonic=lambda: clock.now)
 
     def respond(request):
         if request.url.path == "/api/v1/system/status":
@@ -282,15 +278,13 @@ def test_prefetch_returns_the_part_that_met_the_budget(recall_provider, slow):
 @pytest.mark.parametrize("timeouts", [{}, {"recall_timeout_seconds": 60, "recall_request_timeout_seconds": 60}])
 @pytest.mark.parametrize("compress", ["server", "auto"])
 def test_rewrite_timeout_falls_back_within_the_prefetch_budget(
-    recall_provider, monkeypatch, caplog, compress, timeouts
+    recall_provider, inject_deps, caplog, compress, timeouts
 ):
     provider, module, requests, behavior = recall_provider
     write_recall_config(behavior["home"], recall_scope="shared", recall_compress=compress, **timeouts)
     provider._profile_prefetched_sessions.add("recall-session")
     clock = SimpleNamespace(now=100.0)
-    local_time = SimpleNamespace(**vars(module.time))
-    local_time.monotonic = lambda: clock.now
-    monkeypatch.setattr(module, "time", local_time)
+    inject_deps(module, provider, monotonic=lambda: clock.now)
     seen = []
 
     def respond(request):

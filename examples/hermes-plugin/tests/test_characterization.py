@@ -374,9 +374,9 @@ def test_session_start_block_missing_profile_and_failed_profile(external_provide
 
 @pytest.mark.parametrize("author_id", [None, "", "bob"])
 def test_peer_scope_without_sender_uses_scoped_list_recall_when_compress_off(
-    external_provider, monkeypatch, author_id
+    external_provider, inject_deps, author_id
 ):
-    home, provider, _, manager, backend = initialize(external_provider, monkeypatch, compress="off")
+    home, provider, _, manager, backend = initialize(external_provider, inject_deps, compress="off")
     try:
         with profile_scope(home):
             manager.on_turn_start(1, "Alice fact", author_id="alice")

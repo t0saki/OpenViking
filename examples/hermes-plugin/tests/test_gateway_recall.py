@@ -123,7 +123,7 @@ class GatewayBackend:
 
 
 def initialize(
-    external_provider, monkeypatch, *, name="gateway", scope="peer", compress="off", **identity
+    external_provider, inject_deps, *, name="gateway", scope="peer", compress="off", **identity
 ):
     from agent.memory_manager import MemoryManager
 
@@ -145,7 +145,7 @@ def initialize(
     )
     backend = GatewayBackend()
     client = httpx.Client(transport=httpx.MockTransport(backend))
-    monkeypatch.setattr(module, "_get_httpx", lambda: client)
+    inject_deps(module, provider, transport=lambda: client)
     manager = MemoryManager(external_prefetch_timeout=10)
     manager.add_provider(provider)
     with profile_scope(home):
@@ -162,12 +162,12 @@ def initialize(
 @pytest.mark.parametrize("compress", ["off", "server"])
 @pytest.mark.parametrize("scope", [None, "shared", "peer"])
 def test_gateway_capture_commit_and_sender_scoped_recall(
-    external_provider, monkeypatch, scope, compress
+    external_provider, inject_deps, scope, compress
 ):
     from agent.turn_context import _memory_turn_start_and_prefetch
 
     home, provider, _, manager, backend = initialize(
-        external_provider, monkeypatch, scope=scope, compress=compress
+        external_provider, inject_deps, scope=scope, compress=compress
     )
     agent = SimpleNamespace(
         _memory_manager=manager,
@@ -231,9 +231,9 @@ def test_gateway_capture_commit_and_sender_scoped_recall(
 
 @pytest.mark.parametrize("batch_failures,structured", [(1, True), (4, True), (0, False)])
 def test_delayed_capture_keeps_author_through_fallback(
-    external_provider, monkeypatch, batch_failures, structured
+    external_provider, inject_deps, batch_failures, structured
 ):
-    home, provider, _, manager, backend = initialize(external_provider, monkeypatch)
+    home, provider, _, manager, backend = initialize(external_provider, inject_deps)
     backend.batch_failures = batch_failures
     backend.upload_started, backend.release_upload = threading.Event(), threading.Event()
     try:
@@ -258,9 +258,9 @@ def test_delayed_capture_keeps_author_through_fallback(
 
 
 @pytest.mark.parametrize("author_id", [None, "", "bob"])
-def test_missing_author_and_context_fallback_keep_scope(external_provider, monkeypatch, author_id):
+def test_missing_author_and_context_fallback_keep_scope(external_provider, inject_deps, author_id):
     home, provider, _, manager, backend = initialize(
-        external_provider, monkeypatch, compress="server"
+        external_provider, inject_deps, compress="server"
     )
     try:
         with profile_scope(home):
@@ -282,12 +282,12 @@ def test_missing_author_and_context_fallback_keep_scope(external_provider, monke
         manager.shutdown_all()
 
 
-def test_peer_identity_alt_ids_and_profile_settings(external_provider, monkeypatch):
+def test_peer_identity_alt_ids_and_profile_settings(external_provider, inject_deps):
     home_a, provider_a, module_a, manager_a, _ = initialize(
-        external_provider, monkeypatch, name="profile-a", user_id_alt="stable-alice"
+        external_provider, inject_deps, name="profile-a", user_id_alt="stable-alice"
     )
     home_b, provider_b, _, manager_b, _ = initialize(
-        external_provider, monkeypatch, name="profile-b", scope="shared"
+        external_provider, inject_deps, name="profile-b", scope="shared"
     )
     try:
         for home, provider, expected in (
@@ -322,8 +322,8 @@ def test_peer_identity_alt_ids_and_profile_settings(external_provider, monkeypat
         manager_b.shutdown_all()
 
 
-def test_find_fallback_retains_sender_roots(external_provider, monkeypatch):
-    home, provider, _, manager, backend = initialize(external_provider, monkeypatch)
+def test_find_fallback_retains_sender_roots(external_provider, inject_deps):
+    home, provider, _, manager, backend = initialize(external_provider, inject_deps)
     backend.reject_session_search = True
     try:
         with profile_scope(home):
@@ -338,8 +338,8 @@ def test_find_fallback_retains_sender_roots(external_provider, monkeypatch):
 
 
 @pytest.mark.parametrize("platform,expected", [("telegram", "telegram.alice"), ("", None)])
-def test_older_hooks_and_no_gateway_sender(external_provider, monkeypatch, platform, expected):
-    home, provider, _, manager, backend = initialize(external_provider, monkeypatch)
+def test_older_hooks_and_no_gateway_sender(external_provider, inject_deps, platform, expected):
+    home, provider, _, manager, backend = initialize(external_provider, inject_deps)
     try:
         with profile_scope(home):
             provider._gateway_platform = platform
