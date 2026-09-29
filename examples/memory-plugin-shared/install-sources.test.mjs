@@ -200,6 +200,33 @@ test("a GitHub-channel Claude install moves to TOS, and its statusline follows t
   assert.equal(statusLine(), command);
 });
 
+test("Claude Code without the plugin command is skipped with an upgrade hint", () => {
+  const home = mkdtempSync(join(work, "home-"));
+  const bin = join(home, "bin");
+  const log = join(home, "calls.log");
+  mkdirSync(bin);
+  writeExecutable(join(bin, "claude"), `#!/bin/sh
+echo "$*" >> "${log}"
+case "$*" in
+  --version) echo "1.0.128 (Claude Code)" ;;
+  plugin*) exit 1 ;;
+esac
+exit 0
+`);
+
+  const result = run(home, bin, [
+    "--harness", "claude", "--lang", "en", "--url", "http://127.0.0.1:1933", "--api-key", "", "--yes",
+  ], { OPENVIKING_TOS_BASE: "https://tos.example.invalid" });
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  assert.match(result.stdout, /Skipping claude: it has no 'plugin' command\. The plugin needs Claude Code 2\.0 or newer/);
+  // Neither the review nor the next steps offer commands it cannot run.
+  assert.doesNotMatch(result.stdout, /claude plugin/);
+  const calls = readFileSync(log, "utf8").split("\n").filter(Boolean);
+  assert.deepEqual(calls.filter((line) => !["--version", "plugin --help"].includes(line)), []);
+  assert.equal(existsSync(join(home, ".claude", "settings.json")), false);
+  assert.equal(existsSync(join(home, ".openviking", "memory-plugin-marketplace")), false);
+});
+
 test("retired GitHub-channel options are accepted, announced and ignored", () => {
   const home = mkdtempSync(join(work, "home-"));
   const bin = join(home, "bin");

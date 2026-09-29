@@ -31,11 +31,6 @@
 #   dev      Register this checkout's examples/ directory as the marketplace.
 #            Auto-selected when running from a repo checkout.
 #
-# Legacy Claude Code (< 2.0, no `claude plugin`) is still supported: the
-# installer falls back to `claude mcp add` (stdio proxy) + a hooks merge into
-# ~/.claude/settings.json. That path needs a local copy of the plugin, so it
-# downloads the release bundle.
-#
 # Targets bash 3.2+ (macOS /bin/bash) and Linux.
 
 set -Eeuo pipefail
@@ -1647,10 +1642,10 @@ claude_marketplace_current_source() {
   ' "$CC_KNOWN_MARKETPLACES" "$MARKETPLACE_NAME" 2>/dev/null || true
 }
 
-claude_marketplace_sync() { # claude_marketplace_sync <add-target> <expected-source>
-  local target="$1" needle="$2" current
+claude_marketplace_sync() { # claude_marketplace_sync <source>
+  local source="$1" current
   current="$(claude_marketplace_current_source)"
-  if [ -n "$current" ] && [ "$current" = "$needle" ]; then
+  if [ -n "$current" ] && [ "$current" = "$source" ]; then
     info "$CLAUDE_BIN plugin marketplace update ($MARKETPLACE_NAME)"
     claude_cmd plugin marketplace update "$MARKETPLACE_NAME" || \
       warn 'marketplace update returned non-zero — continuing'
@@ -1664,8 +1659,8 @@ claude_marketplace_sync() { # claude_marketplace_sync <add-target> <expected-sou
     claude_cmd plugin uninstall "$PLUGIN_ID" >/dev/null 2>&1 || true
     claude_cmd plugin marketplace remove "$MARKETPLACE_NAME" >/dev/null 2>&1 || true
   fi
-  info "$CLAUDE_BIN plugin marketplace add ($target)"
-  claude_cmd plugin marketplace add "$target" || {
+  info "$CLAUDE_BIN plugin marketplace add ($source)"
+  claude_cmd plugin marketplace add "$source" || {
     err "$CLAUDE_BIN plugin marketplace add failed"
     return 1
   }
@@ -1709,77 +1704,6 @@ if (entry.autoUpdate === undefined) {
   fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n");
 }
 NODE
-}
-
-# Claude Code's shallow clones can't use the TOS dumb-HTTP git repo, but a URL
-# marketplace whose entry downloads the plugin zip installs and auto-updates
-# with no git at all.
-install_claude_tos_url() {
-  claude_supports_archive_source || return 1
-  if ! claude_marketplace_sync "$CC_TOS_MARKETPLACE_URL" "$CC_TOS_MARKETPLACE_URL"; then
-    warn "$(t 'TOS marketplace unavailable; falling back to the archive directory.' 'TOS marketplace 不可用，回退到归档目录方式。')"
-    return 1
-  fi
-  if is_native_claude_bin; then
-    claude_enable_marketplace_autoupdate "$CC_TOS_MARKETPLACE_URL"
-  fi
-}
-
-install_claude_modern() {
-  if [ "$SOURCE_MODE" = "dev" ] || ! install_claude_tos_url; then
-    ensure_bundle
-    claude_marketplace_sync "$MKT_DIR" "$MKT_DIR" || return 1
-  else
-    CLAUDE_URL_BINS="$(append_csv_list "$CLAUDE_URL_BINS" "$CLAUDE_BIN")"
-  fi
-  if str_contains "$(claude_cmd plugin list 2>/dev/null || true)" "$PLUGIN_ID"; then
-    info "$CLAUDE_BIN plugin update ($PLUGIN_ID)"
-    claude_cmd plugin update "$PLUGIN_ID" || warn "$CLAUDE_BIN plugin update returned non-zero"
-  else
-    info "$CLAUDE_BIN plugin install ($PLUGIN_ID)"
-    claude_cmd plugin install "$PLUGIN_ID" || { err "$CLAUDE_BIN plugin install failed"; return 1; }
-  fi
-  claude_cmd plugin enable "$PLUGIN_ID" >/dev/null 2>&1 || true
-  info "$(t 'Claude-format plugin installed:' 'Claude 格式插件已安装：') $CLAUDE_BIN -> $PLUGIN_ID"
-}
-
-install_claude_legacy() {
-  local plugin_dir hooks_src ts
-  ensure_bundle
-  plugin_dir="$(plugin_dir_on_disk claude-code-memory-plugin)" || {
-    err 'legacy install needs the plugin sources on disk and the bundle has none'
-    return 1
-  }
-  hooks_src="$plugin_dir/hooks/hooks.json"
-  ts=$(date +%Y%m%d-%H%M%S)
-
-  info "Legacy mode: $CLAUDE_BIN mcp add (stdio proxy) + merging hooks into $CC_SETTINGS"
-  claude_cmd mcp remove openviking -s user >/dev/null 2>&1 || true
-  claude_cmd mcp add --scope user openviking -- node "$plugin_dir/servers/mcp-proxy.mjs" || {
-    err "$CLAUDE_BIN mcp add failed"
-    return 1
-  }
-
-  [ -f "$hooks_src" ] || { err "hooks source not found: $hooks_src"; return 1; }
-  mkdir -p "$HOME/.claude"
-  [ -f "$CC_SETTINGS" ] || echo '{}' > "$CC_SETTINGS"
-  cp -p "$CC_SETTINGS" "$CC_SETTINGS.bak.$ts"
-  info "Backup: $CC_SETTINGS.bak.$ts"
-  node - "$hooks_src" "$CC_SETTINGS" "$plugin_dir" <<'NODE' || { err "merging hooks into $CC_SETTINGS failed; original untouched"; return 1; }
-const fs = require("node:fs");
-const [hooksSrc, settingsPath, pluginDir] = process.argv.slice(2);
-const expand = (v) => {
-  if (typeof v === "string") return v.split("${CLAUDE_PLUGIN_ROOT}").join(pluginDir);
-  if (Array.isArray(v)) return v.map(expand);
-  if (v && typeof v === "object") return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, expand(x)]));
-  return v;
-};
-const hooks = expand(JSON.parse(fs.readFileSync(hooksSrc, "utf8")));
-const settings = JSON.parse(fs.readFileSync(settingsPath, "utf8"));
-settings.hooks = { ...(settings.hooks || {}), ...(hooks.hooks || {}) };
-fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n");
-NODE
-  info 'hooks merged'
 }
 
 # Claude Code keeps each plugin version in a directory of its own and records
@@ -1856,31 +1780,45 @@ NODE
   info 'Silence it anytime with: export OPENVIKING_STATUSLINE=off'
 }
 
+# Claude Code's shallow clones can't use the TOS dumb-HTTP git repo, but a URL
+# marketplace whose entry downloads the plugin zip installs and auto-updates
+# with no git at all.
 install_claude() {
   step_heading "$(t 'Claude Code plugin' 'Claude Code 插件')"
   command -v "$CLAUDE_BIN" >/dev/null 2>&1 || {
     warn "$(t 'Claude-format CLI not found; skipping:' '未找到 Claude 格式 CLI，跳过：') $CLAUDE_BIN"
     return 0
   }
-  if has_plugin_subcommand; then
-    install_claude_modern || return 1
-  else
-    warn "$(t "This Claude-format CLI doesn't expose 'plugin'." '当前 Claude 格式 CLI 没有 plugin 子命令。') ($CLAUDE_BIN)"
-    if ! is_native_claude_bin; then
-      warn "$(t 'Legacy compatibility mode is only supported for the native claude command; skipping this custom CLI.' '旧版兼容模式仅支持原生 claude 命令；跳过这个自定义 CLI。')"
-      return 0
-    fi
-    if [ "$INTERACTIVE" -eq 1 ]; then
-      tui_menu "$(t 'Use legacy compatibility mode (claude mcp add + settings.json merge)?' '使用旧版兼容模式（claude mcp add + settings.json 合并）？')" 0 \
-        "$(t 'Yes, install in legacy mode' '是，用兼容模式安装')" \
-        "$(t 'Skip Claude Code' '跳过 Claude Code')"
-      if [ "$TUI_MENU_CHOICE" -eq 1 ]; then
-        info "$(t 'Skipped Claude Code install.' '跳过 Claude Code 安装。')"
-        return 0
-      fi
-    fi
-    install_claude_legacy || return 1
+  if ! has_plugin_subcommand; then
+    warn "$(t "Skipping $CLAUDE_BIN: it has no 'plugin' command. The plugin needs Claude Code 2.0 or newer; upgrade it and re-run this installer." "跳过 ${CLAUDE_BIN}：它没有 plugin 子命令。插件需要 Claude Code 2.0 或更新版本，请升级后重跑本安装脚本。")"
+    return 0
   fi
+  local url=0
+  if [ "$SOURCE_MODE" = "archive" ] && claude_supports_archive_source; then
+    if claude_marketplace_sync "$CC_TOS_MARKETPLACE_URL"; then
+      url=1
+    else
+      warn "$(t 'TOS marketplace unavailable; falling back to the archive directory.' 'TOS marketplace 不可用，回退到归档目录方式。')"
+    fi
+  fi
+  if [ "$url" -eq 1 ]; then
+    if is_native_claude_bin; then
+      claude_enable_marketplace_autoupdate "$CC_TOS_MARKETPLACE_URL"
+    fi
+    CLAUDE_URL_BINS="$(append_csv_list "$CLAUDE_URL_BINS" "$CLAUDE_BIN")"
+  else
+    ensure_bundle
+    claude_marketplace_sync "$MKT_DIR" || return 1
+  fi
+  if str_contains "$(claude_cmd plugin list 2>/dev/null || true)" "$PLUGIN_ID"; then
+    info "$CLAUDE_BIN plugin update ($PLUGIN_ID)"
+    claude_cmd plugin update "$PLUGIN_ID" || warn "$CLAUDE_BIN plugin update returned non-zero"
+  else
+    info "$CLAUDE_BIN plugin install ($PLUGIN_ID)"
+    claude_cmd plugin install "$PLUGIN_ID" || { err "$CLAUDE_BIN plugin install failed"; return 1; }
+  fi
+  claude_cmd plugin enable "$PLUGIN_ID" >/dev/null 2>&1 || true
+  info "$(t 'Claude-format plugin installed:' 'Claude 格式插件已安装：') $CLAUDE_BIN -> $PLUGIN_ID"
   if is_native_claude_bin; then
     register_statusline || true
   fi
@@ -2907,6 +2845,7 @@ print_plan() {
     while IFS= read -r CLAUDE_BIN; do
       [ -n "$CLAUDE_BIN" ] || continue
       command -v "$CLAUDE_BIN" >/dev/null 2>&1 || continue
+      has_plugin_subcommand || continue
       if [ "$SOURCE_MODE" = "archive" ] && claude_supports_archive_source; then
         plan_item "$CLAUDE_BIN plugin marketplace add/update $CC_TOS_MARKETPLACE_URL ($fallback)"
       else
@@ -3009,6 +2948,7 @@ print_next_steps() {
     while IFS= read -r CLAUDE_BIN; do
       [ -n "$CLAUDE_BIN" ] || continue
       command -v "$CLAUDE_BIN" >/dev/null 2>&1 || continue
+      has_plugin_subcommand || continue
       label="$(tui_bin_label claude "$CLAUDE_BIN")"
       updates="$rerun"
       if list_contains_line "$CLAUDE_URL_BINS" "$CLAUDE_BIN"; then

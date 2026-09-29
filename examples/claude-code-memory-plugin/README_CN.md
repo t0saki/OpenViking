@@ -90,7 +90,7 @@ jq -e . /tmp/ov-settings.json >/dev/null && mv /tmp/ov-settings.json ~/.claude/s
 rm -f /tmp/ov-hooks.json
 ```
 
-一行安装脚本在检测到 2.0 之前的版本时会自动执行以上流程（并把发布包解压到 `~/.openviking/memory-plugin-marketplace` 供上面的绝对路径引用）。
+一行安装脚本不会做以上配置：检测到 2.0 之前的版本时，它会跳过 Claude Code 并提示升级。
 
 #### 4. 启动 Claude Code
 

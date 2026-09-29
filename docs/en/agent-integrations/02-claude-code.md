@@ -46,7 +46,7 @@ If you prefer to set it up manually:
 >
 > Using pure local mode (`http://127.0.0.1:1933`, no authentication)? Skip step 1—the plugin automatically defaults to the local setup.
 >
-> Running Claude Code < 2.0? The installer detects it and falls back to `claude mcp add` + a hooks merge automatically; see the [Legacy mode section in the plugin README](https://github.com/volcengine/OpenViking/blob/main/examples/claude-code-memory-plugin/README.md#legacy-mode-claude-code--20).
+> Running Claude Code < 2.0? The installer skips it and asks you to upgrade. To wire it up by hand with `claude mcp add` and a hooks merge, see the [Legacy mode section in the plugin README](https://github.com/volcengine/OpenViking/blob/main/examples/claude-code-memory-plugin/README.md#legacy-mode-claude-code--20).
 
 </details>
 
