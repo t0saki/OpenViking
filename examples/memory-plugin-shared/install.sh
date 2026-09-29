@@ -563,9 +563,12 @@ mask_secret() {
 
 json_merge_ovcli() {
   local file="$1" url="$2" key="$3" account="$4" user="$5"
-  node - "$file" "$url" "$key" "$account" "$user" <<'NODE'
+  # Not as arguments: any user can read those in the process list, and one of
+  # the values is the API key.
+  OVCLI_URL="$url" OVCLI_API_KEY="$key" OVCLI_ACCOUNT="$account" OVCLI_USER="$user" node - "$file" <<'NODE'
 const fs = require("node:fs");
-const [file, url, apiKey, account, user] = process.argv.slice(2);
+const file = process.argv[2];
+const { OVCLI_URL: url, OVCLI_API_KEY: apiKey, OVCLI_ACCOUNT: account, OVCLI_USER: user } = process.env;
 let c = {};
 try { c = JSON.parse(fs.readFileSync(file, "utf8")); } catch {}
 if (url) c.url = url;

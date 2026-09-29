@@ -278,6 +278,36 @@ write_ovcli
   assert.equal(JSON.parse(readFileSync(conf, "utf8")).api_key, "rotated-key");
 });
 
+test("the API key reaches ovcli.conf without passing through a process argument", (t) => {
+  const home = makeTempHome(t);
+  const bin = join(home, "bin");
+  mkdirSync(bin);
+  const log = join(home, "node.log");
+  writeFileSync(join(bin, "node"), `#!/bin/sh\necho "$*" >> "${log}"\nexec "${process.execPath}" "$@"\n`, { mode: 0o755 });
+  const conf = join(home, "ovcli.conf");
+
+  const result = runInstallerPrelude(`
+OV_HOME=${JSON.stringify(home)}
+OVCLI_CONF=${JSON.stringify(conf)}
+CRED_URL="https://example.invalid/openviking"
+CRED_KEY="secret-api-key"
+CRED_ACCOUNT="acct"
+CRED_USER="usr"
+write_ovcli
+`, { PATH: `${bin}:${process.env.PATH}` });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(JSON.parse(readFileSync(conf, "utf8")), {
+    url: "https://example.invalid/openviking",
+    api_key: "secret-api-key",
+    account: "acct",
+    user: "usr",
+  });
+  const calls = readFileSync(log, "utf8");
+  assert.match(calls, /ovcli\.conf/);
+  assert.doesNotMatch(calls, /secret-api-key/);
+});
+
 test("a first-time setup offers the local server first", () => {
   const result = runInstallerPrelude(`
 tui_menu() { TUI_MENU_CHOICE="$2"; }
