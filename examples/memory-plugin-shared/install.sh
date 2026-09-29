@@ -44,6 +44,8 @@
 
 set -Eeuo pipefail
 
+# Replaced with the release version when the release pipeline publishes this file.
+INSTALLER_VERSION="dev"
 OV_HOME="${OPENVIKING_HOME:-$HOME/.openviking}"
 REPO_URL="${OPENVIKING_REPO_URL:-https://github.com/volcengine/OpenViking.git}"
 REPO_DIR="${OPENVIKING_REPO_DIR:-$OV_HOME/openviking-repo}"
