@@ -173,7 +173,8 @@ ask before stopping or restarting it.
 - After changing `url`, installing or updating the plugin: restart Claude
   Code. Hooks re-read config per invocation, the MCP proxy does not.
 - Updates: GitHub installs → `claude plugin marketplace update openviking && claude plugin update openviking-memory@openviking`;
-  TOS/archive and dev-checkout installs → re-run the installer.
+  TOS installs on Claude Code 2.1.224+ (a `url` marketplace) auto-update in the background, or on demand with `claude plugin update openviking-memory@openviking`;
+  older TOS, archive and dev-checkout installs → re-run the installer.
 - Confirm the fix by rerunning the doctor, then by observing an
   `<openviking-context>` block on the next prompt.
 

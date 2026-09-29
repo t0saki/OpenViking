@@ -133,10 +133,18 @@ function checkInstall(report, { cliOnPath }) {
     } else {
       const source = entry.source || {};
       const location = entry.installLocation || source.path || "";
-      const desc = source.source === "directory" ? `directory ${homeShort(source.path || "")}` : source.source === "github" ? `github ${source.repo || ""}` : JSON.stringify(source);
+      const desc = source.source === "directory" ? `directory ${homeShort(source.path || "")}` : source.source === "github" ? `github ${source.repo || ""}` : source.source === "url" ? `url ${source.url || ""}` : JSON.stringify(source);
       if (/\.json$/i.test(String(source.path || ""))) {
         report.warn(`marketplace '${MARKETPLACE}' is registered as a file (${homeShort(source.path)})`, "file-type marketplaces mis-derive installLocation and `claude plugin marketplace update` fails with EISDIR",
           "claude plugin marketplace remove openviking && re-run the installer (it registers a directory)");
+      } else if (source.source === "url") {
+        // Claude Code caches a URL marketplace as a bare manifest file, so there
+        // is no directory at installLocation to check.
+        report.ok(`marketplace '${MARKETPLACE}' → ${desc}`);
+        // The user-settings declaration wins; known_marketplaces.json only
+        // catches up with it on Claude Code's next startup.
+        const declared = tryJson(join(CLAUDE_DIR, "settings.json"))?.extraKnownMarketplaces?.[MARKETPLACE]?.autoUpdate;
+        report.info((declared ?? entry.autoUpdate) ?"auto-update is on (Claude Code checks in the background during interactive sessions; a new version loads after restart)" : "auto-update is off: update with claude plugin update openviking-memory@openviking, or enable it for this marketplace in /plugin");
       } else if (location && !existsPath(join(location, ".claude-plugin", "marketplace.json"))) {
         report.fail(`marketplace '${MARKETPLACE}' points at a missing directory`, `${desc}\nexpected ${homeShort(join(location, ".claude-plugin", "marketplace.json"))}`,
           "the checkout/archive was moved or deleted; re-run the installer");
