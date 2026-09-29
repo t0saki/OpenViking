@@ -72,7 +72,8 @@
 # asks https://openviking.net/install/v1/<harness>.json which release to
 # install, once per selected harness. OPENVIKING_SKIP_VERSION_CHECK=1 skips the
 # check and installs the latest release, which is also what happens when the
-# check fails.
+# check fails. The docs site holds the latest release only, so there the answer
+# names it.
 #
 # Run from a repository checkout, it installs that checkout's plugins and skips
 # the release (--source archive installs the release instead). A copy that is
@@ -1578,8 +1579,9 @@ EOF
 }
 
 # Asks the install site which release to install, one request per harness in
-# parallel. Anything short of a well-formed answer that points into the
-# download location keeps the built-in latest-release URLs, without a word: the answer
+# parallel. The answer names one download location; the same paths are read
+# from the one in use. Anything short of a well-formed answer that points into
+# a download location keeps the built-in latest-release URLs, without a word: the answer
 # only pins the release and must never slow down or break the install.
 resolve_release() {
   [ "$SOURCE_MODE" = "archive" ] || return 0
@@ -1606,14 +1608,16 @@ EOF
   done <<EOF
 $(node -e '
   const fs = require("node:fs");
-  const [dir, prefix, names] = process.argv.slice(1);
+  const [dir, base, bases, names] = process.argv.slice(1);
+  const known = bases.split(/\s+/).filter(Boolean).map((b) => b.replace(/\/+$/, "") + "/");
   const out = {};
   for (const name of names.split("\n").filter(Boolean)) {
     let r;
     try { r = JSON.parse(fs.readFileSync(dir + "/" + name + ".json", "utf8")); } catch { continue; }
     if (!r || r.schema !== 1) continue;
     const urls = Object.keys(r).filter((k) => k.endsWith("_url"));
-    if (urls.some((k) => typeof r[k] !== "string" || !r[k].startsWith(prefix) || /\s/.test(r[k]))) continue;
+    if (urls.some((k) => typeof r[k] !== "string" || /\s/.test(r[k]) || !known.some((b) => r[k].startsWith(b)))) continue;
+    for (const k of urls) r[k] = base + "/" + r[k].slice(known.find((b) => r[k].startsWith(b)).length);
     if (!out.version && typeof r.version === "string" && /^[\w.+-]+$/.test(r.version)) out.version = r.version;
     if (!out.bundle_url && r.bundle_url && /^[0-9a-f]{64}$/i.test(r.sha256 ?? "")) {
       out.bundle_url = r.bundle_url;
@@ -1622,7 +1626,7 @@ $(node -e '
     if (!out.git_url && r.git_url) out.git_url = r.git_url;
   }
   for (const [key, value] of Object.entries(out)) process.stdout.write(key + "=" + value + "\n");
-' "$dir" "$DOWNLOAD_BASE/" "$names" 2>/dev/null || true)
+' "$dir" "$DOWNLOAD_BASE" "$DOWNLOAD_BASES" "$names" 2>/dev/null || true)
 EOF
   rm -rf "$dir"
 }

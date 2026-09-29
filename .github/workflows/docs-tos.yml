@@ -213,6 +213,7 @@ jobs:
           upload plugins/claude/marketplace.json application/json
           bash .github/scripts/publish-dumb-git-repo.sh "${DL_DIR}/plugins/memory-plugins.git" \
             "s3://${TOS_BUCKET}/dl/plugins/memory-plugins.git" --endpoint-url "https://${TOS_S3_ENDPOINT}"
+          upload releases/latest/channels.json application/json
 
       - name: Report TOS deployment failure
         if: steps.setup_python.outcome == 'failure' || steps.install_aws_cli.outcome == 'failure' || steps.upload_tos.outcome == 'failure' || steps.upload_downloads.outcome == 'failure'

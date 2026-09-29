@@ -90,7 +90,7 @@ TOS 发布流程会生成源码 zip，并上传以下类型资产：
 
 ### 文档站上的 Memory 插件下载
 
-安装器和 Memory 插件从文档站下载，不再从 TOS 发布桶下载。两条文档部署流水线（`17. Docs` 部署到 GitHub Pages 的 `docs.openviking.ai`，`19. Docs TOS Deploy` 部署到 `docs.openviking.net`）都会运行 `.github/scripts/build-plugin-downloads.sh`，把产物发布到 `/dl` 下，目录结构与发布桶一致：`memory-plugin-shared/install.sh` 和 `bootstrap.sh`、`releases/latest/memory-plugin-marketplace.zip`、`plugins/claude/marketplace.json` 和 `plugins/claude/openviking-memory-<插件版本>.zip`、`plugins/memory-plugins.git`。
+安装器和 Memory 插件从文档站下载，不再从 TOS 发布桶下载。两条文档部署流水线（`17. Docs` 部署到 GitHub Pages 的 `docs.openviking.ai`，`19. Docs TOS Deploy` 部署到 `docs.openviking.net`）都会运行 `.github/scripts/build-plugin-downloads.sh`，把产物发布到 `/dl` 下，目录结构与发布桶一致：`memory-plugin-shared/install.sh` 和 `bootstrap.sh`、`releases/latest/memory-plugin-marketplace.zip`、`plugins/claude/marketplace.json` 和 `plugins/claude/openviking-memory-<插件版本>.zip`、`plugins/memory-plugins.git`，以及安装站点的版本检查读取的 `releases/latest/channels.json`。
 
 只要推送到 `main` 的提交改动了文档、插件、安装器或 `.github/scripts`，两条流水线就会部署，所以插件改动合入即发布，不需要打 tag，也不需要发 GitHub Release。发布出去的安装器以 `<日期>-<commit>` 作为版本号。发布插件修复时，合入修复并按 `.github/scripts/check-plugin-version-bumps.sh` 的要求升级插件版本；回滚时在 `main` 上 revert 该改动并再次升级版本号。两条流水线也可以在 `main` 上手动触发。
 

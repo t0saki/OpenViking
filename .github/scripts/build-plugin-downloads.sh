@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build the downloads the docs site serves under /dl: the installer, the plugin
-# bundle, the Claude Code URL marketplace and the Codex git marketplace, laid
-# out like the TOS release bucket. Each docs host publishes the tree built from
+# bundle, the Claude Code URL marketplace, the Codex git marketplace and the
+# channel data of the version check, laid out like the TOS release bucket. Each docs host publishes the tree built from
 # the commit it deploys, with its own address in the marketplace manifest.
 
 set -euo pipefail
@@ -54,5 +54,18 @@ bash "${SCRIPTS}/reproducible-zip.sh" "${OUT}/releases/latest/memory-plugin-mark
 bash "${SCRIPTS}/reproducible-zip.sh" "${OUT}/${CLAUDE_ZIP}" "${STAGE}" claude-code-memory-plugin
 bash "${SCRIPTS}/generate-claude-marketplace-json.sh" "${BASE}/${CLAUDE_ZIP}" \
   "${OUT}/${CLAUDE_ZIP}" "${STAGE}" "${OUT}/plugins/claude/marketplace.json"
+
+# What the install site's version check answers with. No checksum: the two
+# hosts deploy one after the other and keep no earlier build, so a pinned
+# bundle would fail to verify while they differ.
+jq -n \
+  --arg version "${VERSION}" \
+  --arg git_url "${BASE}/plugins/memory-plugins.git" \
+  --arg bundle_url "${BASE}/releases/latest/memory-plugin-marketplace.zip" \
+  '{schema: 1, harnesses: (
+      {codex: {version: $version, git_url: $git_url}}
+      + (["claude", "cursor", "trae", "trae-cli", "trae-cn", "zcode", "kimicode",
+          "opencode", "pi", "dsh"] | map({key: ., value: {version: $version, bundle_url: $bundle_url}}) | from_entries)
+    )}' > "${OUT}/releases/latest/channels.json"
 
 echo "Built plugin downloads ${VERSION} for ${BASE}"

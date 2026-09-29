@@ -518,6 +518,20 @@ test("the docs download tree holds what the installer fetches, under the address
       sha256: sha256(join(out, "plugins", "claude", zipName)),
     });
 
+    const channels = JSON.parse(readFileSync(join(out, "releases", "latest", "channels.json"), "utf8"));
+    assert.equal(channels.schema, 1);
+    assert.deepEqual(Object.keys(channels.harnesses).sort(), [
+      "claude", "codex", "cursor", "dsh", "kimicode", "opencode", "pi", "trae", "trae-cli", "trae-cn", "zcode",
+    ]);
+    assert.deepEqual(channels.harnesses.codex, {
+      version,
+      git_url: "https://docs.example.invalid/dl/plugins/memory-plugins.git",
+    });
+    assert.deepEqual(channels.harnesses.cursor, {
+      version,
+      bundle_url: "https://docs.example.invalid/dl/releases/latest/memory-plugin-marketplace.zip",
+    });
+
     const listed = run("unzip", ["-Z1", join(out, "releases", "latest", "memory-plugin-marketplace.zip")]);
     assert.equal(listed.status, 0, listed.stderr);
     assert.ok(listed.stdout.split("\n").includes("memory-plugin-marketplace/.claude-plugin/marketplace.json"));

@@ -533,6 +533,25 @@ exit 0
   assert.ok(existsSync(join(home, ".openviking", "agent-integrations", "cursor", "scripts", "hook.mjs")));
 });
 
+test("an answer naming another download location is read from the one in use", async () => {
+  const { home, bin, downloads } = resolverHome();
+  const other = "http://127.0.0.1:1/dl";
+  const env = { ...siteEnv, OPENVIKING_DOWNLOAD_BASE: `file://${tosBase} ${other}/` };
+
+  answers = { cursor: bundleAnswer({ bundle_url: `${other}/releases/v9.9.9/memory-plugin-marketplace.zip`, source_url: `${other}/source.zip` }) };
+  const pinned = await runAsync(home, bin, cursorArgs, env);
+  assert.equal(pinned.status, 0, `${pinned.stdout}\n${pinned.stderr}`);
+  assert.deepEqual(downloads().map((line) => line.split(" ").pop()), [`file://${pinnedZip}`]);
+
+  // The docs site's channel data carries no checksum: its version is shown
+  // and the latest bundle is installed.
+  answers = { cursor: { status: 200, body: { schema: 1, harness: "cursor", version: "20260929-0123456789", bundle_url: `${other}/releases/latest/memory-plugin-marketplace.zip` } } };
+  const latest = await runAsync(home, bin, cursorArgs, env);
+  assert.equal(latest.status, 0, `${latest.stdout}\n${latest.stderr}`);
+  assert.match(latest.stdout, /Release: 20260929-0123456789/);
+  assert.equal(downloads().pop().split(" ").pop(), latestZip);
+});
+
 test("an unavailable or untrusted resolver answer falls back to the latest release without a word", async () => {
   for (const answer of [
     { status: 503, body: { error: "unavailable" } },
