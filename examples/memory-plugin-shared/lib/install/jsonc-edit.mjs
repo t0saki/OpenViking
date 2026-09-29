@@ -357,7 +357,16 @@ export function updateOpencodeConfig(raw, { pluginSpec = "", mcpProxy = "" } = {
 
 export { stripJsonc };
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
+function isDirectRun() {
+  if (!process.argv[1]) return false;
+  try {
+    return fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+  }
+}
+
+if (isDirectRun()) {
   const file = process.argv[2];
   let raw = "";
   try { raw = fs.readFileSync(file, "utf8"); } catch {}

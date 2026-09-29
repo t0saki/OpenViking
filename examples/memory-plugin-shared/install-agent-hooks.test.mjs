@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmodSync, cpSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -585,6 +585,47 @@ test("uninstall with no installer runtime on disk removes what it can and fetche
     assert.equal(existsSync(join(home, ".cursor", "rules", "openviking-memory.mdc")), false);
     // The host's own files could not be edited, so the uninstall has to name them.
     assert.match(result.stdout, /by hand from:.*\.cursor\/hooks\.json/u, output);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+// A symlinked OPENVIKING_HOME puts a symlink in every helper path the installer
+// resolves under it; a detached script (no lib/ sibling) reads its helpers
+// from there, as the documented piped uninstall does.
+test("cursor installs and uninstalls through a symlinked OPENVIKING_HOME", () => {
+  const home = mkdtempSync(join(tmpdir(), "openviking-symlinked-home-"));
+  try {
+    const realOvHome = join(home, "real-openviking");
+    mkdirSync(realOvHome);
+    const ovHome = join(home, ".openviking");
+    symlinkSync(realOvHome, ovHome, "dir");
+    const hooksPath = join(home, ".cursor", "hooks.json");
+    const mcpPath = join(home, ".cursor", "mcp.json");
+    const detached = join(home, "install.sh");
+    cpSync(installer, detached);
+
+    const installed = runInstaller(home, [
+      "--harness", "cursor",
+      "--source", "dev",
+      "--lang", "en",
+      "--url", "http://127.0.0.1:1933",
+      "--api-key", "",
+      "--yes",
+    ], { OPENVIKING_HOME: ovHome });
+    assert.equal(installed.status, 0, `${installed.stdout}\n${installed.stderr}`);
+    assert.ok(hookCommands(JSON.parse(readFileSync(hooksPath, "utf8"))).some((command) => command.includes("openviking-memory")));
+    assert.ok(JSON.parse(readFileSync(mcpPath, "utf8")).mcpServers.openviking);
+
+    const removed = runInstaller(home, ["--harness", "cursor", "--uninstall", "--lang", "en", "--yes"], {
+      OPENVIKING_HOME: ovHome,
+    }, detached);
+    assert.equal(removed.status, 0, `${removed.stdout}\n${removed.stderr}`);
+    assert.deepEqual(
+      hookCommands(JSON.parse(readFileSync(hooksPath, "utf8"))).filter((command) => command.includes("openviking-memory")),
+      [],
+    );
+    assert.equal(Boolean(JSON.parse(readFileSync(mcpPath, "utf8")).mcpServers?.openviking), false);
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
