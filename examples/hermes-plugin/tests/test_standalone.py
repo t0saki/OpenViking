@@ -36,7 +36,8 @@ def test_initialized_profile_owns_connection_and_recall_across_other_profile(ext
         class Handler(BaseHTTPRequestHandler):
             def do_POST(self):
                 body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-                requests.append((label, self.path, body, self.headers.get("X-API-Key"),
+                assert self.headers.get("X-API-Key") is None
+                requests.append((label, self.path, body, self.headers.get("Authorization"),
                                  self.headers.get("X-OpenViking-Actor-Peer")))
                 payload = b'{"result":{"memories":[]}}'
                 self.send_response(200)
@@ -120,7 +121,7 @@ def test_initialized_profile_owns_connection_and_recall_across_other_profile(ext
             assert provider._resolve_bound_connection_settings()["endpoint"] == module._DEFAULT_ENDPOINT
 
         assert [(label, key, peer) for label, _, _, key, peer in requests] == [
-            ("a", "key-a", "peer-a"), ("a", "key-a-new", "peer-a-new"),
+            ("a", "Bearer key-a", "peer-a"), ("a", "Bearer key-a-new", "peer-a-new"),
             ("a", None, "peer-a")
         ]
         assert all(body["session_id"] == "session-a" for _, _, body, _, _ in requests)

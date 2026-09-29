@@ -5,10 +5,11 @@ from __future__ import annotations
 import mimetypes
 import re
 from contextlib import suppress
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Optional
 
-from .host import _HERMES_VERSION, get_secret
+from .host import get_secret
 from .log import get_logger
 from .settings import _DEFAULT_AGENT
 
@@ -23,7 +24,70 @@ def default_deps():
 logger = get_logger()
 
 
-_OPENVIKING_USER_AGENT = f"openviking-memory-hermes/{_HERMES_VERSION}"
+
+
+def _read_plugin_version() -> str:
+    """The plugin's own version from plugin.yaml; ``0.0.0`` when it cannot be read."""
+    with suppress(OSError, UnicodeDecodeError):
+        text = (Path(__file__).resolve().parent.parent / "plugin.yaml").read_text(encoding="utf-8")
+        match = re.search(r"^version:\s*[\"']?([^\s\"']+)", text, flags=re.MULTILINE)
+        if match:
+            return match.group(1)
+    return "0.0.0"
+
+
+def build_user_agent(plugin: str, version: str) -> str:
+    """``openviking-memory-<plugin>/<version>``; an empty version falls back to 0.0.0."""
+    return f"openviking-memory-{plugin}/{version or '0.0.0'}"
+
+
+@lru_cache(maxsize=1)
+def _openviking_user_agent() -> str:
+    """Read plugin.yaml on first use, never at import time."""
+    return build_user_agent("hermes", _read_plugin_version())
+
+
+def build_openviking_headers(*, api_key: str = "", account: str = "", user: str = "",
+                             trusted_identity: bool = False, identity_override: bool | None = None,
+                             actor_peer_id: str = "", user_agent: str = "",
+                             content_type: bool = True) -> dict:
+    """Headers for one OpenViking request, shared by the REST client and the MCP bridge.
+
+    The key goes out only as ``Authorization: Bearer``. Account and user headers are
+    sent only for a trusted server, or when ``identity_override`` asks for them on
+    this request. Empty values are omitted.
+    """
+    headers = {"Content-Type": "application/json"} if content_type else {}
+    if api_key:
+        headers["Authorization"] = "Bearer " + api_key
+    send_identity = trusted_identity if identity_override is None else identity_override
+    if send_identity:
+        if account:
+            headers["X-OpenViking-Account"] = account
+        if user:
+            headers["X-OpenViking-User"] = user
+    if actor_peer_id:
+        headers["X-OpenViking-Actor-Peer"] = actor_peer_id
+    if user_agent:
+        headers["User-Agent"] = user_agent
+    return headers
+
+
+def is_retryable_failure(status: Optional[int], error: Any = None) -> bool:
+    """Whether a failed OpenViking call is worth retrying (contract ``retryable.json``).
+
+    ``status`` 0 or None means no HTTP response arrived. 408, 429 and 5xx retry; 409
+    retries only when the error body carries ``details.retryable is True``.
+    """
+    if not status:
+        return True
+    if status in (408, 429) or 500 <= status <= 599:
+        return True
+    if status == 409 and isinstance(error, dict):
+        details = error.get("details")
+        return isinstance(details, dict) and details.get("retryable") is True
+    return False
+
 _IDENTITY_UNSET = object()
 _TIMEOUT = 30.0
 # Identity probe states; "modern" and "legacy" are the two identified ones.
@@ -107,16 +171,12 @@ class _VikingClient:
             raise ImportError("httpx is required for OpenViking: pip install httpx")
 
     def _headers(self, *, include_tenant: bool | None = None) -> dict:
-        if include_tenant is None:
-            include_tenant = not bool(self._api_key)
-        h = {"Content-Type": "application/json", "User-Agent": _OPENVIKING_USER_AGENT}
-        if self._agent:
-            h["X-OpenViking-Actor-Peer"] = self._agent
-        if include_tenant:
-            h.update({k: v for k, v in (("X-OpenViking-Account", self._account), ("X-OpenViking-User", self._user)) if v})
-        if self._api_key:
-            h.update({"X-API-Key": self._api_key, "Authorization": "Bearer " + self._api_key})
-        return h
+        # Without a key the server is a local/trusted one; with a key, identity headers
+        # go out only when the trusted-identity retry asks for them.
+        return build_openviking_headers(
+            api_key=self._api_key, account=self._account, user=self._user,
+            trusted_identity=not bool(self._api_key), identity_override=include_tenant,
+            actor_peer_id=self._agent, user_agent=_openviking_user_agent())
 
     @staticmethod
     def _needs_trusted_identity_retry(exc: Exception) -> bool:

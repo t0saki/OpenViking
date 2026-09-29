@@ -67,7 +67,6 @@ from .core.host import (
 from .core.http import (
     _IDENTITY_UNSET,
     _OPENVIKING_IDENTIFIED_STATES,
-    _OPENVIKING_USER_AGENT,
     _TIMEOUT,
     RestResultMixin,
     _format_openviking_exception,
