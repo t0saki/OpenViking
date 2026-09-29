@@ -591,7 +591,7 @@ class OpenVikingMemoryProvider(
                 self._mark_session_committed(sid, committed=False, scope=scope)
                 _register_for_exit(self)
                 self._mark_session_pending(sid, scope=scope)
-                client = upload.run()
+                client = self._upload_turn(upload, sid, scope)
             if client is not None:
                 self._maybe_commit_live_session(sid, turn_count, threshold, client, scope)
 

@@ -7,9 +7,9 @@ import json
 import threading
 import weakref
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Set
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from .connection import _CommitScope
 from .deps import default_deps
@@ -24,6 +24,9 @@ logger = get_logger()
 _SESSION_DRAIN_TIMEOUT = 10.0
 _DEFERRED_COMMIT_TIMEOUT = (_TIMEOUT * 2) + 5.0
 _SESSION_MESSAGE_BATCH_LIMIT = 100
+# Bound of one (sid, generation) backlog of unsent messages; the oldest are dropped first.
+_BACKLOG_MAX_MESSAGES = 2000
+_BACKLOG_MAX_BYTES = 8 * 1024 * 1024
 _SYNC_TRACE_ENV = "HERMES_OPENVIKING_SYNC_TRACE"
 # Host contexts that must not write into OpenViking. Fixed-prompt output from scheduled
 # jobs, delegated subagents, and flush forks has no memory value and would spend server-side
@@ -82,10 +85,35 @@ def _atexit_commit_sessions(budget: float = _EXIT_COMMIT_BUDGET):
                 provider._release_run_lock()
 
 
+def _upload_failure_kind(error: Exception) -> str:
+    """``retry`` (network, 408, 429, 5xx, retryable 409), ``auth`` (401/403, never retried
+    at once), ``fallback`` (404/405: batch endpoint missing) or ``drop`` (other 4xx)."""
+    status = _status_code_from_error(error)
+    if status is None or status in (408, 429) or status >= 500:
+        return "retry"
+    if status == 409 and getattr(error, "retryable", False) is True:
+        return "retry"
+    if status in (401, 403):
+        return "auth"
+    if status in (404, 405):
+        return "fallback"
+    return "drop"
+
+
+@dataclass
+class _Backlog:
+    """Unsent messages of one (sid, connection generation), oldest first."""
+
+    client: _VikingClient
+    messages: List[Dict[str, Any]] = field(default_factory=list)
+    sizes: List[int] = field(default_factory=list)
+    auth_failed: bool = False
+
+
 @dataclass
 class _TurnUpload:
-    """One turn's OpenViking upload: structured batches first, falling back to plain text
-    on a first-batch failure, and to individual messages after a failed retry."""
+    """One turn's OpenViking upload: structured batches, one retry for a retryable failure,
+    then individual messages. What is still unsent afterwards is ``unsent()``."""
 
     client: _VikingClient
     sid: str
@@ -95,10 +123,26 @@ class _TurnUpload:
     assistant_peer_id: str
     user_peer_id: str = ""
     next_index: int = 0
+    failure_kind: str = ""
 
     def _trace(self, fmt: str, *args) -> None:
         if env_var_enabled(_SYNC_TRACE_ENV):
             logger.info("OpenViking sync_turn trace: " + fmt, *args)
+
+    def materialize(self) -> None:
+        """A turn without a structured batch is sent as one user + one assistant text message."""
+        if self.batch_messages:
+            return
+        user_message: Dict[str, Any] = {"role": "user", "parts": [{"type": "text", "text": self.user_content[:4000]}]}
+        if self.user_peer_id:
+            user_message["peer_id"] = self.user_peer_id
+        assistant_message: Dict[str, Any] = {"role": "assistant", "parts": [{"type": "text", "text": _message_text(self.assistant_content)[:4000]}]}
+        if self.assistant_peer_id:
+            assistant_message["peer_id"] = self.assistant_peer_id
+        self.batch_messages = [user_message, assistant_message]
+
+    def unsent(self) -> List[Dict[str, Any]]:
+        return self.batch_messages[self.next_index:]
 
     def post(self, client: _VikingClient) -> None:
         while self.next_index < len(self.batch_messages):
@@ -106,55 +150,43 @@ class _TurnUpload:
             payload = {"messages": self.batch_messages[self.next_index:batch_end]}
             self._trace("POST /api/v1/sessions/%s/messages/batch range=%d:%d payload=%s",
                         self.sid, self.next_index, batch_end, json.dumps(payload, ensure_ascii=False))
-            try:
-                client.post(f"/api/v1/sessions/{self.sid}/messages/batch", payload)
-            except Exception as batch_error:
-                if self.next_index:
-                    raise
-                logger.warning("OpenViking structured sync failed; falling back to text sync: %s", batch_error)
-                break
+            client.post(f"/api/v1/sessions/{self.sid}/messages/batch", payload)
             self.next_index = batch_end
-        if self.batch_messages and self.next_index == len(self.batch_messages):
-            return
-        # Plain-text fallback: one user + one assistant message.
-        user_message: Dict[str, Any] = {"role": "user", "parts": [{"type": "text", "text": self.user_content[:4000]}]}
-        if self.user_peer_id:
-            user_message["peer_id"] = self.user_peer_id
-        assistant_message: Dict[str, Any] = {"role": "assistant", "parts": [{"type": "text", "text": _message_text(self.assistant_content)[:4000]}]}
-        if self.assistant_peer_id:
-            assistant_message["peer_id"] = self.assistant_peer_id
-        client.post(f"/api/v1/sessions/{self.sid}/messages/batch",
-                    {"messages": [user_message, assistant_message]})
 
     def run(self) -> Optional[_VikingClient]:
-        try:
-            client = self.client
-            self.post(client)
-            return client
-        except Exception as e:
-            logger.debug("OpenViking sync_turn failed, retrying: %s", e)
-        retry_client = None
-        try:
-            # The HTTP wrapper opens a new connection for every request. Keep
-            # the original identity even if /reload happens during the retry.
-            retry_client = self.client
-            self.post(retry_client)
-            return retry_client
-        except Exception as retry_error:
-            if retry_client is None or self.next_index >= len(self.batch_messages):
-                logger.warning("OpenViking sync_turn failed: %s", retry_error)
-                return
-            logger.warning("OpenViking structured sync retry failed; writing %d remaining messages individually: %s",
-                           len(self.batch_messages) - self.next_index, retry_error)
+        """Return the client on success; otherwise ``failure_kind`` says why ``unsent()`` is left.
+        The HTTP wrapper opens a new connection for every request, and every attempt keeps the
+        identity captured with the turn even if /reload happens meanwhile."""
+        self.materialize()
+        client = self.client
+        for attempt in (0, 1):
+            try:
+                self.post(client)
+                return client
+            except Exception as e:
+                kind = _upload_failure_kind(e)
+                if kind == "retry" and attempt == 0:
+                    logger.debug("OpenViking sync_turn failed, retrying: %s", e)
+                    continue
+                self.failure_kind = kind
+                if kind == "auth":
+                    logger.warning("OpenViking sync_turn rejected (not retried): %s", e)
+                    return None
+                logger.warning("OpenViking structured sync failed; writing %d remaining messages individually: %s",
+                               len(self.batch_messages) - self.next_index, e)
+                break
         try:
             path = f"/api/v1/sessions/{self.sid}/messages"
             for payload in self.batch_messages[self.next_index:]:
                 self._trace("POST %s message_index=%d payload=%s", path, self.next_index, json.dumps(payload, ensure_ascii=False))
-                retry_client.post(path, payload)
+                client.post(path, payload)
                 self.next_index += 1
-            return retry_client
+            self.failure_kind = ""
+            return client
         except Exception as fallback_error:
+            self.failure_kind = _upload_failure_kind(fallback_error)
             logger.warning("OpenViking sync_turn failed during individual-message fallback: %s", fallback_error)
+        return None
 
 
 class SessionWriterMixin:
@@ -219,6 +251,91 @@ class SessionWriterMixin:
                 return [t for t in self._inflight_writers.get(sid, ()) if t.is_alive()]
         return self._join_all(alive, timeout)
 
+    # -- backlog of unsent messages (always under _writer_commit_lock) -------
+
+    def _backlog_table(self) -> Dict[Tuple[str, str], _Backlog]:
+        """Unsent messages keyed by (sid, connection generation), in insertion order."""
+        table = self.__dict__.get("_upload_backlog")
+        if table is None:
+            table = self.__dict__.setdefault("_upload_backlog", {})
+        return table
+
+    def _prune_backlog(self) -> None:
+        """Messages rejected with 401/403 are never sent under other credentials."""
+        table = self._backlog_table()
+        with self._session_state_lock:
+            current = self._commit_scope.marker_id if self._commit_scope is not None else None
+        for key, entry in list(table.items()):
+            if entry.auth_failed and key[1] != current:
+                del table[key]
+                logger.warning("OpenViking dropped %d unsent messages of session %s: they were rejected with 401/403 "
+                               "and the connection changed since", len(entry.messages), key[0])
+
+    def _backlog_add(self, sid: str, scope: _CommitScope, client: _VikingClient, messages: List[Dict[str, Any]],
+                     *, auth_failed: bool) -> None:
+        if not messages:
+            return
+        entry = self._backlog_table().setdefault((sid, scope.marker_id), _Backlog(client))
+        entry.auth_failed = entry.auth_failed or auth_failed
+        for message in messages:
+            entry.messages.append(message)
+            entry.sizes.append(len(json.dumps(message, ensure_ascii=False, default=str).encode()))
+        dropped = 0
+        while len(entry.messages) > _BACKLOG_MAX_MESSAGES or sum(entry.sizes) > _BACKLOG_MAX_BYTES:
+            entry.messages.pop(0)
+            entry.sizes.pop(0)
+            dropped += 1
+        if dropped:
+            logger.warning("OpenViking backlog for session %s is full; dropped the %d oldest unsent messages", sid, dropped)
+        logger.warning("OpenViking keeps %d unsent messages for session %s; they are sent before its next upload or commit",
+                       len(entry.messages), sid)
+
+    def _flush_backlog(self, sid: str, *, request_timeout: Optional[float] = None) -> bool:
+        """Send every backlog of ``sid`` in order, each with the client it was captured with.
+        True when nothing of ``sid`` is left unsent."""
+        self._prune_backlog()
+        table = self._backlog_table()
+        timeout = {} if request_timeout is None else {"timeout": request_timeout}
+        for key in [k for k in table if k[0] == sid]:
+            entry = table[key]
+            while entry.messages:
+                batch = entry.messages[:_SESSION_MESSAGE_BATCH_LIMIT]
+                try:
+                    try:
+                        entry.client.post(f"/api/v1/sessions/{sid}/messages/batch", {"messages": batch}, **timeout)
+                    except Exception as e:
+                        if _upload_failure_kind(e) != "fallback":
+                            raise
+                        for message in batch:
+                            entry.client.post(f"/api/v1/sessions/{sid}/messages", message, **timeout)
+                except Exception as e:
+                    kind = _upload_failure_kind(e)
+                    if kind in ("retry", "auth"):
+                        entry.auth_failed = entry.auth_failed or kind == "auth"
+                        logger.warning("OpenViking could not send %d unsent messages of session %s: %s",
+                                       len(entry.messages), sid, e)
+                        return False
+                    logger.warning("OpenViking dropped %d unsent messages of session %s rejected by the server: %s",
+                                   len(batch), sid, e)
+                del entry.messages[:len(batch)]
+                del entry.sizes[:len(batch)]
+            del table[key]
+        return True
+
+    def _upload_turn(self, upload: _TurnUpload, sid: str, scope: _CommitScope) -> Optional[_VikingClient]:
+        """Send the backlog first, then the turn; keep whatever could not be sent. Under the writer lock."""
+        self._flush_backlog(sid)
+        pending = self._backlog_table().get((sid, scope.marker_id))
+        if pending is not None:
+            # Earlier messages of this connection are still unsent: queue behind them to keep the order.
+            upload.materialize()
+            self._backlog_add(sid, scope, upload.client, upload.unsent(), auth_failed=False)
+            return None
+        client = upload.run()
+        if client is None and upload.failure_kind in ("retry", "auth"):
+            self._backlog_add(sid, scope, upload.client, upload.unsent(), auth_failed=upload.failure_kind == "auth")
+        return client
+
     # -- session commit / pending-session recovery --------------------------
 
     def _has_committed_session(self, sid: str, *, scope: Optional[_CommitScope] = None) -> bool:
@@ -277,6 +394,10 @@ class SessionWriterMixin:
                         client: Optional[_VikingClient] = None, scope: Optional[_CommitScope] = None,
                         pending_path: Optional[Path] = None, request_timeout: Optional[float] = None) -> bool:
         scope = scope or self._capture_commit_scope()
+        # A commit never overtakes messages of its sid that are still unsent; the marker stays.
+        if not self._flush_backlog(sid, request_timeout=request_timeout):
+            logger.warning("OpenViking session %s has unsent messages; skipping commit %s", sid, context)
+            return False
         try:
             timeout = {} if request_timeout is None else {"timeout": request_timeout}
             (client or scope.client).post(f"/api/v1/sessions/{sid}/commit", {"keep_recent_count": 0}, **timeout)
@@ -368,5 +489,7 @@ class SessionWriterMixin:
         with self._inflight_lock:
             if any(t.is_alive() for group in self._inflight_writers.values() for t in group):
                 return True
+        if self._backlog_table():
+            return True
         with self._session_state_lock:
             return bool(scope.pending) or self._turn_count > 0

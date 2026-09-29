@@ -216,8 +216,8 @@ def test_sync_turn_without_structured_turn_posts_truncated_text(external_provide
     ]
 
 
-def test_sync_turn_first_batch_failure_falls_back_to_truncated_text(external_provider, monkeypatch):
-    provider, _ = _sync_provider(external_provider, monkeypatch, "sync-fallback")
+def test_sync_turn_first_batch_failure_retries_the_structured_batch(external_provider, monkeypatch):
+    provider, _ = _sync_provider(external_provider, monkeypatch, "sync-retry")
     provider._client.post.side_effect = [RuntimeError("batch rejected"), {}]
     long_user = "u" * 5000
     messages = [dict(m) for m in TRANSCRIPT[:6]]
@@ -227,8 +227,8 @@ def test_sync_turn_first_batch_failure_falls_back_to_truncated_text(external_pro
     assert len(posts) == 2
     assert posts[0][0] == "/api/v1/sessions/char-sid/messages/batch"
     assert posts[0][1]["messages"][0]["parts"] == [{"type": "text", "text": long_user}]
-    # The fallback drops tool parts and truncates both sides to 4000 characters.
-    assert posts[1] == ("/api/v1/sessions/char-sid/messages/batch", _plain_text_payload("u" * 4000, "b" * 4000))
+    # No plain-text truncation fallback: the retry resends the same structured batch.
+    assert posts[1] == posts[0]
 
 
 class _FakeClient:

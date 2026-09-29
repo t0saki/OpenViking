@@ -95,9 +95,10 @@ _OPENVIKING_IDENTIFIED_STATES = frozenset({"modern", "legacy"})
 
 
 class _OpenVikingHTTPError(RuntimeError):
-    def __init__(self, message: str, status_code: Optional[int] = None):
+    def __init__(self, message: str, status_code: Optional[int] = None, retryable: bool = False):
         super().__init__(message)
         self.status_code = status_code
+        self.retryable = retryable
 
 
 def _sanitize_openviking_error_message(message: str, status_code: Optional[int] = None) -> str:
@@ -211,7 +212,9 @@ class _VikingClient:
         if resp.status_code >= 400:
             message = _sanitize_openviking_error_message(getattr(resp, "text", ""), resp.status_code)
             if isinstance(error, dict):
-                raise _OpenVikingHTTPError(f"{error.get('code', 'HTTP_ERROR')}: {error.get('message', message)}", resp.status_code)
+                details = error.get("details")
+                raise _OpenVikingHTTPError(f"{error.get('code', 'HTTP_ERROR')}: {error.get('message', message)}", resp.status_code,
+                                           retryable=isinstance(details, dict) and details.get("retryable") is True)
             if isinstance(data, dict) and data.get("status") == "error":
                 raise _OpenVikingHTTPError(str(data), resp.status_code)
             raise _OpenVikingHTTPError(message or f"HTTP {resp.status_code}", resp.status_code)
