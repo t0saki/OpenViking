@@ -1,5 +1,6 @@
 """Load the plugin through Hermes discovery in isolated profile homes."""
 
+import importlib
 import os
 import shutil
 import sys
@@ -56,21 +57,41 @@ def external_provider(tmp_path, monkeypatch):
         provider.shutdown()
 
 
+def core_submodule(plugin, name):
+    """``<plugin package>.core.<name>`` for a plugin module Hermes loaded.
+
+    Hermes imports the plugin under a namespace of its own (for an installed copy
+    ``_hermes_user_memory.<name>``), not under its directory name, so a test finds
+    a core module through the loaded package. ``plugin`` is the package or any of
+    its modules.
+    """
+    package = plugin.__name__ if hasattr(plugin, "__path__") else plugin.__name__.rpartition(".")[0]
+    return importlib.import_module(f"{package}.core.{name}")
+
+
+@pytest.fixture
+def core_module():
+    """``core_module(module, "deps")``: see :func:`core_submodule`."""
+    return core_submodule
+
+
 @pytest.fixture
 def inject_deps():
     """Swap plugin dependencies through ``Deps`` instead of patching module globals.
 
     ``inject(module, *providers, **fields)`` replaces ``fields`` in each given
-    provider's Deps and in the module default, which later providers and helpers
-    called without a provider read. Module defaults are restored at teardown.
+    provider's Deps and in the default of the plugin's ``core.deps``, which later
+    providers and helpers called without a provider read. Defaults are restored
+    at teardown.
     """
     previous = []
 
     def inject(module, *providers, **fields):
-        previous.append((module, module.set_default_deps(replace(module.default_deps(), **fields))))
+        deps = core_submodule(module, "deps")
+        previous.append((deps, deps.set_default_deps(replace(deps.default_deps(), **fields))))
         for provider in providers:
             provider._deps = replace(provider._deps, **fields)
 
     yield inject
-    for module, deps in reversed(previous):
-        module.set_default_deps(deps)
+    for deps, default in reversed(previous):
+        deps.set_default_deps(default)

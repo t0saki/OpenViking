@@ -14,38 +14,158 @@ import errno
 import hashlib
 import json
 import logging
-import math
-import mimetypes
 import os
-import re
-import shutil
-import socket
-import stat
-import subprocess
-import tempfile
 import threading
-import time
 import uuid
 import weakref
-import zipfile
 from collections import OrderedDict
 from contextlib import suppress
 from contextvars import ContextVar
-from dataclasses import dataclass, field, replace
-from functools import lru_cache
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Set
 from urllib.parse import quote, unquote, urlparse
 from urllib.request import url2pathname
 
-from agent.message_content import flatten_message_text
-from agent.memory_provider import MemoryProvider, spawn_context_thread
-from agent.secret_scope import get_secret
-from agent.skill_commands import extract_user_instruction_from_skill_message
-from hermes_cli import __version__ as _HERMES_VERSION
-from hermes_constants import get_hermes_home, get_process_hermes_home
-from tools.registry import tool_error
-from utils import atomic_json_write, env_var_enabled
+from .core.deps import Deps, _rest_client, default_deps, set_default_deps
+from .core.endpoint import (
+    _LOCAL_OPENVIKING_HOSTS,
+    _is_local_openviking_url,
+    _normalize_openviking_url,
+    _openviking_endpoint_is_always_blocked,
+    _openviking_endpoint_label,
+    _OpenVikingEndpointError,
+)
+from .core.envfile import _env_line_safe, _secure_secret_file, _write_env_vars
+from .core.health import (
+    _LEGACY_OPENVIKING_IDENTITY_DETAIL,
+    _OPENVIKING_RESPONDED_FAILURE_PREFIX,
+    _classify_runtime_openviking_health,
+    _client_health_failure,
+    _identity_failure,
+    _validate_openviking_reachability,
+    _validate_openviking_setup_values,
+)
+from .core.host import (
+    _HERMES_VERSION,
+    MemoryProvider,
+    RecallStatus,
+    _get_launch_hermes_home,
+    atomic_json_write,
+    env_var_enabled,
+    extract_user_instruction_from_skill_message,
+    flatten_message_text,
+    get_hermes_home,
+    get_process_hermes_home,
+    get_secret,
+    spawn_context_thread,
+    tool_error,
+)
+from .core.http import (
+    _IDENTITY_UNSET,
+    _OPENVIKING_IDENTIFIED_STATES,
+    _OPENVIKING_USER_AGENT,
+    _TIMEOUT,
+    RestResultMixin,
+    _format_openviking_exception,
+    _get_httpx,
+    _is_timeout_error,
+    _OpenVikingHTTPError,
+    _probe_openviking_identity,
+    _resolve_user_space,
+    _sanitize_openviking_error_message,
+    _status_code_from_error,
+    _VikingClient,
+)
+from .core.local_server import (
+    _LOCAL_OPENVIKING_AUTOSTART_TIMEOUT,
+    _LOCAL_OPENVIKING_PROBE_TIMEOUT,
+    _LOCAL_SERVER_FAILED,
+    _LOCAL_SERVER_OCCUPIED,
+    _LOCAL_SERVER_STARTED,
+    _OPENVIKING_SERVER_LOG_RELATIVE_PATH,
+    _describe_local_port_listener,
+    _local_listener_suffix,
+    _local_openviking_bind,
+    _local_openviking_port_is_open,
+    _start_local_openviking_server,
+    _wait_for_openviking_health,
+)
+from .core.ovcli import (
+    _OVCLI_CONFIG_ENV,
+    _OVCLI_DEFAULT_RELATIVE_PATH,
+    _OVCLI_SAVED_PREFIX,
+    _connection_values_from_ovcli,
+    _default_ovcli_config_path,
+    _discover_ovcli_profiles,
+    _is_valid_ovcli_profile_name,
+    _load_ovcli_config,
+    _load_profile,
+    _ovcli_data_from_connection_values,
+    _ovcli_values_for,
+    _OvcliProfile,
+    _profile_identity,
+    _resolve_ovcli_config_path,
+)
+from .core.settings import (
+    _CONFIG_SCHEMA,
+    _CONNECTION_KEYS,
+    _DEFAULT_AGENT,
+    _DEFAULT_ENDPOINT,
+    _DEFAULT_RECALL_REQUEST_TIMEOUT_SECONDS,
+    _INVALID_SETTING_WARNINGS,
+    _INVALID_SETTING_WARNINGS_LOCK,
+    _NUM,
+    _OPENVIKING_ENV_KEYS,
+    _OPENVIKING_SERVICE_ENDPOINT,
+    _RECALL_SETTING_KEYS,
+    _SETTING_SPECS,
+    SettingsMixin,
+    _cfg_field,
+    _clean_config_value,
+    _validate_openviking_identity_value,
+)
+from .core.tools import (
+    _GENERATED_MEMORY_SUMMARY_FILENAMES,
+    _LEVEL_ENDPOINTS,
+    _LEVEL_MAX_CHARS,
+    _OPENVIKING_RECALL_TOOL_NAMES,
+    _READ_BATCH_FULL_LIMIT,
+    _READ_BATCH_LIMIT,
+    _REMOTE_RESOURCE_PREFIXES,
+    _SYSTEM_PROMPT_TOOL_GUIDANCE,
+    _TOOL_HANDLERS,
+    _TOOL_SCHEMAS,
+    ADD_RESOURCE_SCHEMA,
+    BROWSE_SCHEMA,
+    FORGET_SCHEMA,
+    READ_SCHEMA,
+    REMEMBER_SCHEMA,
+    SEARCH_SCHEMA,
+    _is_local_path_reference,
+    _is_windows_absolute_path,
+    _str,
+    _tool_schema,
+    _validate_forget_memory_uri,
+    _zip_directory,
+)
+from .core.transcript import (
+    _TOOL_STATUS_COMPLETED_ALIASES,
+    _TOOL_STATUS_ERROR_ALIASES,
+    TranscriptMixin,
+    _derive_openviking_user_text,
+    _gateway_peer_id,
+    _index_tool_calls,
+    _is_openviking_recall_tool_name,
+    _message_text,
+    _preview,
+    _rfind_message,
+    _tool_call_id,
+    _tool_call_input,
+    _tool_call_name,
+    _tool_part,
+    _tool_result_status,
+)
 
 try:
     import fcntl
@@ -54,35 +174,13 @@ except ImportError:  # pragma: no cover - Windows
 
 logger = logging.getLogger(__name__)
 
-try:
-    from hermes_constants import get_routing_process_hermes_home as _get_launch_hermes_home
-except ImportError:  # Hermes releases before process-home pinning
-    _get_launch_hermes_home = get_process_hermes_home
 
-try:
-    from agent.memory_provider import RecallStatus
-except ImportError:  # Hermes releases before the recall indicator
-    RecallStatus = None
-
-_DEFAULT_ENDPOINT = "http://127.0.0.1:1933"
-_OPENVIKING_SERVICE_ENDPOINT = "https://api.vikingdb.cn-beijing.volces.com/openviking"
-_DEFAULT_AGENT = ""
-_OPENVIKING_USER_AGENT = f"openviking-memory-hermes/{_HERMES_VERSION}"
-_OVCLI_CONFIG_ENV = "OPENVIKING_CLI_CONFIG_FILE"
-_OVCLI_DEFAULT_RELATIVE_PATH = ".openviking/ovcli.conf"
-_OVCLI_SAVED_PREFIX = "ovcli.conf."
-_CONNECTION_KEYS = ("endpoint", "api_key", "account", "user", "agent")
-_IDENTITY_UNSET = object()
-_OPENVIKING_ENV_KEYS = tuple(f"OPENVIKING_{key.upper()}" for key in _CONNECTION_KEYS)
-_TIMEOUT = 30.0
 _SESSION_DRAIN_TIMEOUT = 10.0
 _DEFERRED_COMMIT_TIMEOUT = (_TIMEOUT * 2) + 5.0
 _SESSION_MESSAGE_BATCH_LIMIT = 100
-_REMOTE_RESOURCE_PREFIXES = ("http://", "https://", "git@", "ssh://", "git://")
 _SYNC_TRACE_ENV = "HERMES_OPENVIKING_SYNC_TRACE"
 _RECALL_QUERY_MIN_CHARS = 5
 _RECALL_MIN_TIMEOUT_SECONDS = 0.05
-_DEFAULT_RECALL_REQUEST_TIMEOUT_SECONDS = 3.0
 # One deadline for a whole prefetch() call. The host joins prefetch for a fixed
 # 8 s (hermes:agent/memory_manager.py:32) and drops a late result.
 _PREFETCH_BUDGET_SECONDS = 7.5
@@ -90,10 +188,6 @@ _PREFETCH_BUDGET_SECONDS = 7.5
 # budget for that fallback; a search without LLM steps takes about 0.4-0.8 s.
 _RECALL_FALLBACK_RESERVE_SECONDS = 1.0
 _SESSION_START_DEFAULT_KEY = "__openviking_default_session__"
-_READ_BATCH_LIMIT = 3
-_READ_BATCH_FULL_LIMIT = 2500
-_LEVEL_ENDPOINTS = {"abstract": "/api/v1/content/abstract", "overview": "/api/v1/content/overview", "full": "/api/v1/content/read"}
-_LEVEL_MAX_CHARS = {"abstract": 1200, "overview": 4000}
 _RECALL_SUMMARY_KEYS = ("abstract", "overview", "text", "content")
 # Outcome of the last prefetch per session id, read by recall_status() and last_recall_outcome().
 _RECALL_PENDING, _RECALL_INJECTED, _RECALL_EMPTY = "pending", "injected", "empty"
@@ -102,43 +196,6 @@ _RECALL_OUTCOMES_KEPT = 64  # session ids remembered per provider; oldest droppe
 _RECALL_STATUS_LABEL = "OpenViking"
 
 
-def _cfg_field(key: str, description: str, **extra) -> dict:
-    return {"key": key, "description": description, **extra, "env_var": f"OPENVIKING_{key.upper()}"}
-
-
-_NUM = {"type": "number", "minimum": 0.25, "maximum": 60.0, "step": 0.25}
-_CONFIG_SCHEMA = [
-    _cfg_field("endpoint", "OpenViking server URL", required=True, default=_DEFAULT_ENDPOINT),
-    _cfg_field("api_key", (
-        "OpenViking API key (recommended; only leave blank for an explicitly "
-        "unauthenticated local development server)"
-    ), secret=True),
-    _cfg_field("account", "Advanced local identity override (leave blank for user API keys)"),
-    _cfg_field("user", "Advanced local user override (leave blank for user API keys)"),
-    _cfg_field("agent", "Optional peer ID for separate assistant context. Uses user memory when no peer is configured.", default=_DEFAULT_AGENT),
-    _cfg_field("recall_scope", "Automatic recall: all peers (shared) or current sender (peer). Unset preserves existing behavior.",
-               type="string", choices=["shared", "peer"], default=None),
-    _cfg_field(
-        "recall_compress",
-        "Cloud recall compression: off, server or auto (no local compressor)",
-        type="string",
-        default="off",
-    ),
-    _cfg_field("commit_token_threshold", "Pending session tokens that trigger a background memory commit",
-               type="integer", minimum=1000, maximum=1000000, default=20000),
-    _cfg_field("recall_limit", "Maximum memories injected by automatic recall", type="integer", minimum=1, maximum=100, default=6),
-    _cfg_field("recall_score_threshold", "Minimum relevance score for automatic recall", type="number", minimum=0.0, maximum=1.0, step=0.01, default=0.15),
-    _cfg_field("recall_max_injected_chars", "Maximum total characters injected by recall", type="integer", minimum=100, maximum=50000, default=4000),
-    _cfg_field("profile_token_budget", "Maximum session-start memory tokens injected", type="integer", minimum=500, maximum=50000, default=6000),
-    _cfg_field("recall_timeout_seconds", "Total timeout for recall (seconds)", **_NUM, default=4.0),
-    _cfg_field("recall_request_timeout_seconds", "Per-request timeout for recall (seconds)", **_NUM, default=_DEFAULT_RECALL_REQUEST_TIMEOUT_SECONDS),
-    _cfg_field("recall_full_read_limit", "Max full L2 content reads per recall", type="integer", minimum=0, maximum=100, default=2),
-    _cfg_field("recall_prefer_abstract", "Use abstracts instead of full L2 reads", type="boolean", default=False),
-    _cfg_field("recall_resources", "Include resources in recall", type="boolean", default=False),
-]
-# Typed settings (config.yaml primary, env override) keyed by config key.
-_SETTING_SPECS = {f["key"]: f for f in _CONFIG_SCHEMA if "type" in f}
-_RECALL_SETTING_KEYS = tuple(k for k in _SETTING_SPECS if k.startswith("recall_"))
 # Explicit-uid URIs (viking://user/<uid>/...) work under every auth mode and
 # supported OpenViking version. The `~` alias requires OpenViking 0.4.16+ for
 # USER/ADMIN roles and 0.4.17+ for ROOT, so internal paths remain explicit.
@@ -150,108 +207,18 @@ _MEMORY_WRITE_TARGET_SUBDIR_MAP = {"user": "preferences", "memory": "patterns"}
 # jobs, delegated subagents, and flush forks has no memory value and would spend server-side
 # extraction budget. Hermes delivers the context to initialize(); recall/read paths are unchanged.
 _NON_PRIMARY_AGENT_CONTEXTS = frozenset({"cron", "subagent", "flush"})
-# OpenViking-generated summaries; non-.md sidecars are already rejected by the .md check.
-_GENERATED_MEMORY_SUMMARY_FILENAMES = {".abstract.md", ".overview.md"}
-_LOCAL_OPENVIKING_HOSTS = {"localhost", "127.0.0.1", "::1"}
-_LOCAL_OPENVIKING_AUTOSTART_TIMEOUT = 60.0
-_LOCAL_OPENVIKING_PROBE_TIMEOUT = 2.0  # loopback connect budget; only guards against a wedged listener
-_LOCAL_SERVER_STARTED = "started"
-_LOCAL_SERVER_OCCUPIED = "occupied"
-_LOCAL_SERVER_FAILED = "failed"
 # After a refresh fails for an unchanged config, skip re-probing for this long so a
 # down server doesn't cost every access a 3s probe + warning under _client_refresh_lock.
 _FAILED_CONFIG_RETRY_COOLDOWN_SECONDS = 30.0
-_OPENVIKING_SERVER_LOG_RELATIVE_PATH = Path("logs") / "openviking-server.log"
-_OPENVIKING_RESPONDED_FAILURE_PREFIX = "OpenViking server responded"
-# Identity probe states; "modern" and "legacy" are the two identified ones.
-_OPENVIKING_IDENTIFIED_STATES = frozenset({"modern", "legacy"})
 _RETRY_LATER = (
     "OpenViking memory is temporarily unavailable; Hermes will retry on a later access or when the config changes."
 )
 _FIX_ENDPOINT = "OpenViking memory is temporarily unavailable; correct the endpoint and reload the configuration."
 _HTTPX_MISSING = "httpx not installed — OpenViking plugin disabled"
-_LEGACY_OPENVIKING_IDENTITY_DETAIL = (
-    "returned OpenViking's legacy health response, but its anonymous OpenAPI metadata did not identify OpenViking. "
-    "If this is OpenViking 0.2.6 or earlier, upgrade to OpenViking 0.2.14 or newer."
-)
 _PENDING_SESSIONS_RELATIVE_DIR = Path("openviking") / "pending_sessions"
 _RUN_LOCKS_RELATIVE_DIR = Path("openviking") / "runs"
 _LEGACY_RECOVERY_LOCK_FILENAME = "legacy-recovery.lock"
 _LOCK_BUSY_ERRNOS = {errno.EWOULDBLOCK, errno.EACCES, errno.EAGAIN}
-_INVALID_SETTING_WARNINGS: Set[tuple[str, str]] = set()
-_INVALID_SETTING_WARNINGS_LOCK = threading.Lock()
-
-
-def _gateway_peer_id(platform: str, sender: Any) -> str:
-    """Namespace transport IDs and encode path-like IDs without merging distinct senders."""
-    platform, sender = str(platform or "").strip().lower(), str(sender or "").strip()
-    if not platform or not sender:
-        return ""
-    raw = f"{platform}.{sender}"
-    if len(raw) <= 128 and re.fullmatch(r"[a-zA-Z0-9_.@-]+", raw) and raw.count("@") <= 1:
-        return raw
-    # Preserve the peer paths generated by the original Hermes #105812.
-    safe = re.sub(r"[^a-zA-Z0-9_.@-]+", "-", raw)
-    safe = re.sub(r"@+", "-", safe).strip(".-") or "gateway-peer"
-    digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:12]
-    return f"{safe[:128 - len(digest) - 1].rstrip('.-') or 'gateway-peer'}-{digest}"
-
-
-@dataclass(frozen=True)
-class _OvcliProfile:
-    source: str
-    name: str
-    path: Path
-    values: dict
-    is_active: bool = False
-
-
-class _OpenVikingHTTPError(RuntimeError):
-    def __init__(self, message: str, status_code: Optional[int] = None):
-        super().__init__(message)
-        self.status_code = status_code
-
-
-class _OpenVikingEndpointError(ValueError):
-    """Raised when a configured endpoint cannot be used safely."""
-
-
-def _sanitize_openviking_error_message(message: str, status_code: Optional[int] = None) -> str:
-    text = (message or "").strip()
-    status = f"HTTP {status_code}" if status_code else "HTTP error"
-    if re.search(r"^\s*<(!doctype|html|head|body)\b", text, flags=re.IGNORECASE):
-        title_match = re.search(r"<title[^>]*>(.*?)</title>", text, flags=re.IGNORECASE | re.DOTALL)
-        if title_match:
-            title = re.sub(r"\s+", " ", title_match.group(1)).strip()
-            title = title.split("|", 1)[1].strip() if "|" in title else title
-            title = title.split(":", 1)[1].strip() if status_code and title.startswith(f"{status_code}:") else title
-            if title:
-                return f"{status}: {title}"
-        return f"{status}: OpenViking endpoint returned an HTML error page."
-    if len(text) > 300:
-        return text[:297].rstrip() + "..."
-    return text or status
-
-
-def _status_code_from_error(error: Exception) -> Optional[int]:
-    if isinstance(error, _OpenVikingHTTPError):
-        return error.status_code
-    return getattr(getattr(error, "response", None), "status_code", None)
-
-
-def _format_openviking_exception(error: Exception) -> str:
-    return _sanitize_openviking_error_message(str(error), _status_code_from_error(error))
-
-
-def _derive_openviking_user_text(content: Any) -> str:
-    """Strip Hermes slash-skill scaffolding before sending content to OpenViking
-    (MemoryManager already does this for the fan-out; kept for direct hook callers)."""
-    return extract_user_instruction_from_skill_message(content) or ""
-
-
-def _preview(value: Any, limit: int = 160) -> str:
-    text = ("" if value is None else str(value)).replace("\n", "\\n")
-    return text[:limit] + "..." if len(text) > limit else text
 
 
 # atexit safety net: commit the current session even if shutdown_memory_provider
@@ -305,26 +272,6 @@ def _atexit_commit_sessions(budget: float = _EXIT_COMMIT_BUDGET):
                 provider._release_run_lock()
 
 
-def _get_httpx():
-    """Lazy import httpx."""
-    try:
-        import httpx
-        return httpx
-    except ImportError:
-        return None
-
-
-def _is_timeout_error(error: BaseException) -> bool:
-    """Identify socket and HTTP transport timeouts in query recall."""
-    if isinstance(error, TimeoutError):
-        return True
-    try:
-        from httpx import TimeoutException
-    except ImportError:
-        return False
-    return isinstance(error, TimeoutException)
-
-
 class _RecallProbe:
     """What one prefetch saw: the first failure and the number of injected recall entries."""
 
@@ -340,554 +287,6 @@ class _RecallProbe:
 
     def outcome(self, text: str) -> str:
         return _RECALL_INJECTED if text else (self.failure or _RECALL_EMPTY)
-
-
-class _VikingClient:
-    """Thin HTTP client for the OpenViking REST API (httpx, no SDK dependency)."""
-
-    def __init__(self, endpoint: str, api_key: str = "",
-                 account: Optional[str] | object = _IDENTITY_UNSET,
-                 user: Optional[str] | object = _IDENTITY_UNSET,
-                 agent: Optional[str] | object = _IDENTITY_UNSET, transport: Any = None):
-        self._endpoint = endpoint.rstrip("/")
-        self._api_key = api_key
-        # Account/user are local/trusted-mode tenant identity. API-key requests
-        # omit these headers unless OpenViking explicitly asks for them (retry).
-        # Tenant identity is a profile .env value: scope-read so a multiplexed
-        # secondary never writes into the default profile's tenant.
-        self._account = (get_secret("OPENVIKING_ACCOUNT", "") if account is _IDENTITY_UNSET or account is None else account) or "default"
-        self._user = (get_secret("OPENVIKING_USER", "") if user is _IDENTITY_UNSET or user is None else user) or "default"
-        self._agent = (get_secret("OPENVIKING_AGENT", "") or _DEFAULT_AGENT) if agent is _IDENTITY_UNSET or agent is None else agent
-        # Every client owns its resolved identity, including clients retained across reloads.
-        self._conn_snapshot = (self._endpoint, self._api_key, self._account, self._user, self._agent)
-        # ``transport`` has httpx's get/post/delete; without one, the default Deps supplies it.
-        self._httpx = transport if transport is not None else default_deps().transport()
-        if self._httpx is None:
-            raise ImportError("httpx is required for OpenViking: pip install httpx")
-
-    def _headers(self, *, include_tenant: bool | None = None) -> dict:
-        if include_tenant is None:
-            include_tenant = not bool(self._api_key)
-        h = {"Content-Type": "application/json", "User-Agent": _OPENVIKING_USER_AGENT}
-        if self._agent:
-            h["X-OpenViking-Actor-Peer"] = self._agent
-        if include_tenant:
-            h.update({k: v for k, v in (("X-OpenViking-Account", self._account), ("X-OpenViking-User", self._user)) if v})
-        if self._api_key:
-            h.update({"X-API-Key": self._api_key, "Authorization": "Bearer " + self._api_key})
-        return h
-
-    @staticmethod
-    def _needs_trusted_identity_retry(exc: Exception) -> bool:
-        """Trusted mode asks for X-OpenViking-Account/User with wording that varies across
-        versions; match the shape, but keep deliberate API-key denials (non-400) non-retriable."""
-        message = str(exc)
-        if "Trusted mode requests must include" not in message:
-            return False
-        if "X-OpenViking-Account" not in message and "X-OpenViking-User" not in message:
-            return False
-        return getattr(exc, "status_code", None) in (None, 400)
-
-    def _multipart_headers(self, *, include_tenant: bool | None = None) -> dict:
-        headers = self._headers(include_tenant=include_tenant)
-        headers.pop("Content-Type", None)
-        return headers
-
-    def _send_with_trusted_identity_retry(self, send, *, multipart: bool = False) -> dict:
-        build = self._multipart_headers if multipart else self._headers
-        try:
-            return self._parse_response(send(build()))
-        except Exception as exc:
-            if not self._api_key or not self._needs_trusted_identity_retry(exc):
-                raise
-            return self._parse_response(send(build(include_tenant=True)))
-
-    def _parse_response(self, resp) -> dict:
-        data = None
-        with suppress(Exception):
-            data = resp.json()
-        error = data.get("error") if isinstance(data, dict) else None
-        if resp.status_code >= 400:
-            message = _sanitize_openviking_error_message(getattr(resp, "text", ""), resp.status_code)
-            if isinstance(error, dict):
-                raise _OpenVikingHTTPError(f"{error.get('code', 'HTTP_ERROR')}: {error.get('message', message)}", resp.status_code)
-            if isinstance(data, dict) and data.get("status") == "error":
-                raise _OpenVikingHTTPError(str(data), resp.status_code)
-            raise _OpenVikingHTTPError(message or f"HTTP {resp.status_code}", resp.status_code)
-        if isinstance(data, dict) and data.get("status") == "error":
-            if isinstance(error, dict):
-                raise RuntimeError(f"{error.get('code', 'OPENVIKING_ERROR')}: {error.get('message', '')}")
-            raise RuntimeError(str(data))
-        return {} if data is None else data
-
-    def _request(self, method: str, path: str, kwargs: dict) -> dict:
-        timeout = kwargs.pop("timeout", _TIMEOUT)
-        fn = getattr(self._httpx, method)
-        return self._send_with_trusted_identity_retry(lambda headers: fn(f"{self._endpoint}{path}", headers=headers, timeout=timeout, **kwargs))
-
-    def get(self, path: str, **kwargs) -> dict:
-        return self._request("get", path, kwargs)
-
-    def post(self, path: str, payload: dict = None, **kwargs) -> dict:
-        return self._request("post", path, {**kwargs, "json": payload or {}})
-
-    def delete(self, path: str, **kwargs) -> dict:
-        return self._request("delete", path, kwargs)
-
-    def upload_temp_file(self, file_path: Path) -> str:
-        mime_type = mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
-
-        def _send(headers):
-            with file_path.open("rb") as f:
-                return self._httpx.post(f"{self._endpoint}/api/v1/resources/temp_upload",
-                                        files={"file": (file_path.name, f, mime_type)}, headers=headers, timeout=_TIMEOUT)
-
-        temp_file_id = self._send_with_trusted_identity_retry(_send, multipart=True).get("result", {}).get("temp_file_id", "")
-        if not temp_file_id:
-            raise RuntimeError("OpenViking temp upload did not return temp_file_id")
-        return temp_file_id
-
-    def health(self) -> bool:
-        with suppress(Exception):
-            return _probe_openviking_identity(self)[0] in _OPENVIKING_IDENTIFIED_STATES
-        return False
-
-    def _anonymous_json(self, path: str) -> dict:
-        """Probe server identity without disclosing credentials or tenant IDs."""
-        return self._parse_response(self._httpx.get(f"{self._endpoint}{path}", headers={"Accept": "application/json"}, timeout=3.0))
-
-    def health_payload(self) -> dict:
-        """``GET /health``, anonymous first so credentials never reach an unknown host.
-        Hosted OpenViking requires auth on /health: when an API key is configured and the
-        anonymous call gets 401/403, retry once with the key (no tenant headers).
-
-        Prefer an anonymous probe so credentials are never sent to an unknown host during identity checks.
-        See #78410.
-        """
-        try:
-            return self._anonymous_json("/health")
-        except _OpenVikingHTTPError as exc:
-            if not self._api_key or _status_code_from_error(exc) not in {401, 403}:
-                raise
-            return self._parse_response(self._httpx.get(f"{self._endpoint}/health", headers=self._headers(include_tenant=False), timeout=3.0))
-
-    def openapi_payload(self) -> dict:
-        return self._anonymous_json("/openapi.json")
-
-    def validate_auth(self) -> dict:  # authenticated access, no mutation
-        return self.get("/api/v1/system/status")
-
-    def validate_root_access(self) -> dict:  # ROOT access via a read-only admin endpoint
-        return self.get("/api/v1/admin/accounts")
-
-
-# -- Tool schemas -----------------------------------------------------------
-
-def _tool_schema(name: str, description: str, properties: dict, required: list) -> dict:
-    return {"name": name, "description": description, "parameters": {"type": "object", "properties": properties, "required": required}}
-
-
-def _str(description: str, **extra) -> dict:
-    return {"type": "string", **extra, "description": description}
-
-
-SEARCH_SCHEMA = _tool_schema(
-    "viking_search",
-    "Semantic search over the OpenViking knowledge base. Returns ranked results with viking:// URIs for deeper reading. "
-    "Use mode='deep' for complex queries that need reasoning across multiple sources, 'fast' for simple lookups.",
-    {
-        "query": _str("Search query."),
-        "mode": _str("Search depth (default: auto).", enum=["auto", "fast", "deep"]),
-        "scope": _str("Viking URI prefix to scope search (e.g. 'viking://resources/docs/')."),
-        "limit": {"type": "integer", "description": "Max results (default: 10)."},
-    },
-    ["query"],
-)
-
-READ_SCHEMA = _tool_schema(
-    "viking_read",
-    "Read one or a few specific viking:// URIs returned by viking_search or viking_browse. Three detail levels:\n"
-    "  abstract — ~100 token summary (L0)\n  overview — ~2k token key points (L1)\n  full — complete content (L2)\n"
-    "Start with abstract/overview, only use full when you need details. For multiple strong candidates, pass uris with up to three URIs.",
-    {
-        "uri": _str("Single viking:// URI to read."),
-        "uris": {"type": "array", "items": {"type": "string"}, "description": "Optional batch of up to three viking:// URIs to read."},
-        "level": _str("Detail level (default: overview).", enum=["abstract", "overview", "full"]),
-    },
-    [],
-)
-
-BROWSE_SCHEMA = _tool_schema(
-    "viking_browse",
-    "Browse the OpenViking knowledge store like a filesystem.\n  list — show directory contents\n  tree — show hierarchy\n  stat — show metadata for a URI",
-    {
-        "action": _str("Browse action.", enum=["tree", "list", "stat"]),
-        "path": _str("Viking URI path (default: viking://). Examples: 'viking://resources/', 'viking://~/memories/'."),
-    },
-    ["action"],
-)
-
-REMEMBER_SCHEMA = _tool_schema(
-    "viking_remember",
-    "Submit important long-term information to OpenViking through session memory extraction. Success means the source was "
-    "submitted, not that a distinct memory file was created. OpenViking can add, merge, or skip the final memory. Use this tool "
-    "when OpenViking should decide how to retain the information. Do not use it when an exact memory file or URI is required. "
-    "If the message is accepted but commit fails, it normally remains live and unextracted because server auto-commit is "
-    "disabled by default; follow the returned recovery instructions.",
-    {"content": _str("The information to remember.")},
-    ["content"],
-)
-
-FORGET_SCHEMA = _tool_schema(
-    "viking_forget",
-    "Delete one OpenViking memory file by exact viking:// URI. Use only when the user explicitly asks to forget or delete a "
-    "specific memory and you have the exact memory file URI. Resources, skills, sessions, directories, generated summaries, "
-    "and broad deletes are rejected.",
-    {"uri": _str("Exact viking:// memory file URI ending in .md.")},
-    ["uri"],
-)
-
-ADD_RESOURCE_SCHEMA = _tool_schema(
-    "viking_add_resource",
-    "Add a remote URL or local file/directory to the OpenViking knowledge base. Remote resources must be public http(s), git, "
-    "or ssh URLs. Local files are uploaded first using OpenViking temp_upload. The system automatically parses, indexes, and "
-    "generates summaries.",
-    {
-        "url": _str("Remote URL or local file/directory path to add."),
-        "reason": _str("Why this resource is relevant (improves search)."),
-        "to": _str("Optional target viking:// URI for the resource."),
-        "parent": _str("Optional parent viking:// URI. Cannot be used with to."),
-        "instruction": _str("Optional processing instruction for semantic extraction."),
-        "wait": {"type": "boolean", "description": "Whether to wait for processing to complete."},
-        "timeout": {"type": "number", "description": "Timeout in seconds when wait is true."},
-    },
-    ["url"],
-)
-
-_TOOL_SCHEMAS = [SEARCH_SCHEMA, READ_SCHEMA, BROWSE_SCHEMA, REMEMBER_SCHEMA, FORGET_SCHEMA, ADD_RESOURCE_SCHEMA]
-# Recall tools (read-only) whose results are never re-ingested — echoing recalled
-# memory back into the transcript would re-store it. Write tools are deliberately absent.
-_OPENVIKING_RECALL_TOOL_NAMES = {SEARCH_SCHEMA["name"], READ_SCHEMA["name"], BROWSE_SCHEMA["name"]}
-# viking_* tool name -> provider method (resolved via getattr so instance patches apply).
-_TOOL_HANDLERS = {schema["name"]: "_tool_" + schema["name"].removeprefix("viking_") for schema in _TOOL_SCHEMAS}
-# Per-tool system-prompt guidance; system_prompt_block() keeps only the lines whose tool
-# is registered, so the prompt never names a tool the model cannot call.
-_SYSTEM_PROMPT_TOOL_GUIDANCE = (
-    (SEARCH_SCHEMA["name"],
-     "Use viking_search for extracted memories, facts, entities, events, and resources. For questions about "
-     "remembered people, preferences, projects, events, or prior user context, search OpenViking before asking the "
-     "user to repeat context. Prefer one or two focused searches, then read the strongest result URIs. If repeated "
-     "searches return the same evidence or no stronger evidence, stop searching, answer from available evidence, and "
-     "state uncertainty if needed."),
-    (READ_SCHEMA["name"],
-     "Use viking_read when you already have a specific viking:// memory or resource URI and need more detail; it can "
-     "read up to three URIs at once."),
-    (BROWSE_SCHEMA["name"], "Use viking_browse for URI diagnostics only; prefer search and read tools for evidence."),
-    (REMEMBER_SCHEMA["name"], "Use viking_remember to store important facts."),
-    (FORGET_SCHEMA["name"], "Use viking_forget to delete exact memory file URIs."),
-    (ADD_RESOURCE_SCHEMA["name"], "Use viking_add_resource to index URLs/docs."),
-)
-# Inbound tool-result status aliases -> canonical "error" / "completed" (else "pending").
-_TOOL_STATUS_ERROR_ALIASES = {"error", "failed", "failure"}
-_TOOL_STATUS_COMPLETED_ALIASES = {"completed", "complete", "success", "succeeded"}
-
-
-def _resolve_user_space(client, *, timeout: Optional[float] = None,
-                        raise_on_timeout: bool = False) -> Optional[str]:
-    """Server-asserted current user for explicit-uid URIs; ``None`` when the probe fails or
-    reports no user. Callers may fall back to a configured value for that one operation but
-    must not cache an unverified identity — a later probe can succeed.
-    Query recall can propagate timeouts to its bounded warning handler."""
-    try:
-        status = client.get("/api/v1/system/status", **({"timeout": timeout} if timeout is not None else {}))
-    except Exception as exc:
-        if raise_on_timeout and _is_timeout_error(exc):
-            raise
-        logger.debug("OpenViking user-space probe failed; using configured fallback", exc_info=True)
-        return None
-    return str(((status or {}).get("result") or {}).get("user") or "").strip() or None
-
-
-def _zip_directory(dir_path: Path) -> Path:
-    """Zip a directory tree into a temp file, skipping symlinks, escapes, and read-blocked files."""
-    from agent.file_safety import raise_if_read_blocked
-
-    root = dir_path.resolve()
-    zip_path = Path(tempfile.gettempdir()) / f"openviking_upload_{uuid.uuid4().hex}.zip"
-    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
-        for file_path in dir_path.rglob("*"):
-            if file_path.is_symlink() or not file_path.is_file():
-                continue
-            try:
-                resolved = file_path.resolve()
-                resolved.relative_to(root)
-                raise_if_read_blocked(str(resolved))
-            except ValueError:
-                continue
-            zipf.write(file_path, arcname=str(file_path.relative_to(dir_path)).replace("\\", "/"))
-    return zip_path
-
-
-def _is_windows_absolute_path(value: str) -> bool:
-    return len(value) >= 3 and value[0].isalpha() and value[1] == ":" and value[2] in {"/", "\\"}
-
-
-def _validate_forget_memory_uri(raw_uri: Any, *, user_space: Optional[str] = None) -> tuple[Optional[str], Optional[str]]:
-    uri = raw_uri.strip() if isinstance(raw_uri, str) else ""
-    if not uri:
-        return None, "uri is required"
-    parsed = urlparse(uri)
-    if parsed.scheme != "viking" or not uri.startswith("viking://"):
-        return None, "viking_forget only accepts viking:// memory file URIs"
-    if parsed.query or parsed.fragment:
-        return None, "viking_forget requires an exact URI without query or fragment"
-    if uri.endswith("/") or not uri.endswith(".md"):
-        return None, "viking_forget only deletes concrete .md memory files"
-    parts = [part for part in uri[len("viking://") :].split("/") if part]
-    if any(unquote(part) in {".", ".."} for part in parts):
-        return None, "viking_forget does not accept dot path segments"
-    # ``memories`` index for ``<scope>/[peers/<agent>/]memories/``; under ``user`` the uid is
-    # required, since the uid-less shorthands are deprecated upstream.
-    offsets = ((1, None), (3, 1)) if parts[:1] == ["~"] else ((2, None), (4, 2)) if parts[:1] == ["user"] else ()
-    memories_idx = next((idx for idx, peer_at in offsets
-                         if len(parts) > idx and parts[idx] == "memories" and (peer_at is None or parts[peer_at] == "peers")), None)
-    if memories_idx is None or len(parts) < memories_idx + 2:
-        return None, "viking_forget only deletes user memory file URIs"
-    # An explicit uid can name someone else's space. Do not send a destructive
-    # request unless the server has confirmed that this uid belongs to the caller.
-    if parts[0] == "user":
-        if not user_space:
-            return None, "viking_forget could not verify the current OpenViking user identity; retry or use viking://~/..."
-        if parts[1] != user_space:
-            return None, (f"viking_forget only deletes your own memories; use viking://user/{user_space}/... "
-                          "or viking://~/... instead")
-    if uri.rsplit("/", 1)[-1] in _GENERATED_MEMORY_SUMMARY_FILENAMES:
-        return None, "viking_forget cannot delete generated memory summary files"
-    return uri, None
-
-
-def _is_local_path_reference(value: str) -> bool:
-    if not value or "\n" in value or "\r" in value or value.startswith(_REMOTE_RESOURCE_PREFIXES):
-        return False
-    if _is_windows_absolute_path(value):
-        return True
-    return value.startswith(("/", "./", "../", "~/", ".\\", "..\\", "~\\")) or "/" in value or "\\" in value
-
-
-def _clean_config_value(value: Any) -> str:
-    return value.strip() if isinstance(value, str) else ""
-
-
-def _openviking_endpoint_label(value: Any) -> str:
-    """Credential-free endpoint label for logs and UI."""
-    raw = _clean_config_value(value)
-    if not raw:
-        return "<empty endpoint>"
-    try:
-        parsed = urlparse(raw if "://" in raw else f"//{raw}")
-        host = parsed.hostname
-        if not host:
-            return "<configured endpoint>"
-        display_host = f"[{host}]" if ":" in host and not host.startswith("[") else host
-        port = None
-        with suppress(ValueError):
-            port = parsed.port
-        return f"{parsed.scheme + '://' if parsed.scheme else ''}{display_host}{f':{port}' if port is not None else ''}"
-    except Exception:
-        return "<configured endpoint>"
-
-
-def _default_ovcli_config_path() -> Path:
-    return Path.home() / _OVCLI_DEFAULT_RELATIVE_PATH
-
-
-def _resolve_ovcli_config_path(config_path: str = "", *, env: Optional[dict] = None) -> Path:
-    chosen = (os.environ if env is None else env).get(_OVCLI_CONFIG_ENV, "").strip() or config_path
-    return Path(chosen).expanduser() if chosen else _default_ovcli_config_path()
-
-
-def _load_ovcli_config(path: Optional[Path] = None) -> dict:
-    config_path = path or _resolve_ovcli_config_path()
-    if not config_path.exists():
-        return {}
-    data = json.loads(config_path.read_text(encoding="utf-8-sig"))
-    if not isinstance(data, dict):
-        raise ValueError(f"OpenViking CLI config must be a JSON object: {config_path}")
-    return data
-
-
-def _connection_values_from_ovcli(data: dict) -> dict:
-    endpoint_value = _clean_config_value(data.get("url"))
-    api_key = _clean_config_value(data.get("api_key")) or _clean_config_value(data.get("root_api_key"))
-    root_api_key = _clean_config_value(data.get("root_api_key"))
-    send_identity = not api_key or api_key == root_api_key  # user keys derive tenant server-side
-    return {
-        # No URL -> no endpoint; the resolver continues to config.yaml, then the default.
-        "endpoint": _normalize_openviking_url(endpoint_value) if endpoint_value else "",
-        "api_key": api_key,
-        "root_api_key": root_api_key,
-        "account": _clean_config_value(data.get("account") or data.get("account_id")) if send_identity else "",
-        "user": _clean_config_value(data.get("user") or data.get("user_id")) if send_identity else "",
-        "agent": _clean_config_value(data.get("actor_peer_id") or data.get("agent_id")),
-    }
-
-
-def _is_valid_ovcli_profile_name(name: str) -> bool:
-    if not name or name.strip() != name or name.startswith(".") or "/" in name or "\\" in name:
-        return False
-    return all(ch.isascii() and (ch.isalnum() or ch in {"-", "_"}) for ch in name)
-
-
-def _validate_openviking_identity_value(value: str, *, field: str) -> tuple[bool, str, str]:
-    label = "Account ID" if field == "account" else "User ID"
-    identifier = "account_id" if field == "account" else "user_id"
-    trimmed = value.strip()
-    if not trimmed:
-        return False, f"{label} cannot be empty.", ""
-    if trimmed != value:
-        return False, f"{label} cannot start or end with whitespace.", ""
-    if field == "account" and trimmed.startswith("_"):
-        return False, "Account ID cannot start with '_'.", ""
-    if not all(ch.isascii() and (ch.isalnum() or ch in {"_", "-", ".", "@"}) for ch in trimmed):
-        return False, f"{label} can only contain letters, numbers, '_', '-', '.', and '@'.", ""
-    if trimmed.count("@") > 1:
-        return False, f"{identifier} must have at most one '@'.", ""
-    return True, "", trimmed
-
-
-@lru_cache(maxsize=128)
-def _openviking_endpoint_is_always_blocked(candidate: str) -> bool:
-    """SSRF floor check, cached per endpoint value: the live provider re-resolves settings
-    on every access (Dashboard / ``/reload``), so slow DNS lookups stay off the hot path."""
-    from tools.url_safety import is_always_blocked_url
-
-    return is_always_blocked_url(candidate)
-
-
-def _normalize_openviking_url(url: str) -> str:
-    trimmed = _clean_config_value(url).rstrip("/")
-    if not trimmed:
-        return _DEFAULT_ENDPOINT
-    lower = trimmed.lower()
-    if lower in {"localhost", "127.0.0.1"}:
-        candidate = f"http://{trimmed}:1933"
-    elif lower in {"::1", "[::1]"}:
-        candidate = "http://[::1]:1933"
-    elif lower.startswith(("[::1]:", "::1:")):
-        candidate = f"http://[::1]:{trimmed.rsplit(':', 1)[1]}"
-    else:
-        candidate = trimmed if "://" in trimmed else f"http://{trimmed}"
-    try:
-        parsed = urlparse(candidate)
-        if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname:
-            raise ValueError("OpenViking endpoints must use http:// or https:// with a host.")
-        parsed.port  # urlparse defers malformed-port validation to this access
-        if parsed.username or parsed.password or parsed.query or parsed.fragment:
-            raise ValueError("OpenViking endpoints cannot contain user info, query parameters, or fragments.")
-    except ValueError as exc:
-        raise _OpenVikingEndpointError(f"Invalid OpenViking endpoint {_openviking_endpoint_label(candidate)}: {exc}") from exc
-
-    # Local/LAN self-host stays allowed; reject cloud-metadata floors so a poisoned
-    # endpoint cannot SSRF via memory sync. Never silently substitute localhost for
-    # an unsafe endpoint — that could forward credentials to the wrong deployment.
-    try:
-        blocked = _openviking_endpoint_is_always_blocked(candidate)
-    except Exception as exc:
-        logger.debug("OpenViking endpoint safety validation failed", exc_info=True)
-        raise _OpenVikingEndpointError("OpenViking endpoint safety validation failed; Hermes refused the connection.") from exc
-    if blocked:
-        raise _OpenVikingEndpointError(
-            f"OpenViking endpoint {_openviking_endpoint_label(candidate)} targets a blocked metadata address."
-        )
-    return candidate
-
-
-def _probe_openviking_identity(client: _VikingClient) -> tuple[str, Any]:
-    """Identify modern or legacy OpenViking before any authenticated request.
-    -> ("modern" | "legacy" | "legacy-unverified" | "unhealthy" | "invalid", health).
-    Modern = documented status/healthy/version contract; legacy = status-only (<= 0.2.6),
-    which must be confirmed via the anonymous OpenAPI title."""
-    health = client.health_payload()
-    if isinstance(health, dict) and health.get("healthy") is False:
-        return "unhealthy", health
-    if not isinstance(health, dict) or health.get("status") != "ok":
-        return "invalid", health
-    if health.get("healthy") is True and isinstance(health.get("version"), str) and health["version"].strip():
-        return "modern", health
-    if "healthy" in health or "version" in health:
-        return "invalid", health
-    try:
-        info = client.openapi_payload().get("info")
-        verified = isinstance(info, dict) and info.get("title") == "OpenViking API"
-    except Exception:
-        logger.debug("Legacy OpenViking OpenAPI identity probe failed", exc_info=True)
-        verified = False
-    return ("legacy" if verified else "legacy-unverified"), health
-
-
-def _load_profile(path: Path, *, source: str, name: str) -> Optional[_OvcliProfile]:
-    try:
-        values = _connection_values_from_ovcli(_load_ovcli_config(path))
-    except Exception as e:
-        logger.warning("Skipping invalid OpenViking CLI config %s: %s", path, _format_openviking_exception(e))
-        return None
-    return _OvcliProfile(source=source, name=name, path=path, values=values)
-
-
-def _profile_identity(path: Path) -> str:
-    try:
-        return str(path.expanduser().resolve())
-    except OSError:
-        return str(path.expanduser())
-
-
-def _discover_ovcli_profiles() -> list[_OvcliProfile]:
-    """env-pointed config, then saved ``ovcli.conf.<name>`` files, then the active
-    ``ovcli.conf`` — which is only listed on its own when no saved profile has
-    identical connection values and nothing else was found."""
-    profiles: list[_OvcliProfile] = []
-    seen_paths: set[str] = set()
-
-    def add(path: Path, *, source: str, name: str) -> None:
-        identity = _profile_identity(path)
-        if path.is_file() and identity not in seen_paths and (profile := _load_profile(path, source=source, name=name)) is not None:
-            seen_paths.add(identity)
-            profiles.append(profile)
-
-    env_path = os.environ.get(_OVCLI_CONFIG_ENV, "").strip()
-    if env_path:
-        add(Path(env_path).expanduser(), source="env", name=_OVCLI_CONFIG_ENV)
-
-    active_path = _default_ovcli_config_path()
-    active_profile = _load_profile(active_path, source="active", name="active") if active_path.exists() else None
-
-    config_dir = _default_ovcli_config_path().parent
-    saved_start = len(profiles)
-    if config_dir.exists():
-        for path in sorted(config_dir.iterdir(), key=lambda item: item.name):
-            name = path.name.removeprefix(_OVCLI_SAVED_PREFIX)
-            if path.is_file() and name != path.name and name != "bak" and _is_valid_ovcli_profile_name(name):
-                add(path, source="saved", name=name)
-
-    if active_profile is not None:
-        marked_active = False
-        for idx in range(saved_start, len(profiles)):
-            if profiles[idx].source == "saved" and profiles[idx].values == active_profile.values:
-                profiles[idx] = replace(profiles[idx], is_active=True)
-                marked_active = True
-                break
-        if not marked_active and not profiles and _profile_identity(active_profile.path) not in seen_paths:
-            profiles.append(active_profile)
-    return profiles
-
-
-def _is_local_openviking_url(value: str) -> bool:
-    try:
-        candidate = _normalize_openviking_url(value)
-    except _OpenVikingEndpointError:
-        return False
-    parsed = urlparse(candidate)
-    return parsed.scheme.lower() == "http" and (parsed.hostname or "").lower() in _LOCAL_OPENVIKING_HOSTS
 
 
 def _load_hermes_openviking_config(hermes_home: Optional[str] = None, *, env: Optional[dict] = None) -> dict:
@@ -951,14 +350,6 @@ def _profile_openviking_env(hermes_home: Optional[str]) -> Optional[dict]:
         return {}  # A failed profile read must not borrow another profile's credentials.
 
 
-def _ovcli_values_for(provider_config: dict, *, env: Optional[dict] = None) -> dict:
-    """Connection values from the linked ovcli profile, or {} when none is linked."""
-    if not provider_config.get("use_ovcli_config"):
-        return {}
-    ovcli_path = _resolve_ovcli_config_path(str(provider_config.get("ovcli_config_path") or ""), env=env)
-    return _connection_values_from_ovcli(_load_ovcli_config(ovcli_path))
-
-
 def _resolve_connection_settings(provider_config: Optional[dict] = None, *, env: Optional[dict] = None) -> dict:
     """Layering: env -> linked ovcli profile -> config.yaml -> built-in default.
     An env account/user (even empty) is authoritative; the secret api_key never
@@ -990,241 +381,6 @@ def _resolve_connection_settings(provider_config: Optional[dict] = None, *, env:
     }
 
 
-def _secure_secret_file(path: Path, *, create: bool = False) -> None:
-    """chmod 0600 a secret-bearing file; with ``create`` also pre-create it BEFORE writing
-    (write-then-chmod leaves a window where the fresh file is world-readable under the umask)."""
-    try:
-        if create and not path.exists():
-            os.close(os.open(str(path), os.O_CREAT | os.O_WRONLY, 0o600))
-        path.chmod(stat.S_IRUSR | stat.S_IWUSR)
-    except OSError as e:
-        logger.debug("Could not %s secret file %s: %s", "pre-create" if create else "restrict permissions on", path, e)
-
-
-def _env_line_safe(value: Any) -> str:
-    """Strip CR/LF/NUL so a value can only occupy its single ``KEY=VALUE`` line — an
-    embedded line break would be re-parsed as a separate variable (secret injection)."""
-    text = value if isinstance(value, str) else str(value)
-    return "".join(text.replace("\x00", "").splitlines())
-
-
-def _write_env_vars(env_path: Path, env_writes: dict, remove_keys: tuple[str, ...] = ()) -> None:
-    env_path.parent.mkdir(parents=True, exist_ok=True)
-    remove_set = set(remove_keys) - set(env_writes)
-    # utf-8-sig + surrogateescape: a Windows editor may leave a BOM (breaks the
-    # first key match) or save cp1252; round-trip undecodable bytes unchanged so
-    # updating one credential cannot corrupt an unrelated value.
-    # newline="": universal-newline translation on read would turn every CRLF
-    # into LF, so the file's real ending could never be detected below.
-    if env_path.exists():
-        with env_path.open("r", encoding="utf-8-sig", errors="surrogateescape", newline="") as fh:
-            existing = fh.read()
-    else:
-        existing = ""
-    # Only physical line endings separate records; other separators belong to values.
-    existing_lines = re.split(r"\r\n|\r|\n", existing)
-    if existing_lines[-1] == "":
-        existing_lines.pop()
-    # Adopt the file's own line ending instead of the platform default: writing
-    # one variable must not rewrite every untouched line from LF to CRLF.
-    eol = "\r\n" if "\r\n" in existing else "\n"  # Mixed endings use CRLF if present.
-    updated_keys = set()
-    new_lines = []
-    for line in existing_lines:
-        key_match = line.split("=", 1)[0].strip() if "=" in line else ""
-        if key_match in remove_set:
-            continue
-        if key_match in env_writes:
-            updated_keys.add(key_match)
-        new_lines.append(f"{key_match}={_env_line_safe(env_writes[key_match])}" if key_match in env_writes else line)
-    new_lines += [f"{key}={_env_line_safe(val)}" for key, val in env_writes.items() if key not in updated_keys]
-    _secure_secret_file(env_path, create=True)
-    # newline="": ``eol`` above is the only thing allowed to decide the line
-    # ending, so text mode cannot translate it on the way out.
-    with env_path.open("w", encoding="utf-8", errors="surrogateescape", newline="") as fh:
-        fh.write(eol.join(new_lines) + (eol if new_lines else ""))
-    _secure_secret_file(env_path)
-
-
-def _ovcli_data_from_connection_values(values: dict) -> dict:
-    data = {"url": _normalize_openviking_url(_clean_config_value(values.get("endpoint")) or _DEFAULT_ENDPOINT)}
-    for out_key, in_key in (("api_key", "api_key"), ("root_api_key", "root_api_key"), ("account", "account"), ("user", "user"), ("actor_peer_id", "agent")):
-        value = _clean_config_value(values.get(in_key))
-        if value:
-            data[out_key] = value
-    return data
-
-
-def _identity_failure(identity: str, subject: str, *, unhealthy_status: str = "status", legacy_subject: Optional[str] = None) -> str:
-    """Human message for a non-identified probe result, or "" when identified."""
-    if identity in _OPENVIKING_IDENTIFIED_STATES:
-        return ""
-    return {
-        "unhealthy": f"{subject} responded but reported unhealthy {unhealthy_status}.",
-        "legacy-unverified": f"{legacy_subject or subject} {_LEGACY_OPENVIKING_IDENTITY_DETAIL}",
-    }.get(identity, f"{subject} responded, but its /health response is not valid OpenViking.")
-
-
-def _client_health_failure(client, subject: str, **identity_kwargs) -> Optional[str]:
-    """"" when healthy, a message when the server answered but is not healthy OpenViking,
-    None when a payload-less (test double) client's health() is simply False."""
-    if hasattr(client, "health_payload"):
-        return _identity_failure(_probe_openviking_identity(client)[0], subject, **identity_kwargs)
-    return "" if client.health() else None
-
-
-def _validate_openviking_reachability(endpoint: str) -> tuple[bool, str]:
-    endpoint = _normalize_openviking_url(endpoint)
-    try:
-        message = _client_health_failure(_VikingClient(endpoint), "OpenViking server", legacy_subject="The server")
-        if message is not None:
-            return (not message), message
-    except Exception as e:
-        if _status_code_from_error(e) is not None:
-            return False, f"OpenViking server responded with {_format_openviking_exception(e)}."
-        return False, f"OpenViking server is not reachable at {endpoint}: {_format_openviking_exception(e)}"
-    return False, f"OpenViking server is not reachable at {endpoint}."
-
-
-def _validate_openviking_setup_values(values: dict, *, require_api_key: bool = False) -> tuple[bool, str, Optional[str]]:
-    """-> (ok, message, role) where role is 'root' / 'user' / None (no key)."""
-    try:
-        endpoint = _normalize_openviking_url(values.get("endpoint"))
-    except _OpenVikingEndpointError as exc:
-        return False, str(exc), None
-    api_key = _clean_config_value(values.get("api_key"))
-    if require_api_key and not api_key:
-        return False, "Remote OpenViking configs require an API key.", None
-    account = _clean_config_value(values.get("account"))
-    user = _clean_config_value(values.get("user"))
-    account, user = account or "default", user or "default"
-    try:
-        client = _VikingClient(endpoint, api_key, account=account, user=user,
-                               agent=_clean_config_value(values.get("agent")) or _DEFAULT_AGENT)
-        identity, health = _probe_openviking_identity(client)
-        if identity == "invalid":
-            return False, "Server /health response is not valid OpenViking.", None
-        message = _identity_failure(identity, "OpenViking server", legacy_subject="The server")
-        if message:
-            return False, message, None
-        if require_api_key or api_key or health.get("auth_mode") in {"api_key", "trusted", None}:
-            client.validate_auth()
-        if not api_key:
-            return True, "", None
-        try:
-            client.validate_root_access()
-            return True, "", "root"
-        except Exception as e:
-            if _status_code_from_error(e) in {401, 403, 404}:
-                return True, "", "user"
-            raise
-    except Exception as e:
-        return False, f"OpenViking validation failed: {_format_openviking_exception(e)}", None
-
-
-def _local_openviking_bind(endpoint: str) -> tuple[str, int]:
-    parsed = urlparse(_normalize_openviking_url(endpoint))
-    return parsed.hostname or "127.0.0.1", parsed.port or 1933
-
-
-def _local_openviking_port_is_open(host: str, port: int) -> bool:
-    """Pre-spawn guard: a successful connect proves a listener owns the port (so a
-    second openviking-server would lose the data-dir lock); says nothing about health."""
-    try:
-        with socket.create_connection((host, port), timeout=_LOCAL_OPENVIKING_PROBE_TIMEOUT):
-            return True
-    except OSError:
-        return False
-
-
-def _describe_local_port_listener(host: str, port: int) -> str:
-    """Best-effort process identity for an occupied local TCP port."""
-    try:
-        import psutil
-
-        accepted_hosts = {"0.0.0.0", "::", "::0", host.lower()}  # wildcard binds + the probed host
-        if host.lower() == "localhost":
-            accepted_hosts.update({"127.0.0.1", "::1"})
-        for conn in psutil.net_connections(kind="inet"):
-            if conn.status != psutil.CONN_LISTEN or not conn.laddr:
-                continue
-            listener_host = str(conn.laddr.ip if hasattr(conn.laddr, "ip") else conn.laddr[0]).lower()
-            listener_port = int(conn.laddr.port if hasattr(conn.laddr, "port") else conn.laddr[1])
-            if listener_port != port or listener_host not in accepted_hosts:
-                continue
-            if conn.pid is None:
-                break
-            try:
-                process_name = psutil.Process(conn.pid).name()
-            except (psutil.Error, OSError):
-                process_name = "unknown process"
-            process_name = re.sub(r"[^\w .+-]", "?", str(process_name))[:80]
-            return f"{process_name or 'unknown process'} (PID {conn.pid})"
-    except Exception:
-        logger.debug("Could not identify the process listening on %s:%s", host, port, exc_info=True)
-    return "an unidentified process"
-
-
-def _local_listener_suffix(endpoint: str) -> str:
-    if not _is_local_openviking_url(endpoint):
-        return ""
-    host, port = _local_openviking_bind(endpoint)  # cannot raise: _is_local_openviking_url already normalized it
-    if not _local_openviking_port_is_open(host, port):
-        return ""
-    return f" The listener on {host}:{port} is {_describe_local_port_listener(host, port)}."
-
-
-def _start_local_openviking_server(endpoint: str) -> tuple[str, str]:
-    try:
-        host, port = _local_openviking_bind(endpoint)
-    except ValueError as e:
-        return _LOCAL_SERVER_FAILED, f"Could not parse local OpenViking URL: {e}"
-    # A client-side health timeout can fire while the server is fine; spawning on
-    # that alone yields a child that dies on DataDirectoryLocked every cooldown.
-    # An occupied port only prevents spawning — it never proves the listener is OpenViking.
-    if _local_openviking_port_is_open(host, port):
-        return _LOCAL_SERVER_OCCUPIED, (
-            f"Port {host}:{port} is occupied by {_describe_local_port_listener(host, port)}. Hermes did not start "
-            "openviking-server because the listener has not passed OpenViking's /health check."
-        )
-    server_cmd = shutil.which("openviking-server")
-    if not server_cmd:
-        return _LOCAL_SERVER_FAILED, "openviking-server was not found on PATH. Start it manually, then retry."
-    log_path = get_hermes_home() / _OPENVIKING_SERVER_LOG_RELATIVE_PATH
-    try:
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        # Strip PYTHONPATH: the Desktop backend puts the Hermes venv on it, which
-        # would shadow openviking-server's own site-packages (and on Windows lock
-        # the Hermes venv's .pyd files, breaking `hermes update`).
-        # Do not let the server child inherit this process's PYTHONPATH. If inherited, openviking-server
-        # would import aiohttp and friends from the Hermes venv instead of its own (its venv's site-packages
-        # are shadowed because PYTHONPATH precedes them) — and on Windows the loaded DLLs then lock the
-        # Hermes venv, aborting `hermes update` with access-denied on .pyd files. (#78153)
-        child_env = os.environ.copy()
-        child_env.pop("PYTHONPATH", None)
-        with log_path.open("ab") as log_file:
-            subprocess.Popen([server_cmd, "--host", host, "--port", str(port)], stdout=log_file, stderr=log_file,
-                             stdin=subprocess.DEVNULL, start_new_session=True, env=child_env)
-    except Exception as e:
-        return _LOCAL_SERVER_FAILED, f"Could not start openviking-server: {e}"
-    return _LOCAL_SERVER_STARTED, f"Started openviking-server on {host}:{port} in the background. Logs: {log_path}"
-
-
-def _wait_for_openviking_health(endpoint: str, *, timeout_seconds: float = 15.0, should_stop=None,
-                                deps: Optional["Deps"] = None) -> bool:
-    deps = deps if deps is not None else default_deps()
-    deadline = deps.monotonic() + timeout_seconds
-    while deps.monotonic() < deadline:
-        # Bail promptly on teardown so the daemon waiter can be join()ed at shutdown
-        # (a worker alive at interpreter exit aborts CPython in Py_FinalizeEx).
-        if should_stop is not None and should_stop():
-            return False
-        if deps.validate_reachability(endpoint)[0]:
-            return True
-        deps.sleep(0.5)
-    return False
-
-
 def _emit_runtime(message: str, callback=None, *, kind: str = "warning") -> None:
     """Log (warning/info by ``kind``) and forward to the CLI callback when one is wired."""
     (logger.warning if kind == "warning" else logger.info)("%s", message)
@@ -1242,166 +398,10 @@ def _runtime_openviking_timeout_message(endpoint: str) -> str:
     )
 
 
-def _classify_runtime_openviking_health(client: _VikingClient, endpoint: str) -> tuple[str, str]:
-    """-> ("healthy" | "responded" | "unreachable", message). A false health result is
-    not treated as server absence unless nothing answered at all."""
-    subject = f"Service at {endpoint}"
-    try:
-        message = _client_health_failure(client, subject, unhealthy_status="OpenViking status")
-        if message is not None:
-            return ("healthy", "") if not message else ("responded", message + _local_listener_suffix(endpoint))
-    except _OpenVikingHTTPError as e:
-        return "responded", f"{subject} responded with {_format_openviking_exception(e)}.{_local_listener_suffix(endpoint)}"
-    except Exception:
-        pass
-    return "unreachable", ""
-
-
-@dataclass(frozen=True)
-class Deps:
-    """Everything the plugin reaches outside the process through, as one injectable value.
-
-    Each provider holds one (``self._deps``) and passes it to the module-level
-    helpers it calls. Helpers called without a provider read ``default_deps()``.
-    Tests swap a dependency by building a Deps (``dataclasses.replace``) rather
-    than patching names in this module, so the fake still reaches the code that
-    reads it after that code moves to another module.
-    """
-
-    # REST transport factory: returns an object with httpx's get/post/delete, or None without httpx.
-    transport: Callable[[], Any] = _get_httpx
-    # REST client factory, called like ``_VikingClient`` without ``transport``.
-    # None builds a ``_VikingClient`` over ``transport()``.
-    client: Optional[Callable[..., Any]] = None
-    # MCP session factory; unused until the MCP bridge is wired in.
-    mcp_session: Optional[Callable[..., Any]] = None
-    monotonic: Callable[[], float] = time.monotonic
-    wall: Callable[[], float] = time.time
-    sleep: Callable[[float], None] = time.sleep
-    # (client, endpoint) -> ("healthy" | "responded" | "unreachable", message)
-    health: Callable[[Any, str], tuple[str, str]] = _classify_runtime_openviking_health
-    # Used by the setup wizard.
-    discover_profiles: Callable[[], List[Any]] = _discover_ovcli_profiles
-    validate_reachability: Callable[[str], tuple[bool, str]] = _validate_openviking_reachability
-    validate_setup_values: Callable[..., tuple[bool, str, Optional[str]]] = _validate_openviking_setup_values
-
-
-_default_deps = Deps()
-
-
-def default_deps() -> Deps:
-    """The Deps a new provider starts from, also read by helpers called without a provider."""
-    return _default_deps
-
-
-def set_default_deps(deps: Deps) -> Deps:
-    """Replace the module default and return the previous one.
-
-    This is the one supported way to swap a dependency plugin-wide; tests restore
-    the returned value afterwards. Providers constructed earlier keep their own Deps.
-    """
-    global _default_deps
-    previous, _default_deps = _default_deps, deps
-    return previous
-
-
-def _rest_client(deps: Deps, endpoint: str, api_key: str = "", **identity) -> "_VikingClient":
-    """A REST client from ``deps``: its client factory, or ``_VikingClient`` over its transport."""
-    if deps.client is not None:
-        return deps.client(endpoint, api_key, **identity)
-    return _VikingClient(endpoint, api_key, transport=deps.transport(), **identity)
-
-
 from . import _setup  # noqa: E402  (needs the helpers above at call time)
 
 
 # -- MemoryProvider implementation ------------------------------------------
-
-_message_text = flatten_message_text  # OpenAI-style string/list content -> text
-
-
-def _tool_part(tool_id: str, tool_name: str, tool_input: Dict[str, Any], tool_status: str, **extra) -> Dict[str, Any]:
-    return {"type": "tool", "tool_id": tool_id, "tool_name": tool_name, "tool_input": tool_input, **extra, "tool_status": tool_status}
-
-
-def _tool_call_id(tool_call: Dict[str, Any]) -> str:
-    return str(tool_call.get("id") or tool_call.get("tool_call_id") or "")
-
-
-def _tool_call_name(tool_call: Dict[str, Any]) -> str:
-    function = tool_call.get("function")
-    return str((function.get("name") if isinstance(function, dict) else tool_call.get("name")) or "")
-
-
-def _is_openviking_recall_tool_name(tool_name: Any) -> bool:
-    return str(tool_name or "").strip().lower() in _OPENVIKING_RECALL_TOOL_NAMES
-
-
-def _tool_call_input(tool_call: Dict[str, Any]) -> Dict[str, Any]:
-    function = tool_call.get("function")
-    raw_args = function.get("arguments") if isinstance(function, dict) else None
-    if raw_args is None:
-        raw_args = tool_call.get("args")
-    if raw_args is None or (isinstance(raw_args, str) and not raw_args.strip()):
-        return {}
-    if not isinstance(raw_args, str):
-        return raw_args if isinstance(raw_args, dict) else {"value": raw_args}
-    with suppress(Exception):
-        parsed = json.loads(raw_args)
-        return parsed if isinstance(parsed, dict) else {"value": parsed}
-    return {"value": raw_args}
-
-
-def _tool_result_status(message: Dict[str, Any]) -> str:
-    raw_status = str(message.get("status") or message.get("tool_status") or "").lower()
-    if raw_status in _TOOL_STATUS_ERROR_ALIASES:
-        return "error"
-    if raw_status in _TOOL_STATUS_COMPLETED_ALIASES:
-        return "completed"
-    text = _message_text(message.get("content")).strip()
-    parsed = None
-    if text:
-        with suppress(Exception):
-            parsed = json.loads(text)
-    if isinstance(parsed, dict):
-        exit_code = parsed.get("exit_code")
-        if (str(parsed.get("status") or "").lower() in _TOOL_STATUS_ERROR_ALIASES or parsed.get("success") is False
-                or bool(parsed.get("error")) or (isinstance(exit_code, int) and exit_code != 0)):
-            return "error"
-    return "completed"
-
-
-def _rfind_message(messages: List[Any], role: str, start: int, expected: Any = None) -> Optional[int]:
-    """Index of the last ``role`` message at or before ``start`` (matching ``expected`` text if given)."""
-    expected_text = None if expected is None else _message_text(expected).strip()
-    for idx in range(start, -1, -1):
-        message = messages[idx]
-        if not isinstance(message, dict) or message.get("role") != role:
-            continue
-        if expected_text is None or (expected_text and _message_text(message.get("content")).strip() == expected_text):
-            return idx
-    return None
-
-
-def _index_tool_calls(messages: List[Dict[str, Any]]) -> tuple[Dict[str, Dict[str, Any]], set[str], set[str]]:
-    """-> (assistant tool_calls by id, ids with a result in the slice, recall-tool ids to drop)."""
-    tool_calls_by_id: Dict[str, Dict[str, Any]] = {}
-    completed_tool_ids: set[str] = set()
-    skipped_tool_ids: set[str] = set()
-    for message in messages:
-        if message.get("role") == "tool":
-            if tool_id := str(message.get("tool_call_id") or message.get("id") or ""):
-                completed_tool_ids.add(tool_id)
-                if _is_openviking_recall_tool_name(message.get("name")):
-                    skipped_tool_ids.add(tool_id)
-        elif message.get("role") == "assistant":
-            for tool_call in message.get("tool_calls") or []:
-                if isinstance(tool_call, dict) and (tool_id := _tool_call_id(tool_call)):
-                    tool_name = _tool_call_name(tool_call)
-                    tool_calls_by_id[tool_id] = {"tool_name": tool_name, "tool_input": _tool_call_input(tool_call)}
-                    if _is_openviking_recall_tool_name(tool_name):
-                        skipped_tool_ids.add(tool_id)
-    return tool_calls_by_id, completed_tool_ids, skipped_tool_ids
 
 
 @dataclass
@@ -1491,7 +491,12 @@ class _TurnUpload:
             logger.warning("OpenViking sync_turn failed during individual-message fallback: %s", fallback_error)
 
 
-class OpenVikingMemoryProvider(MemoryProvider):
+class OpenVikingMemoryProvider(
+    TranscriptMixin,
+    SettingsMixin,
+    RestResultMixin,
+    MemoryProvider,
+):
     """Full bidirectional memory via OpenViking context database."""
 
     def backup_paths(self) -> List[str]:
@@ -1914,18 +919,8 @@ class OpenVikingMemoryProvider(MemoryProvider):
 
     # -- prompt / prefetch ---------------------------------------------------
 
-    def _sender_peer(self, author_id: Any) -> str:
-        sender = str(author_id or "").strip()
-        if sender and sender in {self._gateway_user_id, self._gateway_user_id_alt}:
-            sender = self._gateway_user_id_alt or sender
-        return _gateway_peer_id(self._gateway_platform, sender)
-
     def on_turn_start(self, turn_number: int, message: str, **kwargs) -> None:
         self._turn_peer.set(self._sender_peer(kwargs["author_id"]) if "author_id" in kwargs else self._user_id)
-
-    def _current_sender_peer(self) -> str:
-        current = self._turn_peer.get()
-        return self._user_id if current is None else current
 
     def system_prompt_block(self) -> str:
         """Static tool guidance built from the registered tool names.
@@ -2288,57 +1283,6 @@ class OpenVikingMemoryProvider(MemoryProvider):
 
     # -- typed settings ------------------------------------------------------
 
-    @staticmethod
-    def _parse_setting_value(value: Any, kind: str) -> Optional[bool | int | float | str]:
-        """Parse per schema ``kind`` (boolean / integer / number); None when invalid."""
-        if kind == "string":
-            normalized = str(value).strip().lower()
-            if normalized in {"1", "true", "yes"}:
-                return "auto"
-            if normalized in {"0", "false", "no"}:
-                return "off"
-            return normalized if normalized in {"off", "server", "auto"} else None
-        if kind == "boolean":
-            if isinstance(value, bool):
-                return value
-            normalized = value.strip().lower() if isinstance(value, str) else None
-            return True if normalized in {"1", "true", "yes", "on"} else False if normalized in {"0", "false", "no", "off"} else None
-        try:
-            if isinstance(value, bool):
-                return None
-            numeric = float(value)
-            if not math.isfinite(numeric) or (kind == "integer" and not numeric.is_integer()):
-                return None
-            return int(numeric) if kind == "integer" else numeric
-        except (TypeError, ValueError, OverflowError):
-            return None
-
-    @classmethod
-    def _setting(cls, key: str, provider_config: dict, *, env: Optional[dict] = None) -> Any:
-        """Typed, range-clamped setting per _SETTING_SPECS (config.yaml primary, env override);
-        an invalid value falls back to the default with one warning per (source, value)."""
-        spec = _SETTING_SPECS[key]
-        default = spec["default"]
-        env_value = get_secret(spec["env_var"]) if env is None else env.get(spec["env_var"])
-        if env_value is not None and env_value.strip():
-            value, source = env_value, spec["env_var"]
-        else:
-            value, source = provider_config.get(key, default), f"memory.openviking.{key}"
-        if value is None and default is None:
-            return None  # No policy override on installations that predate the presets.
-        parsed = str(value).strip().lower() if "choices" in spec else cls._parse_setting_value(value, spec["type"])
-        if "choices" in spec and parsed not in spec["choices"]:
-            parsed = None
-        if parsed is None:
-            warning_key = (source, repr(value))
-            with _INVALID_SETTING_WARNINGS_LOCK:
-                first = warning_key not in _INVALID_SETTING_WARNINGS
-                _INVALID_SETTING_WARNINGS.add(warning_key)
-            if first:
-                logger.warning("Invalid %s value %r; using default %r.", source, value, default)
-            return default
-        return max(spec["minimum"], min(spec["maximum"], parsed)) if "minimum" in spec else parsed
-
     def _recall_config(self) -> Dict[str, Any]:
         cfg, env = self._profile_config_and_env()
         resolved = {
@@ -2359,27 +1303,6 @@ class OpenVikingMemoryProvider(MemoryProvider):
         return self._setting("profile_token_budget", cfg, env=env)
 
     # -- session-start memory block -----------------------------------------
-
-    @staticmethod
-    def _unwrap_result(resp: Any) -> Any:
-        """Return OpenViking payload body regardless of wrapped/unwrapped shape."""
-        return resp.get("result") if isinstance(resp, dict) and "result" in resp else resp
-
-    @classmethod
-    def _extract_text_content(cls, resp: Any, *, strict: bool = False) -> str:
-        """Text body from a content endpoint (plain string or {content|text} object);
-        ``strict`` accepts only non-blank string fields."""
-        result = cls._unwrap_result(resp)
-        if isinstance(result, str):
-            return result.strip()
-        if isinstance(result, dict):
-            if not strict:
-                return str(result.get("content") or result.get("text") or "").strip()
-            for key in ("content", "text"):
-                value = result.get(key)
-                if isinstance(value, str) and value.strip():
-                    return value.strip()
-        return ""
 
     @classmethod
     def _extract_memory_listing(cls, resp: Any) -> List[Dict[str, str]]:
@@ -2638,83 +1561,6 @@ class OpenVikingMemoryProvider(MemoryProvider):
         return entries
 
     # -- turn sync -----------------------------------------------------------
-
-    @staticmethod
-    def _extract_current_turn_messages(messages: Optional[List[Dict[str, Any]]], user_content: str, assistant_content: str) -> List[Dict[str, Any]]:
-        """Slice the completed turn out of Hermes' full canonical transcript: the last
-        assistant message matching assistant_content (else the last assistant message,
-        else the transcript end) back to the matching (else nearest) user message."""
-        if not messages:
-            return []
-        last = len(messages) - 1
-
-        def locate(role: str, start: int, expected: Any) -> Optional[int]:
-            matched = _rfind_message(messages, role, start, expected) if _message_text(expected).strip() else None
-            return matched if matched is not None else _rfind_message(messages, role, start)
-
-        end_idx = locate("assistant", last, assistant_content)
-        end_idx = last if end_idx is None else end_idx
-        start_idx = locate("user", end_idx, user_content)
-        if start_idx is None:
-            return []
-        return [message for message in messages[start_idx : end_idx + 1] if isinstance(message, dict)]
-
-    @staticmethod
-    def _messages_to_openviking_batch(messages: List[Dict[str, Any]], *, assistant_peer_id: str = "", user_peer_id: str = "") -> List[Dict[str, Any]]:
-        """Convert Hermes canonical messages into OpenViking batch payloads.
-
-        Recall-tool calls/results are dropped (re-ingesting recalled memory would
-        re-store it); tool results are grouped into assistant messages; a tool call
-        whose result is in the slice is emitted only via its result part.
-        """
-        assistant_peer_id = str(assistant_peer_id or "").strip()
-        user_peer_id = str(user_peer_id or "").strip()
-        dict_messages = [m for m in messages if isinstance(m, dict)]
-        tool_calls_by_id, completed_tool_ids, skipped_tool_ids = _index_tool_calls(dict_messages)
-        payload_messages: List[Dict[str, Any]] = []
-        pending_tool_parts: List[Dict[str, Any]] = []
-
-        def emit(role: str, parts: List[Dict[str, Any]]) -> None:
-            peer_id = assistant_peer_id if role == "assistant" else user_peer_id if role == "user" else ""
-            peer = {"peer_id": peer_id} if peer_id else {}
-            payload_messages.append({"role": role, "parts": parts, **peer})
-
-        def flush_tool_parts() -> None:
-            nonlocal pending_tool_parts
-            if pending_tool_parts:
-                emit("assistant", pending_tool_parts)
-                pending_tool_parts = []
-
-        for message in dict_messages:
-            role = str(message.get("role") or "")
-            if role == "tool":
-                tool_id = str(message.get("tool_call_id") or message.get("id") or "")
-                prior_call = tool_calls_by_id.get(tool_id, {})
-                tool_name = str(message.get("name") or prior_call.get("tool_name") or "")
-                if tool_id not in skipped_tool_ids and not _is_openviking_recall_tool_name(tool_name):
-                    pending_tool_parts.append(_tool_part(tool_id, tool_name, prior_call.get("tool_input", {}), _tool_result_status(message),
-                                                         tool_output=_message_text(message.get("content"))))
-                continue
-            if role not in {"user", "assistant"}:
-                continue
-            flush_tool_parts()
-            text = _message_text(message.get("content"))
-            parts: List[Dict[str, Any]] = [{"type": "text", "text": text}] if text else []
-            if role == "assistant":
-                for tool_call in message.get("tool_calls") or []:
-                    if not isinstance(tool_call, dict):
-                        continue
-                    tool_id, tool_name = _tool_call_id(tool_call), _tool_call_name(tool_call)
-                    if tool_id in skipped_tool_ids or tool_id in completed_tool_ids or _is_openviking_recall_tool_name(tool_name):
-                        continue
-                    # Pre-scan caches non-empty ids; parse again for the uncached empty-id case.
-                    tool_input = tool_calls_by_id[tool_id]["tool_input"] if tool_id in tool_calls_by_id else _tool_call_input(tool_call)
-                    parts.append(_tool_part(tool_id, tool_name, tool_input, "pending"))
-            if parts:
-                emit(role, parts)
-
-        flush_tool_parts()
-        return payload_messages
 
     def sync_turn(self, user_content: str, assistant_content: str, *, session_id: str = "",
                   messages: Optional[List[Dict[str, Any]]] = None,
