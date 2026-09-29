@@ -11,8 +11,8 @@
  *      id (`cx-<codex-session-id>`) and remember it in state.
  *   2. Read transcript_path, parse JSONL rollout, append every new
  *      user/assistant turn since last capture via add_message.
- *   3. If session pending_tokens crosses commitTokenThreshold, commit while
- *      keeping a recent live tail for continuity.
+ *   3. If session pending_tokens crosses commitTokenThreshold, commit and
+ *      archive every captured message.
  *
  * A Stop for this session also proves the thread is alive again, so the
  * SessionEnd marker (if any) is cleared before anything else. Committing is

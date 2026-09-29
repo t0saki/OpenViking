@@ -184,6 +184,8 @@ integrations should configure category `quotas` when they need exact ceilings.
 | `captureToolMaxChars`    | `1000000`  | Guard cap on one tool part's `tool_output`; the server externalizes oversized output |
 | `commitTokenThreshold`   | `20000`    | Pending-token threshold for client-driven commit                         |
 
+`commitKeepRecentCount` (`OPENVIKING_COMMIT_KEEP_RECENT_COUNT`) is no longer read: every commit archives all captured messages. Delete it from existing config.
+
 ### Context takeover
 
 Takeover is enabled by default. OpenViking commits archived history, reads the
