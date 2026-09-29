@@ -222,5 +222,6 @@ def test_setup_priming_fills_the_disk_cache(external_provider, fake_mcp, core_mo
     assert cached["endpoint"] == "http://127.0.0.1:19534"
     assert [t["name"] for t in cached["tools"]] == [t["name"] for t in SERVER_TOOLS]
     assert fake_mcp.sessions[0]["url"] == "http://127.0.0.1:19534/mcp"
-    assert fake_mcp.sessions[0]["headers"]["X-API-Key"] == "k"
+    assert fake_mcp.sessions[0]["headers"]["Authorization"] == "Bearer k"
+    assert "X-API-Key" not in fake_mcp.sessions[0]["headers"]
     catalog.clear_memory_cache()
