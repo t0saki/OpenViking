@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -24,6 +25,20 @@ function runInstallerPrelude(body, env = {}) {
     env: preludeEnv(env),
     input: `${installerPrelude}\n${body}\n`,
     timeout: 10_000,
+  });
+}
+
+// For bodies that talk to a server in this process, which spawnSync would
+// block.
+function runInstallerPreludeAsync(body, env = {}) {
+  return new Promise((resolve) => {
+    const child = spawn("/bin/bash", [], { env: preludeEnv(env) });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => { stdout += chunk; });
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    child.on("close", (status) => resolve({ status, stdout, stderr }));
+    child.stdin.end(`${installerPrelude}\n${body}\n`);
   });
 }
 
@@ -191,7 +206,8 @@ INTERACTIVE=1
 OV_HOME=${JSON.stringify(home)}
 OVCLI_CONF=${JSON.stringify(conf)}
 exec 3< <(printf '\\n')
-configure_ovcli
+gather_credentials
+write_ovcli
 `);
 
   assert.equal(result.status, 0, result.stderr);
@@ -214,6 +230,16 @@ test("menu digit shortcuts move the cursor instead of confirming", () => {
   assert.ok(chooseFormat, "tui_choose_cli_format not found");
   assert.match(chooseFormat[0], /^ +1\) cursor=0 ;;$/m);
   assert.match(chooseFormat[0], /^ +2\) cursor=1 ;;$/m);
+});
+
+test("q at the install confirmation cancels rather than taking the default", () => {
+  // Every other menu keeps its default on q; here the default is Proceed.
+  const menu = /^tui_menu\(\) \{[\s\S]*?^\}$/m.exec(installerSource);
+  assert.ok(menu, "tui_menu not found");
+  assert.match(menu[0], /^ +q\|Q\) cursor="\$\{TUI_MENU_QUIT:-\$def\}"; break ;;$/m);
+  const confirm = /^confirm_plan\(\) \{$[\s\S]*?^\}$/m.exec(installerSource);
+  assert.ok(confirm, "confirm_plan not found");
+  assert.match(confirm[0], /TUI_MENU_QUIT=1 tui_menu "[^\n]*" 0 "\$\(t 'Proceed' '继续'\)" "\$\(t 'Cancel' '取消'\)"$/m);
 });
 
 test("an empty element in a comma-separated list is skipped, not fatal", () => {
@@ -242,13 +268,27 @@ INTERACTIVE=1
 OV_HOME=${JSON.stringify(home)}
 OVCLI_CONF=${JSON.stringify(conf)}
 exec 3< <(printf 'rotated-key\\n')
-configure_ovcli
+gather_credentials
+write_ovcli
 `);
 
   assert.equal(result.status, 0, result.stderr);
   assert.doesNotMatch(result.stdout, /Updated: url:/);
   assert.match(result.stdout, /Updated: api_key: stor…-key \(10\) -> rota…-key \(11\)/);
   assert.equal(JSON.parse(readFileSync(conf, "utf8")).api_key, "rotated-key");
+});
+
+test("a first-time setup offers the local server first", () => {
+  const result = runInstallerPrelude(`
+tui_menu() { TUI_MENU_CHOICE="$2"; }
+INTERACTIVE=1
+exec 3< <(printf '\\n')
+prompt_connection "" ""
+printf '%s|%s\\n' "$WIZ_URL" "$WIZ_KEY"
+`);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout.trim().split("\n").pop(), "http://127.0.0.1:1933|");
 });
 
 test("the language follows --lang, OPENVIKING_LANG, the locale, then the macOS setting", (t) => {
@@ -289,4 +329,153 @@ printf '%s\\n' "$UI_LANG"
   assert.equal(detect({ FAKE_APPLE_LOCALE: "zh-Hans_CN" }), "zh");
   assert.equal(detect({ FAKE_APPLE_LOCALE: "" }), "en");
   assert.equal(detect({ FAKE_UNAME: "Linux" }), "en");
+});
+
+test("the server check tells an unreachable server, a rejected key and other failures apart", async (t) => {
+  const key = 'good"key\\';
+  const seen = [];
+  const server = createServer((req, res) => {
+    const [, scenario, ...rest] = req.url.split("/");
+    seen.push({ path: `/${rest.join("/")}`, headers: req.headers });
+    let status = 200;
+    if (rest.join("/") === "api/v1/system/status") {
+      if (scenario === "authed") status = req.headers.authorization === `Bearer ${key}` ? 200 : 401;
+      if (scenario === "broken") status = 500;
+    }
+    res.writeHead(status, { "Content-Type": "application/json" });
+    res.end("{}");
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const closed = createServer();
+  await new Promise((resolve) => closed.listen(0, "127.0.0.1", resolve));
+  const unreachable = `http://127.0.0.1:${closed.address().port}`;
+  await new Promise((resolve) => closed.close(resolve));
+
+  // Every curl call is logged, so the key can be checked to stay out of argv.
+  const bin = makeTempHome(t);
+  const log = join(bin, "curl.log");
+  const realCurl = spawnSync("bash", ["-c", "command -v curl"], { encoding: "utf8" }).stdout.trim();
+  writeFileSync(join(bin, "curl"), `#!/bin/sh\necho "$*" >> "${log}"\nexec "${realCurl}" "$@"\n`, { mode: 0o755 });
+
+  const result = await runInstallerPreludeAsync(`
+for target in "${base}/open||" "${base}/authed|$PROBE_KEY|acct" "${base}/authed|wrong|" "${base}/authed||" "${base}/broken||" "${unreachable}||"; do
+  IFS='|' read -r url key account <<PROBE
+$target
+PROBE
+  probe_server "$url/" "$key" "$account" "usr"
+  printf '%s:%s\\n' "$PROBE_RESULT" "$PROBE_CODE"
+done
+`, { PROBE_KEY: key, PATH: `${bin}:${process.env.PATH}` });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(result.stdout.trim().split("\n"), [
+    "ok:200",
+    "ok:200",
+    "rejected:401",
+    "key-required:401",
+    "http:500",
+    "unreachable:000",
+  ]);
+  const authed = seen.find((req) => req.headers.authorization === `Bearer ${key}`);
+  assert.equal(authed.headers["x-openviking-account"], "acct");
+  assert.equal(authed.headers["x-openviking-user"], "usr");
+  assert.ok(seen.filter((req) => req.path === "/health").every((req) => !req.headers.authorization));
+  assert.doesNotMatch(readFileSync(log, "utf8"), /good|wrong/);
+});
+
+test("re-entering after a failed server check probes the new values", async (t) => {
+  const server = createServer((req, res) => {
+    res.writeHead(req.headers.authorization === "Bearer fresh-key" || req.url.endsWith("/health") ? 200 : 401);
+    res.end("{}");
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+  const url = `http://127.0.0.1:${server.address().port}`;
+
+  // First answer: re-enter; then the custom-URL arm, whose prompt keeps the URL.
+  const result = await runInstallerPreludeAsync(`
+MENU_ANSWERS="0 2"
+tui_menu() { set -- $MENU_ANSWERS; TUI_MENU_CHOICE="$1"; shift; MENU_ANSWERS="$*"; }
+INTERACTIVE=1
+exec 3< <(printf '\\nfresh-key\\n')
+CRED_URL=${JSON.stringify(url)}
+CRED_KEY="stale-key"
+check_server
+printf '%s|%s|%s\\n' "$PROBE_RESULT" "$CRED_URL" "$CRED_KEY"
+`);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /The server rejected the API key \(HTTP 401\)\./);
+  assert.equal(result.stdout.trim().split("\n").pop(), `ok|${url}|fresh-key`);
+});
+
+// A copy away from the checkout, so the run is not in dev mode and the
+// release installer is not fetched.
+function detachedInstaller(t, transform = (source) => source) {
+  const dir = mkdtempSync(join(realpathSync(tmpdir()), "openviking-flow-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const home = join(dir, "home");
+  const bin = join(home, "bin");
+  mkdirSync(bin, { recursive: true });
+  const script = join(dir, "install.sh");
+  writeFileSync(script, transform(installerSource));
+  const dshLog = join(dir, "dsh.log");
+  writeFileSync(join(bin, "dsh"), `#!/bin/sh\necho "$*" >> "${dshLog}"\necho "@openviking/dsh-memory-plugin openviking-memory-runtime"\n`, { mode: 0o755 });
+  const run = (args) => spawnSync("bash", [script, ...args], {
+    cwd: home,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      HOME: home,
+      PATH: `${bin}:${process.env.PATH}`,
+      OPENVIKING_HOME: join(home, ".openviking"),
+      OPENVIKING_TOS_BASE: "https://tos.example.invalid",
+      OPENVIKING_INSTALLER_REEXEC: "0",
+    },
+    timeout: 30_000,
+  });
+  return { home, dshLog, run };
+}
+
+test("cancelling at the confirmation leaves the machine untouched", (t) => {
+  // Drive the interactive flow without a terminal: every menu takes its
+  // default except the confirmation, which is cancelled.
+  const { home, dshLog, run } = detachedInstaller(t, (source) => source.replace(mainMarker, `INTERACTIVE=1
+exec 3</dev/null
+tui_menu() {
+  TUI_MENU_CHOICE="$2"
+  case "$1" in *Proceed*) TUI_MENU_CHOICE=1 ;; esac
+}
+${mainMarker}`));
+
+  const result = run(["--harness", "cursor,dsh", "--lang", "en", "--url", "http://127.0.0.1:9", "--api-key", "secret-api-key"]);
+
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  assert.match(result.stdout, /3\. Review/);
+  assert.match(result.stdout, /~\/\.cursor\/hooks\.json/);
+  assert.match(result.stdout, /Cancelled; nothing was changed\./);
+  assert.doesNotMatch(`${result.stdout}${result.stderr}`, /secret-api-key/);
+  assert.deepEqual(readdirSync(home), ["bin"]);
+  assert.equal(existsSync(dshLog), false);
+});
+
+test("a non-interactive run with no server says so and how to re-run", (t) => {
+  const { home, run } = detachedInstaller(t);
+  const notice = /No server was given: the plugin is configured for http:\/\/127\.0\.0\.1:1933 without an API key\./;
+
+  const result = run(["--harness", "dsh", "--lang", "en", "--yes"]);
+
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  assert.match(result.stdout, notice);
+  assert.ok(result.stdout.indexOf("Review") < result.stdout.search(notice));
+  assert.match(result.stdout, /install\.sh\) --yes --harness dsh --url <server-url> --api-key <api-key>/);
+  assert.match(result.stdout, /5\. Validation/);
+  assert.equal(JSON.parse(readFileSync(join(home, ".openviking", "ovcli.conf"), "utf8")).url, "http://127.0.0.1:1933");
+
+  // Once a server is configured, a re-run has nothing to warn about.
+  const again = run(["--harness", "dsh", "--lang", "en", "--yes"]);
+  assert.equal(again.status, 0, `${again.stdout}\n${again.stderr}`);
+  assert.doesNotMatch(again.stdout, notice);
 });

@@ -148,7 +148,7 @@ Options:
   --uninstall        Remove Cursor/TRAE/TRAE CN/ZCode/Kimi Code integration files and config,
                      plus any legacy TraeCode CLI hook config.
                      For Codex-format plugins, use the client's plugin uninstall command.
-  --yes, -y          Use defaults for prompts when possible.
+  --yes, -y          Use defaults for prompts and install without asking for confirmation.
 EOF
 }
 
@@ -201,6 +201,7 @@ read_tty() { # read_tty <varname> [-s]
 
 TUI_MENU_CHOICE=0
 
+# q picks TUI_MENU_QUIT when the caller sets it, otherwise the default.
 tui_menu() { # tui_menu <title> <default-index> <option...>  -> TUI_MENU_CHOICE
   local title="$1" def="$2"
   shift 2
@@ -261,7 +262,7 @@ tui_menu() { # tui_menu <title> <default-index> <option...>  -> TUI_MENU_CHOICE
         fi
         ;;
       ''|$'\n'|$'\r') break ;;
-      q|Q) cursor="$def"; break ;;
+      q|Q) cursor="${TUI_MENU_QUIT:-$def}"; break ;;
     esac
   done
   printf '\033[?25h' >/dev/tty
@@ -1163,8 +1164,9 @@ EOF
 # ---------------------------------------------------------------------------
 
 prompt_connection() { # sets WIZ_URL / WIZ_KEY (WIZ_KEY may stay __OPENVIKING_KEEP__)
-  local current_url="$1" current_key="$2" url_input reply
-  tui_menu "$(t 'Where do you connect to OpenViking?' '连接到哪个 OpenViking 服务？')" 2 \
+  local current_url="$1" current_key="$2" url_input reply def=2
+  [ -n "$current_url" ] || def=0
+  tui_menu "$(t 'Where do you connect to OpenViking?' '连接到哪个 OpenViking 服务？')" "$def" \
     "$(t 'Self-hosted / local' '自建 / 本地')  [http://127.0.0.1:1933]" \
     "$(t 'Volcengine OpenViking Cloud' '火山引擎 OpenViking 云服务')  [api.vikingdb.cn-beijing.volces.com]" \
     "$(t 'Custom URL / keep current' '自定义 URL / 保持当前')  [${current_url:-http://127.0.0.1:1933}]"
@@ -1198,65 +1200,135 @@ prompt_connection() { # sets WIZ_URL / WIZ_KEY (WIZ_KEY may stay __OPENVIKING_KE
   fi
 }
 
-configure_ovcli() {
-  local current_url current_key current_account current_user url key account user reply
+# What the credentials step settled on. Nothing is written until the plan is
+# confirmed; key, account and user stay __OPENVIKING_KEEP__ to keep the stored
+# value.
+CUR_URL=""; CUR_KEY=""; CUR_ACCOUNT=""; CUR_USER=""
+CRED_URL=""; CRED_KEY="__OPENVIKING_KEEP__"; CRED_ACCOUNT="__OPENVIKING_KEEP__"; CRED_USER="__OPENVIKING_KEEP__"
+PROBE_RESULT=""
+PROBE_CODE=""
+
+cred_value() { # cred_value <chosen> <stored>
+  if [ "$1" = "__OPENVIKING_KEEP__" ]; then printf '%s' "$2"; else printf '%s' "$1"; fi
+}
+
+gather_credentials() {
   heading "$(t '2. OpenViking credentials' '2. OpenViking 凭据配置') ($OVCLI_CONF)"
-  mkdir -p "$OV_HOME"
-  chmod 700 "$OV_HOME" 2>/dev/null || true
+  CUR_URL="$(json_get "$OVCLI_CONF" url)"
+  CUR_KEY="$(json_get "$OVCLI_CONF" api_key)"
+  CUR_ACCOUNT="$(json_get "$OVCLI_CONF" account)"
+  CUR_USER="$(json_get "$OVCLI_CONF" user)"
 
-  current_url="$(json_get "$OVCLI_CONF" url)"
-  current_key="$(json_get "$OVCLI_CONF" api_key)"
-  current_account="$(json_get "$OVCLI_CONF" account)"
-  current_user="$(json_get "$OVCLI_CONF" user)"
-
-  url="$current_url"
-  key="__OPENVIKING_KEEP__"
-  account="__OPENVIKING_KEEP__"
-  user="__OPENVIKING_KEEP__"
-
-  [ -n "$URL_ARG" ] && url="$URL_ARG"
-  [ "$API_KEY_ARG" != "__OPENVIKING_UNSET__" ] && key="$API_KEY_ARG"
-  [ "$ACCOUNT_ARG" != "__OPENVIKING_UNSET__" ] && account="$ACCOUNT_ARG"
-  [ "$USER_ARG" != "__OPENVIKING_UNSET__" ] && user="$USER_ARG"
+  CRED_URL="${URL_ARG:-$CUR_URL}"
+  [ "$API_KEY_ARG" = "__OPENVIKING_UNSET__" ] || CRED_KEY="$API_KEY_ARG"
+  [ "$ACCOUNT_ARG" = "__OPENVIKING_UNSET__" ] || CRED_ACCOUNT="$ACCOUNT_ARG"
+  [ "$USER_ARG" = "__OPENVIKING_UNSET__" ] || CRED_USER="$USER_ARG"
 
   # Show what is configured today, then offer to keep or reconfigure.
-  if [ -n "$current_url" ] || [ -n "$current_key" ]; then
+  if [ -n "$CUR_URL" ] || [ -n "$CUR_KEY" ]; then
     info "$(t 'Current config:' '当前配置：')"
-    info "  url:     ${current_url:-$(t '(not set)' '（未设置）')}"
-    info "  api_key: $(mask_secret "$current_key")"
-    [ -n "$current_account" ] && info "  account: $current_account"
-    [ -n "$current_user" ] && info "  user:    $current_user"
+    info "  url:     ${CUR_URL:-$(t '(not set)' '（未设置）')}"
+    info "  api_key: $(mask_secret "$CUR_KEY")"
+    [ -n "$CUR_ACCOUNT" ] && info "  account: $CUR_ACCOUNT"
+    [ -n "$CUR_USER" ] && info "  user:    $CUR_USER"
   else
     info "$(t 'No existing config found.' '未找到已有配置。')"
   fi
 
   if [ "$INTERACTIVE" -eq 1 ] && [ -z "$URL_ARG" ] && [ "$API_KEY_ARG" = "__OPENVIKING_UNSET__" ]; then
-    if [ -n "$current_url" ] || [ -n "$current_key" ]; then
+    if [ -n "$CUR_URL" ] || [ -n "$CUR_KEY" ]; then
       tui_menu "$(t 'Existing credentials found — what next?' '检测到已有凭据——如何处理？')" 0 \
         "$(t 'Keep current credentials' '沿用当前凭据')" \
         "$(t 'Reconfigure (server URL / API key)' '重新配置（服务地址 / API key）')"
       if [ "$TUI_MENU_CHOICE" -eq 1 ]; then
-        prompt_connection "$current_url" "$current_key"
-        url="$WIZ_URL"; key="$WIZ_KEY"
+        prompt_connection "$CUR_URL" "$CUR_KEY"
+        CRED_URL="$WIZ_URL"; CRED_KEY="$WIZ_KEY"
       fi
     else
       prompt_connection "" ""
-      url="$WIZ_URL"; key="$WIZ_KEY"
+      CRED_URL="$WIZ_URL"; CRED_KEY="$WIZ_KEY"
     fi
   fi
-  [ -z "$url" ] && url="${current_url:-http://127.0.0.1:1933}"
+  if [ -z "$CRED_URL" ]; then
+    CRED_URL="http://127.0.0.1:1933"
+  fi
+}
 
+# One `header = "..."` line for `curl -K -`: headers read from stdin keep the
+# API key out of the process list.
+curl_header_line() { # curl_header_line <name> <value>
+  local value="${2//\\/\\\\}"
+  value="${value//\"/\\\"}"
+  printf 'header = "%s: %s"\n' "$1" "$value"
+}
+
+probe_server() { # probe_server <url> <key> <account> <user> -> PROBE_RESULT, PROBE_CODE
+  local url="${1%/}" key="$2" account="$3" user="$4"
+  PROBE_CODE="$(curl -sS -m 5 -o /dev/null -w '%{http_code}' "$url/health" 2>/dev/null || true)"
+  case "$PROBE_CODE" in
+    ''|000) PROBE_RESULT="unreachable"; return 0 ;;
+  esac
+  PROBE_CODE="$(
+    {
+      [ -z "$key" ] || curl_header_line Authorization "Bearer $key"
+      [ -z "$account" ] || curl_header_line X-OpenViking-Account "$account"
+      [ -z "$user" ] || curl_header_line X-OpenViking-User "$user"
+    } | curl -sS -m 5 -o /dev/null -w '%{http_code}' -K - "$url/api/v1/system/status" 2>/dev/null || true
+  )"
+  case "$PROBE_CODE" in
+    2??) PROBE_RESULT="ok" ;;
+    401|403) if [ -n "$key" ]; then PROBE_RESULT="rejected"; else PROBE_RESULT="key-required"; fi ;;
+    ''|000) PROBE_RESULT="unreachable" ;;
+    *) PROBE_RESULT="http" ;;
+  esac
+}
+
+check_server() {
+  local key def
+  command -v curl >/dev/null 2>&1 || return 0
+  while :; do
+    key="$(cred_value "$CRED_KEY" "$CUR_KEY")"
+    probe_server "$CRED_URL" "$key" "$(cred_value "$CRED_ACCOUNT" "$CUR_ACCOUNT")" "$(cred_value "$CRED_USER" "$CUR_USER")"
+    def=0
+    case "$PROBE_RESULT" in
+      ok)
+        info "$(t 'Server check passed:' '服务检查通过：') $CRED_URL"
+        return 0
+        ;;
+      unreachable)
+        # Usual for a local server that has not been started yet.
+        warn "$(t "Cannot reach $CRED_URL. If the server is not running yet, start it before using the plugin." "无法连接 ${CRED_URL}。如果服务还没启动，请在使用插件前启动它。")"
+        def=1
+        ;;
+      rejected) warn "$(t "The server rejected the API key (HTTP $PROBE_CODE)." "服务拒绝了该 API key（HTTP ${PROBE_CODE}）。")" ;;
+      key-required) warn "$(t "The server requires an API key (HTTP $PROBE_CODE)." "该服务需要 API key（HTTP ${PROBE_CODE}）。")" ;;
+      *) warn "$(t "The server status check returned HTTP $PROBE_CODE." "服务状态检查返回 HTTP ${PROBE_CODE}。")" ;;
+    esac
+    [ "$INTERACTIVE" -eq 1 ] || return 0
+    tui_menu "$(t 'What next?' '接下来怎么做？')" "$def" \
+      "$(t 'Re-enter server URL and API key' '重新输入服务地址和 API key')" \
+      "$(t 'Continue anyway' '仍然继续')"
+    [ "$TUI_MENU_CHOICE" -eq 0 ] || return 0
+    prompt_connection "$CRED_URL" "$key"
+    CRED_URL="$WIZ_URL"
+    [ "$WIZ_KEY" = "__OPENVIKING_KEEP__" ] || CRED_KEY="$WIZ_KEY"
+  done
+}
+
+write_ovcli() {
+  mkdir -p "$OV_HOME"
+  chmod 700 "$OV_HOME" 2>/dev/null || true
   if [ -f "$OVCLI_CONF" ]; then
     cp "$OVCLI_CONF" "$OVCLI_CONF.bak.$(date +%s)"
   fi
-  json_merge_ovcli "$OVCLI_CONF" "$url" "$key" "$account" "$user"
-  if [ "$url" != "$current_url" ]; then
-    info "$(t 'Updated:' '已更新：') url: ${current_url:-—} -> $url"
+  json_merge_ovcli "$OVCLI_CONF" "$CRED_URL" "$CRED_KEY" "$CRED_ACCOUNT" "$CRED_USER"
+  if [ "$CRED_URL" != "$CUR_URL" ]; then
+    info "$(t 'Updated:' '已更新：') url: ${CUR_URL:-—} -> $CRED_URL"
   fi
-  if [ "$key" != "__OPENVIKING_KEEP__" ] && [ "$key" != "$current_key" ]; then
-    info "$(t 'Updated:' '已更新：') api_key: $(mask_secret "$current_key") -> $(mask_secret "$key")"
+  if [ "$CRED_KEY" != "__OPENVIKING_KEEP__" ] && [ "$CRED_KEY" != "$CUR_KEY" ]; then
+    info "$(t 'Updated:' '已更新：') api_key: $(mask_secret "$CUR_KEY") -> $(mask_secret "$CRED_KEY")"
   fi
-  info "$(t 'Credentials ready:' '凭据已就绪：') $OVCLI_CONF"
+  info "$(t 'Credentials saved:' '凭据已保存：') $OVCLI_CONF"
   info "$(t 'Reconfigure later by re-running this installer.' '之后可重跑本安装脚本重新配置。')"
 }
 
@@ -1355,7 +1427,6 @@ resolve_source_mode() {
   if [ "$retired" -eq 1 ]; then
     warn "$(t 'The GitHub install channel was removed and its options are ignored. To install a branch, run install.sh from a checkout of it.' 'GitHub 安装渠道已移除，相关选项不再生效。要安装某个分支，请在该分支的 checkout 中运行 install.sh。')"
   fi
-  info "$(t 'Source mode:' '安装源模式：') $SOURCE_MODE"
   if [ "$SOURCE_MODE" = "archive" ] && [ "$HAVE_CLAUDE" -eq 1 ] && contains_harness claude \
     && ! claude_supports_archive_source; then
     warn "$(t "Claude Code older than $CC_ARCHIVE_SOURCE_MIN_VERSION cannot auto-update the plugin (local directory marketplace); re-run this installer to update. Codex keeps remote updates via its TOS git marketplace." "Claude Code 低于 $CC_ARCHIVE_SOURCE_MIN_VERSION 时插件无法自动更新（本地目录 marketplace），更新请重跑本安装脚本；Codex 走 TOS git marketplace 仍可远程更新。")"
@@ -2671,6 +2742,135 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
+# Plan and confirmation
+# ---------------------------------------------------------------------------
+
+short_path() {
+  case "$1" in
+    "$HOME"/*) printf '%s%s' '~' "${1#"$HOME"}" ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+
+print_selection() {
+  info "$(t 'Selected harnesses:' '已选择：') $(printf '%s' "${PUBLIC_SELECTED_HARNESSES:-$SELECTED_HARNESSES}" | tr ',' ' ')"
+  if contains_harness claude; then info "$(t 'Claude-format commands:' 'Claude 格式命令：') $(list_words "$CLAUDE_BINS")"; fi
+  if [ -n "$TRAECODE_CLI_BIN" ]; then info "TraeCode CLI 2.0: $TRAECODE_CLI_BIN"; fi
+  if contains_harness codex && [ -z "$TRAECODE_CLI_BIN" ]; then info "$(t 'Codex-format commands:' 'Codex 格式命令：') $(list_words "$CODEX_BINS")"; fi
+  if contains_harness dsh; then info "$(t 'DeepSeek Harness profile:' 'DeepSeek Harness profile：') ${DSH_PROFILE:-$DSH_PROFILE_DEFAULT}"; fi
+}
+
+plan_item() { printf '      %s\n' "$*"; }
+
+plan_paths() { # plan_paths <label> <path...>
+  local label="$1" out="" path
+  shift
+  for path in "$@"; do out="${out:+$out, }$(short_path "$path")"; done
+  plan_item "$label: $out"
+}
+
+print_plan() {
+  local bundle fallback account user
+  if [ "$SOURCE_MODE" = "dev" ]; then bundle="$(short_path "$CHECKOUT_DIR/examples")"; else bundle="$(short_path "$MKT_DIR_ARCHIVE")"; fi
+  fallback="$(t 'fallback:' '失败时改用') $bundle"
+  account="$(cred_value "$CRED_ACCOUNT" "$CUR_ACCOUNT")"
+  user="$(cred_value "$CRED_USER" "$CUR_USER")"
+  heading "$(t '3. Review' '3. 确认安装内容')"
+  print_selection
+  info "$(t 'Server:' '服务地址：') $CRED_URL"
+  info "API key: $(mask_secret "$(cred_value "$CRED_KEY" "$CUR_KEY")")"
+  if [ -n "$account" ]; then info "account: $account"; fi
+  if [ -n "$user" ]; then info "user: $user"; fi
+  info "$(t 'Source mode:' '安装源模式：') $SOURCE_MODE"
+  info "$(t 'The install will change:' '安装将修改：')"
+  plan_item "$(short_path "$OVCLI_CONF")"
+  if contains_harness claude; then
+    while IFS= read -r CLAUDE_BIN; do
+      [ -n "$CLAUDE_BIN" ] || continue
+      command -v "$CLAUDE_BIN" >/dev/null 2>&1 || continue
+      if [ "$SOURCE_MODE" = "archive" ] && claude_supports_archive_source; then
+        plan_item "$CLAUDE_BIN plugin marketplace add/update $CC_TOS_MARKETPLACE_URL ($fallback)"
+      else
+        plan_item "$CLAUDE_BIN plugin marketplace add/update $bundle"
+      fi
+      plan_item "$CLAUDE_BIN plugin install/update $PLUGIN_ID"
+      if is_native_claude_bin; then
+        plan_item "$(short_path "$CC_SETTINGS") ($(t 'marketplace auto-update, statusline' 'marketplace 自动更新、statusline'))"
+      fi
+    done <<EOF
+$CLAUDE_BINS
+EOF
+  fi
+  if contains_harness codex; then
+    while IFS= read -r CODEX_BIN; do
+      [ -n "$CODEX_BIN" ] || continue
+      command -v "$CODEX_BIN" >/dev/null 2>&1 || continue
+      if [ "$SOURCE_MODE" = "archive" ]; then
+        plan_item "$CODEX_BIN plugin marketplace add/upgrade $CODEX_TOS_GIT_URL ($fallback)"
+      else
+        plan_item "$CODEX_BIN plugin marketplace add/upgrade $bundle"
+      fi
+      plan_item "$CODEX_BIN plugin add $PLUGIN_ID"
+      if is_native_codex_bin; then plan_item "$(short_path "$CODEX_CONFIG")"; fi
+    done <<EOF
+$CODEX_BINS
+EOF
+  fi
+  if [ "$SOURCE_MODE" = "archive" ] && { contains_harness cursor || contains_harness trae || contains_harness trae-cn \
+    || contains_harness zcode || contains_harness kimicode || contains_harness opencode || contains_harness pi; }; then
+    plan_item "$bundle ($(t 'plugin bundle download' '下载插件包'))"
+  fi
+  if contains_harness cursor; then
+    plan_paths Cursor "$HOME/.cursor/hooks.json" "$(cursor_mcp_path)" "$HOME/.cursor/rules/openviking-memory.mdc" \
+      "$HOME/.cursor/skills/openviking-memory" "$HOME/.cursor/skills/openviking-skills" "$OV_HOME/agent-integrations/cursor"
+  fi
+  if contains_harness trae; then
+    plan_paths TRAE "$HOME/.trae/hooks.json" "$(trae_mcp_path trae)" "$OV_HOME/agent-integrations/trae"
+  fi
+  if contains_harness trae-cn; then
+    plan_paths "TRAE CN" "$HOME/.trae-cn/hooks.json" "$(trae_mcp_path trae-cn)" "$OV_HOME/agent-integrations/trae-cn"
+  fi
+  if contains_harness zcode; then
+    plan_paths ZCode "$HOME/.zcode/cli/config.json" "$HOME/.zcode/hooks.json" "$(zcode_mcp_path)" "$OV_HOME/agent-integrations/zcode"
+  fi
+  if contains_harness kimicode; then
+    plan_paths "Kimi Code" "${KIMI_CODE_HOME:-$HOME/.kimi-code}/plugins" "$OV_HOME/agent-integrations/kimicode"
+  fi
+  if contains_harness opencode && command -v opencode >/dev/null 2>&1; then
+    plan_paths OpenCode "$HOME/.config/opencode/plugins/openviking" "$HOME/.config/opencode/plugins/openviking.js" "$(opencode_config_file)"
+  fi
+  if contains_harness pi && command -v pi >/dev/null 2>&1; then
+    plan_paths pi "$HOME/.pi/agent/extensions/openviking"
+  fi
+  if contains_harness dsh && command -v dsh >/dev/null 2>&1; then
+    plan_item "dsh plugin --profile ${DSH_PROFILE:-$DSH_PROFILE_DEFAULT} add $DSH_PACKAGE@latest"
+  fi
+}
+
+# Without a tty nobody saw the connection menu, so a run that got no server
+# says loudly what it assumed and how to fix it.
+warn_default_connection() {
+  [ "$INTERACTIVE" -eq 0 ] && [ -z "$URL_ARG" ] && [ "$API_KEY_ARG" = "__OPENVIKING_UNSET__" ] \
+    && [ -z "$CUR_URL" ] && [ -z "$CUR_KEY" ] || return 0
+  local bins=""
+  [ -z "$CLAUDE_BINS_ARG" ] || bins="$bins --claude-bin $CLAUDE_BINS_ARG"
+  [ -z "$CODEX_BINS_ARG" ] || bins="$bins --codex-bin $CODEX_BINS_ARG"
+  printf '\n'
+  warn "${BOLD}$(t 'No server was given: the plugin is configured for http://127.0.0.1:1933 without an API key.' '未指定服务：插件将连接 http://127.0.0.1:1933，且不带 API key。')${RESET}"
+  warn "$(t 'To use another server, re-run with its URL and API key:' '如需连接其他服务，请带上服务地址和 API key 重新运行：')"
+  printf '      bash <(curl -fsSL %s/memory-plugin-shared/install.sh) --yes --harness %s%s --url <server-url> --api-key <api-key>\n\n' \
+    "$TOS_BASE" "${PUBLIC_SELECTED_HARNESSES:-$SELECTED_HARNESSES}" "$bins"
+}
+
+confirm_plan() {
+  TUI_MENU_QUIT=1 tui_menu "$(t 'Proceed with the install?' '开始安装？')" 0 "$(t 'Proceed' '继续')" "$(t 'Cancel' '取消')"
+  if [ "$TUI_MENU_CHOICE" -ne 0 ]; then
+    info "$(t 'Cancelled; nothing was changed.' '已取消，未做任何修改。')"
+    exit 0
+  fi
+}
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -2694,18 +2894,20 @@ validate_selected_harnesses
 select_compatible_bins
 select_dsh_profile
 refresh_available_harnesses
-info "$(t 'Selected harnesses:' '已选择：') $(printf '%s' "${PUBLIC_SELECTED_HARNESSES:-$SELECTED_HARNESSES}" | tr ',' ' ')"
-if contains_harness claude; then info "$(t 'Claude-format commands:' 'Claude 格式命令：') $(list_words "$CLAUDE_BINS")"; fi
-if [ -n "$TRAECODE_CLI_BIN" ]; then info "TraeCode CLI 2.0: $TRAECODE_CLI_BIN"; fi
-if contains_harness codex && [ -z "$TRAECODE_CLI_BIN" ]; then info "$(t 'Codex-format commands:' 'Codex 格式命令：') $(list_words "$CODEX_BINS")"; fi
-if contains_harness dsh; then info "$(t 'DeepSeek Harness profile:' 'DeepSeek Harness profile：') ${DSH_PROFILE:-$DSH_PROFILE_DEFAULT}"; fi
 validate_selected_bins
 if [ "$UNINSTALL" -eq 1 ]; then
+  print_selection
   uninstall_agent_integrations
   exit 0
 fi
 resolve_source_mode
-configure_ovcli
+gather_credentials
+check_server
+print_plan
+warn_default_connection
+# Nothing under $OV_HOME or in any harness config is written before this point.
+confirm_plan
+write_ovcli
 
 if contains_harness claude; then
   while IFS= read -r CLAUDE_BIN; do
