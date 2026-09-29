@@ -55,6 +55,8 @@ _CONFIG_SCHEMA = [
     _cfg_field("recall_resources", "Include resources in recall", type="boolean", default=False),
     _cfg_field("recall_context_mode", "Use server context mode for shared and sender-scoped recall (false: list search)",
                type="boolean", default=True),
+    _cfg_field("extra_tools", "Optional OpenViking tools to expose besides the defaults, comma-separated "
+               "(write, edit, add_skill, list_watches, cancel_watch)", default=""),
 ]
 # Typed settings (config.yaml primary, env override) keyed by config key.
 _SETTING_SPECS = {f["key"]: f for f in _CONFIG_SCHEMA if "type" in f}

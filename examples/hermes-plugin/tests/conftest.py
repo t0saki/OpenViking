@@ -95,3 +95,41 @@ def inject_deps():
     yield inject
     for deps, default in reversed(previous):
         deps.set_default_deps(default)
+
+
+class FakeMcp:
+    """Scripted OpenViking /mcp behind ``Deps.mcp_session``; records every session and call."""
+
+    def __init__(self):
+        self.sessions = []
+        self.calls = []
+        self.tools = []
+        self.reply = lambda name, arguments: {"content": [{"type": "text", "text": f"{name} ok"}]}
+
+    def factory(self, url, headers, on_http_status, timeout):
+        from contextlib import asynccontextmanager
+
+        fake = self
+
+        class Session:
+            async def initialize(self):
+                return None
+
+            async def list_tools(self, cursor):
+                return list(fake.tools), None
+
+            async def call_tool(self, name, arguments):
+                fake.calls.append((name, dict(arguments)))
+                return fake.reply(name, arguments)
+
+        @asynccontextmanager
+        async def open_session():
+            self.sessions.append({"url": url, "headers": dict(headers)})
+            yield Session()
+
+        return open_session()
+
+
+@pytest.fixture
+def fake_mcp():
+    return FakeMcp()

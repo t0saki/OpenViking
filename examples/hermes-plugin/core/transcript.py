@@ -108,7 +108,11 @@ def _rfind_message(messages: List[Any], role: str, start: int, expected: Any = N
 
 
 def _index_tool_calls(messages: List[Dict[str, Any]]) -> tuple[Dict[str, Dict[str, Any]], set[str], set[str]]:
-    """-> (assistant tool_calls by id, ids with a result in the slice, recall-tool ids to drop)."""
+    """-> (assistant tool_calls by id, ids with a result in the slice, tool ids to drop).
+
+    Nothing is dropped any more: OpenViking recall-tool results are captured so the
+    server can attribute which memories were used. The third value stays for callers.
+    """
     tool_calls_by_id: Dict[str, Dict[str, Any]] = {}
     completed_tool_ids: set[str] = set()
     skipped_tool_ids: set[str] = set()
@@ -116,15 +120,11 @@ def _index_tool_calls(messages: List[Dict[str, Any]]) -> tuple[Dict[str, Dict[st
         if message.get("role") == "tool":
             if tool_id := str(message.get("tool_call_id") or message.get("id") or ""):
                 completed_tool_ids.add(tool_id)
-                if _is_openviking_recall_tool_name(message.get("name")):
-                    skipped_tool_ids.add(tool_id)
         elif message.get("role") == "assistant":
             for tool_call in message.get("tool_calls") or []:
                 if isinstance(tool_call, dict) and (tool_id := _tool_call_id(tool_call)):
                     tool_name = _tool_call_name(tool_call)
                     tool_calls_by_id[tool_id] = {"tool_name": tool_name, "tool_input": _tool_call_input(tool_call)}
-                    if _is_openviking_recall_tool_name(tool_name):
-                        skipped_tool_ids.add(tool_id)
     return tool_calls_by_id, completed_tool_ids, skipped_tool_ids
 
 
@@ -165,8 +165,8 @@ class TranscriptMixin:
     def _messages_to_openviking_batch(messages: List[Dict[str, Any]], *, assistant_peer_id: str = "", user_peer_id: str = "") -> List[Dict[str, Any]]:
         """Convert Hermes canonical messages into OpenViking batch payloads.
 
-        Recall-tool calls/results are dropped (re-ingesting recalled memory would
-        re-store it); tool results are grouped into assistant messages; a tool call
+        OpenViking recall-tool calls/results are kept so the server can attribute
+        memory usage; tool results are grouped into assistant messages; a tool call
         whose result is in the slice is emitted only via its result part.
         """
         assistant_peer_id = str(assistant_peer_id or "").strip()
@@ -193,7 +193,7 @@ class TranscriptMixin:
                 tool_id = str(message.get("tool_call_id") or message.get("id") or "")
                 prior_call = tool_calls_by_id.get(tool_id, {})
                 tool_name = str(message.get("name") or prior_call.get("tool_name") or "")
-                if tool_id not in skipped_tool_ids and not _is_openviking_recall_tool_name(tool_name):
+                if tool_id not in skipped_tool_ids:
                     pending_tool_parts.append(_tool_part(tool_id, tool_name, prior_call.get("tool_input", {}), _tool_result_status(message),
                                                          tool_output=_message_text(message.get("content"))))
                 continue
@@ -207,7 +207,7 @@ class TranscriptMixin:
                     if not isinstance(tool_call, dict):
                         continue
                     tool_id, tool_name = _tool_call_id(tool_call), _tool_call_name(tool_call)
-                    if tool_id in skipped_tool_ids or tool_id in completed_tool_ids or _is_openviking_recall_tool_name(tool_name):
+                    if tool_id in skipped_tool_ids or tool_id in completed_tool_ids:
                         continue
                     # Pre-scan caches non-empty ids; parse again for the uncached empty-id case.
                     tool_input = tool_calls_by_id[tool_id]["tool_input"] if tool_id in tool_calls_by_id else _tool_call_input(tool_call)

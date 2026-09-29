@@ -25,7 +25,7 @@ def test_external_discovery_preserves_profile_config_and_relative_setup(external
     assert (home_a / "config.yaml").read_bytes() == before
 
 
-def test_initialized_profile_owns_connection_and_recall_across_other_profile(external_provider, monkeypatch, inject_deps):
+def test_initialized_profile_owns_connection_and_recall_across_other_profile(external_provider, monkeypatch, inject_deps, fake_mcp):
     from agent.secret_scope import build_profile_secret_scope, reset_secret_scope, set_secret_scope
     from hermes_constants import reset_hermes_home_override, set_hermes_home_override
 
@@ -83,14 +83,14 @@ def test_initialized_profile_owns_connection_and_recall_across_other_profile(ext
                 f"OPENVIKING_AGENT=peer-{label}\nOV_TEST_BUDGET={budget}\n", encoding="utf-8"
             )
 
-        inject_deps(module, provider, health=lambda *_: ("healthy", ""))
+        inject_deps(module, provider, health=lambda *_: ("healthy", ""), mcp_session=fake_mcp.factory)
         with profile_scope(home_a):
             provider.initialize("session-a", hermes_home=str(home_a))
             assert provider._client._api_key == "key-a"
             assert provider._profile_token_budget() == 1100
 
         with profile_scope(home_b):
-            provider.handle_tool_call("viking_search", {"query": "preference", "mode": "deep"})
+            provider.handle_tool_call("openviking_search", {"query": "preference"})
             assert provider._client._account == "account-a"
             assert provider._client._user == "user-a"
             assert provider._recall_config()["limit"] == 3
@@ -101,7 +101,7 @@ def test_initialized_profile_owns_connection_and_recall_across_other_profile(ext
                 "OPENVIKING_USER=user-a\nOPENVIKING_AGENT=peer-a-new\n"
                 "OV_TEST_BUDGET=1100\n", encoding="utf-8"
             )
-            provider.handle_tool_call("viking_search", {"query": "preference", "mode": "deep"})
+            provider.handle_tool_call("openviking_search", {"query": "preference"})
 
             # Removing A's credentials must not borrow B's active or process values.
             (home_a / ".env").write_text(
@@ -110,7 +110,7 @@ def test_initialized_profile_owns_connection_and_recall_across_other_profile(ext
             monkeypatch.setenv("OPENVIKING_API_KEY", "process-b-key")
             monkeypatch.setenv("OPENVIKING_ACCOUNT", "process-b-account")
             monkeypatch.setenv("OPENVIKING_USER", "process-b-user")
-            provider.handle_tool_call("viking_search", {"query": "preference", "mode": "deep"})
+            provider.handle_tool_call("openviking_search", {"query": "preference"})
             assert (provider._client._api_key, provider._client._account, provider._client._user) == (
                 "", "default", "default"
             )
@@ -120,10 +120,12 @@ def test_initialized_profile_owns_connection_and_recall_across_other_profile(ext
             monkeypatch.setenv("OPENVIKING_ENDPOINT", endpoint_b)
             assert provider._resolve_bound_connection_settings()["endpoint"] == module._DEFAULT_ENDPOINT
 
-        assert [(label, key, peer) for label, _, _, key, peer in requests] == [
-            ("a", "Bearer key-a", "peer-a"), ("a", "Bearer key-a-new", "peer-a-new"),
-            ("a", None, "peer-a")
+        searches = [session for session in fake_mcp.sessions if session["url"] == f"{endpoint_a}/mcp"]
+        assert [(s["headers"].get("Authorization"), s["headers"].get("X-OpenViking-Actor-Peer")) for s in searches[-3:]] == [
+            ("Bearer key-a", "peer-a"), ("Bearer key-a-new", "peer-a-new"), (None, "peer-a")
         ]
+        assert [name for name, _ in fake_mcp.calls] == ["search"] * 3
+        assert not [r for r in requests if r[1].startswith("/api/v1/search")]
         assert all(body["session_id"] == "session-a" for _, _, body, _, _ in requests)
     finally:
         for server, worker in servers:
@@ -335,53 +337,18 @@ def test_external_native_memory_lifecycle_survives_restart(external_provider, ta
     assert requests[2][1] == {"uri": uri, "recursive": False, "wait": True}
 
 
-def test_external_provider_dispatches_search_over_http(external_provider):
+def test_external_provider_dispatches_search_over_mcp(external_provider, inject_deps, fake_mcp):
     _, provider, module, _ = external_provider("search")
-    requests = []
+    inject_deps(module, provider, mcp_session=fake_mcp.factory)
+    fake_mcp.reply = lambda name, arguments: {"content": [{"type": "text", "text": "Use concise replies."}]}
+    provider._client = module._VikingClient("http://127.0.0.1:19532", agent="existing-peer")
 
-    class Handler(BaseHTTPRequestHandler):
-        def do_POST(self):
-            body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-            requests.append((self.path, body, self.headers.get("X-OpenViking-Actor-Peer")))
-            payload = json.dumps(
-                {
-                    "result": {
-                        "memories": [
-                            {
-                                "uri": "viking://user/alice/memories/preferences/test.md",
-                                "score": 0.9,
-                                "abstract": "Use concise replies.",
-                            }
-                        ]
-                    }
-                }
-            ).encode()
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(payload)))
-            self.end_headers()
-            self.wfile.write(payload)
+    result = provider.handle_tool_call("openviking_search", {"query": "reply preference"})
 
-        def log_message(self, *_args):
-            pass
-
-    server = HTTPServer(("127.0.0.1", 0), Handler)
-    worker = threading.Thread(target=server.serve_forever, daemon=True)
-    worker.start()
-    client = module._VikingClient(f"http://127.0.0.1:{server.server_port}", agent="existing-peer")
-    provider._client = client
-    try:
-        result = json.loads(
-            provider.handle_tool_call(
-                "viking_search", {"query": "reply preference", "mode": "fast"}
-            )
-        )
-        assert requests == [("/api/v1/search/find", {"query": "reply preference"}, "existing-peer")]
-        assert "Use concise replies." in json.dumps(result)
-    finally:
-        server.shutdown()
-        server.server_close()
-        worker.join(timeout=5)
+    assert result == "Use concise replies."
+    assert fake_mcp.calls == [("search", {"query": "reply preference"})]
+    assert fake_mcp.sessions[0]["url"] == "http://127.0.0.1:19532/mcp"
+    assert fake_mcp.sessions[0]["headers"]["X-OpenViking-Actor-Peer"] == "existing-peer"
 
 
 def test_cancelled_external_setup_keeps_existing_config(external_provider, monkeypatch):
@@ -487,8 +454,9 @@ def test_external_provider_rejects_other_user_forget_uri(external_provider):
     assert "your own memories" in error
 
 
-def test_external_provider_forget_fails_closed_without_identity(external_provider):
-    _, provider, _, _ = external_provider("forget-unverified")
+def test_external_provider_forget_fails_closed_without_identity(external_provider, inject_deps, fake_mcp):
+    _, provider, module, _ = external_provider("forget-unverified")
+    inject_deps(module, provider, mcp_session=fake_mcp.factory)
     delete_calls = []
 
     class UnverifiedClient:
@@ -501,11 +469,14 @@ def test_external_provider_forget_fails_closed_without_identity(external_provide
 
     provider._client = UnverifiedClient()
     result = json.loads(
-        provider._tool_forget({"uri": "viking://user/alice/memories/preferences/mem_abc123.md"})
+        provider.handle_tool_call(
+            "openviking_forget", {"uri": "viking://user/alice/memories/preferences/mem_abc123.md"}
+        )
     )
 
     assert "identity" in result["error"].lower()
     assert delete_calls == []
+    assert fake_mcp.calls == []
 
 
 @pytest.mark.parametrize(
@@ -534,8 +505,9 @@ def test_external_provider_rejects_dot_segments_in_forget_uri(external_provider,
         "viking://~/memories/preferences/mem_abc123.md",
     ],
 )
-def test_external_provider_forget_keeps_verified_connection(external_provider, uri):
+def test_external_provider_forget_keeps_verified_connection(external_provider, uri, inject_deps, fake_mcp):
     _, provider, module, _ = external_provider("forget-connection-snapshot")
+    inject_deps(module, provider, mcp_session=fake_mcp.factory)
     identity_requested = threading.Event()
     continue_identity = threading.Event()
     requests = {"a": [], "b": []}
@@ -578,7 +550,7 @@ def test_external_provider_forget_keeps_verified_connection(external_provider, u
     provider._client = module._VikingClient(f"http://127.0.0.1:{servers[0].server_port}")
     result = []
     tool_thread = threading.Thread(
-        target=lambda: result.append(provider.handle_tool_call("viking_forget", {"uri": uri}))
+        target=lambda: result.append(provider.handle_tool_call("openviking_forget", {"uri": uri}))
     )
     tool_thread.start()
     try:
@@ -590,9 +562,12 @@ def test_external_provider_forget_keeps_verified_connection(external_provider, u
         tool_thread.join(timeout=5)
 
         assert not tool_thread.is_alive()
-        assert json.loads(result[0])["status"] == "deleted"
-        assert [method for method, _ in requests["a"]] == ["GET", "DELETE"]
+        assert result[0] == "forget ok"
+        assert [method for method, _ in requests["a"]] == ["GET"]
         assert requests["b"] == []
+        # The delete goes to the connection whose identity was verified, never recursive.
+        assert [s["url"] for s in fake_mcp.sessions] == [f"http://127.0.0.1:{servers[0].server_port}/mcp"]
+        assert fake_mcp.calls == [("forget", {"uri": uri, "recursive": False})]
     finally:
         continue_identity.set()
         tool_thread.join(timeout=5)
@@ -962,15 +937,15 @@ def test_non_primary_contexts_skip_writes(external_provider, monkeypatch, inject
 
 
 @pytest.mark.parametrize("agent_context", ["cron", "subagent", "flush"])
-def test_non_primary_session_switch_keeps_search_on_current_session(external_provider, monkeypatch, inject_deps, agent_context):
-    """A read-only provider must still follow session changes for recall."""
+def test_non_primary_session_switch_keeps_search_on_current_session(external_provider, monkeypatch, inject_deps, agent_context, fake_mcp):
+    """A read-only provider must still follow session changes; its searches carry no session_id."""
     from unittest.mock import Mock
 
     from agent.memory_manager import MemoryManager
 
     home, provider, module, _ = external_provider(f"read-only-switch-{agent_context}")
     monkeypatch.setenv("OPENVIKING_ENDPOINT", "http://127.0.0.1:19531")
-    inject_deps(module, provider, health=lambda *_: ("healthy", ""))
+    inject_deps(module, provider, health=lambda *_: ("healthy", ""), mcp_session=fake_mcp.factory)
     provider.initialize("old-sid", hermes_home=str(home), agent_context=agent_context)
     client = Mock()
     client.post.return_value = {"result": {"memories": []}}
@@ -983,12 +958,12 @@ def test_non_primary_session_switch_keeps_search_on_current_session(external_pro
     manager.on_session_switch("new-sid", reason="compression")
     assert provider._session_id == "new-sid"
     assert provider._profile_prefetched_sessions == set()
-    provider.handle_tool_call("viking_search", {"query": "preferences", "mode": "deep"})
+    provider.handle_tool_call("openviking_search", {"query": "preferences"})
     provider.on_session_end([])
 
-    client.post.assert_called_once_with(
-        "/api/v1/search/search", {"query": "preferences", "session_id": "new-sid"}
-    )
+    # Session-scoped search belongs to the primary context only.
+    assert fake_mcp.calls == [("search", {"query": "preferences"})]
+    client.post.assert_not_called()
 
 
 def test_live_commit_does_not_block_next_turn_or_lose_its_pending_marker(external_provider, monkeypatch):

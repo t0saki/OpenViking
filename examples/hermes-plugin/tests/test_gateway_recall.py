@@ -165,11 +165,11 @@ def initialize(
 @pytest.mark.parametrize("compress", ["off", "server"])
 @pytest.mark.parametrize("scope", [None, "shared", "peer"])
 def test_gateway_capture_commit_and_sender_scoped_recall(
-    external_provider, inject_deps, scope, compress
+    external_provider, inject_deps, fake_mcp, scope, compress
 ):
     from agent.turn_context import _memory_turn_start_and_prefetch
 
-    home, provider, _, manager, backend = initialize(
+    home, provider, module, manager, backend = initialize(
         external_provider, inject_deps, scope=scope, compress=compress
     )
     agent = SimpleNamespace(
@@ -225,9 +225,10 @@ def test_gateway_capture_commit_and_sender_scoped_recall(
         assert backend.pending == []
         assert not provider._state_path("pending", "shared-group").exists()
         # Sender recall never changes the configured identity used for capture/tools.
+        inject_deps(module, provider, mcp_session=fake_mcp.factory)
         with profile_scope(home):
-            provider.handle_tool_call("viking_search", {"query": "preference"})
-        assert backend.searches[-1][0].headers["X-OpenViking-Actor-Peer"] == "telegram.assistant"
+            provider.handle_tool_call("openviking_search", {"query": "preference"})
+        assert fake_mcp.sessions[-1]["headers"]["X-OpenViking-Actor-Peer"] == "telegram.assistant"
     finally:
         manager.shutdown_all()
 

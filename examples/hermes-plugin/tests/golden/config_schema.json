@@ -141,5 +141,11 @@
     "type": "boolean",
     "default": true,
     "env_var": "OPENVIKING_RECALL_CONTEXT_MODE"
+  },
+  {
+    "key": "extra_tools",
+    "description": "Optional OpenViking tools to expose besides the defaults, comma-separated (write, edit, add_skill, list_watches, cancel_watch)",
+    "default": "",
+    "env_var": "OPENVIKING_EXTRA_TOOLS"
   }
 ]

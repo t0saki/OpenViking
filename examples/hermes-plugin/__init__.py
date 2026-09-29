@@ -171,26 +171,12 @@ from .core.state_store import (
 )
 from .core.tools import (
     _GENERATED_MEMORY_SUMMARY_FILENAMES,
-    _LEVEL_ENDPOINTS,
-    _LEVEL_MAX_CHARS,
     _OPENVIKING_RECALL_TOOL_NAMES,
-    _READ_BATCH_FULL_LIMIT,
-    _READ_BATCH_LIMIT,
     _REMOTE_RESOURCE_PREFIXES,
     _SYSTEM_PROMPT_TOOL_GUIDANCE,
-    _TOOL_HANDLERS,
-    _TOOL_SCHEMAS,
-    ADD_RESOURCE_SCHEMA,
-    BROWSE_SCHEMA,
-    FORGET_SCHEMA,
-    READ_SCHEMA,
-    REMEMBER_SCHEMA,
-    SEARCH_SCHEMA,
     ToolsMixin,
     _is_local_path_reference,
     _is_windows_absolute_path,
-    _str,
-    _tool_schema,
     _validate_forget_memory_uri,
     _zip_directory,
 )
@@ -461,6 +447,7 @@ class OpenVikingMemoryProvider(
         if self._client:
             self._conn_snapshot = self._settings_tuple()
             self._recover_pending_sessions()
+            self._refresh_tool_catalog()
 
         if self._writes_enabled:
             _register_for_exit(self)
@@ -702,16 +689,13 @@ class OpenVikingMemoryProvider(
     # -- tools ------------------------------------------------------------------
 
     def get_tool_schemas(self) -> List[Dict[str, Any]]:
-        return list(_TOOL_SCHEMAS)
+        return self._openviking_tool_schemas()
 
     def handle_tool_call(self, tool_name: str, args: dict, **kwargs) -> str:
         if not self._ensure_client():
             return tool_error("OpenViking server not connected")
-        handler = _TOOL_HANDLERS.get(tool_name)
-        if handler is None:
-            return tool_error(f"Unknown tool: {tool_name}")
         try:
-            return getattr(self, handler)(args)
+            return self._call_openviking_tool(tool_name, args)
         except Exception as e:
             return tool_error(str(e))
 
