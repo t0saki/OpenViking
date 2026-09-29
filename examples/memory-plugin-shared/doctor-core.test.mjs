@@ -311,7 +311,9 @@ test("no doctor wrapper redefines a name doctor-core already exports", () => {
   }
 });
 
-test("the hook hosts' doctor weighs the prompt and stop hooks against the request timeout", () => {
+// The hooks bound their own requests (agent-hook-plugin/tests/request-budget),
+// so no timeout setting is a hook overrun the doctor should report.
+test("the hook hosts' doctor reports no hook-budget overrun at any request timeout", () => {
   const home = mkdtempSync(join(tmpdir(), "ov-doctor-hosts-"));
   const doctor = fileURLToPath(new URL("../agent-hook-plugin/scripts/ov-memory-doctor.mjs", import.meta.url));
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("OPENVIKING_")));
@@ -329,20 +331,9 @@ test("the hook hosts' doctor weighs the prompt and stop hooks against the reques
       .map((finding) => `${finding.title} → ${finding.fix}`);
   };
   try {
-    for (const [client, prompt, stop] of [
-      ["cursor", "beforeSubmitPrompt", "stop"],
-      ["trae", "UserPromptSubmit", "Stop"],
-      ["trae-cn", "UserPromptSubmit", "Stop"],
-      ["zcode", "UserPromptSubmit", "Stop"],
-    ]) {
-      assert.deepEqual(budgetWarnings(client), [], `${client}: the defaults fit every hook budget`);
-      assert.deepEqual(budgetWarnings(client, { OPENVIKING_TIMEOUT_MS: "25000" }), [
-        `request timeout 25000ms exceeds the ${prompt} hook budget 20000ms → lower OPENVIKING_TIMEOUT_MS`,
-      ], client);
-      assert.deepEqual(budgetWarnings(client, { OPENVIKING_TIMEOUT_MS: "35000" }), [
-        `request timeout 35000ms exceeds the ${prompt} hook budget 20000ms → lower OPENVIKING_TIMEOUT_MS`,
-        `request timeout 35000ms exceeds the ${stop} hook budget 30000ms → lower OPENVIKING_TIMEOUT_MS`,
-      ], client);
+    for (const client of ["cursor", "trae", "trae-cn", "zcode"]) {
+      assert.deepEqual(budgetWarnings(client), [], client);
+      assert.deepEqual(budgetWarnings(client, { OPENVIKING_TIMEOUT_MS: "35000" }), [], client);
     }
   } finally {
     rmSync(home, { recursive: true, force: true });
