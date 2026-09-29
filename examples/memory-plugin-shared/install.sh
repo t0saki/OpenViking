@@ -1854,9 +1854,20 @@ NODE
   info 'Silence it anytime with: export OPENVIKING_STATUSLINE=off'
 }
 
+claude_install_plugin() {
+  if str_contains "$(claude_cmd plugin list 2>/dev/null || true)" "$PLUGIN_ID"; then
+    info "$CLAUDE_BIN plugin update ($PLUGIN_ID)"
+    claude_cmd plugin update "$PLUGIN_ID" || warn "$CLAUDE_BIN plugin update returned non-zero"
+  else
+    info "$CLAUDE_BIN plugin install ($PLUGIN_ID)"
+    claude_cmd plugin install "$PLUGIN_ID" || { err "$CLAUDE_BIN plugin install failed"; return 1; }
+  fi
+}
+
 # Claude Code's shallow clones can't use the TOS dumb-HTTP git repo, but a URL
 # marketplace whose entry downloads the plugin zip installs and auto-updates
-# with no git at all.
+# with no git at all. Registering it already removed any earlier registration
+# and its plugin, so an install that fails from it falls back as well.
 install_claude() {
   step_heading "$(t 'Claude Code plugin' 'Claude Code 插件')"
   command -v "$CLAUDE_BIN" >/dev/null 2>&1 || {
@@ -1869,7 +1880,7 @@ install_claude() {
   fi
   local url=0
   if [ "$SOURCE_MODE" = "archive" ] && claude_supports_archive_source; then
-    if claude_marketplace_sync "$CC_TOS_MARKETPLACE_URL"; then
+    if claude_marketplace_sync "$CC_TOS_MARKETPLACE_URL" && claude_install_plugin; then
       url=1
     else
       warn "$(t 'TOS marketplace unavailable; falling back to the archive directory.' 'TOS marketplace 不可用，回退到归档目录方式。')"
@@ -1883,13 +1894,7 @@ install_claude() {
   else
     ensure_bundle
     claude_marketplace_sync "$MKT_DIR" || return 1
-  fi
-  if str_contains "$(claude_cmd plugin list 2>/dev/null || true)" "$PLUGIN_ID"; then
-    info "$CLAUDE_BIN plugin update ($PLUGIN_ID)"
-    claude_cmd plugin update "$PLUGIN_ID" || warn "$CLAUDE_BIN plugin update returned non-zero"
-  else
-    info "$CLAUDE_BIN plugin install ($PLUGIN_ID)"
-    claude_cmd plugin install "$PLUGIN_ID" || { err "$CLAUDE_BIN plugin install failed"; return 1; }
+    claude_install_plugin || return 1
   fi
   claude_cmd plugin enable "$PLUGIN_ID" >/dev/null 2>&1 || true
   info "$(t 'Claude-format plugin installed:' 'Claude 格式插件已安装：') $CLAUDE_BIN -> $PLUGIN_ID"

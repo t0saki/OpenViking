@@ -47,6 +47,8 @@ case "$*" in
   "plugin marketplace add "*)
     case "$4" in https://*) [ -z "$FAKE_CLAUDE_URL_FAILS" ] || exit 1 ;; esac
     printf '[{"name":"openviking","path":"%s"}]' "$4" > "$FAKE_CLAUDE_DIR/marketplaces.json" ;;
+  "plugin install "*)
+    case "$(cat "$FAKE_CLAUDE_DIR/marketplaces.json" 2>/dev/null)" in *https://*) [ -z "$FAKE_CLAUDE_INSTALL_FAILS" ] || exit 1 ;; esac ;;
 esac
 exit 0
 `, { mode: 0o755 });
@@ -155,6 +157,14 @@ test("TOS installs register Claude Code's URL marketplace when the CLI supports 
     log = calls();
     assert.ok(log.includes(`plugin marketplace add ${archiveDir}`), log.join("\n"));
     assert.match(failed.stdout + failed.stderr, /falling back to the archive directory/);
+
+    // So does a URL marketplace whose plugin cannot be installed, which
+    // otherwise leaves no plugin at all.
+    const uninstallable = install("2.1.284", { FAKE_CLAUDE_INSTALL_FAILS: "1" });
+    log = calls();
+    assert.equal(log.filter((line) => line === "plugin install openviking-memory@openviking").length, 2, log.join("\n"));
+    assert.ok(log.indexOf(`plugin marketplace add ${archiveDir}`) > log.indexOf(`plugin marketplace add ${marketplaceUrl}`), log.join("\n"));
+    assert.match(uninstallable.stdout, /Claude Code\n {4}Next: .*\n {4}Updates: re-run this installer\n/);
 
     // Claude Code before the archive source keeps the local directory.
     rmSync(join(fake, "marketplaces.json"), { force: true });
