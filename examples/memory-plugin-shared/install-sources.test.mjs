@@ -227,6 +227,59 @@ exit 0
   assert.equal(existsSync(join(home, ".openviking", "memory-plugin-marketplace")), false);
 });
 
+// It records its calls and keeps the one marketplace registration the
+// installer reads back; FAKE_CODEX_GIT_FAILS makes adding a git marketplace fail.
+function writeFakeCodex(bin, dir) {
+  writeExecutable(join(bin, "codex"), `#!/bin/sh
+echo "$*" >> "${dir}/calls.log"
+case "$*" in
+  "plugin marketplace list --json") cat "${dir}/marketplaces.json" 2>/dev/null || echo '{"marketplaces":[]}' ;;
+  "plugin marketplace remove "*) rm -f "${dir}/marketplaces.json" ;;
+  "plugin marketplace add "*)
+    case "$4" in *.git) [ -z "$FAKE_CODEX_GIT_FAILS" ] || exit 1 ;; esac
+    printf '{"marketplaces":[{"name":"openviking","marketplaceSource":{"source":"%s"}}]}' "$4" > "${dir}/marketplaces.json" ;;
+  "plugin list") echo "openviking-memory@openviking" ;;
+esac
+exit 0
+`);
+}
+
+// The fake leaves no plugin cache behind, which validation has to tolerate.
+test("Codex moves to the TOS git marketplace, falls back to the bundle, and says how it updates", () => {
+  const home = mkdtempSync(join(work, "home-"));
+  const bin = join(home, "bin");
+  const fake = join(home, "fake-codex");
+  mkdirSync(bin);
+  mkdirSync(fake);
+  writeFakeCodex(bin, fake);
+  const install = (extraEnv) => {
+    rmSync(join(fake, "calls.log"), { force: true });
+    const result = run(home, bin, [
+      "--harness", "codex", "--lang", "en", "--url", "http://127.0.0.1:1933", "--api-key", "", "--yes",
+    ], extraEnv);
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    return { stdout: result.stdout, calls: readFileSync(join(fake, "calls.log"), "utf8").split("\n") };
+  };
+
+  // A marketplace the GitHub channel registered is re-registered from TOS.
+  writeFileSync(join(fake, "marketplaces.json"), JSON.stringify({
+    marketplaces: [{ name: "openviking", marketplaceSource: { source: "https://github.com/volcengine/OpenViking.git" } }],
+  }));
+  const moved = install();
+  assert.ok(moved.calls.includes("plugin marketplace remove openviking"), moved.calls.join("\n"));
+  assert.ok(moved.calls.includes(`plugin marketplace add file://${tosBase}/plugins/memory-plugins.git`), moved.calls.join("\n"));
+  assert.match(moved.stdout, /Codex\n {4}Next: .*\n {4}Updates: automatic; Codex upgrades the marketplace when it starts\n/);
+  assert.match(readFileSync(join(home, ".codex", "config.toml"), "utf8"), /\[plugins\."openviking-memory@openviking"\]\nenabled = true/);
+  assert.equal(existsSync(join(home, ".openviking", "memory-plugin-marketplace")), false);
+
+  // A git marketplace that cannot be added gives way to the bundle's directory.
+  rmSync(join(fake, "marketplaces.json"));
+  const fallback = install({ FAKE_CODEX_GIT_FAILS: "1" });
+  assert.match(fallback.stdout, /TOS git marketplace unavailable; falling back to the archive directory/);
+  assert.ok(fallback.calls.includes(`plugin marketplace add ${join(home, ".openviking", "memory-plugin-marketplace")}`), fallback.calls.join("\n"));
+  assert.match(fallback.stdout, /Codex\n {4}Next: .*\n {4}Updates: re-run this installer\n/);
+});
+
 test("retired GitHub-channel options are accepted, announced and ignored", () => {
   const home = mkdtempSync(join(work, "home-"));
   const bin = join(home, "bin");
