@@ -3,42 +3,34 @@
 # OpenViking Memory Plugin shared installer for Claude Code, Codex, Cursor,
 # TRAE / TRAE CN, TraeCode CLI 2.0, ZCode, Kimi Code, OpenCode, and pi.
 #
-# One-liner (GitHub):
-#   bash <(curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/main/examples/memory-plugin-shared/install.sh)
-# One-liner (TOS mirror, for regions where GitHub is unreachable):
-#   bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/memory-plugin-shared/install.sh) --dist tos
+# One-liner:
+#   bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/memory-plugin-shared/install.sh)
 # Non-interactive:
-#   bash install.sh --harness claude,codex,cursor,trae,trae-cn,trae-cli,zcode,kimicode,opencode,pi,dsh --dist github --lang en --url http://127.0.0.1:1933
+#   bash install.sh --harness claude,codex,cursor,trae,trae-cn,trae-cli,zcode,kimicode,opencode,pi,dsh --lang en --url http://127.0.0.1:1933
 # Format-compatible CLI aliases:
 #   bash install.sh --harness trae-cli
 #   bash install.sh --harness claude --claude-bin claude,seed
-# Fork / branch verification:
-#   OPENVIKING_REPO_URL=https://github.com/you/OpenViking.git \
-#   OPENVIKING_REPO_REF=my-branch bash install.sh --source remote
 #
-# Distribution channels (--dist, prompted interactively):
-#   github  Remote marketplaces straight from GitHub (default). Claude Code
-#           uses a synthesized git-subdir manifest; Codex adds the repo as a
-#           git marketplace. No repo clone, updates via plugin/marketplace
-#           update commands.
-#   tos     Volcengine TOS mirror, zero GitHub access. Codex adds a TOS-hosted
-#           git repo (dumb HTTP) and CAN update remotely; Claude Code 2.1.224+
-#           adds a TOS-hosted URL marketplace whose plugin downloads as a zip,
-#           with auto-update on. Older Claude Code uses a downloaded archive as
-#           a local directory marketplace and must re-run this installer to
-#           update.
+# Everything is installed from the OpenViking release on Volcengine TOS
+# (OPENVIKING_TOS_BASE). Claude Code 2.1.224+ adds a URL marketplace whose
+# plugin downloads as a zip and auto-updates. Codex adds a TOS-hosted git
+# marketplace (dumb HTTP) and updates through it. The other harnesses, and
+# Claude Code or Codex when their marketplace cannot be used, install from the
+# release bundle (memory-plugin-marketplace.zip) and update when this installer
+# is re-run. A copy of this script that is not a release build and not in a
+# checkout (for example one fetched from GitHub) runs the release copy instead.
+# `--dist github`, `--source remote` and OPENVIKING_REPO_URL / _REF / _BRANCH
+# are still accepted and ignored.
 #
 # Source modes (--source, advanced override; auto-detected when omitted):
-#   remote   Remote marketplaces (see --dist). Default.
-#   archive  Download the marketplace archive and register it as a local
-#            directory marketplace for both harnesses.
+#   archive  The release channel above. Default.
 #   dev      Register this checkout's examples/ directory as the marketplace.
 #            Auto-selected when running from a repo checkout.
 #
 # Legacy Claude Code (< 2.0, no `claude plugin`) is still supported: the
 # installer falls back to `claude mcp add` (stdio proxy) + a hooks merge into
 # ~/.claude/settings.json. That path needs a local copy of the plugin, so it
-# downloads the release bundle even in remote mode.
+# downloads the release bundle.
 #
 # Targets bash 3.2+ (macOS /bin/bash) and Linux.
 
@@ -47,8 +39,6 @@ set -Eeuo pipefail
 # Replaced with the release version when the release pipeline publishes this file.
 INSTALLER_VERSION="dev"
 OV_HOME="${OPENVIKING_HOME:-$HOME/.openviking}"
-REPO_URL="${OPENVIKING_REPO_URL:-https://github.com/volcengine/OpenViking.git}"
-REPO_REF="${OPENVIKING_REPO_REF:-${OPENVIKING_REPO_BRANCH:-main}}"
 MKT_ARCHIVE_URL="${OPENVIKING_MARKETPLACE_ARCHIVE_URL:-}"
 TOS_BASE="${OPENVIKING_TOS_BASE:-https://ovrelease.tos-cn-beijing.volces.com}"
 TOS_BASE="${TOS_BASE%/}"
@@ -72,10 +62,6 @@ CODEX_CONFIG="${CODEX_CONFIG_FILE:-$HOME/.codex/config.toml}"
 CC_SETTINGS="$HOME/.claude/settings.json"
 CC_KNOWN_MARKETPLACES="$HOME/.claude/plugins/known_marketplaces.json"
 MKT_DIR_ARCHIVE="$OV_HOME/memory-plugin-marketplace"
-# Directory-shaped on purpose: Claude Code's file-type marketplaces
-# mis-derive installLocation and fail `marketplace update` with EISDIR.
-CC_REMOTE_MKT_DIR="$OV_HOME/marketplaces/openviking-claude"
-CC_REMOTE_MANIFEST="$CC_REMOTE_MKT_DIR/.claude-plugin/marketplace.json"
 
 REQUESTED_HARNESSES=""
 PUBLIC_SELECTED_HARNESSES=""
@@ -100,7 +86,6 @@ NODE_BIN=""
 CHECKOUT_DIR=""     # repo checkout the script itself lives in, when applicable
 MKT_DIR=""          # plugin bundle root once ensure_bundle ran (checkout examples/ in dev mode)
 SOURCE_MODE=""
-DIST="github"
 UI_LANG="en"
 
 if [ -t 1 ]; then
@@ -151,9 +136,9 @@ Options:
   --claude-bin LIST  Comma-separated Claude-format CLI commands (default: claude).
   --codex-bin LIST   Comma-separated Codex-format CLI commands (default: codex).
   --dsh-profile NAME DeepSeek Harness profile to install into (default: web).
-  --dist CHANNEL     github (default) | tos (mirror for GitHub-blocked regions).
+  --dist CHANNEL     Accepted for compatibility and ignored; installs come from the OpenViking release.
   --lang LANG        en | zh (interactive prompts language; auto-detected).
-  --source MODE      Advanced: remote | archive | dev (default: auto-detect).
+  --source MODE      Advanced: archive | dev (default: auto-detect).
   --url URL          OpenViking server base URL.
   --api-key KEY      OpenViking API key. Pass '' for unauthenticated local mode.
   --account ID       Optional OpenViking account.
@@ -167,6 +152,7 @@ Options:
 EOF
 }
 
+INSTALLER_ARGS=("$@")
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --harness) REQUESTED_HARNESSES="${2:-}"; shift 2 ;;
@@ -1015,11 +1001,11 @@ install_dsh() {
   # when the name carries no version, so a profile holding a dev build would
   # never fall back to the published package.
   local profile="${DSH_PROFILE:-$DSH_PROFILE_DEFAULT}" spec="$DSH_PACKAGE@latest" origin="npm" local_dir
-  # npm is the bundle's only distribution channel, so the github/tos choice does
-  # not apply here; only dev mode installs something other than the published
-  # package. It still has to arrive as a real package rather than a link: a
-  # linked source tree resolves its dsh peers from its own realpath and misses
-  # the profile's hoisted node_modules, so the checkout gets packed first.
+  # npm is the bundle's only distribution channel; only dev mode installs
+  # something other than the published package. It still has to arrive as a
+  # real package rather than a link: a linked source tree resolves its dsh
+  # peers from its own realpath and misses the profile's hoisted node_modules,
+  # so the checkout gets packed first.
   if [ "$SOURCE_MODE" = "dev" ] && ensure_bundle && local_dir="$(plugin_dir_on_disk dsh-memory-plugin)"; then
     local packed
     if packed="$(dsh_pack_local "$local_dir")"; then
@@ -1174,37 +1160,6 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
-# Distribution channel (github vs tos mirror)
-# ---------------------------------------------------------------------------
-
-select_dist() {
-  if [ -n "$DIST_ARG" ]; then
-    DIST="$DIST_ARG"
-  elif [ "$INTERACTIVE" -eq 1 ] && [ -z "$SOURCE_ARG" ]; then
-    if [ -n "$CHECKOUT_DIR" ]; then
-      tui_menu "$(t 'Install source' '安装源模式')" 2 \
-        "GitHub  $(t '(remote marketplace; supports remote updates)' '（远程 marketplace；支持远程更新）')" \
-        "$(t 'Volcengine TOS mirror (use when GitHub is unreachable)' '火山引擎 TOS 镜像（无法访问 GitHub 时使用）')" \
-        "$(t 'This checkout (development; edits take effect live)' '当前 checkout（开发模式；改动即时生效）')"
-      case "$TUI_MENU_CHOICE" in
-        0) DIST="github" ;;
-        1) DIST="tos" ;;
-        *) SOURCE_ARG="dev" ;;
-      esac
-    else
-      tui_menu "$(t 'Install source' '安装源模式')" 0 \
-        "GitHub  $(t '(default; supports remote updates)' '（默认；支持远程更新）')" \
-        "$(t 'Volcengine TOS mirror (use when GitHub is unreachable)' '火山引擎 TOS 镜像（无法访问 GitHub 时使用）')"
-      if [ "$TUI_MENU_CHOICE" -eq 1 ]; then DIST="tos"; else DIST="github"; fi
-    fi
-  fi
-  case "$DIST" in
-    github|tos) ;;
-    *) err "Invalid --dist: $DIST (expected github or tos)"; exit 2 ;;
-  esac
-}
-
-# ---------------------------------------------------------------------------
 # ovcli.conf wizard
 # ---------------------------------------------------------------------------
 
@@ -1354,26 +1309,59 @@ resolve_self_checkout() {
   fi
 }
 
-resolve_source_mode() {
-  if [ -n "$SOURCE_ARG" ]; then
-    SOURCE_MODE="$SOURCE_ARG"
-  elif [ "$DIST" = "tos" ]; then
-    SOURCE_MODE="archive"
-  elif [ -n "$MKT_ARCHIVE_URL" ]; then
-    SOURCE_MODE="archive"
-  elif [ -n "$CHECKOUT_DIR" ]; then
-    SOURCE_MODE="dev"
-  else
-    SOURCE_MODE="remote"
+# A copy that is neither a release build nor part of a checkout (one fetched
+# from GitHub, say) would run against helpers and plugins from the release
+# bundle. Running the release copy instead keeps the script and the bundle on
+# one release.
+reexec_release_installer() { # reexec_release_installer <original-args...>
+  [ "$INSTALLER_VERSION" = "dev" ] && [ -z "$CHECKOUT_DIR" ] \
+    && [ "${OPENVIKING_INSTALLER_REEXEC:-}" != "0" ] || return 0
+  # The language is only chosen later, so this one message follows the flag
+  # or the locale.
+  local UI_LANG="${LANG_ARG:-$(detect_lang_default)}" tmp status=0
+  tmp="$(mktemp "${TMPDIR:-/tmp}/ov-install.XXXXXX")" || return 0
+  if curl -fsSL --connect-timeout 10 -o "$tmp" "$TOS_BASE/memory-plugin-shared/install.sh" 2>/dev/null; then
+    case "$(head -n 5 "$tmp")" in
+      '#!'*'OpenViking Memory Plugin shared installer'*)
+        OPENVIKING_INSTALLER_REEXEC=0 bash "$tmp" --dist tos "$@" || status=$?
+        rm -f "$tmp"
+        exit "$status"
+        ;;
+    esac
   fi
-  case "$SOURCE_MODE" in
-    remote|archive|dev) ;;
-    *) err "Invalid --source: $SOURCE_MODE (expected remote, archive, or dev)"; exit 2 ;;
+  rm -f "$tmp"
+  warn "$(t 'Could not fetch the release installer; continuing with this copy.' '无法获取发布版安装脚本，继续使用当前脚本。')"
+}
+
+resolve_source_mode() {
+  local retired=0
+  case "$DIST_ARG" in
+    ''|tos) ;;
+    github) retired=1 ;;
+    *) err "Invalid --dist: $DIST_ARG (expected tos)"; exit 2 ;;
   esac
-  info "$(t 'Source mode:' '安装源模式：') $SOURCE_MODE ($(t 'channel' '渠道'): $DIST)"
+  case "$SOURCE_ARG" in
+    ''|archive|dev) SOURCE_MODE="$SOURCE_ARG" ;;
+    remote) SOURCE_MODE="archive"; retired=1 ;;
+    *) err "Invalid --source: $SOURCE_ARG (expected archive or dev)"; exit 2 ;;
+  esac
+  if [ -n "${OPENVIKING_REPO_URL:-}${OPENVIKING_REPO_REF:-}${OPENVIKING_REPO_BRANCH:-}" ]; then
+    retired=1
+  fi
+  if [ -z "$SOURCE_MODE" ]; then
+    if [ -n "$CHECKOUT_DIR" ] && [ "$DIST_ARG" != "tos" ] && [ -z "$MKT_ARCHIVE_URL" ]; then
+      SOURCE_MODE="dev"
+    else
+      SOURCE_MODE="archive"
+    fi
+  fi
+  if [ "$retired" -eq 1 ]; then
+    warn "$(t 'The GitHub install channel was removed and its options are ignored. To install a branch, run install.sh from a checkout of it.' 'GitHub 安装渠道已移除，相关选项不再生效。要安装某个分支，请在该分支的 checkout 中运行 install.sh。')"
+  fi
+  info "$(t 'Source mode:' '安装源模式：') $SOURCE_MODE"
   if [ "$SOURCE_MODE" = "archive" ] && [ "$HAVE_CLAUDE" -eq 1 ] && contains_harness claude \
-    && ! { [ "$DIST" = "tos" ] && claude_supports_archive_source; }; then
-    warn "$(t "Archive installs, and TOS installs on Claude Code older than $CC_ARCHIVE_SOURCE_MIN_VERSION, cannot auto-update Claude Code (local directory marketplace); re-run this installer to update. Codex keeps remote updates via its TOS git marketplace." "归档方式安装、以及 Claude Code 低于 $CC_ARCHIVE_SOURCE_MIN_VERSION 时的 TOS 安装无法自动更新 Claude Code 插件（本地目录 marketplace），更新请重跑本安装脚本；Codex 走 TOS git marketplace 仍可远程更新。")"
+    && ! claude_supports_archive_source; then
+    warn "$(t "Claude Code older than $CC_ARCHIVE_SOURCE_MIN_VERSION cannot auto-update the plugin (local directory marketplace); re-run this installer to update. Codex keeps remote updates via its TOS git marketplace." "Claude Code 低于 $CC_ARCHIVE_SOURCE_MIN_VERSION 时插件无法自动更新（本地目录 marketplace），更新请重跑本安装脚本；Codex 走 TOS git marketplace 仍可远程更新。")"
   fi
 }
 
@@ -1488,31 +1476,6 @@ claude_marketplace_current_source() {
   ' "$CC_KNOWN_MARKETPLACES" "$MARKETPLACE_NAME" 2>/dev/null || true
 }
 
-write_claude_remote_manifest() {
-  mkdir -p "$(dirname "$CC_REMOTE_MANIFEST")"
-  # Pre-directory-layout leftover (a bare .json registered as a file-type
-  # marketplace); superseded by the directory registration below.
-  rm -f "$OV_HOME/marketplaces/openviking-claude.json"
-  node - "$CC_REMOTE_MANIFEST" "$MARKETPLACE_NAME" "$REPO_URL" "$REPO_REF" <<'NODE'
-const fs = require("node:fs");
-const [file, name, url, ref] = process.argv.slice(2);
-const manifest = {
-  name,
-  description: `OpenViking plugins for Claude Code (remote: ${url} @ ${ref}).`,
-  owner: { name: "OpenViking" },
-  plugins: [
-    {
-      name: "openviking-memory",
-      description: "Long-term semantic memory for Claude Code, powered by OpenViking",
-      source: { source: "git-subdir", url, path: "examples/claude-code-memory-plugin", ref },
-      category: "productivity",
-    },
-  ],
-};
-fs.writeFileSync(file, JSON.stringify(manifest, null, 2) + "\n");
-NODE
-}
-
 claude_marketplace_sync() { # claude_marketplace_sync <add-target> <expected-source>
   local target="$1" needle="$2" current
   current="$(claude_marketplace_current_source)"
@@ -1592,24 +1555,10 @@ install_claude_tos_url() {
 }
 
 install_claude_modern() {
-  case "$SOURCE_MODE" in
-    remote)
-      write_claude_remote_manifest
-      claude_marketplace_sync "$CC_REMOTE_MKT_DIR" "$CC_REMOTE_MKT_DIR" || return 1
-      ;;
-    archive)
-      if [ "$DIST" = "tos" ] && install_claude_tos_url; then
-        :
-      else
-        ensure_bundle
-        claude_marketplace_sync "$MKT_DIR" "$MKT_DIR" || return 1
-      fi
-      ;;
-    dev)
-      ensure_bundle
-      claude_marketplace_sync "$MKT_DIR" "$MKT_DIR" || return 1
-      ;;
-  esac
+  if [ "$SOURCE_MODE" = "dev" ] || ! install_claude_tos_url; then
+    ensure_bundle
+    claude_marketplace_sync "$MKT_DIR" "$MKT_DIR" || return 1
+  fi
   if str_contains "$(claude_cmd plugin list 2>/dev/null || true)" "$PLUGIN_ID"; then
     info "$CLAUDE_BIN plugin update ($PLUGIN_ID)"
     claude_cmd plugin update "$PLUGIN_ID" || warn "$CLAUDE_BIN plugin update returned non-zero"
@@ -1828,30 +1777,28 @@ codex_marketplace_current_source() {
   ' "$MARKETPLACE_NAME" 2>/dev/null || true
 }
 
-codex_marketplace_sync() { # codex_marketplace_sync <expected-source> <add-args...>
-  local needle="$1" current
-  shift
+codex_unregister() {
+  codex_cmd plugin remove "$PLUGIN_ID" >/dev/null 2>&1 || true
+  codex_cmd plugin uninstall "$PLUGIN_ID" >/dev/null 2>&1 || true
+  codex_cmd plugin marketplace remove "$MARKETPLACE_NAME" >/dev/null 2>&1 || true
+}
+
+codex_marketplace_sync() { # codex_marketplace_sync <source>
+  local source="$1" current
   current="$(codex_marketplace_current_source)"
-  if [ -n "$current" ] && [ "$current" = "$needle" ]; then
+  if [ -n "$current" ] && [ "$current" = "$source" ]; then
     info "$CODEX_BIN plugin marketplace upgrade ($MARKETPLACE_NAME)"
     codex_cmd plugin marketplace upgrade "$MARKETPLACE_NAME" >/dev/null 2>&1 || true
     return 0
   fi
   if [ -n "$current" ]; then
     info "$(t 'Marketplace points elsewhere; re-registering' 'marketplace 指向其他来源，重新注册') ($current)"
-    codex_cmd plugin remove "$PLUGIN_ID" >/dev/null 2>&1 || true
-    codex_cmd plugin uninstall "$PLUGIN_ID" >/dev/null 2>&1 || true
-    codex_cmd plugin marketplace remove "$MARKETPLACE_NAME" >/dev/null 2>&1 || true
+    codex_unregister
   elif ! is_native_codex_bin; then
-    codex_cmd plugin remove "$PLUGIN_ID" >/dev/null 2>&1 || true
-    codex_cmd plugin uninstall "$PLUGIN_ID" >/dev/null 2>&1 || true
-    codex_cmd plugin marketplace remove "$MARKETPLACE_NAME" >/dev/null 2>&1 || true
+    codex_unregister
   fi
-  info "$CODEX_BIN plugin marketplace add $*"
-  codex_cmd plugin marketplace add "$@" >/dev/null || {
-    err "$CODEX_BIN plugin marketplace add failed"
-    return 1
-  }
+  info "$CODEX_BIN plugin marketplace add $source"
+  codex_cmd plugin marketplace add "$source" >/dev/null
 }
 
 ensure_codex_config() {
@@ -1898,37 +1845,17 @@ install_codex() {
     warn "$(t 'Codex-format CLI not found; skipping:' '未找到 Codex 格式 CLI，跳过：') $CODEX_BIN"
     return 0
   }
-  case "$SOURCE_MODE" in
-    remote)
-      # Codex doesn't expose which --ref a registered git marketplace is
-      # pinned to (`marketplace upgrade` silently refreshes the OLD ref), so
-      # a matching URL is not enough — re-register deterministically.
-      codex_cmd plugin remove "$PLUGIN_ID" >/dev/null 2>&1 || true
-      codex_cmd plugin uninstall "$PLUGIN_ID" >/dev/null 2>&1 || true
-      codex_cmd plugin marketplace remove "$MARKETPLACE_NAME" >/dev/null 2>&1 || true
-      info "$CODEX_BIN plugin marketplace add $REPO_URL --ref $REPO_REF"
-      # Sparse must include .agents/ — the marketplace manifest lives there,
-      # and a plugin-dir-only sparse checkout fails manifest resolution.
-      codex_cmd plugin marketplace add "$REPO_URL" --ref "$REPO_REF" \
-        --sparse examples/codex-memory-plugin --sparse .agents >/dev/null 2>&1 || \
-        codex_cmd plugin marketplace add "$REPO_URL" --ref "$REPO_REF" >/dev/null || {
-          err "$CODEX_BIN plugin marketplace add failed"
-          return 1
-        }
-      ;;
-    archive)
-      if [ "$DIST" = "tos" ] && install_codex_tos_git; then
-        :
-      else
-        ensure_bundle
-        codex_marketplace_sync "$MKT_DIR" "$MKT_DIR" || return 1
-      fi
-      ;;
-    dev)
-      ensure_bundle
-      codex_marketplace_sync "$MKT_DIR" "$MKT_DIR" || return 1
-      ;;
-  esac
+  # Codex clones git marketplaces served over dumb HTTP from static hosting,
+  # so the TOS release carries a slim marketplace git repo that Codex upgrades.
+  if [ "$SOURCE_MODE" = "dev" ] || ! codex_marketplace_sync "$CODEX_TOS_GIT_URL"; then
+    [ "$SOURCE_MODE" = "dev" ] \
+      || warn "$(t 'TOS git marketplace unavailable; falling back to the archive directory.' 'TOS git marketplace 不可用，回退到归档目录方式。')"
+    ensure_bundle
+    codex_marketplace_sync "$MKT_DIR" || {
+      err "$CODEX_BIN plugin marketplace add failed"
+      return 1
+    }
+  fi
   if codex_cmd plugin add "$PLUGIN_ID" >/dev/null 2>&1; then
     plugin_installed=1
   elif codex_cmd plugin install "$PLUGIN_ID" >/dev/null 2>&1; then
@@ -1948,32 +1875,6 @@ install_codex() {
     info "$(t 'Codex plugin enabled in' 'Codex 插件已在配置中启用：') $CODEX_CONFIG"
   else
     info "$(t 'Codex-format plugin installed:' 'Codex 格式插件已安装：') $CODEX_BIN -> $PLUGIN_ID"
-  fi
-}
-
-# Codex can clone git repos served over dumb HTTP from static hosting, so the
-# TOS mirror hosts a slim marketplace git repo — unlike Claude Code, Codex
-# keeps remote update support (`codex plugin marketplace upgrade`) on TOS.
-install_codex_tos_git() {
-  info "$CODEX_BIN plugin marketplace add $CODEX_TOS_GIT_URL"
-  local current
-  current="$(codex_marketplace_current_source)"
-  if [ -n "$current" ] && [ "$current" = "$CODEX_TOS_GIT_URL" ]; then
-    codex_cmd plugin marketplace upgrade "$MARKETPLACE_NAME" >/dev/null 2>&1 || true
-    return 0
-  fi
-  if [ -n "$current" ]; then
-    codex_cmd plugin remove "$PLUGIN_ID" >/dev/null 2>&1 || true
-    codex_cmd plugin uninstall "$PLUGIN_ID" >/dev/null 2>&1 || true
-    codex_cmd plugin marketplace remove "$MARKETPLACE_NAME" >/dev/null 2>&1 || true
-  elif ! is_native_codex_bin; then
-    codex_cmd plugin remove "$PLUGIN_ID" >/dev/null 2>&1 || true
-    codex_cmd plugin uninstall "$PLUGIN_ID" >/dev/null 2>&1 || true
-    codex_cmd plugin marketplace remove "$MARKETPLACE_NAME" >/dev/null 2>&1 || true
-  fi
-  if ! codex_cmd plugin marketplace add "$CODEX_TOS_GIT_URL" >/dev/null 2>&1; then
-    warn "$(t 'TOS git marketplace unavailable; falling back to the archive directory.' 'TOS git marketplace 不可用，回退到归档目录方式。')"
-    return 1
   fi
 }
 
@@ -2776,6 +2677,8 @@ EOF
 # Main
 # ---------------------------------------------------------------------------
 
+resolve_self_checkout
+reexec_release_installer ${INSTALLER_ARGS[@]+"${INSTALLER_ARGS[@]}"}
 select_language
 
 heading "$(t '1. Environment check' '1. 环境检查')"
@@ -2789,7 +2692,6 @@ NODE_MAJOR="$("$NODE_BIN" -p 'Number(process.versions.node.split(".")[0])')"
 [ "$NODE_MAJOR" -ge 18 ] || { err "Node.js 18+ required; found $("$NODE_BIN" --version)."; exit 1; }
 command -v curl >/dev/null 2>&1 || warn "curl not found; archive installs may fail."
 
-resolve_self_checkout
 select_harnesses
 validate_selected_harnesses
 select_compatible_bins
@@ -2805,10 +2707,8 @@ if [ "$UNINSTALL" -eq 1 ]; then
   uninstall_agent_integrations
   exit 0
 fi
-select_dist
-
-configure_ovcli
 resolve_source_mode
+configure_ovcli
 
 if contains_harness claude; then
   while IFS= read -r CLAUDE_BIN; do
@@ -2838,10 +2738,7 @@ validate_install
 
 heading "$(t 'Done' '完成')"
 info "$(t 'Credentials:' '凭据：') $OVCLI_CONF"
-case "$SOURCE_MODE" in
-  remote) if contains_harness claude || contains_harness codex; then info "Marketplace: remote ($REPO_URL @ $REPO_REF)"; fi ;;
-  *) if contains_harness claude || contains_harness codex; then info "Marketplace: ${MKT_DIR:-$CODEX_TOS_GIT_URL}"; fi ;;
-esac
+if contains_harness claude || contains_harness codex; then info "Marketplace: ${MKT_DIR:-$CODEX_TOS_GIT_URL}"; fi
 if contains_harness claude; then info "Claude-format: $(list_words "$CLAUDE_BINS") -> $PLUGIN_ID"; fi
 if [ -n "$TRAECODE_CLI_BIN" ]; then
   info "TraeCode CLI 2.0: $TRAECODE_CLI_BIN -> $PLUGIN_ID"
@@ -2856,3 +2753,8 @@ if contains_harness kimicode; then info "Kimi Code: native plugin (hooks + MCP)"
 if contains_harness opencode; then info "OpenCode: ~/.config/opencode/plugins/openviking"; fi
 if contains_harness pi; then info "pi: ~/.pi/agent/extensions/openviking"; fi
 if contains_harness dsh; then info "DeepSeek Harness: $DSH_PACKAGE ($(t 'profile' '配置档') ${DSH_PROFILE:-$DSH_PROFILE_DEFAULT})"; fi
+# Earlier installers cloned the repository here; nothing uses it any more
+# unless a legacy hook or statusline in settings.json still points into it.
+if [ -d "$OV_HOME/openviking-repo" ] && ! grep -qF "$OV_HOME/openviking-repo" "$CC_SETTINGS" 2>/dev/null; then
+  info "$(t 'No longer used by the installer; you can delete it:' '安装程序已不再使用该目录，可以手动删除：') $OV_HOME/openviking-repo"
+fi

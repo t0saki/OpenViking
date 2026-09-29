@@ -159,7 +159,7 @@ test("TOS installs register Claude Code's URL marketplace when the CLI supports 
     assert.ok(log.includes(`plugin marketplace add ${archiveDir}`), log.join("\n"));
     assert.equal(log.some((line) => line.includes("https://")), false, log.join("\n"));
     assert.equal(existsSync(settingsPath) && readSettings().extraKnownMarketplaces !== undefined, false);
-    assert.match(legacy.stdout + legacy.stderr, /cannot auto-update Claude Code/);
+    assert.match(legacy.stdout + legacy.stderr, /older than 2\.1\.224 cannot auto-update the plugin/);
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }

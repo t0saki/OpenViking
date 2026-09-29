@@ -47,6 +47,7 @@ function runInstaller(home, args, extraEnv = {}, script = installer) {
       ...process.env,
       HOME: home,
       OPENVIKING_HOME: join(home, ".openviking"),
+      OPENVIKING_INSTALLER_REEXEC: "0",
       ...extraEnv,
     },
     encoding: "utf8",
