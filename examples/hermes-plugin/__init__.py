@@ -27,6 +27,7 @@ import threading
 import time
 import uuid
 import zipfile
+from collections import OrderedDict
 from contextlib import suppress
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
@@ -57,6 +58,11 @@ try:
 except ImportError:  # Hermes releases before process-home pinning
     _get_launch_hermes_home = get_process_hermes_home
 
+try:
+    from agent.memory_provider import RecallStatus
+except ImportError:  # Hermes releases before the recall indicator
+    RecallStatus = None
+
 _DEFAULT_ENDPOINT = "http://127.0.0.1:1933"
 _OPENVIKING_SERVICE_ENDPOINT = "https://api.vikingdb.cn-beijing.volces.com/openviking"
 _DEFAULT_AGENT = ""
@@ -81,6 +87,11 @@ _READ_BATCH_FULL_LIMIT = 2500
 _LEVEL_ENDPOINTS = {"abstract": "/api/v1/content/abstract", "overview": "/api/v1/content/overview", "full": "/api/v1/content/read"}
 _LEVEL_MAX_CHARS = {"abstract": 1200, "overview": 4000}
 _RECALL_SUMMARY_KEYS = ("abstract", "overview", "text", "content")
+# Outcome of the last prefetch per session id, read by recall_status() and last_recall_outcome().
+_RECALL_PENDING, _RECALL_INJECTED, _RECALL_EMPTY = "pending", "injected", "empty"
+_RECALL_TIMEOUT, _RECALL_UNAVAILABLE, _RECALL_ERROR = "timeout", "unavailable", "error"
+_RECALL_OUTCOMES_KEPT = 64  # session ids remembered per provider; oldest dropped first
+_RECALL_STATUS_LABEL = "OpenViking"
 
 
 def _cfg_field(key: str, description: str, **extra) -> dict:
@@ -277,6 +288,23 @@ def _is_timeout_error(error: BaseException) -> bool:
     except ImportError:
         return False
     return isinstance(error, TimeoutException)
+
+
+class _RecallProbe:
+    """What one prefetch saw: the first failure and the number of injected recall entries."""
+
+    __slots__ = ("failure", "count")
+
+    def __init__(self) -> None:
+        self.failure = ""
+        self.count = 0
+
+    def fail(self, error: Optional[BaseException] = None, *, outcome: str = "") -> None:
+        if not self.failure:
+            self.failure = outcome or (_RECALL_TIMEOUT if _is_timeout_error(error) else _RECALL_ERROR)
+
+    def outcome(self, text: str) -> str:
+        return _RECALL_INJECTED if text else (self.failure or _RECALL_EMPTY)
 
 
 class _VikingClient:
@@ -1424,6 +1452,12 @@ class OpenVikingMemoryProvider(MemoryProvider):
         self._deferred_commit_threads: Set[threading.Thread] = set()
         self._commit_scope: Optional[_CommitScope] = None
         self._profile_prefetched_sessions: Set[str] = set()
+        # session id -> (sequence, outcome, count) of its last prefetch. The sequence lets a
+        # prefetch the host already abandoned finish without overwriting a newer one.
+        self._recall_status_lock = threading.Lock()
+        self._recall_outcomes: "OrderedDict[str, tuple[int, str, int]]" = OrderedDict()
+        self._recall_sequence = 0
+        self._last_recall_session: Optional[str] = None
         self._conn_snapshot: Optional[tuple] = None
         self._failed_refresh: Optional[tuple] = None
         self._runtime_start_thread: Optional[threading.Thread] = None
@@ -1449,6 +1483,27 @@ class OpenVikingMemoryProvider(MemoryProvider):
             return bool(_ovcli_values_for(provider_config).get("endpoint"))
         except Exception:
             return False
+
+    def unavailable_reason(self) -> str:
+        """Why is_available() is false, appended to the host's warning. Local config only, no network."""
+        if self.is_available():
+            return ""
+        setup_hint = (
+            "Set OPENVIKING_ENDPOINT in the profile's .env, set memory.openviking.endpoint in config.yaml, "
+            "or run `hermes memory setup`."
+        )
+        provider_config = _load_hermes_openviking_config()
+        if not provider_config.get("use_ovcli_config"):
+            return f"OpenViking: no endpoint is configured. {setup_hint}"
+        path = _resolve_ovcli_config_path(str(provider_config.get("ovcli_config_path") or ""))
+        if not path.exists():
+            return f"OpenViking: the linked OpenViking CLI config {path} does not exist. {setup_hint}"
+        try:
+            _connection_values_from_ovcli(_load_ovcli_config(path))
+        except Exception as exc:
+            detail = str(exc) if isinstance(exc, ValueError) else type(exc).__name__
+            return f"OpenViking: the linked OpenViking CLI config {path} could not be read ({detail}). {setup_hint}"
+        return f'OpenViking: the linked OpenViking CLI config {path} has no "url". {setup_hint}'
 
     def get_config_schema(self):
         return [dict(field) for field in _CONFIG_SCHEMA]
@@ -1789,16 +1844,72 @@ class OpenVikingMemoryProvider(MemoryProvider):
         ])
 
     def prefetch(self, query: str, *, session_id: str = "") -> str:
-        """Session-start memory block (once per session) + query recall."""
+        """Session-start memory block (once per session) + query recall; records the outcome."""
+        effective_session_id = str(session_id or self._session_id or "").strip()
+        sequence = self._begin_recall(effective_session_id)
+        probe = _RecallProbe()
+        text = ""
+        try:
+            text = self._prefetch_context(query, effective_session_id, probe)
+        except Exception as e:
+            probe.fail(e)
+            raise
+        finally:
+            self._finish_recall(effective_session_id, sequence, probe.outcome(text), probe.count if text else 0)
+        return text
+
+    def _prefetch_context(self, query: str, session_id: str, probe: _RecallProbe) -> str:
         query_text = _derive_openviking_user_text(query).strip()
         if not self._ensure_client():
+            probe.fail(outcome=_RECALL_UNAVAILABLE)
             return ""
-        effective_session_id = str(session_id or self._session_id or "").strip()
-        parts = [self._session_start_memory_context(effective_session_id)]
+        parts = [self._session_start_memory_context(session_id, probe=probe)]
         if len(query_text) >= _RECALL_QUERY_MIN_CHARS:
-            parts.append(self._search_prefetch_context(query_text, session_id=effective_session_id))
+            parts.append(self._search_prefetch_context(query_text, session_id=session_id, probe=probe))
         parts = [p for p in parts if p]
         return "## OpenViking Context\n" + "\n\n".join(parts) if parts else ""
+
+    def _begin_recall(self, session_id: str) -> int:
+        """Mark a prefetch as running, so recall_status() never reports an earlier result."""
+        with self._recall_status_lock:
+            self._recall_sequence += 1
+            self._recall_outcomes[session_id] = (self._recall_sequence, _RECALL_PENDING, 0)
+            self._recall_outcomes.move_to_end(session_id)
+            while len(self._recall_outcomes) > _RECALL_OUTCOMES_KEPT:
+                self._recall_outcomes.popitem(last=False)
+            self._last_recall_session = session_id
+            return self._recall_sequence
+
+    def _finish_recall(self, session_id: str, sequence: int, outcome: str, count: int) -> None:
+        with self._recall_status_lock:
+            current = self._recall_outcomes.get(session_id)
+            if current is not None and current[0] == sequence:
+                self._recall_outcomes[session_id] = (sequence, outcome, count)
+
+    def _recall_record(self, session_id: Optional[str]) -> Optional[tuple[int, str, int]]:
+        with self._recall_status_lock:
+            key = self._last_recall_session if session_id is None else session_id
+            return None if key is None else self._recall_outcomes.get(key)
+
+    def recall_status(self) -> Optional[RecallStatus]:
+        """Indicator for the most recent prefetch; None unless it injected context.
+
+        The count is the number of query-recall entries; 0 (a generic indicator)
+        when only the session-start block or a server-rendered digest was injected.
+        """
+        record = self._recall_record(None)
+        if RecallStatus is None or record is None or record[1] != _RECALL_INJECTED:
+            return None
+        return RecallStatus(provider_label=_RECALL_STATUS_LABEL, count=record[2])
+
+    def last_recall_outcome(self, session_id: Optional[str] = None) -> str:
+        """Outcome of the last prefetch for ``session_id`` (default: the most recent prefetch).
+
+        One of ``pending``, ``injected``, ``empty``, ``timeout``, ``unavailable``,
+        ``error``; ``""`` when no prefetch was recorded.
+        """
+        record = self._recall_record(None if session_id is None else str(session_id).strip())
+        return record[1] if record else ""
 
     def queue_prefetch(self, query: str, *, session_id: str = "") -> None:
         """OpenViking recall is current-query only; post-turn warming is unused."""
@@ -1829,8 +1940,10 @@ class OpenVikingMemoryProvider(MemoryProvider):
                 logger.debug("OpenViking session-aware prefetch failed, falling back to search/find: %s", e)
         return client.post("/api/v1/search/find", base_payload, timeout=cls._remaining_recall_timeout(deadline, request_timeout))
 
-    def _search_prefetch_context(self, query: str, *, session_id: str = "", client: Optional[_VikingClient] = None) -> str:
+    def _search_prefetch_context(self, query: str, *, session_id: str = "", client: Optional[_VikingClient] = None,
+                                 probe: Optional[_RecallProbe] = None) -> str:
         query_text = (query or "").strip()
+        probe = probe or _RecallProbe()
         sender_peer = self._current_sender_peer()
         if len(query_text) < _RECALL_QUERY_MIN_CHARS:
             return ""
@@ -1842,8 +1955,10 @@ class OpenVikingMemoryProvider(MemoryProvider):
                     client = self._new_client()  # legacy/hand-wired path: no env baseline yet
         except Exception as e:
             logger.debug("OpenViking prefetch client build failed: %s", e)
+            probe.fail(e)
             return ""
         if client is None:
+            probe.fail(outcome=_RECALL_UNAVAILABLE)
             return ""
 
         cfg = None
@@ -1864,6 +1979,7 @@ class OpenVikingMemoryProvider(MemoryProvider):
                     raise_on_timeout=True,
                 )
                 if not user:
+                    probe.fail(outcome=_RECALL_ERROR)
                     return ""
                 user_root = f"viking://user/{user}"
                 target_uri = [f"{user_root}/memories"]
@@ -1908,6 +2024,8 @@ class OpenVikingMemoryProvider(MemoryProvider):
                             raise ValueError("OpenViking did not confirm actor-scoped context")
                         if (assembled.get("stats") or {}).get("rewrite") == "no_relevant":
                             return ""
+                        entries = assembled.get("entries")
+                        probe.count = len(entries) if isinstance(entries, list) else 0
                         return str(
                             assembled.get("digest") or assembled.get("rendered") or ""
                         ).strip()
@@ -1933,11 +2051,14 @@ class OpenVikingMemoryProvider(MemoryProvider):
                 return ""
             candidates = [item for ctx_type in ("memories", "resources") for item in (result.get(ctx_type, []) or []) if isinstance(item, dict)]
             selected = self._select_recall_candidates(candidates, query_text, limit=cfg["limit"], score_threshold=cfg["score_threshold"])
-            return "\n".join(self._build_prefetch_entries(
+            entries = self._build_prefetch_entries(
                 client, selected, prefer_abstract=cfg["prefer_abstract"], max_injected_chars=cfg["max_injected_chars"],
                 deadline=deadline, request_timeout=cfg["request_timeout_seconds"], full_read_limit=cfg["full_read_limit"],
-            ))
+            )
+            probe.count = len(entries)
+            return "\n".join(entries)
         except Exception as e:
+            probe.fail(e)
             # A timeout leaves query recall empty. Report only local, bounded
             # diagnostics; exception text can contain query or identity data.
             if cfg is not None and _is_timeout_error(e):
@@ -2180,15 +2301,17 @@ class OpenVikingMemoryProvider(MemoryProvider):
         entity_lines, _ = cls._format_memory_listing(entities_uri, entities, available_units - preference_units)
         return cls._assemble_session_start_memory_block(profile_text, preference_lines, entity_lines, profile_uri=profile_uri)
 
-    def _session_start_memory_context(self, session_id: str) -> str:
+    def _session_start_memory_context(self, session_id: str, *, probe: Optional[_RecallProbe] = None) -> str:
         """Once per session: profile + preferences/entities listings. Skipped (not latched) when
         the profile read fails for any reason other than absence (404/410) or no client is set."""
         session_key = session_id or self._session_id or "__openviking_default_session__"
         if session_key in self._profile_prefetched_sessions:
             return ""
+        probe = probe or _RecallProbe()
         try:
             client = self._client
             if not client:
+                probe.fail(outcome=_RECALL_UNAVAILABLE)
                 return ""
             cfg = self._recall_config()
             deadline, request_timeout = time.monotonic() + cfg["timeout_seconds"], cfg["request_timeout_seconds"]
@@ -2198,13 +2321,15 @@ class OpenVikingMemoryProvider(MemoryProvider):
 
             try:
                 user = self._user_space(client, timeout=self._remaining_recall_timeout(deadline, request_timeout))
-            except Exception:
+            except Exception as e:
+                probe.fail(e)
                 return ""
             uris = tuple(f"viking://user/{user}/{suffix}" for suffix in _SESSION_START_SUFFIXES)
             try:
                 profile = self._extract_text_content(budgeted_get("/api/v1/content/read", {"uri": uris[0]}))
             except Exception as e:
                 if _status_code_from_error(e) not in {404, 410}:
+                    probe.fail(e)
                     return ""
                 profile = ""
             listings = []
@@ -2215,6 +2340,7 @@ class OpenVikingMemoryProvider(MemoryProvider):
                     listings.append([])
         except Exception as e:
             logger.debug("OpenViking session-start memory prefetch failed: %s", e)
+            probe.fail(e)
             return ""
         self._profile_prefetched_sessions.add(session_key)
         return self._build_session_start_memory_block(

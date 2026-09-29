@@ -243,6 +243,20 @@ Explicit tools retain
 the configured assistant view. Use separate OpenViking users and credentials
 when participants require separate access rights.
 
+### Recall indicator
+
+When automatic recall injects OpenViking context, Hermes shows a status line
+such as `OpenViking — recalled 3 memories`. The count is the number of recalled
+entries. A turn that injects only the session-start profile block, or a
+compressed digest without an entry list, shows `recalled relevant memory`.
+Nothing is shown when recall finds nothing, times out, or cannot reach the
+server.
+
+If `openviking` is the selected provider but no endpoint is configured, the
+Hermes "reports unavailable" warning names the cause: no endpoint in the
+profile's `.env` or `config.yaml`, or a linked `ovcli.conf` that is missing,
+unreadable, or has no `url`.
+
 ## Tools
 
 | Tool | Description |
