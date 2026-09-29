@@ -31,6 +31,7 @@ logger = logging.getLogger("plugins.memory.openviking")
 _REGISTRY_VERSION = 2
 _REGISTRY_RELATIVE_PATH = Path("openviking") / "memory_mirror_registry.json"
 _SUPPORTED_ACTIONS = frozenset({"add", "replace", "remove"})
+# The worker exits after one idle poll and the next enqueue starts a new one.
 _POLL_SECONDS = 0.05
 _REGISTRY_LOCKS_GUARD = threading.Lock()
 _REGISTRY_LOCKS: Dict[Path, threading.Lock] = {}
@@ -140,14 +141,17 @@ class NativeMemoryMirror:
 
     def _run(self) -> None:
         while True:
-            with self._state_lock:
-                stopping = self._shutting_down
-            if stopping and self._queue.empty():
-                return
-
             try:
                 event = self._queue.get(timeout=_POLL_SECONDS)
             except queue.Empty:
+                # Exit only under the enqueue lock: an event put before this check is
+                # picked up here, and one put after it starts a new worker. Events are
+                # applied one at a time, so a restart never reorders them.
+                with self._state_lock:
+                    if self._queue.empty():
+                        if self._worker is threading.current_thread():
+                            self._worker = None
+                        return
                 continue
 
             try:
