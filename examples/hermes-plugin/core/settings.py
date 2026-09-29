@@ -53,6 +53,8 @@ _CONFIG_SCHEMA = [
     _cfg_field("recall_full_read_limit", "Max full L2 content reads per recall", type="integer", minimum=0, maximum=100, default=2),
     _cfg_field("recall_prefer_abstract", "Use abstracts instead of full L2 reads", type="boolean", default=False),
     _cfg_field("recall_resources", "Include resources in recall", type="boolean", default=False),
+    _cfg_field("recall_context_mode", "Use server context mode for shared and sender-scoped recall (false: list search)",
+               type="boolean", default=True),
 ]
 # Typed settings (config.yaml primary, env override) keyed by config key.
 _SETTING_SPECS = {f["key"]: f for f in _CONFIG_SCHEMA if "type" in f}

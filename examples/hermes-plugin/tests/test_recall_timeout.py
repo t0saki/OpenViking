@@ -143,7 +143,8 @@ def test_public_prefetch_exhausted_budget_warns_without_fallback_request(
         if request.url.path == "/api/v1/system/status":
             return httpx.Response(200, json={"result": {"user": "private-identity"}})
         assert request.url.path == "/api/v1/search/search"
-        assert (json.loads(request.content).get("mode") == "context") == (compress != "off")
+        # Both scopes have a sender here, so every compression setting uses context mode.
+        assert json.loads(request.content).get("mode") == "context"
         # Consume the entire budget in the first search. The real deadline
         # check must prevent a second HTTP request and report TimeoutError.
         clock.now += 1.5

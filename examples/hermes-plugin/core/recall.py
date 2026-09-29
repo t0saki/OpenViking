@@ -29,6 +29,29 @@ _RECALL_PENDING, _RECALL_INJECTED, _RECALL_EMPTY = "pending", "injected", "empty
 _RECALL_TIMEOUT, _RECALL_UNAVAILABLE, _RECALL_ERROR = "timeout", "unavailable", "error"
 _RECALL_OUTCOMES_KEPT = 64  # session ids remembered per provider; oldest dropped first
 _RECALL_STATUS_LABEL = "OpenViking"
+# Per-type context-mode slots for recall_limit; same weights and rounding as
+# memory-plugin-shared lib/recall-core.mjs codingQuotas().
+_CONTEXT_QUOTA_WEIGHTS = {"events": 1, "entities": 2, "preferences": 1, "experiences": 1, "resources": 3, "skills": 2}
+
+
+def _context_quotas(limit: Any) -> Dict[str, int]:
+    """Split ``limit`` into per-type slots, each at least 1, closest to the weights."""
+    try:
+        slots = max(1, int(limit))
+    except (TypeError, ValueError):
+        slots = 10
+    quotas = dict.fromkeys(_CONTEXT_QUOTA_WEIGHTS, 1)
+    if slots < len(quotas):
+        return quotas
+    total = sum(_CONTEXT_QUOTA_WEIGHTS.values())
+    ideals = {key: slots * weight / total for key, weight in _CONTEXT_QUOTA_WEIGHTS.items()}
+    while sum(quotas.values()) < slots:
+        best = next(iter(quotas))
+        for key in quotas:
+            if ideals[key] - quotas[key] > ideals[best] - quotas[best]:
+                best = key
+        quotas[best] += 1
+    return quotas
 
 
 class _RecallProbe:
@@ -222,19 +245,29 @@ class RecallMixin:
                     target_uri += [f"{user_root}/resources", "viking://resources"]
                     if sender_peer:
                         target_uri.append(f"{user_root}/peers/{sender_peer}/resources")
-            # Without an actor, context-mode resource defaults include peers.
-            # Use scoped list recall for that case, even with compression on.
-            if cfg["compress"] in ("server", "auto") and (scope != "peer" or sender_peer):
+            primary = getattr(self, "_agent_context", "primary") == "primary"
+            # Context mode is the default route for shared recall and for
+            # sender-scoped recall with a sender (recall_context_mode=false
+            # reverts both to list search). Otherwise compression alone picks it.
+            # Without an actor, context-mode resource defaults include peers,
+            # so that case always uses scoped list recall.
+            context_route = primary and cfg["context_mode"] and (
+                scope == "shared" or (scope == "peer" and bool(sender_peer)))
+            compress = cfg["compress"] in ("server", "auto")
+            if context_route or (compress and (scope != "peer" or sender_peer)):
                 payload = {
                     "query": query_text,
                     "mode": "context",
                     "purpose": "coding",
-                    "rewrite": True if cfg["compress"] == "server" else "auto",
                     "score_threshold": cfg["score_threshold"],
                     "max_tokens": max(64, min(32000, cfg["max_injected_chars"] // 4)),
                     "context_type": ["memory", "resource"] if cfg["resources"] else "memory",
                 }
-                if session_id:
+                if compress:
+                    payload["rewrite"] = True if cfg["compress"] == "server" else "auto"
+                if context_route:
+                    payload["quotas"] = _context_quotas(cfg["limit"])
+                if session_id and primary:
                     payload["session_id"] = session_id
                 if scope in ("shared", "peer"):
                     payload["peer_scope"] = "actor" if scope == "peer" else "all"
@@ -260,9 +293,10 @@ class RecallMixin:
                                 return ""
                             entries = assembled.get("entries")
                             probe.count = len(entries) if isinstance(entries, list) else 0
-                            return str(
-                                assembled.get("digest") or assembled.get("rendered") or ""
-                            ).strip()
+                            # A rewrite request injects the server's digest; plain
+                            # context mode injects the rendered block.
+                            text = assembled.get("digest") if "rewrite" in payload else None
+                            return str(text or assembled.get("rendered") or "").strip()
                     except Exception as e:
                         logger.debug(
                             "OpenViking context rewrite unavailable or timed out, falling back to search: %s", e

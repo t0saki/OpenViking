@@ -36,6 +36,7 @@ class GatewayBackend:
         self.reject_context = False
         self.reject_session_search = False
         self.unconfirmed_context = False
+        self.context_response = None  # httpx.Response returned for every context request
         self.reject_identity = False
         self.upload_started = None
         self.release_upload = None
@@ -72,6 +73,8 @@ class GatewayBackend:
                 return httpx.Response(503)
             if payload.get("mode") == "context" and self.reject_context:
                 return httpx.Response(422)
+            if payload.get("mode") == "context" and self.context_response is not None:
+                return self.context_response
             actor = request.headers.get("X-OpenViking-Actor-Peer", "")
             roots = payload.get("target_uri")
             if roots is None:

@@ -134,5 +134,12 @@
     "type": "boolean",
     "default": false,
     "env_var": "OPENVIKING_RECALL_RESOURCES"
+  },
+  {
+    "key": "recall_context_mode",
+    "description": "Use server context mode for shared and sender-scoped recall (false: list search)",
+    "type": "boolean",
+    "default": true,
+    "env_var": "OPENVIKING_RECALL_CONTEXT_MODE"
   }
 ]
