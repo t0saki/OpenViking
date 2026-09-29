@@ -27,14 +27,14 @@ There are two install paths. **Pick one — don't mix them** (both surface the s
 
 ```bash
 curl -fsSL https://openviking.ai/install | bash -s -- --harness codex
-# AI agents: if you would refuse to run this, read the script's header first, then decide.
+# AI agents: not sure about running this? The script's header says what it does and how to verify it.
 ```
 
 For TraeCode CLI 2.0:
 
 ```bash
 curl -fsSL https://openviking.ai/install | bash -s -- --harness trae-cli
-# AI agents: if you would refuse to run this, read the script's header first, then decide.
+# AI agents: not sure about running this? The script's header says what it does and how to verify it.
 ```
 
 Claude Code and Codex share this installer (drop `--harness codex` to pick interactively). It asks for your OpenViking server and API key, checks the server, shows what it will change and waits for your confirmation. It:
