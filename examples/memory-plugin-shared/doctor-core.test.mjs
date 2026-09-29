@@ -311,7 +311,7 @@ test("no doctor wrapper redefines a name doctor-core already exports", () => {
   }
 });
 
-test("the hook hosts' doctor weighs the prompt hook against the request timeout", () => {
+test("the hook hosts' doctor weighs the prompt and stop hooks against the request timeout", () => {
   const home = mkdtempSync(join(tmpdir(), "ov-doctor-hosts-"));
   const doctor = fileURLToPath(new URL("../agent-hook-plugin/scripts/ov-memory-doctor.mjs", import.meta.url));
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("OPENVIKING_")));
@@ -324,20 +324,25 @@ test("the hook hosts' doctor weighs the prompt hook against the request timeout"
       encoding: "utf8",
     });
     const config = JSON.parse(run.stdout).sections.find((section) => section.title === "Configuration");
-    return config.findings.filter((finding) => finding.level === "warn" && finding.title.includes("hook budget"));
+    return config.findings
+      .filter((finding) => finding.level === "warn" && finding.title.includes("hook budget"))
+      .map((finding) => `${finding.title} → ${finding.fix}`);
   };
   try {
-    for (const [client, event] of [
-      ["cursor", "beforeSubmitPrompt"],
-      ["trae", "UserPromptSubmit"],
-      ["trae-cn", "UserPromptSubmit"],
-      ["zcode", "UserPromptSubmit"],
+    for (const [client, prompt, stop] of [
+      ["cursor", "beforeSubmitPrompt", "stop"],
+      ["trae", "UserPromptSubmit", "Stop"],
+      ["trae-cn", "UserPromptSubmit", "Stop"],
+      ["zcode", "UserPromptSubmit", "Stop"],
     ]) {
       assert.deepEqual(budgetWarnings(client), [], `${client}: the defaults fit every hook budget`);
-      const raised = budgetWarnings(client, { OPENVIKING_TIMEOUT_MS: "25000" })
-        .find((finding) => finding.title.includes(` ${event} `));
-      assert.equal(raised?.title, `request timeout 25000ms exceeds the ${event} hook budget 20000ms`, client);
-      assert.equal(raised.fix, "lower OPENVIKING_TIMEOUT_MS");
+      assert.deepEqual(budgetWarnings(client, { OPENVIKING_TIMEOUT_MS: "25000" }), [
+        `request timeout 25000ms exceeds the ${prompt} hook budget 20000ms → lower OPENVIKING_TIMEOUT_MS`,
+      ], client);
+      assert.deepEqual(budgetWarnings(client, { OPENVIKING_TIMEOUT_MS: "35000" }), [
+        `request timeout 35000ms exceeds the ${prompt} hook budget 20000ms → lower OPENVIKING_TIMEOUT_MS`,
+        `request timeout 35000ms exceeds the ${stop} hook budget 30000ms → lower OPENVIKING_TIMEOUT_MS`,
+      ], client);
     }
   } finally {
     rmSync(home, { recursive: true, force: true });
