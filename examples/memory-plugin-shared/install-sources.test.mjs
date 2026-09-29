@@ -10,7 +10,7 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -371,18 +371,23 @@ test("a copy that is not a release build runs the release installer", () => {
   const release = join(home, "tos", "memory-plugin-shared", "install.sh");
   mkdirSync(dirname(release), { recursive: true });
   const args = ["--harness", "cursor", "--lang", "en", "--url", "http://127.0.0.1:9", "--api-key", "", "--yes"];
-  const reexec = { OPENVIKING_INSTALLER_REEXEC: "", OPENVIKING_TOS_BASE: `file://${join(home, "tos")}` };
+  // A lib/install beside the script would be taken for the installer's own
+  // helpers, so the release copy runs alone in a directory it then removes.
+  const tmp = join(home, "tmp");
+  mkdirSync(join(tmp, "lib", "install"), { recursive: true });
+  const reexec = { OPENVIKING_INSTALLER_REEXEC: "", OPENVIKING_TOS_BASE: `file://${join(home, "tos")}`, TMPDIR: tmp };
 
   writeFileSync(release, [
     "#!/usr/bin/env bash",
     "# OpenViking Memory Plugin shared installer (release stand-in)",
-    'printf \'%s|\' "$OPENVIKING_INSTALLER_REEXEC" "$@"',
+    'printf \'%s|\' "$OPENVIKING_INSTALLER_REEXEC" "$@" "$(ls -A "$(dirname "$0")")"',
     "exit 7",
     "",
   ].join("\n"));
   const handed = run(home, bin, args, reexec);
   assert.equal(handed.status, 7, handed.stderr);
-  assert.equal(handed.stdout, ["0", "--dist", "tos", ...args, ""].join("|"));
+  assert.equal(handed.stdout, ["0", "--dist", "tos", ...args, "install.sh", ""].join("|"));
+  assert.deepEqual(readdirSync(tmp), ["lib"]);
 
   // Anything that is not the installer, such as an error page, is not run.
   writeFileSync(release, "<html>503 Service Unavailable</html>\n");

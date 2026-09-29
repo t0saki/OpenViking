@@ -1483,18 +1483,20 @@ resolve_self_checkout() {
 reexec_release_installer() { # reexec_release_installer <original-args...>
   [ "$INSTALLER_VERSION" = "dev" ] && [ -z "$CHECKOUT_DIR" ] \
     && [ "${OPENVIKING_INSTALLER_REEXEC:-}" != "0" ] || return 0
-  local tmp status=0
-  tmp="$(mktemp "${TMPDIR:-/tmp}/ov-install.XXXXXX")" || return 0
-  if curl -fsSL --connect-timeout 10 -o "$tmp" "$TOS_BASE/memory-plugin-shared/install.sh" 2>/dev/null; then
-    case "$(head -n 5 "$tmp")" in
+  local dir status=0
+  # A directory of its own: install_lib_dir takes a lib/install found beside
+  # the running script.
+  dir="$(mktemp -d "${TMPDIR:-/tmp}/ov-install.XXXXXX")" || return 0
+  if curl -fsSL --connect-timeout 10 -o "$dir/install.sh" "$TOS_BASE/memory-plugin-shared/install.sh" 2>/dev/null; then
+    case "$(head -n 5 "$dir/install.sh")" in
       '#!'*'OpenViking Memory Plugin shared installer'*)
-        OPENVIKING_INSTALLER_REEXEC=0 bash "$tmp" --dist tos "$@" || status=$?
-        rm -f "$tmp"
+        OPENVIKING_INSTALLER_REEXEC=0 bash "$dir/install.sh" --dist tos "$@" || status=$?
+        rm -rf "$dir"
         exit "$status"
         ;;
     esac
   fi
-  rm -f "$tmp"
+  rm -rf "$dir"
   warn "$(t 'Could not fetch the release installer; continuing with this copy.' '无法获取发布版安装脚本，继续使用当前脚本。')"
 }
 
