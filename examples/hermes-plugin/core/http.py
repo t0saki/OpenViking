@@ -42,9 +42,13 @@ def build_user_agent(plugin: str, version: str) -> str:
 
 
 @lru_cache(maxsize=1)
+def plugin_version() -> str:
+    """The plugin version, read from plugin.yaml on first use, never at import time."""
+    return _read_plugin_version()
+
+
 def _openviking_user_agent() -> str:
-    """Read plugin.yaml on first use, never at import time."""
-    return build_user_agent("hermes", _read_plugin_version())
+    return build_user_agent("hermes", plugin_version())
 
 
 def build_openviking_headers(*, api_key: str = "", account: str = "", user: str = "",

@@ -23,7 +23,7 @@ class Uploads:
     def __init__(self, module, **identity):
         self.real = module._VikingClient(ENDPOINT, "user-key", transport=object(), **identity)
         self._endpoint = self.real._endpoint
-        self._headers = self.real._headers
+        self._conn_snapshot = self.real._conn_snapshot
         self.uploads = []
 
     def upload_temp_file(self, path):
@@ -113,6 +113,22 @@ def test_plain_forward_carries_rest_identity_headers(wired):
     assert session["headers"] == expected
     assert session["headers"]["Authorization"] == "Bearer user-key"
     assert session["headers"]["X-OpenViking-Actor-Peer"] == "hermes"
+
+
+def test_mcp_connection_uses_the_rest_header_builder_and_plugin_version(wired, core_module):
+    import re
+    from pathlib import Path
+
+    provider, module, _ = wired
+    http = core_module(module, "http")
+    version = re.search(r"^version:\s*(\S+)", (Path(module.__file__).parent / "plugin.yaml").read_text(), re.M).group(1)
+    settings = {"endpoint": ENDPOINT, "api_key": "", "account": "acct", "user": "", "agent": "peer"}
+    for client, expected in ((provider._client, provider._client.real._headers()), (None, http.build_openviking_headers(
+            account="acct", user="default", trusted_identity=True, actor_peer_id="peer",
+            user_agent=f"openviking-memory-hermes/{version}"))):
+        conn = provider._mcp_connection(settings, client)
+        assert conn.headers() == expected
+        assert conn.client_version == version == http.plugin_version()
 
 
 def test_unknown_or_unexposed_tool_is_rejected(wired):

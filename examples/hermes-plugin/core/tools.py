@@ -121,24 +121,32 @@ def _is_local_path_reference(value: str) -> bool:
     return value.startswith(("/", "./", "../", "~/", ".\\", "..\\", "~\\")) or "/" in value or "\\" in value
 
 
-class _HeaderOnlyTransport:
-    """Satisfies ``_VikingClient``'s transport check when only its header builder is used."""
-
-
 def _mcp_connection(settings: Dict[str, str], client: Any, deps: Any):
-    """MCP connection on ``client``'s endpoint and identity when it is a REST client, else on ``settings``."""
-    from .http import _VikingClient
+    """MCP connection on ``client``'s endpoint and identity when it is a REST client, else on ``settings``.
+
+    Headers come from ``build_openviking_headers`` with the same inputs as the REST
+    client's, so MCP and REST requests carry the same identity.
+    """
+    from .http import _openviking_user_agent, build_openviking_headers, plugin_version
     from .mcp_bridge import McpConnection
 
-    # The REST client's header builder, so MCP requests carry the same identity.
-    if not (hasattr(client, "_headers") and isinstance(getattr(client, "_endpoint", None), str)):
-        client = _VikingClient(settings["endpoint"], settings["api_key"], account=settings["account"],
-                               user=settings["user"], agent=settings["agent"], transport=_HeaderOnlyTransport())
+    snapshot = getattr(client, "_conn_snapshot", None)
+    if isinstance(snapshot, tuple) and len(snapshot) == 5 and all(isinstance(v, str) for v in snapshot):
+        endpoint, api_key, account, user, agent = snapshot
+    else:
+        endpoint, api_key, agent = settings["endpoint"], settings["api_key"], settings["agent"]
+        account, user = settings["account"] or "default", settings["user"] or "default"
+
+    def headers() -> Dict[str, str]:
+        return build_openviking_headers(api_key=api_key, account=account, user=user, trusted_identity=not api_key,
+                                        actor_peer_id=agent, user_agent=_openviking_user_agent())
+
     return McpConnection(
-        url=client._endpoint.rstrip("/") + _MCP_PATH,
-        headers=client._headers,
+        url=endpoint.rstrip("/") + _MCP_PATH,
+        headers=headers,
         spawn=spawn_context_thread,
         session_factory=deps.mcp_session,
+        client_version=plugin_version(),
     )
 
 
