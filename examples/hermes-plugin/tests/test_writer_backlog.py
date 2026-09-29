@@ -292,3 +292,29 @@ def test_threshold_commit_looks_up_the_session_when_the_response_has_no_pending_
     alice = servers["alice"]
     turn(provider, 1)
     assert alice.gets == ["/api/v1/sessions/hermes-sid-1"]
+
+
+def test_auth_failure_backlog_expires_within_the_same_connection(writer, clock, caplog):
+    provider, servers, _, session_writer = writer
+    alice = servers["alice"]
+    alice.fail = 401
+    turn(provider, 1)
+    turn(provider, 2)
+    alice.fail = None
+    clock.advance(session_writer._AUTH_BACKLOG_TTL_SECONDS)
+    with caplog.at_level(logging.WARNING):
+        turn(provider, 3)
+    # Both rejected turns expired together: the TTL counts from the first rejection.
+    assert alice.texts("hermes-sid-1") == pair(3)
+    assert any("still not accepted" in r.getMessage() for r in caplog.records)
+
+
+def test_auth_failure_backlog_is_kept_before_its_ttl(writer, clock):
+    provider, servers, _, session_writer = writer
+    alice = servers["alice"]
+    alice.fail = 403
+    turn(provider, 1)
+    alice.fail = None
+    clock.advance(session_writer._AUTH_BACKLOG_TTL_SECONDS - 60)
+    turn(provider, 2)
+    assert alice.texts("hermes-sid-1") == pair(1, 2)

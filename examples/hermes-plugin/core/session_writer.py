@@ -30,6 +30,8 @@ _BACKLOG_MAX_BYTES = 8 * 1024 * 1024
 # After a retryable upload failure, turns of the same connection generation go straight
 # into the backlog for this long instead of each waiting on a server that is known to be down.
 _UPLOAD_COOLDOWN_SECONDS = 30.0
+# Messages rejected with 401/403 wait this long for the same connection to be accepted again.
+_AUTH_BACKLOG_TTL_SECONDS = 10 * 60.0
 _SYNC_TRACE_ENV = "HERMES_OPENVIKING_SYNC_TRACE"
 # Host contexts that must not write into OpenViking. Fixed-prompt output from scheduled
 # jobs, delegated subagents, and flush forks has no memory value and would spend server-side
@@ -118,6 +120,13 @@ class _Backlog:
     messages: List[Dict[str, Any]] = field(default_factory=list)
     sizes: List[int] = field(default_factory=list)
     auth_failed: bool = False
+    # Monotonic time of the first 401/403 rejection.
+    auth_failed_at: Optional[float] = None
+
+    def mark_auth_failed(self, now: float) -> None:
+        self.auth_failed = True
+        if self.auth_failed_at is None:
+            self.auth_failed_at = now
 
 
 @dataclass
@@ -299,18 +308,26 @@ class SessionWriterMixin:
         table = self._backlog_table()
         with self._session_state_lock:
             current = self._commit_scope.marker_id if self._commit_scope is not None else None
+        now = self._deps.monotonic()
         for key, entry in list(table.items()):
-            if entry.auth_failed and key[1] != current:
+            if not entry.auth_failed:
+                continue
+            if key[1] != current:
                 del table[key]
                 logger.warning("OpenViking dropped %d unsent messages of session %s: they were rejected with 401/403 "
                                "and the connection changed since", len(entry.messages), key[0])
+            elif entry.auth_failed_at is not None and now - entry.auth_failed_at >= _AUTH_BACKLOG_TTL_SECONDS:
+                del table[key]
+                logger.warning("OpenViking dropped %d unsent messages of session %s: they were rejected with 401/403 "
+                               "and still not accepted after %d s", len(entry.messages), key[0], _AUTH_BACKLOG_TTL_SECONDS)
 
     def _backlog_add(self, sid: str, scope: _CommitScope, client: _VikingClient, messages: List[Dict[str, Any]],
                      *, auth_failed: bool) -> None:
         if not messages:
             return
         entry = self._backlog_table().setdefault((sid, scope.marker_id), _Backlog(client))
-        entry.auth_failed = entry.auth_failed or auth_failed
+        if auth_failed:
+            entry.mark_auth_failed(self._deps.monotonic())
         for message in messages:
             entry.messages.append(message)
             entry.sizes.append(len(json.dumps(message, ensure_ascii=False, default=str).encode()))
@@ -345,7 +362,8 @@ class SessionWriterMixin:
                 except Exception as e:
                     kind = _upload_failure_kind(e)
                     if kind in ("retry", "auth"):
-                        entry.auth_failed = entry.auth_failed or kind == "auth"
+                        if kind == "auth":
+                            entry.mark_auth_failed(self._deps.monotonic())
                         if kind == "retry":
                             self._start_upload_cooldown(key[1])
                         logger.warning("OpenViking could not send %d unsent messages of session %s: %s",
