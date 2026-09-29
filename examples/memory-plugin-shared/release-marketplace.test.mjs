@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
@@ -10,6 +11,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const installer = join(ROOT, "examples", "memory-plugin-shared", "install.sh");
 const stageScript = join(ROOT, ".github", "scripts", "stage-memory-plugin-marketplace.sh");
 const archiveCheck = join(ROOT, ".github", "scripts", "check-marketplace-archive.mjs");
+const claudeMarketplaceScript = join(ROOT, ".github", "scripts", "generate-claude-marketplace-json.sh");
 
 function run(command, args, options = {}) {
   return spawnSync(command, args, {
@@ -18,6 +20,51 @@ function run(command, args, options = {}) {
     ...options,
   });
 }
+
+function stageMarketplaceZip(tmp) {
+  const stage = join(tmp, "memory-plugin-marketplace");
+  const staged = run("bash", [stageScript, stage]);
+  assert.equal(staged.status, 0, `${staged.stdout}\n${staged.stderr}`);
+  const zip = join(tmp, "memory-plugin-marketplace.zip");
+  const zipped = run("zip", ["-rq", zip, "memory-plugin-marketplace"], { cwd: tmp });
+  assert.equal(zipped.status, 0, `${zipped.stdout}\n${zipped.stderr}`);
+  return { stage, zip };
+}
+
+test("Claude URL marketplace lists the release's plugin zip as an archive source", () => {
+  const tmp = mkdtempSync(join(tmpdir(), "openviking-claude-marketplace-"));
+  try {
+    const { stage } = stageMarketplaceZip(tmp);
+    const pluginZip = join(tmp, "openviking-memory-claude.zip");
+    const zipped = run("zip", ["-rq", pluginZip, "claude-code-memory-plugin"], { cwd: stage });
+    assert.equal(zipped.status, 0, `${zipped.stdout}\n${zipped.stderr}`);
+    const out = join(tmp, "marketplace.json");
+    const generated = run("bash", [claudeMarketplaceScript, "v9.9.9", "https://tos.example.invalid/", pluginZip, stage, out]);
+    assert.equal(generated.status, 0, `${generated.stdout}\n${generated.stderr}`);
+
+    const manifest = JSON.parse(readFileSync(out, "utf8"));
+    const pluginJson = JSON.parse(readFileSync(join(stage, "claude-code-memory-plugin", ".claude-plugin", "plugin.json"), "utf8"));
+    assert.equal(manifest.name, "openviking");
+    assert.equal(manifest.plugins.length, 1);
+    const [entry] = manifest.plugins;
+    assert.equal(entry.name, "openviking-memory");
+    // Claude Code only updates an installed plugin when this string changes.
+    assert.equal(entry.version, pluginJson.version);
+    assert.deepEqual(entry.source, {
+      source: "archive",
+      url: "https://tos.example.invalid/releases/v9.9.9/openviking-memory-claude.zip",
+      sha256: createHash("sha256").update(readFileSync(pluginZip)).digest("hex"),
+    });
+
+    // Claude Code strips one wrapping directory, so the manifest must sit
+    // exactly one level down.
+    const listed = run("unzip", ["-Z1", pluginZip]);
+    assert.equal(listed.status, 0, listed.stderr);
+    assert.ok(listed.stdout.split("\n").includes("claude-code-memory-plugin/.claude-plugin/plugin.json"));
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
 
 test("release marketplace archive supports ZCode and pi TOS installs", () => {
   const tmp = mkdtempSync(join(tmpdir(), "openviking-zcode-release-"));

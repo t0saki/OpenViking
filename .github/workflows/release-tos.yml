@@ -80,10 +80,15 @@ jobs:
           # Slim archive with the memory integrations and marketplace manifests
           # required by clients that support native marketplace installation.
           # The shared installer registers the unzipped directory as a local
-          # marketplace for both Claude Code and Codex (GitHub-free path).
+          # marketplace when the client has no remote TOS channel.
           STAGE=/tmp/memory-plugin-marketplace
           bash .github/scripts/stage-memory-plugin-marketplace.sh "${STAGE}"
           (cd /tmp && zip -rq "memory-plugin-marketplace-${RELEASE_TAG}.zip" memory-plugin-marketplace)
+          # Claude Code (>= 2.1.224) installs and auto-updates from a URL
+          # marketplace whose entry downloads this zip of the plugin alone.
+          (cd "${STAGE}" && zip -rq "/tmp/openviking-memory-claude-${RELEASE_TAG}.zip" claude-code-memory-plugin)
+          bash .github/scripts/generate-claude-marketplace-json.sh "${RELEASE_TAG}" "https://ovrelease.tos-cn-beijing.volces.com" \
+            "/tmp/openviking-memory-claude-${RELEASE_TAG}.zip" "${STAGE}" /tmp/claude-marketplace.json
 
       - name: Build marketplace git repo (dumb HTTP)
         if: steps.tos_config.outputs.configured == 'true'
@@ -92,7 +97,7 @@ jobs:
           # from TOS static hosting. Codex clones it directly and keeps remote
           # update support (`codex plugin marketplace upgrade`). Claude Code
           # cannot consume it (its shallow clones are rejected by dumb HTTP)
-          # and uses the zip archive above instead.
+          # and uses the URL marketplace above instead.
           SRC=/tmp/memory-plugins-src
           rm -rf "${SRC}" /tmp/memory-plugins.git
           cp -R /tmp/memory-plugin-marketplace "${SRC}"
@@ -172,6 +177,7 @@ jobs:
 
           SOURCE_ZIP="/tmp/openviking-${RELEASE_TAG}-source.zip"
           MARKETPLACE_ZIP="/tmp/memory-plugin-marketplace-${RELEASE_TAG}.zip"
+          CLAUDE_PLUGIN_ZIP="/tmp/openviking-memory-claude-${RELEASE_TAG}.zip"
           SHARED_INSTALL="examples/memory-plugin-shared/install.sh"
           CLAUDE_INSTALL="examples/claude-code-memory-plugin/setup-helper/install.sh"
           CODEX_INSTALL="examples/codex-memory-plugin/setup-helper/install.sh"
@@ -181,6 +187,8 @@ jobs:
           # Versioned, immutable copies
           upload "${SOURCE_ZIP}" "releases/${RELEASE_TAG}/openviking-${RELEASE_TAG}-source.zip" "${ZIP_CONTENT_TYPE}" "${IMMUTABLE_CACHE_CONTROL}"
           upload "${MARKETPLACE_ZIP}" "releases/${RELEASE_TAG}/memory-plugin-marketplace.zip" "${ZIP_CONTENT_TYPE}" "${IMMUTABLE_CACHE_CONTROL}"
+          upload "${CLAUDE_PLUGIN_ZIP}" "releases/${RELEASE_TAG}/openviking-memory-claude.zip" "${ZIP_CONTENT_TYPE}" "${IMMUTABLE_CACHE_CONTROL}"
+          upload /tmp/claude-marketplace.json "releases/${RELEASE_TAG}/claude-marketplace.json" "application/json" "${IMMUTABLE_CACHE_CONTROL}"
           upload_dir "/tmp/memory-plugins.git" "releases/${RELEASE_TAG}/memory-plugins.git"
           upload "${SHARED_INSTALL}" "releases/${RELEASE_TAG}/memory-plugin-shared/install.sh" "${SHELL_CONTENT_TYPE}" "${IMMUTABLE_CACHE_CONTROL}"
           upload "${CLAUDE_INSTALL}" "releases/${RELEASE_TAG}/claude-code-memory-plugin/install.sh" "${SHELL_CONTENT_TYPE}" "${IMMUTABLE_CACHE_CONTROL}"
@@ -197,6 +205,7 @@ jobs:
             upload "s3://${TOS_BUCKET}/releases/${RELEASE_TAG}/openviking-${RELEASE_TAG}-source.zip" "releases/latest/openviking-source.zip" "${ZIP_CONTENT_TYPE}" "${NO_CACHE_CONTROL}"
             upload "s3://${TOS_BUCKET}/releases/${RELEASE_TAG}/memory-plugin-marketplace.zip" "releases/latest/memory-plugin-marketplace.zip" "${ZIP_CONTENT_TYPE}" "${NO_CACHE_CONTROL}"
             upload_dir "/tmp/memory-plugins.git" "plugins/memory-plugins.git"
+            upload "s3://${TOS_BUCKET}/releases/${RELEASE_TAG}/claude-marketplace.json" "plugins/claude/marketplace.json" "application/json" "${NO_CACHE_CONTROL}"
             upload "${SHARED_INSTALL}" "memory-plugin-shared/install.sh" "${SHELL_CONTENT_TYPE}" "${NO_CACHE_CONTROL}"
             upload "${CLAUDE_INSTALL}" "claude-code-memory-plugin/install.sh" "${SHELL_CONTENT_TYPE}" "${NO_CACHE_CONTROL}"
             upload "${CODEX_INSTALL}" "codex-memory-plugin/install.sh" "${SHELL_CONTENT_TYPE}" "${NO_CACHE_CONTROL}"
