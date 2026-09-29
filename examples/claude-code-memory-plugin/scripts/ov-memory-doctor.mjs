@@ -186,7 +186,10 @@ function checkInstall(report, { cliOnPath }) {
         "remove the openviking entries from .hooks in ~/.claude/settings.json (back it up first)");
     }
     const statusCmd = String(settings.data.statusLine?.command || "");
-    if (statusCmd.includes("statusline.mjs")) {
+    if (statusCmd.includes("installed_plugins.json")) {
+      // The installer's command resolves the current plugin install on each run.
+      report.ok("statusline registered (runs the installed plugin)");
+    } else if (statusCmd.includes("statusline.mjs")) {
       const m = /node\s+"?([^"]+statusline\.mjs)"?/.exec(statusCmd);
       const path = m ? expandHome(m[1]) : "";
       if (path && !existsPath(path)) report.warn("statusLine points at a missing statusline.mjs", homeShort(path), "re-run the installer or fix .statusLine.command in ~/.claude/settings.json");

@@ -94,7 +94,7 @@ jq -e . /tmp/ov-settings.json >/dev/null && mv /tmp/ov-settings.json ~/.claude/s
 rm -f /tmp/ov-hooks.json
 ```
 
-The one-line installer automates exactly this when it detects a pre-2.0 build (it keeps a source checkout under `~/.openviking/openviking-repo` for the absolute paths above).
+The one-line installer automates exactly this when it detects a pre-2.0 build (it unpacks the release bundle under `~/.openviking/memory-plugin-marketplace` for the absolute paths above).
 
 #### 4. Start Claude Code
 

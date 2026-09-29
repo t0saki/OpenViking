@@ -542,13 +542,11 @@ test("uninstall with no installer runtime on disk removes what it can and fetche
       force: true,
     });
     const result = runInstaller(home, ["--harness", "cursor", "--uninstall", "--lang", "en", "--yes"], {
-      OPENVIKING_REPO_URL: "file:///nonexistent/openviking.git",
-      OPENVIKING_REPO_DIR: join(home, "openviking-repo"),
+      OPENVIKING_TOS_BASE: "file:///nonexistent",
     }, detached);
     const output = `${result.stdout}\n${result.stderr}`;
     assert.equal(result.status, 0, output);
-    assert.doesNotMatch(output, /Cloning|Refreshing checkout/u, output);
-    assert.equal(existsSync(join(home, "openviking-repo")), false);
+    assert.equal(existsSync(join(home, ".openviking", "memory-plugin-marketplace")), false);
     assert.equal(existsSync(join(home, ".openviking", "agent-integrations", "cursor")), false);
     assert.equal(existsSync(join(home, ".cursor", "rules", "openviking-memory.mdc")), false);
     // The host's own files could not be edited, so the uninstall has to name them.

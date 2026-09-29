@@ -38,7 +38,7 @@
 # Legacy Claude Code (< 2.0, no `claude plugin`) is still supported: the
 # installer falls back to `claude mcp add` (stdio proxy) + a hooks merge into
 # ~/.claude/settings.json. That path needs a local copy of the plugin, so it
-# fetches the source even in remote mode.
+# downloads the release bundle even in remote mode.
 #
 # Targets bash 3.2+ (macOS /bin/bash) and Linux.
 
@@ -48,9 +48,7 @@ set -Eeuo pipefail
 INSTALLER_VERSION="dev"
 OV_HOME="${OPENVIKING_HOME:-$HOME/.openviking}"
 REPO_URL="${OPENVIKING_REPO_URL:-https://github.com/volcengine/OpenViking.git}"
-REPO_DIR="${OPENVIKING_REPO_DIR:-$OV_HOME/openviking-repo}"
 REPO_REF="${OPENVIKING_REPO_REF:-${OPENVIKING_REPO_BRANCH:-main}}"
-REPO_ARCHIVE_URL="${OPENVIKING_REPO_ARCHIVE_URL:-}"
 MKT_ARCHIVE_URL="${OPENVIKING_MARKETPLACE_ARCHIVE_URL:-}"
 TOS_BASE="${OPENVIKING_TOS_BASE:-https://ovrelease.tos-cn-beijing.volces.com}"
 TOS_BASE="${TOS_BASE%/}"
@@ -100,8 +98,7 @@ UNINSTALL=0
 NODE_BIN=""
 
 CHECKOUT_DIR=""     # repo checkout the script itself lives in, when applicable
-SRC_ROOT=""         # local source root once ensured (checkout or $REPO_DIR)
-MKT_DIR=""          # directory marketplace root for archive/dev modes
+MKT_DIR=""          # plugin bundle root once ensure_bundle ran (checkout examples/ in dev mode)
 SOURCE_MODE=""
 DIST="github"
 UI_LANG="en"
@@ -1023,7 +1020,7 @@ install_dsh() {
   # package. It still has to arrive as a real package rather than a link: a
   # linked source tree resolves its dsh peers from its own realpath and misses
   # the profile's hoisted node_modules, so the checkout gets packed first.
-  if [ "$SOURCE_MODE" = "dev" ] && local_dir="$(plugin_dir_on_disk dsh-memory-plugin)"; then
+  if [ "$SOURCE_MODE" = "dev" ] && ensure_bundle && local_dir="$(plugin_dir_on_disk dsh-memory-plugin)"; then
     local packed
     if packed="$(dsh_pack_local "$local_dir")"; then
       spec="$packed"
@@ -1330,8 +1327,8 @@ fetch_archive() { # fetch_archive <url> <dest> <required-subpath>
     err "unexpected archive layout (missing $need)"
     rm -rf "$tmp_zip" "$tmp_dir"; exit 1
   fi
-  if [ -e "$dest" ] && [ ! -f "$dest/$ARCHIVE_MARKER" ] && [ ! -d "$dest/.git" ]; then
-    err "$dest exists and is not an OpenViking checkout/archive."
+  if [ -e "$dest" ] && [ ! -f "$dest/$ARCHIVE_MARKER" ]; then
+    err "$dest exists and is not an OpenViking archive."
     rm -rf "$tmp_zip" "$tmp_dir"; exit 1
   fi
   rm -rf "$dest"
@@ -1362,7 +1359,7 @@ resolve_source_mode() {
     SOURCE_MODE="$SOURCE_ARG"
   elif [ "$DIST" = "tos" ]; then
     SOURCE_MODE="archive"
-  elif [ -n "$MKT_ARCHIVE_URL" ] || [ -n "$REPO_ARCHIVE_URL" ]; then
+  elif [ -n "$MKT_ARCHIVE_URL" ]; then
     SOURCE_MODE="archive"
   elif [ -n "$CHECKOUT_DIR" ]; then
     SOURCE_MODE="dev"
@@ -1380,54 +1377,33 @@ resolve_source_mode() {
   fi
 }
 
-# Ensure a local copy of the plugin sources exists (legacy Claude Code and the
-# statusline need real files on disk even in remote mode).
-ensure_checkout() {
-  [ -n "$SRC_ROOT" ] && return 0
-  if [ -n "$CHECKOUT_DIR" ]; then
-    SRC_ROOT="$CHECKOUT_DIR"
-    info "$(t 'Using current checkout:' '使用当前 checkout：') $SRC_ROOT"
-    return 0
-  fi
-  if [ "$SOURCE_MODE" = "archive" ] && [ -n "$MKT_DIR" ]; then
-    # The marketplace archive already contains the plugin sources.
-    SRC_ROOT=""
-    return 1
-  fi
-  if [ -n "$REPO_ARCHIVE_URL" ]; then
-    fetch_archive "$REPO_ARCHIVE_URL" "$REPO_DIR" "examples" || { err "source archive download failed"; exit 1; }
-  elif [ -d "$REPO_DIR/.git" ]; then
-    info "$(t 'Refreshing checkout' '刷新 checkout') ($REPO_REF)"
-    git -C "$REPO_DIR" fetch --depth 1 origin "$REPO_REF"
-    git -C "$REPO_DIR" reset --hard FETCH_HEAD
+# The release bundle every file-based harness installs from, and the directory
+# marketplace Claude-format and Codex-format CLIs use when their remote source
+# is unavailable. Fetched on first need, so an install that uses none of it
+# downloads nothing and needs no unzip. Call it at top level only: a caller
+# inside `$(...)` runs in a subshell, where MKT_DIR is lost and the next call
+# would download the bundle again.
+ensure_bundle() {
+  [ -z "$MKT_DIR" ] || return 0
+  if [ "$SOURCE_MODE" = "dev" ]; then
+    MKT_DIR="$CHECKOUT_DIR/examples"
   else
-    if [ -e "$REPO_DIR" ] && [ ! -f "$REPO_DIR/$ARCHIVE_MARKER" ]; then
-      err "$REPO_DIR exists but is not a git checkout."
+    fetch_archive "${MKT_ARCHIVE_URL:-$TOS_BASE/releases/latest/memory-plugin-marketplace.zip}" \
+      "$MKT_DIR_ARCHIVE" ".claude-plugin/marketplace.json" || {
+      err "$(t 'Plugin bundle download failed.' '插件包下载失败。')"
       exit 1
-    fi
-    command -v git >/dev/null 2>&1 || { err "git not found (needed to fetch sources)."; exit 1; }
-    info "$(t 'Cloning' '克隆') $REPO_URL (ref $REPO_REF)"
-    rm -rf "$REPO_DIR"
-    mkdir -p "$(dirname "$REPO_DIR")"
-    git clone --depth 1 --branch "$REPO_REF" "$REPO_URL" "$REPO_DIR"
+    }
+    MKT_DIR="$MKT_DIR_ARCHIVE"
   fi
-  SRC_ROOT="$REPO_DIR"
+  if [ ! -f "$MKT_DIR/.claude-plugin/marketplace.json" ]; then
+    err "marketplace dir $MKT_DIR is missing .claude-plugin/marketplace.json"
+    exit 1
+  fi
 }
 
-# Locate the plugin dir with real files on disk (for legacy / statusline).
-# Callers capture stdout ($(...)), so any progress output from the fetch has
-# to stay on stderr or it corrupts the captured path.
 plugin_dir_on_disk() { # plugin_dir_on_disk <plugin-subdir>
-  if [ -n "$MKT_DIR" ] && [ -d "$MKT_DIR/$1" ]; then
-    printf '%s' "$MKT_DIR/$1"
-    return 0
-  fi
-  ensure_checkout 1>&2 || true
-  if [ -n "$SRC_ROOT" ] && [ -d "$SRC_ROOT/examples/$1" ]; then
-    printf '%s' "$SRC_ROOT/examples/$1"
-    return 0
-  fi
-  return 1
+  [ -n "$MKT_DIR" ] && [ -d "$MKT_DIR/$1" ] || return 1
+  printf '%s' "$MKT_DIR/$1"
 }
 
 # The installer's own JavaScript: the JSONC editor OpenCode's config needs and
@@ -1435,18 +1411,12 @@ plugin_dir_on_disk() { # plugin_dir_on_disk <plugin-subdir>
 # of the runtime the plugins ship, so it travels with whatever copy of this
 # script is running rather than with `lib/MANIFEST`.
 #
-# `--uninstall` runs before any source is resolved, and the documented uninstall
+# `--uninstall` runs before any bundle is fetched, and the documented uninstall
 # pipes this script from a URL, where there is no sibling directory to read. So
-# this only ever looks at what is already on disk — the running script's
-# sibling, the assembled runtime, and a marketplace or source root an earlier
-# step resolved. Never plugin_dir_on_disk: it would clone a repository, or exit
-# for want of git, just to remove hooks.
-#
-# REPO_DIR is in the list because ensure_checkout only ever runs inside a
-# command substitution (`plugin_dir="$(plugin_dir_on_disk ...)"`); its SRC_ROOT
-# assignment dies with that subshell while the checkout it wrote stays on disk.
-# OpenCode reads the installer's JavaScript from that checkout rather than a
-# vendored copy, so without this its remote install cannot find the runtime.
+# this only ever looks at what is already on disk: the running script's
+# sibling, the bundle an install step fetched, and the copy an earlier install
+# assembled. The bundle goes ahead of that copy because it comes from the same
+# release as this script, while the assembled copy may be older.
 install_lib_dir() {
   local src self candidate
   src="${BASH_SOURCE[0]:-}"
@@ -1456,10 +1426,8 @@ install_lib_dir() {
   fi
   for candidate in \
     "${self:+$self/lib/install}" \
-    "$OV_HOME/agent-integrations/memory-plugin-shared/lib/install" \
     "${MKT_DIR:+$MKT_DIR/memory-plugin-shared/lib/install}" \
-    "${REPO_DIR:+$REPO_DIR/examples/memory-plugin-shared/lib/install}" \
-    "${SRC_ROOT:+$SRC_ROOT/examples/memory-plugin-shared/lib/install}"; do
+    "$OV_HOME/agent-integrations/memory-plugin-shared/lib/install"; do
     [ -n "$candidate" ] && [ -d "$candidate" ] || continue
     printf '%s' "$candidate"
     return 0
@@ -1471,34 +1439,6 @@ require_install_lib_dir() {
   install_lib_dir && return 0
   err "$(t 'Installer runtime not found:' '未找到安装器运行时：') memory-plugin-shared/lib/install"
   return 1
-}
-
-prepare_marketplace_dir() {
-  case "$SOURCE_MODE" in
-    dev)
-      MKT_DIR="$CHECKOUT_DIR/examples"
-      ;;
-    archive)
-      heading "$(t '3. Marketplace archive' '3. Marketplace 归档')"
-      [ -z "$MKT_ARCHIVE_URL" ] && [ "$DIST" = "tos" ] && MKT_ARCHIVE_URL="$TOS_BASE/releases/latest/memory-plugin-marketplace.zip"
-      [ -z "$REPO_ARCHIVE_URL" ] && [ "$DIST" = "tos" ] && REPO_ARCHIVE_URL="$TOS_BASE/releases/latest/openviking-source.zip"
-      if [ -n "$MKT_ARCHIVE_URL" ] && fetch_archive "$MKT_ARCHIVE_URL" "$MKT_DIR_ARCHIVE" ".claude-plugin/marketplace.json"; then
-        MKT_DIR="$MKT_DIR_ARCHIVE"
-      elif [ -n "$REPO_ARCHIVE_URL" ]; then
-        [ -n "$MKT_ARCHIVE_URL" ] && warn "$(t 'marketplace archive unavailable; falling back to the full source archive' 'marketplace 归档不可用，回退到完整源码归档')"
-        fetch_archive "$REPO_ARCHIVE_URL" "$REPO_DIR" "examples" || { err "source archive download failed"; exit 1; }
-        SRC_ROOT="$REPO_DIR"
-        MKT_DIR="$REPO_DIR/examples"
-      else
-        err "archive mode needs OPENVIKING_MARKETPLACE_ARCHIVE_URL or OPENVIKING_REPO_ARCHIVE_URL"
-        exit 1
-      fi
-      ;;
-  esac
-  if [ -n "$MKT_DIR" ] && [ ! -f "$MKT_DIR/.claude-plugin/marketplace.json" ]; then
-    err "marketplace dir $MKT_DIR is missing .claude-plugin/marketplace.json"
-    exit 1
-  fi
 }
 
 # ---------------------------------------------------------------------------
@@ -1661,10 +1601,12 @@ install_claude_modern() {
       if [ "$DIST" = "tos" ] && install_claude_tos_url; then
         :
       else
+        ensure_bundle
         claude_marketplace_sync "$MKT_DIR" "$MKT_DIR" || return 1
       fi
       ;;
     dev)
+      ensure_bundle
       claude_marketplace_sync "$MKT_DIR" "$MKT_DIR" || return 1
       ;;
   esac
@@ -1681,8 +1623,9 @@ install_claude_modern() {
 
 install_claude_legacy() {
   local plugin_dir hooks_src ts
+  ensure_bundle
   plugin_dir="$(plugin_dir_on_disk claude-code-memory-plugin)" || {
-    err 'legacy install needs the plugin sources on disk and none could be fetched'
+    err 'legacy install needs the plugin sources on disk and the bundle has none'
     return 1
   }
   hooks_src="$plugin_dir/hooks/hooks.json"
@@ -1717,10 +1660,43 @@ NODE
   info 'hooks merged'
 }
 
+# Claude Code keeps each plugin version in a directory of its own and records
+# the current one in installed_plugins.json. The command looks that path up on
+# every run, so the statusline follows plugin updates and needs no copy of its
+# own. Any failure prints nothing, which leaves the status line empty.
+statusline_command() {
+  local script='const fs=require("fs"),os=require("os"),path=require("path"),url=require("url");try{const d=process.env.CLAUDE_CONFIG_DIR||path.join(os.homedir(),".claude");const e=JSON.parse(fs.readFileSync(path.join(d,"plugins","installed_plugins.json"),"utf8")).plugins[process.argv[1]]||[];const p=(e.find(x=>x.scope==="user")||e[0]).installPath;import(url.pathToFileURL(path.join(p,"scripts","statusline.mjs")).href).catch(()=>{})}catch{}'
+  printf "node -e '%s' '%s'" "$script" "$PLUGIN_ID"
+}
+
+# Earlier installers pointed the statusline at a copy under ~/.openviking with
+# exactly this command. Anything composed around it is the user's own.
+is_own_statusline() {
+  case "$1" in
+    'node "'*.openviking/*claude-code-memory-plugin/scripts/statusline.mjs'"') ;;
+    *) return 1 ;;
+  esac
+  case "${1#node \"}" in *\"*\"*) return 1 ;; esac
+}
+
 register_statusline() {
   [ "$STATUSLINE_ARG" = "no" ] && return 0
-  local plugin_dir cmd existing reply ts
-  if [ "$STATUSLINE_ARG" != "yes" ]; then
+  local cmd existing own=0 ts
+  cmd="$(statusline_command)"
+  existing=$(node -e '
+    try {
+      const s = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
+      if (s.statusLine && s.statusLine.command) process.stdout.write(String(s.statusLine.command));
+    } catch {}
+  ' "$CC_SETTINGS" 2>/dev/null || true)
+  if [ "$existing" = "$cmd" ]; then
+    info "$(t 'Statusline already registered.' 'Statusline 已注册。')"
+    return 0
+  fi
+  # A statusline this installer registered before is repointed without asking:
+  # the user already chose it, only its location changes.
+  is_own_statusline "$existing" && own=1
+  if [ "$own" -eq 0 ] && [ "$STATUSLINE_ARG" != "yes" ]; then
     [ "$INTERACTIVE" -eq 1 ] || return 0
     heading "$(t 'Statusline (optional)' 'Statusline 状态栏（可选）')"
     info "$(t 'OpenViking can show a one-line server/recall status under the input box.' 'OpenViking 可以在输入框下方显示一行服务/召回状态。')"
@@ -1732,34 +1708,19 @@ register_statusline() {
       info "$(t 'Skipped statusline registration. Re-run the installer to enable it later.' '跳过 statusline 注册，之后重跑安装脚本可启用。')"
       return 0
     fi
-  fi
-  plugin_dir="$(plugin_dir_on_disk claude-code-memory-plugin)" || {
-    warn 'statusline needs the plugin sources on disk and none could be fetched; skipping'
-    return 0
-  }
-  cmd="node \"$plugin_dir/scripts/statusline.mjs\""
-  mkdir -p "$HOME/.claude"
-  [ -f "$CC_SETTINGS" ] || echo '{}' > "$CC_SETTINGS"
-  existing=$(node -e '
-    try {
-      const s = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
-      if (s.statusLine && s.statusLine.command) process.stdout.write(String(s.statusLine.command));
-    } catch {}
-  ' "$CC_SETTINGS" 2>/dev/null || true)
-  if [ "$existing" = "$cmd" ]; then
-    info "$(t 'Statusline already registered.' 'Statusline 已注册。')"
-    return 0
-  fi
-  if [ -n "$existing" ] && [ "$STATUSLINE_ARG" != "yes" ]; then
-    warn "$(t 'Existing statusline detected:' '检测到已有 statusline：') $existing"
-    tui_menu "$(t 'Replace it with the OpenViking statusline?' '替换为 OpenViking statusline？')" 1 \
-      "$(t 'Replace' '替换')" \
-      "$(t 'Keep existing' '保留现有')"
-    if [ "$TUI_MENU_CHOICE" -ne 0 ]; then
-      info "$(t 'Kept the existing statusline.' '保留了已有 statusline。')"
-      return 0
+    if [ -n "$existing" ]; then
+      warn "$(t 'Existing statusline detected:' '检测到已有 statusline：') $existing"
+      tui_menu "$(t 'Replace it with the OpenViking statusline?' '替换为 OpenViking statusline？')" 1 \
+        "$(t 'Replace' '替换')" \
+        "$(t 'Keep existing' '保留现有')"
+      if [ "$TUI_MENU_CHOICE" -ne 0 ]; then
+        info "$(t 'Kept the existing statusline.' '保留了已有 statusline。')"
+        return 0
+      fi
     fi
   fi
+  mkdir -p "$HOME/.claude"
+  [ -f "$CC_SETTINGS" ] || echo '{}' > "$CC_SETTINGS"
   ts=$(date +%Y%m%d-%H%M%S)
   cp -p "$CC_SETTINGS" "$CC_SETTINGS.bak.$ts"
   node - "$CC_SETTINGS" "$cmd" <<'NODE' || { err "writing statusline into $CC_SETTINGS failed"; return 1; }
@@ -1959,10 +1920,12 @@ install_codex() {
       if [ "$DIST" = "tos" ] && install_codex_tos_git; then
         :
       else
+        ensure_bundle
         codex_marketplace_sync "$MKT_DIR" "$MKT_DIR" || return 1
       fi
       ;;
     dev)
+      ensure_bundle
       codex_marketplace_sync "$MKT_DIR" "$MKT_DIR" || return 1
       ;;
   esac
@@ -2275,6 +2238,7 @@ trae_mcp_path() { # trae_mcp_path <client-id>
 install_cursor() {
   heading "$(t '4. Cursor integration' '4. Cursor 集成')"
   local root hooks_path mcp_path skill skill_tmp legacy_plugins
+  ensure_bundle
   root="$(assemble_agent_integration cursor cursor)" || return 1
   hooks_path="$HOME/.cursor/hooks.json"
   mcp_path="$(cursor_mcp_path)"
@@ -2311,6 +2275,7 @@ zcode_merge_config() { # zcode_merge_config <config_path> <hooks_path> <mcp_path
 install_zcode() {
   heading "$(t 'ZCode integration' 'ZCode 集成')"
   local root hooks_path mcp_path config_path
+  ensure_bundle
   root="$(assemble_agent_integration zcode zcode)" || return 1
   hooks_path="$HOME/.zcode/hooks.json"
   mcp_path="$(zcode_mcp_path)"
@@ -2328,6 +2293,7 @@ install_zcode() {
 install_kimicode() {
   heading "$(t 'Kimi Code CLI integration' 'Kimi Code CLI 集成')"
   local bundle kimi_home install_lib persisted_dir persisted_tmp persisted_backup root
+  ensure_bundle
   bundle="$OV_HOME/agent-integrations/kimicode-bundle.$$"
   rm -rf "$bundle"
   mkdir -p "$bundle"
@@ -2385,6 +2351,7 @@ install_kimicode() {
 
 install_trae_variant() { # install_trae_variant <trae|trae-cn>
   local client_id="$1" root hooks_path mcp_path
+  ensure_bundle
   root="$(assemble_agent_integration trae "$client_id")" || return 1
   hooks_path="$HOME/.$client_id/hooks.json"
   mcp_path="$(trae_mcp_path "$client_id")"
@@ -2403,66 +2370,16 @@ install_opencode() {
     warn "$(t 'opencode CLI not found; skipping OpenCode install.' '未找到 opencode 命令，跳过 OpenCode 安装。')"
     return 0
   fi
-  case "$SOURCE_MODE" in
-    remote)
-      opencode_register_npm_plugin
-      ;;
-    archive|dev)
-      opencode_install_file_plugin
-      ;;
-  esac
-}
-
-opencode_config_file() {
-  local json="$HOME/.config/opencode/opencode.json" jsonc="$HOME/.config/opencode/opencode.jsonc"
-  if [ -f "$jsonc" ] && grep -q '"plugin"' "$jsonc" 2>/dev/null; then printf '%s' "$jsonc"; return; fi
-  if [ -f "$json" ]; then printf '%s' "$json"; return; fi
-  if [ -f "$jsonc" ]; then printf '%s' "$jsonc"; return; fi
-  printf '%s' "$json"
-}
-
-opencode_register_npm_plugin() {
-  local cfg plugin_dir proxy_root proxy
-  cfg="$(opencode_config_file)"
-  plugin_dir="$(plugin_dir_on_disk opencode-plugin)" || {
-    warn "$(t 'OpenCode plugin sources not found; registering npm package without MCP fallback.' '未找到 OpenCode 插件源码；仅注册 npm 包，不写 MCP fallback。')"
-    opencode_write_config "$cfg" "@openviking/opencode-plugin" ""
-    return 0
-  }
-  proxy_root="$OV_HOME/opencode-mcp-proxy/openviking"
-  proxy="$(opencode_install_mcp_proxy_snapshot "$plugin_dir" "$proxy_root")"
-  opencode_write_config "$cfg" "@openviking/opencode-plugin" "$proxy"
-  info "$(t 'OpenCode plugin registered in' 'OpenCode 插件已注册到：') $cfg"
-}
-
-opencode_install_mcp_proxy_snapshot() {
-  local plugin_dir="$1" dest="$2"
-  prepare_opencode_runtime "$plugin_dir" || return 1
-  rm -rf "$dest.tmp"
-  mkdir -p "$dest.tmp"
-  (cd "$plugin_dir" && tar --exclude node_modules --exclude .git -cf - package.json lib servers) | (cd "$dest.tmp" && tar -xf -)
-  rm -rf "$dest"
-  mkdir -p "$(dirname "$dest")"
-  mv "$dest.tmp" "$dest"
-  printf '%s' "$dest/servers/mcp-proxy.mjs"
-}
-
-opencode_write_config() {
-  local cfg="$1" plugin_spec="$2" mcp_proxy="$3" lib
-  lib="$(require_install_lib_dir)" || return 1
-  mkdir -p "$(dirname "$cfg")"
-  [ -f "$cfg" ] || printf '{\n}\n' > "$cfg"
-  cp "$cfg" "$cfg.bak.$(date +%Y%m%d-%H%M%S)"
-  "$NODE_BIN" "$lib/jsonc-edit.mjs" "$cfg" "$plugin_spec" "$mcp_proxy"
-}
-
-opencode_install_file_plugin() {
   local plugin_dir dest
+  ensure_bundle
   plugin_dir="$(plugin_dir_on_disk opencode-plugin)" || {
     warn "$(t 'OpenCode plugin sources not found; skipping.' '未找到 OpenCode 插件源码，跳过。')"
     return 0
   }
-  prepare_opencode_runtime "$plugin_dir" || return 1
+  sync_shared_runtime || return 1
+  # Import resolves the complete dependency graph; node --check only parses.
+  "$NODE_BIN" --input-type=module -e 'import { pathToFileURL } from "node:url"; await import(pathToFileURL(process.argv[2]));' \
+    check-runtime "$plugin_dir/servers/mcp-proxy.mjs" || return 1
   dest="$HOME/.config/opencode/plugins/openviking"
   mkdir -p "$(dirname "$dest")"
   if [ "$SOURCE_MODE" = "dev" ]; then
@@ -2479,8 +2396,26 @@ opencode_install_file_plugin() {
   else
     printf '%s\n' 'export { OpenVikingPlugin, default } from "./openviking/index.mjs"' > "$HOME/.config/opencode/plugins/openviking.js"
   fi
-  opencode_write_config "$(opencode_config_file)" "" "$dest/servers/mcp-proxy.mjs"
+  opencode_write_config "$(opencode_config_file)" "$dest/servers/mcp-proxy.mjs"
   info "$(t 'OpenCode file plugin installed:' 'OpenCode 文件插件已安装：') $dest"
+}
+
+opencode_config_file() {
+  local json="$HOME/.config/opencode/opencode.json" jsonc="$HOME/.config/opencode/opencode.jsonc"
+  if [ -f "$jsonc" ] && grep -q '"plugin"' "$jsonc" 2>/dev/null; then printf '%s' "$jsonc"; return; fi
+  if [ -f "$json" ]; then printf '%s' "$json"; return; fi
+  if [ -f "$jsonc" ]; then printf '%s' "$jsonc"; return; fi
+  printf '%s' "$json"
+}
+
+opencode_write_config() {
+  local cfg="$1" mcp_proxy="$2" lib
+  lib="$(require_install_lib_dir)" || return 1
+  mkdir -p "$(dirname "$cfg")"
+  [ -f "$cfg" ] || printf '{\n}\n' > "$cfg"
+  cp "$cfg" "$cfg.bak.$(date +%Y%m%d-%H%M%S)"
+  # No npm plugin spec, so jsonc-edit drops one an older install registered.
+  "$NODE_BIN" "$lib/jsonc-edit.mjs" "$cfg" "" "$mcp_proxy"
 }
 
 # ---------------------------------------------------------------------------
@@ -2498,14 +2433,6 @@ sync_shared_runtime() {
   "$NODE_BIN" "$shared/sync.mjs" >/dev/null
 }
 
-prepare_opencode_runtime() {
-  local plugin_dir="$1"
-  sync_shared_runtime || return 1
-  # Import resolves the complete dependency graph; node --check only parses.
-  "$NODE_BIN" --input-type=module -e 'import { pathToFileURL } from "node:url"; await import(pathToFileURL(process.argv[2]));' \
-    check-runtime "$plugin_dir/servers/mcp-proxy.mjs" || return 1
-}
-
 install_pi() {
   heading "$(t '4. pi extension' '4. pi 扩展')"
   if ! command -v pi >/dev/null 2>&1; then
@@ -2518,6 +2445,7 @@ install_pi() {
     return 1
   }
   local plugin_dir dest tmp
+  ensure_bundle
   plugin_dir="$(plugin_dir_on_disk pi-coding-agent-extension)" || {
     warn "$(t 'pi extension sources not found; skipping.' '未找到 pi 扩展源码，跳过。')"
     return 0
@@ -2767,7 +2695,7 @@ EOF
   if contains_harness opencode; then
     local ocfg="$HOME/.config/opencode/opencode.json"
     local ocfgc="$HOME/.config/opencode/opencode.jsonc"
-    if grep -q '@openviking/opencode-plugin' "$ocfg" "$ocfgc" 2>/dev/null || { [ -f "$HOME/.config/opencode/plugins/openviking.js" ] && [ -f "$HOME/.config/opencode/plugins/openviking/index.mjs" ]; }; then
+    if [ -f "$HOME/.config/opencode/plugins/openviking.js" ] && [ -f "$HOME/.config/opencode/plugins/openviking/index.mjs" ]; then
       info "opencode: $PLUGIN_NAME $(t 'appears installed' '看起来已安装')"
     else
       warn "opencode: $PLUGIN_NAME $(t 'not found in config/plugin dir' '未在配置或插件目录中找到')"
@@ -2781,8 +2709,6 @@ EOF
     fi
     if [ -f "$HOME/.config/opencode/plugins/openviking/servers/mcp-proxy.mjs" ]; then
       node --check "$HOME/.config/opencode/plugins/openviking/servers/mcp-proxy.mjs" || ok=0
-    elif [ -f "$OV_HOME/opencode-mcp-proxy/openviking/servers/mcp-proxy.mjs" ]; then
-      node --check "$OV_HOME/opencode-mcp-proxy/openviking/servers/mcp-proxy.mjs" || ok=0
     else
       warn "opencode: $(t 'OpenViking MCP proxy not found' '未找到 OpenViking MCP proxy')"
       ok=0
@@ -2883,7 +2809,6 @@ select_dist
 
 configure_ovcli
 resolve_source_mode
-prepare_marketplace_dir
 
 if contains_harness claude; then
   while IFS= read -r CLAUDE_BIN; do
@@ -2928,6 +2853,6 @@ if contains_harness trae; then info "TRAE: ~/.trae/hooks.json + MCP"; fi
 if contains_harness trae-cn; then info "TRAE CN: ~/.trae-cn/hooks.json + MCP"; fi
 if contains_harness zcode; then info "ZCode: ~/.zcode/cli/config.json (hooks + MCP)"; fi
 if contains_harness kimicode; then info "Kimi Code: native plugin (hooks + MCP)"; fi
-if contains_harness opencode; then info "OpenCode: @openviking/opencode-plugin"; fi
+if contains_harness opencode; then info "OpenCode: ~/.config/opencode/plugins/openviking"; fi
 if contains_harness pi; then info "pi: ~/.pi/agent/extensions/openviking"; fi
 if contains_harness dsh; then info "DeepSeek Harness: $DSH_PACKAGE ($(t 'profile' '配置档') ${DSH_PROFILE:-$DSH_PROFILE_DEFAULT})"; fi
