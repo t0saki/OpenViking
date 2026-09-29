@@ -115,9 +115,11 @@ PLUGIN_NAME="openviking-memory"
 DSH_PACKAGE="@openviking/dsh-memory-plugin"
 PLUGIN_ID="${PLUGIN_NAME}@${MARKETPLACE_NAME}"
 
-CODEX_CONFIG="${CODEX_CONFIG_FILE:-$HOME/.codex/config.toml}"
-CC_SETTINGS="$HOME/.claude/settings.json"
-CC_KNOWN_MARKETPLACES="$HOME/.claude/plugins/known_marketplaces.json"
+CODEX_DIR="${CODEX_HOME:-$HOME/.codex}"
+CODEX_CONFIG="${CODEX_CONFIG_FILE:-$CODEX_DIR/config.toml}"
+CC_CONFIG_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+CC_SETTINGS="$CC_CONFIG_DIR/settings.json"
+CC_KNOWN_MARKETPLACES="$CC_CONFIG_DIR/plugins/known_marketplaces.json"
 MKT_DIR_ARCHIVE="$OV_HOME/memory-plugin-marketplace"
 
 REQUESTED_HARNESSES=""
@@ -1763,7 +1765,7 @@ claude_supports_archive_source() {
 # beside the declaration `marketplace add` writes to user settings, where the
 # /plugin toggle keeps it too, so a user who switched it off stays off.
 claude_enable_marketplace_autoupdate() { # claude_enable_marketplace_autoupdate <url>
-  mkdir -p "$HOME/.claude"
+  mkdir -p "$CC_CONFIG_DIR"
   [ -f "$CC_SETTINGS" ] || echo '{}' > "$CC_SETTINGS"
   node - "$CC_SETTINGS" "$MARKETPLACE_NAME" "$1" <<'NODE' || warn "$(t 'could not enable marketplace auto-update in' '无法在以下文件中开启 marketplace 自动更新：') $CC_SETTINGS"
 const fs = require("node:fs");
@@ -1837,7 +1839,7 @@ register_statusline() {
       fi
     fi
   fi
-  mkdir -p "$HOME/.claude"
+  mkdir -p "$CC_CONFIG_DIR"
   [ -f "$CC_SETTINGS" ] || echo '{}' > "$CC_SETTINGS"
   ts=$(date +%Y%m%d-%H%M%S)
   cp -p "$CC_SETTINGS" "$CC_SETTINGS.bak.$ts"
@@ -2296,7 +2298,7 @@ cursor_mcp_path() {
 }
 
 cursor_legacy_claude_plugins() {
-  local registry="$HOME/.claude/plugins/installed_plugins.json"
+  local registry="$CC_CONFIG_DIR/plugins/installed_plugins.json"
   [ -f "$registry" ] || return 0
   "$NODE_BIN" - "$registry" "$PLUGIN_ID" <<'NODE' 2>/dev/null || true
 const fs = require("node:fs");
@@ -2642,7 +2644,7 @@ EOF
         ok=0
       fi
       if is_native_codex_bin; then
-        cached=$(find "$HOME/.codex/plugins/cache/$MARKETPLACE_NAME/$PLUGIN_NAME" -name 'mcp-proxy.mjs' -path '*/servers/*' 2>/dev/null | sort | tail -n 1 || true)
+        cached=$(find "$CODEX_DIR/plugins/cache/$MARKETPLACE_NAME/$PLUGIN_NAME" -name 'mcp-proxy.mjs' -path '*/servers/*' 2>/dev/null | sort | tail -n 1 || true)
         if [ -n "$cached" ]; then
           node --check "$cached" && info "codex: $(t 'cached stdio proxy parses' '缓存中的 stdio 代理语法正常') ($cached)" || ok=0
         fi

@@ -280,6 +280,36 @@ test("Codex moves to the TOS git marketplace, falls back to the bundle, and says
   assert.match(fallback.stdout, /Codex\n {4}Next: .*\n {4}Updates: re-run this installer\n/);
 });
 
+test("Claude Code and Codex files go where CLAUDE_CONFIG_DIR and CODEX_HOME point", () => {
+  const home = mkdtempSync(join(work, "home-"));
+  const bin = join(home, "bin");
+  const fakeClaude = join(home, "fake-claude");
+  const fakeCodex = join(home, "fake-codex");
+  mkdirSync(bin);
+  mkdirSync(fakeClaude);
+  mkdirSync(fakeCodex);
+  writeFakeClaude(bin, fakeClaude);
+  writeFakeCodex(bin, fakeCodex);
+  const claudeDir = join(home, "claude-config");
+  const codexDir = join(home, "codex-home");
+  const cachedProxy = join(codexDir, "plugins", "cache", "openviking", "openviking-memory", "1.0.0", "servers", "mcp-proxy.mjs");
+  mkdirSync(dirname(cachedProxy), { recursive: true });
+  writeFileSync(cachedProxy, "");
+
+  const result = run(home, bin, [
+    "--harness", "claude,codex", "--lang", "en", "--url", "http://127.0.0.1:1933", "--api-key", "", "--statusline", "--yes",
+  ], { OPENVIKING_TOS_BASE: "https://tos.example.invalid", CLAUDE_CONFIG_DIR: claudeDir, CODEX_HOME: codexDir });
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+
+  const settings = JSON.parse(readFileSync(join(claudeDir, "settings.json"), "utf8"));
+  assert.equal(settings.extraKnownMarketplaces.openviking.autoUpdate, true);
+  assert.match(settings.statusLine.command, /installed_plugins\.json/);
+  assert.match(readFileSync(join(codexDir, "config.toml"), "utf8"), /\[plugins\."openviking-memory@openviking"\]\nenabled = true/);
+  assert.ok(result.stdout.includes(`codex: cached stdio proxy parses (${cachedProxy})`), result.stdout);
+  assert.equal(existsSync(join(home, ".claude")), false);
+  assert.equal(existsSync(join(home, ".codex")), false);
+});
+
 test("retired GitHub-channel options are accepted, announced and ignored", () => {
   const home = mkdtempSync(join(work, "home-"));
   const bin = join(home, "bin");
