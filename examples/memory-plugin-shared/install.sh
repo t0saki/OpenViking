@@ -22,10 +22,11 @@
 #           git marketplace. No repo clone, updates via plugin/marketplace
 #           update commands.
 #   tos     Volcengine TOS mirror, zero GitHub access. Codex adds a TOS-hosted
-#           git repo (dumb HTTP) and CAN update remotely; Claude Code uses a
-#           downloaded archive as a local directory marketplace and must
-#           re-run this installer to update (git dumb HTTP can't serve Claude
-#           Code's shallow clones).
+#           git repo (dumb HTTP) and CAN update remotely; Claude Code 2.1.224+
+#           adds a TOS-hosted URL marketplace whose plugin downloads as a zip,
+#           with auto-update on. Older Claude Code uses a downloaded archive as
+#           a local directory marketplace and must re-run this installer to
+#           update.
 #
 # Source modes (--source, advanced override; auto-detected when omitted):
 #   remote   Remote marketplaces (see --dist). Default.
@@ -52,6 +53,9 @@ MKT_ARCHIVE_URL="${OPENVIKING_MARKETPLACE_ARCHIVE_URL:-}"
 TOS_BASE="${OPENVIKING_TOS_BASE:-https://ovrelease.tos-cn-beijing.volces.com}"
 TOS_BASE="${TOS_BASE%/}"
 CODEX_TOS_GIT_URL="${OPENVIKING_CODEX_TOS_GIT_URL:-$TOS_BASE/plugins/memory-plugins.git}"
+CC_TOS_MARKETPLACE_URL="${OPENVIKING_CLAUDE_TOS_MARKETPLACE_URL:-$TOS_BASE/plugins/claude/marketplace.json}"
+# First Claude Code release with the `archive` plugin source.
+CC_ARCHIVE_SOURCE_MIN_VERSION="2.1.224"
 ARCHIVE_MARKER='.openviking-archive-source'
 OVCLI_CONF="${OPENVIKING_CLI_CONFIG_FILE:-$OV_HOME/ovcli.conf}"
 
@@ -1368,8 +1372,9 @@ resolve_source_mode() {
     *) err "Invalid --source: $SOURCE_MODE (expected remote, archive, or dev)"; exit 2 ;;
   esac
   info "$(t 'Source mode:' '安装源模式：') $SOURCE_MODE ($(t 'channel' '渠道'): $DIST)"
-  if [ "$SOURCE_MODE" = "archive" ] && [ "$HAVE_CLAUDE" -eq 1 ] && contains_harness claude; then
-    warn "$(t 'TOS/archive installs cannot auto-update Claude Code (local directory marketplace); re-run this installer to update. Codex keeps remote updates via its TOS git marketplace.' 'TOS/归档方式安装的 Claude Code 插件无法自动更新（本地目录 marketplace），更新请重跑本安装脚本；Codex 走 TOS git marketplace 仍可远程更新。')"
+  if [ "$SOURCE_MODE" = "archive" ] && [ "$HAVE_CLAUDE" -eq 1 ] && contains_harness claude \
+    && ! { [ "$DIST" = "tos" ] && claude_supports_archive_source; }; then
+    warn "$(t "Archive installs, and TOS installs on Claude Code older than $CC_ARCHIVE_SOURCE_MIN_VERSION, cannot auto-update Claude Code (local directory marketplace); re-run this installer to update. Codex keeps remote updates via its TOS git marketplace." "归档方式安装、以及 Claude Code 低于 $CC_ARCHIVE_SOURCE_MIN_VERSION 时的 TOS 安装无法自动更新 Claude Code 插件（本地目录 marketplace），更新请重跑本安装脚本；Codex 走 TOS git marketplace 仍可远程更新。")"
   fi
 }
 
@@ -1590,13 +1595,74 @@ claude_marketplace_sync() { # claude_marketplace_sync <add-target> <expected-sou
   }
 }
 
+# The TOS URL marketplace lists the plugin as an `archive` source (a zip over
+# HTTPS). Custom Claude-format CLIs don't share Claude Code's version line, so
+# only the native command qualifies, and a custom one that already lists the
+# URL marketplace, such as a wrapper sharing Claude Code's config: replacing it
+# with the directory marketplace would turn off auto-update for Claude Code too.
+claude_supports_archive_source() {
+  if ! is_native_claude_bin; then
+    [ "$(claude_marketplace_current_source)" = "$CC_TOS_MARKETPLACE_URL" ] || return 1
+    return 0
+  fi
+  local version
+  version="$(claude_cmd --version 2>/dev/null || true)"
+  node -e '
+    const parse = (s) => (/(\d+)\.(\d+)\.(\d+)/.exec(s) || []).slice(1).map(Number);
+    const have = parse(process.argv[1]);
+    const need = parse(process.argv[2]);
+    const diff = have.length ? have.map((n, i) => n - need[i]).find((d) => d !== 0) ?? 0 : -1;
+    process.exit(diff >= 0 ? 0 : 1);
+  ' "$version" "$CC_ARCHIVE_SOURCE_MIN_VERSION" 2>/dev/null
+}
+
+# Claude Code leaves auto-update off for third-party marketplaces. The flag goes
+# beside the declaration `marketplace add` writes to user settings, where the
+# /plugin toggle keeps it too, so a user who switched it off stays off.
+claude_enable_marketplace_autoupdate() { # claude_enable_marketplace_autoupdate <url>
+  mkdir -p "$HOME/.claude"
+  [ -f "$CC_SETTINGS" ] || echo '{}' > "$CC_SETTINGS"
+  node - "$CC_SETTINGS" "$MARKETPLACE_NAME" "$1" <<'NODE' || warn "$(t 'could not enable marketplace auto-update in' '无法在以下文件中开启 marketplace 自动更新：') $CC_SETTINGS"
+const fs = require("node:fs");
+const [settingsPath, name, url] = process.argv.slice(2);
+const settings = JSON.parse(fs.readFileSync(settingsPath, "utf8"));
+const known = settings.extraKnownMarketplaces || {};
+const entry = known[name] || { source: { source: "url", url } };
+if (entry.autoUpdate === undefined) {
+  settings.extraKnownMarketplaces = { ...known, [name]: { ...entry, autoUpdate: true } };
+  fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n");
+}
+NODE
+}
+
+# Claude Code's shallow clones can't use the TOS dumb-HTTP git repo, but a URL
+# marketplace whose entry downloads the plugin zip installs and auto-updates
+# with no git at all.
+install_claude_tos_url() {
+  claude_supports_archive_source || return 1
+  if ! claude_marketplace_sync "$CC_TOS_MARKETPLACE_URL" "$CC_TOS_MARKETPLACE_URL"; then
+    warn "$(t 'TOS marketplace unavailable; falling back to the archive directory.' 'TOS marketplace 不可用，回退到归档目录方式。')"
+    return 1
+  fi
+  if is_native_claude_bin; then
+    claude_enable_marketplace_autoupdate "$CC_TOS_MARKETPLACE_URL"
+  fi
+}
+
 install_claude_modern() {
   case "$SOURCE_MODE" in
     remote)
       write_claude_remote_manifest
       claude_marketplace_sync "$CC_REMOTE_MKT_DIR" "$CC_REMOTE_MKT_DIR" || return 1
       ;;
-    archive|dev)
+    archive)
+      if [ "$DIST" = "tos" ] && install_claude_tos_url; then
+        :
+      else
+        claude_marketplace_sync "$MKT_DIR" "$MKT_DIR" || return 1
+      fi
+      ;;
+    dev)
       claude_marketplace_sync "$MKT_DIR" "$MKT_DIR" || return 1
       ;;
   esac

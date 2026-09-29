@@ -31,6 +31,23 @@ function stageMarketplaceZip(tmp) {
   return { stage, zip };
 }
 
+// A stand-in for the claude CLI: it records each invocation and keeps the one
+// marketplace registration the installer reads back through `--json`.
+function writeFakeClaude(bin) {
+  writeFileSync(join(bin, "claude"), `#!/bin/sh
+echo "$*" >> "$FAKE_CLAUDE_DIR/calls.log"
+case "$*" in
+  --version) echo "$FAKE_CLAUDE_VERSION (Claude Code)" ;;
+  "plugin marketplace list --json") cat "$FAKE_CLAUDE_DIR/marketplaces.json" 2>/dev/null || echo "[]" ;;
+  "plugin marketplace remove "*) rm -f "$FAKE_CLAUDE_DIR/marketplaces.json" ;;
+  "plugin marketplace add "*)
+    case "$4" in https://*) [ -z "$FAKE_CLAUDE_URL_FAILS" ] || exit 1 ;; esac
+    printf '[{"name":"openviking","path":"%s"}]' "$4" > "$FAKE_CLAUDE_DIR/marketplaces.json" ;;
+esac
+exit 0
+`, { mode: 0o755 });
+}
+
 test("Claude URL marketplace lists the release's plugin zip as an archive source", () => {
   const tmp = mkdtempSync(join(tmpdir(), "openviking-claude-marketplace-"));
   try {
@@ -61,6 +78,126 @@ test("Claude URL marketplace lists the release's plugin zip as an archive source
     const listed = run("unzip", ["-Z1", pluginZip]);
     assert.equal(listed.status, 0, listed.stderr);
     assert.ok(listed.stdout.split("\n").includes("claude-code-memory-plugin/.claude-plugin/plugin.json"));
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("TOS installs register Claude Code's URL marketplace when the CLI supports archive sources", () => {
+  const tmp = mkdtempSync(join(tmpdir(), "openviking-claude-tos-"));
+  try {
+    const { zip } = stageMarketplaceZip(tmp);
+    const bin = join(tmp, "bin");
+    const fake = join(tmp, "fake-claude");
+    mkdirSync(bin);
+    mkdirSync(fake);
+    writeFakeClaude(bin);
+    const home = join(tmp, "home");
+    mkdirSync(join(home, ".claude"), { recursive: true });
+    const marketplaceUrl = "https://tos.example.invalid/plugins/claude/marketplace.json";
+    const settingsPath = join(home, ".claude", "settings.json");
+    const readSettings = () => JSON.parse(readFileSync(settingsPath, "utf8"));
+    const calls = () => readFileSync(join(fake, "calls.log"), "utf8").split("\n");
+    const install = (version, extraEnv = {}) => {
+      rmSync(join(fake, "calls.log"), { force: true });
+      const result = run("bash", [
+        installer, "--harness", "claude", "--dist", "tos", "--lang", "en",
+        "--url", "http://127.0.0.1:1933", "--api-key", "", "--no-statusline", "--yes",
+      ], {
+        env: {
+          ...process.env,
+          HOME: home,
+          PATH: `${bin}:${process.env.PATH}`,
+          OPENVIKING_HOME: join(home, ".openviking"),
+          OPENVIKING_TOS_BASE: "https://tos.example.invalid",
+          OPENVIKING_MARKETPLACE_ARCHIVE_URL: `file://${zip}`,
+          FAKE_CLAUDE_DIR: fake,
+          FAKE_CLAUDE_VERSION: version,
+          ...extraEnv,
+        },
+      });
+      assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+      return result;
+    };
+
+    // An install from the old archive channel is re-registered from the URL.
+    const archiveDir = join(home, ".openviking", "memory-plugin-marketplace");
+    writeFileSync(join(fake, "marketplaces.json"), JSON.stringify([{ name: "openviking", path: archiveDir }]));
+    install("2.1.224");
+    let log = calls();
+    assert.ok(log.includes("plugin uninstall openviking-memory@openviking"), log.join("\n"));
+    assert.ok(log.includes("plugin marketplace remove openviking"), log.join("\n"));
+    assert.ok(log.includes(`plugin marketplace add ${marketplaceUrl}`), log.join("\n"));
+    assert.ok(log.includes("plugin install openviking-memory@openviking"), log.join("\n"));
+    assert.deepEqual(readSettings().extraKnownMarketplaces.openviking, {
+      source: { source: "url", url: marketplaceUrl },
+      autoUpdate: true,
+    });
+
+    // A re-run refreshes the same registration and leaves a user's choice to
+    // turn auto-update off alone.
+    const settings = readSettings();
+    settings.extraKnownMarketplaces.openviking.autoUpdate = false;
+    writeFileSync(settingsPath, JSON.stringify(settings));
+    install("2.1.284");
+    log = calls();
+    assert.ok(log.includes("plugin marketplace update openviking"), log.join("\n"));
+    assert.equal(log.some((line) => line.startsWith("plugin marketplace add")), false, log.join("\n"));
+    assert.equal(readSettings().extraKnownMarketplaces.openviking.autoUpdate, false);
+
+    // Unreachable URL marketplace: fall back to the unpacked archive.
+    const failed = install("2.1.284", { FAKE_CLAUDE_URL_FAILS: "1", OPENVIKING_TOS_BASE: "https://other.example.invalid" });
+    log = calls();
+    assert.ok(log.includes(`plugin marketplace add ${archiveDir}`), log.join("\n"));
+    assert.match(failed.stdout + failed.stderr, /falling back to the archive directory/);
+
+    // Claude Code before the archive source keeps the local directory.
+    rmSync(join(fake, "marketplaces.json"), { force: true });
+    rmSync(settingsPath);
+    const legacy = install("2.1.223");
+    log = calls();
+    assert.ok(log.includes(`plugin marketplace add ${archiveDir}`), log.join("\n"));
+    assert.equal(log.some((line) => line.includes("https://")), false, log.join("\n"));
+    assert.equal(existsSync(settingsPath) && readSettings().extraKnownMarketplaces !== undefined, false);
+    assert.match(legacy.stdout + legacy.stderr, /cannot auto-update Claude Code/);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("a Claude-format wrapper sharing Claude Code's config keeps the URL marketplace", () => {
+  const tmp = mkdtempSync(join(tmpdir(), "openviking-claude-wrapper-"));
+  try {
+    const bin = join(tmp, "bin");
+    const fake = join(tmp, "fake-claude");
+    const home = join(tmp, "home");
+    mkdirSync(bin);
+    mkdirSync(fake);
+    mkdirSync(home);
+    writeFakeClaude(bin);
+    writeFileSync(join(bin, "claude-wrap"), '#!/bin/sh\nexec claude "$@"\n', { mode: 0o755 });
+    const marketplaceUrl = "https://tos.example.invalid/plugins/claude/marketplace.json";
+
+    const result = run("bash", [
+      installer, "--harness", "claude", "--claude-bin", "claude,claude-wrap", "--dist", "tos", "--lang", "en",
+      "--url", "http://127.0.0.1:1933", "--api-key", "", "--no-statusline", "--yes",
+    ], {
+      env: {
+        ...process.env,
+        HOME: home,
+        PATH: `${bin}:${process.env.PATH}`,
+        OPENVIKING_HOME: join(home, ".openviking"),
+        OPENVIKING_TOS_BASE: "https://tos.example.invalid",
+        FAKE_CLAUDE_DIR: fake,
+        FAKE_CLAUDE_VERSION: "2.1.284",
+      },
+    });
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    const log = readFileSync(join(fake, "calls.log"), "utf8").split("\n");
+    assert.deepEqual(log.filter((line) => /^plugin (uninstall|marketplace (add|remove))/.test(line)), [
+      `plugin marketplace add ${marketplaceUrl}`,
+    ]);
+    assert.equal(JSON.parse(readFileSync(join(fake, "marketplaces.json"), "utf8"))[0].path, marketplaceUrl);
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
