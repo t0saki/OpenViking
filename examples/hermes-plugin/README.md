@@ -381,6 +381,14 @@ request keeps 1 second of that budget for a fallback: if it times out, recall
 falls back to the search without rewrite. Older servers fall back to the
 existing search path within the same budget.
 
+### Session ids
+
+The OpenViking session for a Hermes session is named `hermes-<Hermes session id>`
+(an id that already starts with `hermes-` is kept as is). Recall, the search tool,
+turn uploads, commits and pending-commit markers all use this name. Before 3.0 the
+plugin used the bare Hermes id; markers left by 2.x are still recovered under the
+id they store, so sessions uploaded before the upgrade are committed where they are.
+
 ### Active-session commits
 
 The standalone provider checks OpenViking's `pending_tokens` after each successful

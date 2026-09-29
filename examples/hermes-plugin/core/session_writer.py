@@ -16,7 +16,7 @@ from .deps import default_deps
 from .host import env_var_enabled, spawn_context_thread
 from .http import _TIMEOUT, _status_code_from_error, _VikingClient
 from .log import get_logger
-from .transcript import _message_text
+from .transcript import _message_text, openviking_session_id
 
 logger = get_logger()
 
@@ -325,7 +325,7 @@ class SessionWriterMixin:
     def _upload_turn(self, upload: _TurnUpload, sid: str, scope: _CommitScope) -> Optional[_VikingClient]:
         """Send the backlog first, then the turn; keep whatever could not be sent. Under the writer lock."""
         with self._session_state_lock:
-            current_sid = self._session_id
+            current_sid = openviking_session_id(self._session_id)
         # Sessions left behind by a switch: once their backlog is sent, commit them off this thread.
         for other in dict.fromkeys(k[0] for k in self._backlog_table() if k[0] != sid and k[1] == scope.marker_id):
             if self._flush_backlog(other) and other != current_sid:
@@ -410,7 +410,7 @@ class SessionWriterMixin:
             self._mark_session_committed(sid, scope=scope)
             self._clear_pending_session(sid, scope=scope, pending_path=pending_path)
             with self._session_state_lock:
-                if self._session_id == sid and self._commit_scope is scope and self._client is scope.client:
+                if openviking_session_id(self._session_id) == sid and self._commit_scope is scope and self._client is scope.client:
                     self._turn_count = 0
             logger.info("OpenViking session %s committed %s (%d turns)", sid, context, turn_count)
             return True
@@ -457,7 +457,7 @@ class SessionWriterMixin:
             return
         with self._session_state_lock:
             scope = self._capture_commit_scope()
-            sid = self._session_id
+            sid = openviking_session_id(self._session_id)
         if not self._drain_writers(sid, timeout=drain_timeout):
             logger.warning("OpenViking writer for %s still alive after drain — skipping commit", sid)
             return
@@ -477,7 +477,7 @@ class SessionWriterMixin:
             return
         try:
             with self._session_state_lock:
-                turn_count = self._turn_count if self._session_id == sid and self._commit_scope is scope else 0
+                turn_count = self._turn_count if openviking_session_id(self._session_id) == sid and self._commit_scope is scope else 0
             if expired():
                 return
             if self._session_needs_commit(sid, turn_count, scope=scope, request_timeout=remaining()):

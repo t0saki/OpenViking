@@ -11,6 +11,21 @@ from typing import Any, Dict, List, Optional
 from .host import extract_user_instruction_from_skill_message, flatten_message_text
 from .tools import _OPENVIKING_RECALL_TOOL_NAMES
 
+_OPENVIKING_SESSION_PREFIX = "hermes-"
+
+
+def openviking_session_id(hermes_session_id: Any) -> str:
+    """The OpenViking session id for a Hermes session id: ``hermes-<id>``, never prefixed twice.
+
+    Every request that names a session (recall, the search tool, upload, commit) and
+    every new pending marker uses this. Markers written by 2.x hold the bare Hermes
+    id; recovery commits a marker's stored id as is and never maps it again.
+    """
+    sid = str(hermes_session_id or "").strip()
+    if not sid or sid.startswith(_OPENVIKING_SESSION_PREFIX):
+        return sid
+    return _OPENVIKING_SESSION_PREFIX + sid
+
 
 def _gateway_peer_id(platform: str, sender: Any) -> str:
     """Namespace transport IDs and encode path-like IDs without merging distinct senders."""

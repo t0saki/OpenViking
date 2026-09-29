@@ -122,7 +122,7 @@ def test_unknown_or_unexposed_tool_is_rejected(wired):
     assert fake.calls == []
 
 
-@pytest.mark.parametrize("context,expected", [("primary", {"query": "q", "session_id": "sid-1"}), ("cron", {"query": "q"})])
+@pytest.mark.parametrize("context,expected", [("primary", {"query": "q", "session_id": "hermes-sid-1"}), ("cron", {"query": "q"})])
 def test_search_injects_session_in_primary_context_only(wired, context, expected):
     provider, _, fake = wired
     provider._session_id, provider._agent_context = "sid-1", context

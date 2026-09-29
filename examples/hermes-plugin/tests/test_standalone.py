@@ -126,7 +126,7 @@ def test_initialized_profile_owns_connection_and_recall_across_other_profile(ext
         ]
         assert [name for name, _ in fake_mcp.calls] == ["search"] * 3
         assert not [r for r in requests if r[1].startswith("/api/v1/search")]
-        assert all(body["session_id"] == "session-a" for _, _, body, _, _ in requests)
+        assert all(body["session_id"] == "hermes-session-a" for _, _, body, _, _ in requests)
     finally:
         for server, worker in servers:
             server.shutdown()
@@ -392,7 +392,7 @@ def test_cloud_recall(external_provider, monkeypatch, mode, rewrite, response, e
     assert path == "/api/v1/search/search"
     assert body["mode"] == "context"
     assert body["rewrite"] == rewrite
-    assert body["session_id"] == "session"
+    assert body["session_id"] == "hermes-session"
     # Compression without explicit deadlines may use the 7.5 s prefetch budget,
     # minus the 1 s kept for the search without rewrite.
     assert 6 < client.post.call_args.kwargs["timeout"] <= 6.5
@@ -739,9 +739,14 @@ def _live_provider(external_provider, monkeypatch, name="live-commit"):
     return home, provider, module
 
 
+def _ov(sid):
+    """The OpenViking session id the plugin sends for a Hermes session id."""
+    return f"hermes-{sid}"
+
+
 def _finish_turn(provider, user="one", sid="live-sid"):
     provider.sync_turn(user, "reply", session_id=sid)
-    assert provider._drain_writers(sid, timeout=5)
+    assert provider._drain_writers(_ov(sid), timeout=5)
     assert provider._drain_finalizers(timeout=5)
 
 
@@ -753,22 +758,22 @@ def test_live_session_commits_at_token_threshold_and_rearms(external_provider, m
     for _ in range(7):
         _finish_turn(provider)
     assert not [c for c in client.post.call_args_list if c.args[0].endswith("/commit")]
-    marker = provider._state_path("pending", "live-sid")
+    marker = provider._state_path("pending", _ov("live-sid"))
     assert marker.exists()
     client.get.return_value = {"result": {"pending_tokens": 20000}}
     _finish_turn(provider)
     assert provider._turn_count == 0
-    assert provider._has_committed_session("live-sid")
+    assert provider._has_committed_session(_ov("live-sid"))
     assert not marker.exists()
     client.get.return_value = {"pending_tokens": 100}
     _finish_turn(provider, "new turn")
-    assert not provider._has_committed_session("live-sid")
+    assert not provider._has_committed_session(_ov("live-sid"))
     assert marker.exists()
     client.get.return_value = {"pending_tokens": 25000}
     _finish_turn(provider)
     commits = [c for c in client.post.call_args_list if c.args[0].endswith("/commit")]
     assert len(commits) == 2
-    assert commits[0].args == ("/api/v1/sessions/live-sid/commit", {"keep_recent_count": 0})
+    assert commits[0].args == ("/api/v1/sessions/hermes-live-sid/commit", {"keep_recent_count": 0})
     provider.on_session_end([])
     assert len([c for c in client.post.call_args_list if c.args[0].endswith("/commit")]) == 2
 
@@ -795,9 +800,9 @@ def test_live_commit_waits_for_registered_writer_before_committing(external_prov
         assert commit_paths == []
     finally:
         release_upload.set()
-    assert provider._drain_writers("live-sid", timeout=5)
+    assert provider._drain_writers(_ov("live-sid"), timeout=5)
     assert provider._drain_finalizers(timeout=5)
-    assert commit_paths == ["/api/v1/sessions/live-sid/commit"]
+    assert commit_paths == ["/api/v1/sessions/hermes-live-sid/commit"]
 
 
 def test_failed_live_commit_stays_pending_and_retries_on_next_turn(external_provider, monkeypatch):
@@ -814,12 +819,12 @@ def test_failed_live_commit_stays_pending_and_retries_on_next_turn(external_prov
     provider._client.post.side_effect = post
     _finish_turn(provider)
     assert provider._turn_count == 1
-    assert not provider._has_committed_session("live-sid")
-    assert provider._state_path("pending", "live-sid").exists()
+    assert not provider._has_committed_session(_ov("live-sid"))
+    assert provider._state_path("pending", _ov("live-sid")).exists()
     _finish_turn(provider, "two")
     assert len(commit_attempts) == 2
     assert provider._turn_count == 0
-    assert not provider._state_path("pending", "live-sid").exists()
+    assert not provider._state_path("pending", _ov("live-sid")).exists()
 
 
 @pytest.mark.parametrize("metadata", [{}, {"pending_tokens": "invalid"}, RuntimeError("unavailable")])
@@ -831,11 +836,11 @@ def test_live_metadata_failure_does_not_replay_uploaded_turn(external_provider, 
         provider._client.get.return_value = metadata
     _finish_turn(provider)
     assert provider._client.post.call_count == 1
-    assert provider._state_path("pending", "live-sid").exists()
+    assert provider._state_path("pending", _ov("live-sid")).exists()
     provider._client.get.side_effect = None
     provider._client.get.return_value = {"pending_tokens": 20000}
     _finish_turn(provider)
-    assert provider._has_committed_session("live-sid")
+    assert provider._has_committed_session(_ov("live-sid"))
 
 
 def test_live_failed_upload_does_not_commit_partial_turn(external_provider, monkeypatch):
@@ -843,10 +848,10 @@ def test_live_failed_upload_does_not_commit_partial_turn(external_provider, monk
     provider._client.post.side_effect = RuntimeError("upload unavailable")
     _finish_turn(provider)
     assert not provider._client.get.called
-    assert provider._state_path("pending", "live-sid").exists()
+    assert provider._state_path("pending", _ov("live-sid")).exists()
     provider._client.post.side_effect = None
     _finish_turn(provider)
-    assert provider._has_committed_session("live-sid")
+    assert provider._has_committed_session(_ov("live-sid"))
 
 
 def test_live_config_schema_save_and_profile_overrides(external_provider, monkeypatch):
@@ -903,7 +908,7 @@ def test_session_switch_commits_below_live_threshold(external_provider, monkeypa
     _finish_turn(provider)
     provider.on_session_switch("new-sid")
     assert provider._drain_finalizers(timeout=5)
-    assert provider._client.post.call_args.args[0] == "/api/v1/sessions/live-sid/commit"
+    assert provider._client.post.call_args.args[0] == "/api/v1/sessions/hermes-live-sid/commit"
     assert provider._session_id == "new-sid"
 
 
@@ -991,10 +996,10 @@ def test_live_commit_does_not_block_next_turn_or_lose_its_pending_marker(externa
             submitted.result(timeout=2)
         finally:
             release.set()
-    assert provider._drain_writers('live-sid', timeout=5)
+    assert provider._drain_writers(_ov('live-sid'), timeout=5)
     assert provider._drain_finalizers(timeout=5)
-    assert not provider._has_committed_session('live-sid')
-    assert provider._state_path('pending', 'live-sid').exists()
+    assert not provider._has_committed_session(_ov('live-sid'))
+    assert provider._state_path('pending', _ov('live-sid')).exists()
     provider.on_session_end([])
     assert len(commits) == 2
 
@@ -1036,7 +1041,7 @@ def test_soft_eviction_cycles_do_not_grow_exit_registry(
         client = _wire_live_client(provider, f"evicted-{cycle}")
         _finish_turn(provider, sid=f"evicted-{cycle}")
         provider.on_session_end([])
-        assert client.post.call_args.args[0] == f"/api/v1/sessions/evicted-{cycle}/commit"
+        assert client.post.call_args.args[0] == f"/api/v1/sessions/hermes-evicted-{cycle}/commit"
         assert provider not in module._exit_registry
         dropped.append(weakref.ref(provider))
         del provider, client
@@ -1106,7 +1111,7 @@ def test_exit_hook_stops_starting_commits_when_the_budget_is_spent(external_prov
     assert len(commits) == 1 and 0 < commits[0] <= 0.2
     assert len(module._exit_registry) == 0
     assert all(each._run_lock_path is None for each in providers)
-    markers = [each._state_path("pending", f"exit-sid-{index}").exists() for index, each in enumerate(providers)]
+    markers = [each._state_path("pending", _ov(f"exit-sid-{index}")).exists() for index, each in enumerate(providers)]
     assert sorted(markers) == [False, True]  # the skipped session stays pending for recovery
     other.shutdown()
 
@@ -1141,7 +1146,7 @@ def test_exit_hook_bounds_the_wait_for_the_commit_lock(external_provider, monkey
 
     assert elapsed < 2.0
     assert not any(call.args[0].endswith("/commit") for call in client.post.call_args_list)
-    assert provider._state_path("pending", "exit-lock-sid").exists()  # left for the next run's recovery
+    assert provider._state_path("pending", _ov("exit-lock-sid")).exists()  # left for the next run's recovery
     assert provider._run_lock_path is None
     assert len(module._exit_registry) == 0
 
@@ -1220,11 +1225,11 @@ def test_reload_keeps_new_connection_pending_after_old_commit(reload_provider, m
     provider.sync_turn("Alice's pending turn", "reply", session_id=sid)
     try:
         assert alice_get.wait(timeout=5)
-        alice_marker = provider._state_path("pending", sid)
+        alice_marker = provider._state_path("pending", _ov(sid))
         reload("bob", endpoint)
         provider.sync_turn("Bob's pending turn", "reply", session_id=sid)
         assert bob_get.wait(timeout=5)
-        bob_marker = provider._state_path("pending", sid)
+        bob_marker = provider._state_path("pending", _ov(sid))
         assert bob_marker.exists()
         # A claims the finalizer while B's metadata request is still pending.
         release_alice.set()
@@ -1232,23 +1237,23 @@ def test_reload_keeps_new_connection_pending_after_old_commit(reload_provider, m
     finally:
         release_alice.set()
         release_bob.set()
-    assert provider._drain_writers(sid, timeout=5)
+    assert provider._drain_writers(_ov(sid), timeout=5)
     assert provider._drain_finalizers(timeout=5)
     assert not alice_marker.exists()
     if bob_tokens < 20000:
         assert bob_marker.exists()
-        assert not provider._has_committed_session(sid)
+        assert not provider._has_committed_session(_ov(sid))
         assert provider._turn_count == 1
     else:
         # B must get its own threshold finalizer while A already owns one.
-        assert provider._has_committed_session(sid)
+        assert provider._has_committed_session(_ov(sid))
         assert not bob_marker.exists()
     provider.on_session_end([])
     assert not bob_marker.exists()
     for backend in backends.values():
         commits = [c for c in backend.post.call_args_list if c.args[0].endswith("/commit")]
         assert len(commits) == 1
-        assert commits[0].args == (f"/api/v1/sessions/{sid}/commit", {"keep_recent_count": 0})
+        assert commits[0].args == (f"/api/v1/sessions/{_ov(sid)}/commit", {"keep_recent_count": 0})
 
 
 def test_reload_recovery_preserves_markers_for_other_connections(reload_provider, monkeypatch):
@@ -1266,10 +1271,10 @@ def test_reload_recovery_preserves_markers_for_other_connections(reload_provider
         reload(user)
         backends[user].post.side_effect = fail_commit
         _finish_turn(provider, user, sid=sid)
-        markers[user] = provider._state_path("pending", sid)
+        markers[user] = provider._state_path("pending", _ov(sid))
         provider.on_session_end([])
         assert markers[user].exists()
-        assert not provider._has_committed_session(sid)
+        assert not provider._has_committed_session(_ov(sid))
         assert "private-test-key" not in markers[user].read_text()
     assert markers["alice"] != markers["bob"]
     provider.shutdown()
@@ -1284,7 +1289,7 @@ def test_reload_recovery_preserves_markers_for_other_connections(reload_provider
             recovered.initialize("new-sid", hermes_home=str(home))
             assert recovered._drain_finalizers(timeout=5)
             assert not markers[user].exists()
-            backends[user].post.assert_called_once_with(f"/api/v1/sessions/{sid}/commit", {"keep_recent_count": 0})
+            backends[user].post.assert_called_once_with(f"/api/v1/sessions/{_ov(sid)}/commit", {"keep_recent_count": 0})
             if user == "bob":
                 assert markers["alice"].exists()
                 backends["alice"].post.assert_not_called()
@@ -1317,25 +1322,79 @@ def test_reload_back_to_original_identity_keeps_new_generation_pending(reload_pr
     provider.sync_turn("old Alice turn", "reply", session_id=sid)
     try:
         assert first_get.wait(timeout=5)
-        old_marker = provider._state_path("pending", sid)
+        old_marker = provider._state_path("pending", _ov(sid))
         reload("bob")
         provider.sync_turn("Bob turn", "reply", session_id=sid)
         assert bob_get.wait(timeout=5)
-        bob_marker = provider._state_path("pending", sid)
+        bob_marker = provider._state_path("pending", _ov(sid))
         reload("alice")
         provider.sync_turn("new Alice turn", "reply", session_id=sid)
         assert later_get.wait(timeout=5)
-        new_marker = provider._state_path("pending", sid)
+        new_marker = provider._state_path("pending", _ov(sid))
     finally:
         release_first.set()
-    assert provider._drain_writers(sid, timeout=5)
+    assert provider._drain_writers(_ov(sid), timeout=5)
     assert provider._drain_finalizers(timeout=5)
     assert not old_marker.exists()
     assert new_marker.exists() and bob_marker.exists()
-    assert not provider._has_committed_session(sid)
+    assert not provider._has_committed_session(_ov(sid))
     assert provider._turn_count == 1
     provider.on_session_end([])
     assert not new_marker.exists()
     assert bob_marker.exists()
     commits = [c for c in backends["alice"].post.call_args_list if c.args[0].endswith("/commit")]
     assert len(commits) == 2
+
+
+@pytest.mark.parametrize("hermes_id,expected", [
+    ("abc", "hermes-abc"), (" abc ", "hermes-abc"), ("hermes-abc", "hermes-abc"), ("", ""), (None, ""),
+])
+def test_openviking_session_id_prefixes_once(external_provider, core_module, hermes_id, expected):
+    _, _, module, _ = external_provider("session-id-mapping")
+    assert core_module(module, "transcript").openviking_session_id(hermes_id) == expected
+
+
+def test_every_session_request_and_marker_carries_the_prefixed_id(external_provider, monkeypatch):
+    import json
+
+    home, provider, _ = _live_provider(external_provider, monkeypatch, "prefixed-session-id")
+    client = provider._client
+    client.get.return_value = {"pending_tokens": 1}
+    client.post.side_effect = lambda path, *_a, **_k: (
+        {"result": {"rendered": "", "entries": []}} if path == "/api/v1/search/search" else {}
+    )
+    provider._search_prefetch_context("remember deployment preferences", session_id="live-sid", client=client)
+    _finish_turn(provider)
+    marker = provider._state_path("pending", "hermes-live-sid")
+    assert json.loads(marker.read_text())["session_id"] == "hermes-live-sid"
+    provider.on_session_end([])
+
+    paths = [c.args[0] for c in client.post.call_args_list] + [c.args[0] for c in client.get.call_args_list]
+    session_paths = [p for p in paths if p.startswith("/api/v1/sessions/")]
+    assert session_paths and all(p.startswith("/api/v1/sessions/hermes-live-sid") for p in session_paths)
+    assert "/api/v1/sessions/hermes-live-sid/commit" in session_paths
+    searches = [c.args[1] for c in client.post.call_args_list if c.args[0].startswith("/api/v1/search/")]
+    assert searches and all(body.get("session_id") == "hermes-live-sid" for body in searches)
+    assert not marker.exists()
+
+
+@pytest.mark.parametrize("owner", ["", "dead-2x-run"])
+def test_2x_marker_is_recovered_with_its_stored_id(reload_provider, owner):
+    """Markers written by 2.x hold the bare Hermes id; recovery commits that id as is."""
+    import json
+
+    home, provider, module, backends, _ = reload_provider
+    provider.shutdown()
+    directory = home / "openviking" / "pending_sessions"
+    directory.mkdir(parents=True, exist_ok=True)
+    marker = directory / "old-sid.json"
+    marker.write_text(json.dumps({"session_id": "old-sid", **({"owner_run_id": owner} if owner else {})}))
+    backends["alice"].post.reset_mock()
+    recovered = module.OpenVikingMemoryProvider()
+    try:
+        recovered.initialize("new-sid", hermes_home=str(home))
+        assert recovered._drain_finalizers(timeout=5)
+        backends["alice"].post.assert_called_once_with("/api/v1/sessions/old-sid/commit", {"keep_recent_count": 0})
+        assert not marker.exists()
+    finally:
+        recovered.shutdown()

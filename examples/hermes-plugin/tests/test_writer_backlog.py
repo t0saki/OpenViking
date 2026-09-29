@@ -73,7 +73,7 @@ def writer(external_provider, monkeypatch, inject_deps, core_module):
 
 def turn(provider, text, sid="sid-1"):
     provider.sync_turn(f"u{text}", f"a{text}", session_id=sid)
-    assert provider._drain_writers(sid, timeout=5)
+    assert provider._drain_writers(f"hermes-{sid}", timeout=5)
     assert provider._drain_finalizers(timeout=5)
 
 
@@ -87,12 +87,12 @@ def test_server_down_then_back_keeps_every_turn_in_order(writer):
     alice.fail = "down"
     for n in (1, 2, 3):
         turn(provider, n)
-    assert alice.texts("sid-1") == []
+    assert alice.texts("hermes-sid-1") == []
     alice.fail = None
     turn(provider, 4)
-    assert alice.texts("sid-1") == pair(1, 2, 3, 4)
+    assert alice.texts("hermes-sid-1") == pair(1, 2, 3, 4)
     provider.on_session_end([])
-    assert alice.committed("sid-1") == [pair(1, 2, 3, 4)]
+    assert alice.committed("hermes-sid-1") == [pair(1, 2, 3, 4)]
 
 
 def test_retryable_status_is_backlogged_and_resent(writer):
@@ -102,7 +102,7 @@ def test_retryable_status_is_backlogged_and_resent(writer):
     turn(provider, 1)
     alice.fail = None
     turn(provider, 2)
-    assert alice.texts("sid-1") == pair(1, 2)
+    assert alice.texts("hermes-sid-1") == pair(1, 2)
 
 
 def test_commit_waits_for_backlog(writer):
@@ -111,7 +111,7 @@ def test_commit_waits_for_backlog(writer):
     turn(provider, 1)
     alice.fail = "down"
     turn(provider, 2)
-    marker = provider._state_path("pending", "sid-1")
+    marker = provider._state_path("pending", "hermes-sid-1")
     provider.on_session_end([])
     assert alice.commits == []
     assert marker.exists()
@@ -119,8 +119,8 @@ def test_commit_waits_for_backlog(writer):
     alice.requests.clear()
     provider.on_session_end([])
     # The backlog goes out before the commit, and the commit covers it.
-    assert alice.requests == ["/api/v1/sessions/sid-1/messages/batch", "/api/v1/sessions/sid-1/commit"]
-    assert alice.committed("sid-1") == [pair(1, 2)]
+    assert alice.requests == ["/api/v1/sessions/hermes-sid-1/messages/batch", "/api/v1/sessions/hermes-sid-1/commit"]
+    assert alice.committed("hermes-sid-1") == [pair(1, 2)]
     assert not marker.exists()
 
 
@@ -132,12 +132,12 @@ def test_session_switch_with_backlog_commits_old_session_after_resend(writer):
     provider.on_session_switch("sid-2")
     assert provider._drain_finalizers(timeout=5)
     assert alice.commits == []
-    assert provider._state_path("pending", "sid-1").exists()
+    assert provider._state_path("pending", "hermes-sid-1").exists()
     alice.fail = None
     turn(provider, 2, sid="sid-2")
-    assert alice.committed("sid-1") == [pair(1)]
-    assert alice.texts("sid-2") == pair(2)
-    assert not provider._state_path("pending", "sid-1").exists()
+    assert alice.committed("hermes-sid-1") == [pair(1)]
+    assert alice.texts("hermes-sid-2") == pair(2)
+    assert not provider._state_path("pending", "hermes-sid-1").exists()
 
 
 def test_backlog_keeps_its_identity_across_reload(writer):
@@ -149,8 +149,8 @@ def test_backlog_keeps_its_identity_across_reload(writer):
     alice.fail = None
     turn(provider, 2)
     # Alice's retryable backlog is sent with Alice's client, never with Bob's.
-    assert alice.texts("sid-1") == pair(1)
-    assert bob.texts("sid-1") == pair(2)
+    assert alice.texts("hermes-sid-1") == pair(1)
+    assert bob.texts("hermes-sid-1") == pair(2)
 
 
 def test_auth_failure_is_not_retried_and_resent_within_the_same_connection(writer):
@@ -159,10 +159,10 @@ def test_auth_failure_is_not_retried_and_resent_within_the_same_connection(write
     alice.fail = 401
     turn(provider, 1)
     # No immediate retry and no per-message fallback.
-    assert alice.requests == ["/api/v1/sessions/sid-1/messages/batch"]
+    assert alice.requests == ["/api/v1/sessions/hermes-sid-1/messages/batch"]
     alice.fail = None
     turn(provider, 2)
-    assert alice.texts("sid-1") == pair(1, 2)
+    assert alice.texts("hermes-sid-1") == pair(1, 2)
 
 
 def test_auth_failure_backlog_is_dropped_when_credentials_change(writer, caplog):
@@ -175,8 +175,8 @@ def test_auth_failure_backlog_is_dropped_when_credentials_change(writer, caplog)
     with caplog.at_level(logging.WARNING):
         turn(provider, 2)
         provider.on_session_end([])
-    assert alice.texts("sid-1") == []
-    assert bob.committed("sid-1") == [pair(2)]
+    assert alice.texts("hermes-sid-1") == []
+    assert bob.committed("hermes-sid-1") == [pair(2)]
     assert any("rejected with 401/403" in r.getMessage() for r in caplog.records)
 
 
@@ -188,7 +188,7 @@ def test_other_client_errors_are_dropped_with_a_warning(writer, caplog):
         turn(provider, 1)
     alice.fail = None
     turn(provider, 2)
-    assert alice.texts("sid-1") == pair(2)
+    assert alice.texts("hermes-sid-1") == pair(2)
 
 
 def test_backlog_bound_drops_oldest_with_warning(writer, monkeypatch, caplog):
@@ -202,7 +202,7 @@ def test_backlog_bound_drops_oldest_with_warning(writer, monkeypatch, caplog):
     assert any("dropped the 2 oldest" in r.getMessage() for r in caplog.records)
     alice.fail = None
     turn(provider, 4)
-    assert alice.texts("sid-1") == pair(2, 3, 4)
+    assert alice.texts("hermes-sid-1") == pair(2, 3, 4)
 
 
 def test_backlog_is_resent_in_batches_of_at_most_100(writer):
@@ -214,5 +214,5 @@ def test_backlog_is_resent_in_batches_of_at_most_100(writer):
     alice.fail = None
     alice.requests.clear()
     turn(provider, "last")
-    assert alice.texts("sid-1") == pair(*range(60), "last")
-    assert alice.requests == ["/api/v1/sessions/sid-1/messages/batch"] * 3
+    assert alice.texts("hermes-sid-1") == pair(*range(60), "last")
+    assert alice.requests == ["/api/v1/sessions/hermes-sid-1/messages/batch"] * 3

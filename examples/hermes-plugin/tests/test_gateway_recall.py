@@ -209,7 +209,7 @@ def test_gateway_capture_commit_and_sender_scoped_recall(
                     ],
                 )
             assert manager.flush_pending(timeout=10)
-            assert provider._drain_writers("shared-group", timeout=10)
+            assert provider._drain_writers("hermes-shared-group", timeout=10)
             provider.on_session_end([])
             assert provider._drain_finalizers(timeout=10)
         assert [m["peer_id"] for m in backend.archived if m["role"] == "user"] == [
@@ -253,7 +253,7 @@ def test_delayed_capture_keeps_author_through_fallback(
             assert backend.upload_started.wait(5)
             manager.on_turn_start(2, "Bob fact", author_id="bob")
             backend.release_upload.set()
-            assert provider._drain_writers("shared-group", timeout=10)
+            assert provider._drain_writers("hermes-shared-group", timeout=10)
         assert backend.pending
         assert {m["peer_id"] for m in backend.pending if m["role"] == "user"} == {"telegram.alice"}
     finally:
@@ -351,7 +351,7 @@ def test_older_hooks_and_no_gateway_sender(external_provider, inject_deps, platf
             # Older Hermes does not pass per-turn author metadata.
             provider.on_turn_start(1, "Remember this")
             provider.sync_turn("Remember this", "OK", session_id="shared-group")
-            assert provider._drain_writers("shared-group", timeout=10)
+            assert provider._drain_writers("hermes-shared-group", timeout=10)
             assert backend.pending[0].get("peer_id") == expected
             backend.pending.clear()
             # An explicit missing author must clear the initialized sender.
@@ -359,7 +359,7 @@ def test_older_hooks_and_no_gateway_sender(external_provider, inject_deps, platf
             provider.sync_turn(
                 "Remember another fact", "OK", session_id="shared-group", turn_author={"id": None}
             )
-            assert provider._drain_writers("shared-group", timeout=10)
+            assert provider._drain_writers("hermes-shared-group", timeout=10)
             assert "peer_id" not in backend.pending[0]
     finally:
         manager.shutdown_all()

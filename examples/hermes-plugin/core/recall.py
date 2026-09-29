@@ -10,7 +10,7 @@ from .host import get_secret, spawn_context_thread
 from .http import _is_timeout_error, _resolve_user_space, _VikingClient
 from .log import get_logger
 from .settings import _RECALL_SETTING_KEYS, _SETTING_SPECS
-from .transcript import _derive_openviking_user_text
+from .transcript import _derive_openviking_user_text, openviking_session_id
 
 logger = get_logger()
 
@@ -199,6 +199,7 @@ class RecallMixin:
                                  probe: Optional[_RecallProbe] = None, deadline: Optional[float] = None) -> str:
         query_text = (query or "").strip()
         probe = probe or _RecallProbe()
+        session_id = openviking_session_id(session_id)
         sender_peer = self._current_sender_peer()
         if len(query_text) < _RECALL_QUERY_MIN_CHARS:
             return ""

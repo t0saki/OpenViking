@@ -196,6 +196,7 @@ from .core.transcript import (
     _tool_call_name,
     _tool_part,
     _tool_result_status,
+    openviking_session_id,
 )
 
 logger = logging.getLogger(__name__)
@@ -570,7 +571,7 @@ class OpenVikingMemoryProvider(
             # blocks sync_turn. A write after a commit re-arms its recovery marker.
             with self._writer_commit_lock:
                 with self._session_state_lock:
-                    if self._session_id == sid and self._commit_scope is scope and self._client is scope.client:
+                    if openviking_session_id(self._session_id) == sid and self._commit_scope is scope and self._client is scope.client:
                         self._turn_count += 1
                         turn_count = self._turn_count
                     else:
@@ -583,7 +584,7 @@ class OpenVikingMemoryProvider(
                 self._maybe_commit_live_session(sid, turn_count, threshold, client, scope)
 
         with self._session_state_lock:
-            sid = str(session_id or self._session_id).strip()
+            sid = openviking_session_id(session_id or self._session_id)
         if not sid:
             return
         upload = _TurnUpload(client, sid, batch_messages, user_content, assistant_content, assistant_peer_id, user_peer_id)
@@ -642,13 +643,13 @@ class OpenVikingMemoryProvider(
                 # In-place compression keeps the same (still live) sid, which compress_context()
                 # just committed and latched. Re-arm so later commits aren't rejected. Rotation
                 # mode is untouched: the old id stays latched to dedupe its async finalizer.
-                self._mark_session_committed(old_session_id, committed=False, scope=scope)
+                self._mark_session_committed(openviking_session_id(old_session_id), committed=False, scope=scope)
 
         if not rotate:
             logger.debug("OpenViking on_session_switch skipped rotation: session=%s rewound=%s", old_session_id, rewound)
             return
         if old_session_id and self._writes_enabled:
-            self._finalize_session_async(old_session_id, old_turn_count, context="on switch", scope=scope)
+            self._finalize_session_async(openviking_session_id(old_session_id), old_turn_count, context="on switch", scope=scope)
         logger.debug("OpenViking on_session_switch: old=%s new=%s parent=%s reset=%s", old_session_id, new_id, parent_session_id, reset)
 
     # -- memory mirroring -----------------------------------------------------

@@ -179,7 +179,7 @@ def _sync_provider(external_provider, monkeypatch, name):
 
 def _sync(provider, user, assistant, messages):
     provider.sync_turn(user, assistant, session_id="char-sid", messages=messages, turn_author={"id": "alice"})
-    assert provider._drain_writers("char-sid", timeout=5)
+    assert provider._drain_writers("hermes-char-sid", timeout=5)
     return [c.args for c in provider._client.post.call_args_list if "/messages" in c.args[0]]
 
 
@@ -198,13 +198,13 @@ def test_sync_turn_slices_current_turn_and_strips_skill_scaffolding(external_pro
     expected[0] = {**expected[0], "parts": [{"type": "text", "text": "ship it now"}]}
     # Slicing ends at the assistant message matching assistant_content, so the trailing
     # tool results after "Build failed" are outside the turn.
-    assert posts == [("/api/v1/sessions/char-sid/messages/batch", {"messages": expected[:4]})]
+    assert posts == [("/api/v1/sessions/hermes-char-sid/messages/batch", {"messages": expected[:4]})]
 
 
 def test_sync_turn_skips_bare_skill_invocation(external_provider, monkeypatch):
     provider, _ = _sync_provider(external_provider, monkeypatch, "sync-bare-skill")
     provider.sync_turn(BARE_SKILL_SCAFFOLD, "OK", session_id="char-sid", messages=[])
-    assert provider._drain_writers("char-sid", timeout=5)
+    assert provider._drain_writers("hermes-char-sid", timeout=5)
     assert provider._client.post.call_args_list == []
 
 
@@ -222,7 +222,7 @@ def test_sync_turn_without_structured_turn_posts_truncated_text(external_provide
     provider, _ = _sync_provider(external_provider, monkeypatch, "sync-text")
     posts = _sync(provider, "u" * 5000, [{"type": "text", "text": "a" * 4500}], messages)
     assert posts == [
-        ("/api/v1/sessions/char-sid/messages/batch", _plain_text_payload("u" * 4000, "a" * 4000))
+        ("/api/v1/sessions/hermes-char-sid/messages/batch", _plain_text_payload("u" * 4000, "a" * 4000))
     ]
 
 
@@ -235,7 +235,7 @@ def test_sync_turn_first_batch_failure_retries_the_structured_batch(external_pro
     messages[5] = {**messages[5], "content": "b" * 4500}
     posts = _sync(provider, long_user, "b" * 4500, messages)
     assert len(posts) == 2
-    assert posts[0][0] == "/api/v1/sessions/char-sid/messages/batch"
+    assert posts[0][0] == "/api/v1/sessions/hermes-char-sid/messages/batch"
     assert posts[0][1]["messages"][0]["parts"] == [{"type": "text", "text": long_user}]
     # No plain-text truncation fallback: the retry resends the same structured batch.
     assert posts[1] == posts[0]

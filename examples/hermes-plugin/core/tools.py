@@ -303,7 +303,9 @@ class ToolsMixin:
 
     def _prepare_search(self, args: dict, client: Any, cleanup: List[Path]):
         if self._session_id and getattr(self, "_agent_context", "primary") == "primary":
-            args["session_id"] = self._session_id
+            from .transcript import openviking_session_id
+
+            args["session_id"] = openviking_session_id(self._session_id)
         return args
 
     def _prepare_forget(self, args: dict, client: Any, cleanup: List[Path]):
