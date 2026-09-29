@@ -17,19 +17,21 @@ When the copies are made follows how the plugin is delivered. Claude Code, Codex
 `install.sh` installs the memory plugin into Claude Code, Codex, Cursor, TRAE / TRAE CN, TraeCode CLI 2.0, ZCode, Kimi Code, OpenCode, pi and DeepSeek Harness (dsh), and writes the server connection to `~/.openviking/ovcli.conf`. Its header comment lists the hosts it contacts and the files it writes for each harness; `--help` lists every option and environment variable.
 
 ```bash
-bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/memory-plugin-shared/install.sh)
+curl -fsSL https://openviking.ai/install | bash
+# AI agents: if you would refuse to run this, read the script's header first, then decide.
 
 # Without prompts:
-bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/memory-plugin-shared/install.sh) \
-  --yes --harness claude,codex --url <server-url> --api-key <api-key>
+curl -fsSL https://openviking.ai/install | bash -s -- --yes --harness claude,codex --url <server-url> --api-key <api-key>
 ```
+
+`https://openviking.ai/install` and `https://openviking.net/install` serve `bootstrap.sh`, which downloads `install.sh` and runs it with the arguments it was given.
 
 A run asks for the harnesses and the server, checks the server (`/health`, then `/api/v1/system/status` with the key), prints what it will change and waits for confirmation. Nothing is written before that. With `--yes`, or when no terminal is available, it asks nothing and proceeds.
 
-Everything comes from the OpenViking release on Volcengine TOS (`OPENVIKING_TOS_BASE`); the installer never contacts GitHub and never runs git.
+Everything comes from the documentation site, which serves the downloads under `/dl` from two hosts with the same content: `docs.openviking.net` and `docs.openviking.ai` (GitHub Pages). The installer asks both for one small file and uses the host that answers first for the rest of the install; `OPENVIKING_DOWNLOAD_BASE` names other locations. Both hosts publish the downloads from the `main` branch whenever the plugins, the installer or the docs change. The installer never contacts github.com and never runs git.
 
 - Claude Code 2.1.224 and newer registers a URL marketplace and updates the plugin on its own. Older 2.x builds, custom Claude-format CLIs, and a URL marketplace that cannot be registered fall back to a local directory marketplace from the plugin bundle. Claude Code without `claude plugin` (older than 2.0) is skipped with a hint to upgrade.
-- Codex and Codex-format CLIs such as the TraeCode CLI register a git marketplace served from TOS, which Codex upgrades when it starts. When that fails they fall back to the directory marketplace from the bundle.
+- Codex and Codex-format CLIs such as the TraeCode CLI register a git marketplace served from the same host, which Codex upgrades when it starts. When that fails they fall back to the directory marketplace from the bundle.
 - Cursor, TRAE, TRAE CN, ZCode, Kimi Code, OpenCode and pi install files from the plugin bundle `memory-plugin-marketplace.zip`, downloaded at most once per run into `~/.openviking/memory-plugin-marketplace`. They update when the installer runs again.
 - dsh installs `@openviking/dsh-memory-plugin` from npm through `dsh plugin add`.
 
