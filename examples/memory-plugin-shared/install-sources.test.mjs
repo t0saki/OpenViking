@@ -236,7 +236,7 @@ case "$*" in
   "plugin marketplace list --json") cat "${dir}/marketplaces.json" 2>/dev/null || echo '{"marketplaces":[]}' ;;
   "plugin marketplace remove "*) rm -f "${dir}/marketplaces.json" ;;
   "plugin marketplace add "*)
-    case "$4" in *.git) [ -z "$FAKE_CODEX_GIT_FAILS" ] || exit 1 ;; esac
+    case "$4" in *.git) [ -z "$FAKE_CODEX_GIT_FAILS" ] || { echo "fatal: git marketplace unreachable" >&2; exit 1; } ;; esac
     printf '{"marketplaces":[{"name":"openviking","marketplaceSource":{"source":"%s"}}]}' "$4" > "${dir}/marketplaces.json" ;;
   "plugin list") echo "openviking-memory@openviking" ;;
 esac
@@ -278,6 +278,35 @@ test("Codex moves to the TOS git marketplace, falls back to the bundle, and says
   assert.match(fallback.stdout, /TOS git marketplace unavailable; falling back to the archive directory/);
   assert.ok(fallback.calls.includes(`plugin marketplace add ${join(home, ".openviking", "memory-plugin-marketplace")}`), fallback.calls.join("\n"));
   assert.match(fallback.stdout, /Codex\n {4}Next: .*\n {4}Updates: re-run this installer\n/);
+});
+
+// macOS ships bash 3.2 as /bin/bash, which runs the ERR trap for a failing
+// `command <program>` even where the failure is handled.
+test("a handled CLI failure neither reports itself nor disarms the error report", () => {
+  const home = mkdtempSync(join(work, "home-"));
+  const bin = join(home, "bin");
+  const fake = join(home, "fake-codex");
+  mkdirSync(bin);
+  mkdirSync(fake);
+  writeFakeCodex(bin, fake);
+  const install = () => spawnSync("/bin/bash", [
+    installer, "--harness", "codex", "--lang", "en", "--url", "http://127.0.0.1:9", "--api-key", "", "--yes",
+  ], { cwd: home, env: installEnv(home, bin, { CODEX_HOME: join(home, ".codex"), FAKE_CODEX_GIT_FAILS: "1" }), encoding: "utf8" });
+
+  const fellBack = install();
+  assert.equal(fellBack.status, 0, `${fellBack.stdout}\n${fellBack.stderr}`);
+  assert.doesNotMatch(fellBack.stderr, /stopped unexpectedly|unreachable/);
+  const calls = readFileSync(join(fake, "calls.log"), "utf8").split("\n");
+  assert.ok(calls.includes(`plugin marketplace add ${join(home, ".openviking", "memory-plugin-marketplace")}`), calls.join("\n"));
+
+  // A real failure later in the same run is still reported.
+  const config = join(home, ".codex", "config.toml");
+  rmSync(config);
+  mkdirSync(config);
+  const failed = install();
+  assert.equal(failed.status, 1, `${failed.stdout}\n${failed.stderr}`);
+  assert.equal(failed.stderr.match(/OpenViking installer stopped unexpectedly/g)?.length, 1, failed.stderr);
+  assert.match(failed.stderr, /Command: node /);
 });
 
 test("Claude Code and Codex files go where CLAUDE_CONFIG_DIR and CODEX_HOME point", () => {

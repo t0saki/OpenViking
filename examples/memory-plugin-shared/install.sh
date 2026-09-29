@@ -1679,8 +1679,10 @@ is_native_claude_bin() {
   [ "$(bin_basename "$CLAUDE_BIN")" = "claude" ]
 }
 
+# Not `command "$CLAUDE_BIN"`: when `command` runs an external program that
+# fails, bash 3.2 fires the ERR trap even where the caller handles the failure.
 claude_cmd() {
-  command "$CLAUDE_BIN" "$@"
+  "$CLAUDE_BIN" "$@"
 }
 
 has_plugin_subcommand() {
@@ -1915,7 +1917,7 @@ is_native_codex_bin() {
 }
 
 codex_cmd() {
-  command "$CODEX_BIN" "$@"
+  "$CODEX_BIN" "$@"
 }
 
 codex_bin_label() {
@@ -2038,7 +2040,7 @@ install_codex() {
   }
   # Codex clones git marketplaces served over dumb HTTP from static hosting,
   # so the TOS release carries a slim marketplace git repo that Codex upgrades.
-  if [ "$SOURCE_MODE" = "dev" ] || ! codex_marketplace_sync "$CODEX_TOS_GIT_URL"; then
+  if [ "$SOURCE_MODE" = "dev" ] || ! codex_marketplace_sync "$CODEX_TOS_GIT_URL" 2>/dev/null; then
     [ "$SOURCE_MODE" = "dev" ] \
       || warn "$(t 'TOS git marketplace unavailable; falling back to the archive directory.' 'TOS git marketplace 不可用，回退到归档目录方式。')"
     ensure_bundle
