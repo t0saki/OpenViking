@@ -83,10 +83,10 @@ jobs:
           # marketplace when the client has no remote TOS channel.
           STAGE=/tmp/memory-plugin-marketplace
           bash .github/scripts/stage-memory-plugin-marketplace.sh "${STAGE}"
-          (cd /tmp && zip -rq "memory-plugin-marketplace-${RELEASE_TAG}.zip" memory-plugin-marketplace)
+          bash .github/scripts/reproducible-zip.sh "/tmp/memory-plugin-marketplace-${RELEASE_TAG}.zip" /tmp memory-plugin-marketplace
           # Claude Code (>= 2.1.224) installs and auto-updates from a URL
           # marketplace whose entry downloads this zip of the plugin alone.
-          (cd "${STAGE}" && zip -rq "/tmp/openviking-memory-claude-${RELEASE_TAG}.zip" claude-code-memory-plugin)
+          bash .github/scripts/reproducible-zip.sh "/tmp/openviking-memory-claude-${RELEASE_TAG}.zip" "${STAGE}" claude-code-memory-plugin
           bash .github/scripts/generate-claude-marketplace-json.sh "${RELEASE_TAG}" "https://ovrelease.tos-cn-beijing.volces.com" \
             "/tmp/openviking-memory-claude-${RELEASE_TAG}.zip" "${STAGE}" /tmp/claude-marketplace.json
 

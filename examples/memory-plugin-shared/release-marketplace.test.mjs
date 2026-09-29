@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
@@ -16,6 +16,7 @@ const archiveCheck = join(ROOT, ".github", "scripts", "check-marketplace-archive
 const claudeMarketplaceScript = join(ROOT, ".github", "scripts", "generate-claude-marketplace-json.sh");
 const stampScript = join(ROOT, ".github", "scripts", "stamp-installer-version.sh");
 const publishGitScript = join(ROOT, ".github", "scripts", "publish-dumb-git-repo.sh");
+const zipScript = join(ROOT, ".github", "scripts", "reproducible-zip.sh");
 
 function run(command, args, options = {}) {
   return spawnSync(command, args, {
@@ -441,6 +442,43 @@ test("published installer copies carry the release version and nothing else chan
       assert.equal(unsafe.status, 1, `${version}: ${unsafe.stderr}`);
       assert.equal(existsSync(join(tmp, "unsafe.sh")), false);
     }
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+// A re-run of a release rebuilds its zips and overwrites the versioned keys,
+// while the manifests pinning their sha256 may stay as they were.
+test("rebuilding a release zip from the same commit gives the same bytes", () => {
+  const tmp = mkdtempSync(join(tmpdir(), "openviking-reproducible-zip-"));
+  try {
+    const files = [join("plugin", "plugin.json"), join("plugin", "scripts", "hook.mjs"), join("plugin", "README.md")];
+    const build = (name, order, mtime) => {
+      const parent = join(tmp, name);
+      for (const file of order) {
+        mkdirSync(dirname(join(parent, file)), { recursive: true });
+        writeFileSync(join(parent, file), `${file}\n`);
+        utimesSync(join(parent, file), mtime, mtime);
+      }
+      const out = join(tmp, `${name}.zip`);
+      const zipped = run("bash", [zipScript, out, parent, "plugin"]);
+      assert.equal(zipped.status, 0, `${zipped.stdout}\n${zipped.stderr}`);
+      return out;
+    };
+    const sha256 = (file) => createHash("sha256").update(readFileSync(file)).digest("hex");
+
+    const first = build("first", files, new Date("2020-01-01T00:00:00Z"));
+    const second = build("second", [...files].reverse(), new Date());
+    assert.equal(sha256(first), sha256(second));
+    const listed = run("unzip", ["-Z1", first]);
+    assert.equal(listed.status, 0, listed.stderr);
+    assert.deepEqual(listed.stdout.trim().split("\n"), [
+      "plugin/",
+      "plugin/README.md",
+      "plugin/plugin.json",
+      "plugin/scripts/",
+      "plugin/scripts/hook.mjs",
+    ]);
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
