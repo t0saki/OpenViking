@@ -238,8 +238,10 @@ validation remains part of release testing.
 
 CI also runs `scripts/check-hermes-plugin-install.py` through the real Hermes
 CLI in an isolated profile. It installs this repository's plugin subdirectory,
-enables it through Hermes's dependency manager, validates the installed directory,
-and checks that the external provider loads. The bundled OpenViking copy is
+checks that the installed tree equals the plugin directory at the checked-out
+commit file for file, enables it through Hermes's dependency manager, validates
+the installed directory, and checks that the external provider and every
+`core/` module import from the installed copy. The bundled OpenViking copy is
 temporarily removed from the test checkout. This catches dependency conflicts
 across supported platforms that runtime tests alone do not exercise.
 
