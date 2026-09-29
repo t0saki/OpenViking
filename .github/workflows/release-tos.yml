@@ -110,6 +110,12 @@ jobs:
           git -C /tmp/memory-plugins.git update-server-info
           du -sh /tmp/memory-plugins.git
 
+      - name: Stamp shared installer version
+        if: steps.tos_config.outputs.configured == 'true'
+        run: |
+          bash .github/scripts/stamp-installer-version.sh examples/memory-plugin-shared/install.sh \
+            "${RELEASE_TAG#v}" /tmp/memory-plugin-shared-install.sh
+
       - name: Upload release artifacts to TOS
         if: steps.tos_config.outputs.configured == 'true'
         env:
@@ -178,7 +184,7 @@ jobs:
           SOURCE_ZIP="/tmp/openviking-${RELEASE_TAG}-source.zip"
           MARKETPLACE_ZIP="/tmp/memory-plugin-marketplace-${RELEASE_TAG}.zip"
           CLAUDE_PLUGIN_ZIP="/tmp/openviking-memory-claude-${RELEASE_TAG}.zip"
-          SHARED_INSTALL="examples/memory-plugin-shared/install.sh"
+          SHARED_INSTALL="/tmp/memory-plugin-shared-install.sh"
           CLAUDE_INSTALL="examples/claude-code-memory-plugin/setup-helper/install.sh"
           CODEX_INSTALL="examples/codex-memory-plugin/setup-helper/install.sh"
           CLAUDE_TOS_INSTALL="examples/claude-code-memory-plugin/setup-helper/tos-install.sh"
