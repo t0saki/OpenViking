@@ -349,7 +349,7 @@ JS 系 harness 的召回逻辑均由 `recall-core.mjs` 中的三级降级链处�
 
 - **写入路径**：JS 系统一通过 `batch-send.mjs` 处理（对应接口 `POST /messages/batch`，每批最多 100 条，与服务端的 `max_length=100` 限制保持一致；若遇 404/405 错误则降级为逐条发送）。增量游标由各家自行实现（cc 按 transcript turn 序号计算，codex 机制相同；cursor 采用 `sha256(index+role+content)`；zcode 基于 rollout 的 `turn_id`；opencode v1 依赖事件流 Map，v2 在 execution 结束时读取 context 并按 message id 推进游标；dsh 基于事件白名单；pi 依据 branch 条目水位；hermes 则按当前轮切片）。
 - **commit 是客户端触发的**（详见 [§2.3](#_2-3-服务端会话与-commit-语义)）：服务端默认不自动 commit。下表所有的"阈值/触发"条件，均指客户端逻辑。
-- **keep_recent_count 差异**（即 commit 后给宿主留多少 live tail）：服务端默认值为 0。各家传参如下：cc、codex、opencode、dsh、pi 每次 commit 都传 0，因为近期轮次已在它们各自的 transcript 里（takeover 模式下，pi 在模型上下文中自行保留最近 3 个用户轮）；cursor、trae×2、zcode 发空 body `{}`，即传 0（每次均为全量归档）；openclaw 在 afterTurn 阈值触发时传 10，在 compact/reset/memory_store 操作时传 0；hermes 恒定传 0。
+- **keep_recent_count 差异**（即 commit 后给宿主留多少 live tail）：服务端默认值为 0。各家传参如下：cc、codex、opencode、dsh、pi 每次 commit 都传 0，因为近期轮次已在它们各自的 transcript 里（takeover 模式下，pi 在模型上下文中自行保留最近 3 个用户轮）；cursor、trae×2、zcode 发空 body `{}`，即传 0（每次均为全量归档）；openclaw 一律传 0，afterTurn 阈值 commit 后由插件在组装上下文时补上最近 10 条消息；hermes 恒定传 0。
 - **写路径 detach**（`async-writer.mjs`，cc/codex/zcode 的 Stop 默认开）：drain stdin → spawn detached worker → approve → write payload → unref（注：spawn 失败时尚未 approve，回落同步恰好只输出一次）。detached worker 自成进程组，不受终端信号波及——这是保证 cc 在关闭链路时具有高可靠性、zcode 在按下 Ctrl+C 时不丢失写入数据的关键机制。附带效果：执行 detach 后，Stop 的 `appended N turn(s)` 提示将不再展示（设置 `OPENVIKING_WRITE_PATH_ASYNC=0` 可恢复该提示）。
 
 ### 3.3.2 常规 commit 触发条件
@@ -365,7 +365,7 @@ JS 系 harness 的召回逻辑均由 `recall-core.mjs` 中的三级降级链处�
 | dsh | `turn/end`：`pending_tokens ≥ 20000`（30s 超时），keep 0 | teardown（见 [§3.3.3](#_3-3-3-关闭方式-×-harness-终局矩阵)） | 无（不监听 compaction 事件） |
 | pi（takeover 默认开） | `onTurnSynced`：本地估算 `pendingTokens ≥ 30000`，且 pi 上下文在当前边界之后有超过 3 个用户轮时，执行 commitAndAdvance（keep 0，由 `context` hook 原样保留最近 3 个用户轮；归档 overview 每轮只读一次、不等待，读到非空才推进边界；服务端已标记完成或失败却没有 overview 的归档会被丢弃，其冻结的 token 压力随之扣除） | 手动执行 `/viking commit` | `session_before_compact`（需 `firstKeptEntryId` 非空） |
 | pi（takeover off） | syncBranch 执行后：服务端 `pending_tokens ≥ 20000`，keep 0 | `session_shutdown`：无条件 commit；手动执行 `/viking commit` | `session_before_compact`：无条件 commit |
-| openclaw | afterTurn：`pending_tokens ≥ floor(tokenBudget × 0.5)`（ratio 默认 0.5，tokenBudget 缺省 128000，即阈值 ~64000），wait=false，keep 10 | `before_reset`（执行 `/new` `/reset`）：wait=true，keep 0；`memory_store` 工具：wait=true，keep 0 | `compact()`：wait=true，keep 0（Phase2 轮询上限 5 分钟） |
+| openclaw | afterTurn：`pending_tokens ≥ floor(tokenBudget × 0.5)`（ratio 默认 0.5，tokenBudget 缺省 128000，即阈值 ~64000），wait=false，keep 0（插件在内存中保留最近 10 条，组装时补上） | `before_reset`（执行 `/new` `/reset`）：wait=true，keep 0；`memory_store` 工具：wait=true，keep 0 | `compact()`：wait=true，keep 0（Phase2 轮询上限 5 分钟） |
 | hermes | 无阈值 commit——触发面全是会话边界：`on_session_end`（drain 10s，drain 不净则本次不 commit）、`on_session_switch`（涉及 `/new`、`/resume`、`/branch` 或压缩 fork，异步 drain 预算 65s）、gateway 缓存驱逐；`/undo` 与原地压缩不 commit。用幂等集合防二次 commit；keep 0 | atexit 兜底 | fork 型压缩边界 commit；原地压缩不 commit |
 | ov CLI | 无 | `ov session commit`；`ov add-memory` 第三步固定 commit | — |
 | ingest | `pending ≥ 6000` 或 idle 5s，keep 0；backfill 在每个会话结束时执行 `commit_if_needed` | 退出时执行 `_flush_all()` | — |
@@ -446,17 +446,17 @@ JS 系 harness 的召回逻辑均由 `recall-core.mjs` 中的三级降级链处�
 
 ### 3.4.3 openclaw ContextEngine
 
-- 实现宿主 `ContextEngine` 接口，`assemble()` 分两个分支：transformContext（只做召回前置注入，5 道 passthrough 守卫）与 main-assemble（`getSessionContext(tokenBudget)` → 用服务端返回替换宿主 live 历史，四层预算切分，3 道 passthrough 保护 + provider 消息 sanitize 管线）。
+- 实现宿主 `ContextEngine` 接口，`assemble()` 分两个分支：transformContext（只做召回前置注入，5 道 passthrough 守卫）与 main-assemble（`getSessionContext(tokenBudget)` → 用服务端返回、加上插件在上次自动 commit 时保留的最近消息替换宿主 live 历史，四层预算切分，3 道 passthrough 保护 + provider 消息 sanitize 管线）。
 - `compact()` = `commit(wait=true, keep 0)`（500ms 轮询，Phase2 上限 5 分钟）→ `latest_archive_overview` 当 summary、`archive_uri` 末段当 `firstKeptEntryId`。`customInstructions`/`compactionTarget` 保留接口，当前不参与压缩产物。
 - `ingest()/ingestBatch()` 是刻意 no-op，写入全走 `afterTurn`。
-- 有归档时额外注入 20 行 "Session Context Guide" systemPromptAddition，指示模型在说"没有信息"之前先重读摘要，并用 `ov_archive_search` 尝试至少 2 组关键词。
+- 有归档时额外注入 "Session Context Guide" systemPromptAddition，指示模型在说"没有信息"之前先重读摘要，并用 `ov_archive_search` 尝试至少 2 组关键词。
 
 ### 3.4.4 pi 与 openclaw 接管方式对照
 
 | 维度 | pi takeover | openclaw ContextEngine |
 |---|---|---|
 | 宿主契约 | 一个 context 钩子的 messages 改写 | 注册 ContextEngine，`ownsCompaction: true` |
-| 历史真相源 | 仍是 pi 本地 branch | OV 服务端 getSessionContext |
+| 历史真相源 | 仍是 pi 本地 branch | OV 服务端 getSessionContext，加上插件在内存中保留的最近消息 |
 | 触发 | 客户端 token 阈值 30000 + 保留 3 轮 | 宿主调用 assemble/compact |
 | 压缩产物 | 一条合成 user 消息（3000 token 截断） | 重建后的整个 messages 数组 + compaction summary |
 | 失败姿态 | fail-open 回完整历史 | passthrough 回宿主 live 消息 |
