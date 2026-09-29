@@ -96,3 +96,30 @@ def test_batch_fallback_statuses_are_not_retryable(http):
     batch = _fixture("retryable.json")["batch_endpoint"]
     for status in batch["fallback_statuses"]:
         assert http.is_retryable_failure(status) is False
+
+
+@pytest.mark.parametrize("identity", [
+    ("http://127.0.0.1:1933/", "secret", "acct-a", "user-a", "peer-1"),
+    ("http://ov.example", "", "default", "default", ""),
+    ("http://127.0.0.1:1933", "kéy", "acct", "用户", "peer"),
+], ids=["keyed", "keyless", "non-ascii"])
+def test_connection_snapshot_reproduces_both_fingerprints(external_provider, core_module, identity):
+    import threading
+    from types import SimpleNamespace
+
+    _, _, module, _ = external_provider("snapshot")
+    http, connection, mirror = (core_module(module, name) for name in ("http", "connection", "mirror"))
+    endpoint, api_key, account, user, agent = identity
+    client = http._VikingClient(endpoint, api_key=api_key, account=account, user=user, agent=agent,
+                                transport=object())
+    holder = SimpleNamespace(_session_state_lock=threading.Lock(), _commit_scope=None, _client=client,
+                             _conn_snapshot=None, _turn_count=0)
+
+    snapshot = connection.ConnectionSnapshot.from_client(client)
+
+    assert snapshot.as_tuple() == client._conn_snapshot
+    assert snapshot.peer == client._agent
+    assert snapshot.commit_key() == connection.ConnectionMixin._capture_commit_scope(holder).connection_key
+    assert snapshot.mirror_connection() == mirror._connection_fingerprint(client)
+    with pytest.raises(AttributeError):
+        snapshot.url = "http://other"

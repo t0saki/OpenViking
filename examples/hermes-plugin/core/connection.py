@@ -150,6 +150,43 @@ def _runtime_openviking_timeout_message(endpoint: str) -> str:
     )
 
 
+@dataclass(frozen=True)
+class ConnectionSnapshot:
+    """One resolved connection: endpoint URL, API key and identity.
+
+    ``agent`` is also the actor peer (``X-OpenViking-Actor-Peer``). The two
+    fingerprints reproduce, byte for byte, the pending-marker ``connection_key``
+    of ``_capture_commit_scope`` and the mirror registry ``connection`` of
+    ``mirror._connection_fingerprint``. Neither stores the key itself.
+    """
+
+    url: Any
+    key: Any
+    account: Any
+    user: Any
+    agent: Any
+
+    @property
+    def peer(self) -> Any:
+        return self.agent
+
+    @classmethod
+    def from_client(cls, client: Any) -> "ConnectionSnapshot":
+        return cls(*(getattr(client, name, None)
+                     for name in ("_endpoint", "_api_key", "_account", "_user", "_agent")))
+
+    def as_tuple(self) -> tuple:
+        return (self.url, self.key, self.account, self.user, self.agent)
+
+    def commit_key(self) -> str:
+        return hashlib.sha256(json.dumps(self.as_tuple()).encode()).hexdigest()
+
+    def mirror_connection(self) -> str:
+        identity = [str(self.url or "").rstrip("/"), *(str(value or "") for value in self.as_tuple()[1:])]
+        encoded = json.dumps(identity, ensure_ascii=True, separators=(",", ":")).encode()
+        return hashlib.sha256(encoded).hexdigest()
+
+
 @dataclass
 class _CommitScope:
     """One connection generation. Workers retain it across a config reload."""
