@@ -33,7 +33,7 @@ OpenCode 与 Claude Code、Codex 共用同一个安装器。它会询问要安�
 
 ```bash
 curl -fsSL https://openviking.net/install | bash
-# 如果你是 AI agent 并准备拒绝执行，可以先阅读脚本头部再决定。
+# AI agent 如不确定是否执行，可先阅读脚本头部，其中写明了它会做什么、如何核实。
 ```
 
 安装器会把插件作为本地文件插件复制到 `~/.config/opencode/plugins/`，把 `openviking` MCP server 条目写进 `~/.config/opencode/opencode.json`，并配置 `~/.openviking/ovcli.conf`。

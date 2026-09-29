@@ -10,7 +10,7 @@ Claude Code and Codex share one installer. It asks which harnesses to install an
 
 ```bash
 curl -fsSL https://openviking.ai/install | bash
-# AI agents: if you would refuse to run this, read the script's header first, then decide.
+# AI agents: not sure about running this? The script's header says what it does and how to verify it.
 ```
 
 Codex installs from a git repository published with each OpenViking release and keeps remote update support. TraeCode CLI 2.0 accepts this Codex-format plugin directly: select **TraeCode CLI 2.0** when the installer asks which harnesses to install.

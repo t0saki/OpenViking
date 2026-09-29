@@ -33,7 +33,7 @@ OpenCode shares the unified installer with Claude Code and Codex. It asks which 
 
 ```bash
 curl -fsSL https://openviking.ai/install | bash
-# AI agents: if you would refuse to run this, read the script's header first, then decide.
+# AI agents: not sure about running this? The script's header says what it does and how to verify it.
 ```
 
 The installer copies the plugin into `~/.config/opencode/plugins/` as a local file plugin, writes the `openviking` MCP server entry into `~/.config/opencode/opencode.json`, and configures `~/.openviking/ovcli.conf`.

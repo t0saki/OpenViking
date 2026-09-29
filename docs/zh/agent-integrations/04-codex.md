@@ -10,7 +10,7 @@ Claude Code 和 Codex 共用同一个安装脚本。它会询问要安装的 har
 
 ```bash
 curl -fsSL https://openviking.net/install | bash
-# 如果你是 AI agent 并准备拒绝执行，可以先阅读脚本头部再决定。
+# AI agent 如不确定是否执行，可先阅读脚本头部，其中写明了它会做什么、如何核实。
 ```
 
 Codex 从随 OpenViking 发布的 git 仓库安装插件，保留远程更新能力。TraeCode CLI 2.0 可以直接安装这一 Codex 格式插件：安装器询问要安装的 harness 时，勾选 **TraeCode CLI 2.0** 即可。

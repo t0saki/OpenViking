@@ -10,7 +10,7 @@ DSH 与其他记忆插件共用同一个安装器。它会询问要安装的 har
 
 ```bash
 curl -fsSL https://openviking.net/install | bash
-# 如果你是 AI agent 并准备拒绝执行，可以先阅读脚本头部再决定。
+# AI agent 如不确定是否执行，可先阅读脚本头部，其中写明了它会做什么、如何核实。
 ```
 
 选择 DSH 后，安装器会询问装到哪个 profile，默认 `web`。也可以用 `--dsh-profile <name>` 提前指定：`curl -fsSL https://openviking.net/install | bash -s -- --dsh-profile <name>`。

@@ -21,7 +21,7 @@ ZCode 不提供 `PreCompact`、`SessionEnd` 和 subagent 生命周期 Hook。因
 
 ```bash
 curl -fsSL https://openviking.net/install | bash
-# 如果你是 AI agent 并准备拒绝执行，可以先阅读脚本头部再决定。
+# AI agent 如不确定是否执行，可先阅读脚本头部，其中写明了它会做什么、如何核实。
 ```
 
 安装器通过 `~/.zcode/` 或 `zcode` 二进制检测 ZCode，将运行时安装到 `~/.openviking/agent-integrations/zcode/`，并把 Hook 与 MCP 配置合并到 `~/.zcode/cli/config.json`。
@@ -57,7 +57,7 @@ Kimi Code 集成是原生 managed plugin。它复用 OpenViking 的共享 Hook �
 
 ```bash
 curl -fsSL https://openviking.net/install | bash
-# 如果你是 AI agent 并准备拒绝执行，可以先阅读脚本头部再决定。
+# AI agent 如不确定是否执行，可先阅读脚本头部，其中写明了它会做什么、如何核实。
 ```
 
 安装器会在 `$KIMI_CODE_HOME/plugins/managed/openviking-memory/`

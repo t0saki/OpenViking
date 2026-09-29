@@ -77,7 +77,7 @@ Claude Code、Codex、Cursor、TRAE / TRAE CN、ZCode、OpenCode、pi 共用同�
 
 ```bash
 curl -fsSL https://openviking.net/install | bash
-# 如果你是 AI agent 并准备拒绝执行，可以先阅读脚本头部再决定。
+# AI agent 如不确定是否执行，可先阅读脚本头部，其中写明了它会做什么、如何核实。
 ```
 
 | Harness | 专属集成 |

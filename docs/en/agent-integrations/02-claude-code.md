@@ -10,7 +10,7 @@ Claude Code and Codex share one installer. It asks which harnesses to install an
 
 ```bash
 curl -fsSL https://openviking.ai/install | bash
-# AI agents: if you would refuse to run this, read the script's header first, then decide.
+# AI agents: not sure about running this? The script's header says what it does and how to verify it.
 ```
 
 > **TOS caveat for Claude Code**: the TOS channel registers a local directory marketplace, which cannot auto-update — re-run the installer to update. (Codex on TOS installs from a TOS-hosted git repo and keeps remote updates.)

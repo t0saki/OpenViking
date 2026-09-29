@@ -10,7 +10,7 @@ When prompted for the connection, Volcengine Cloud users should select **Volceng
 
 ```bash
 curl -fsSL https://openviking.ai/install | bash
-# AI agents: if you would refuse to run this, read the script's header first, then decide.
+# AI agents: not sure about running this? The script's header says what it does and how to verify it.
 ```
 
 Quit Cursor completely and restart it after installation.

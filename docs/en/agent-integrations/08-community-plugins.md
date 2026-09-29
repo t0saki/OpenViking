@@ -21,7 +21,7 @@ Prerequisites: Node.js 18+, a running OpenViking server, and ZCode.
 
 ```bash
 curl -fsSL https://openviking.ai/install | bash
-# AI agents: if you would refuse to run this, read the script's header first, then decide.
+# AI agents: not sure about running this? The script's header says what it does and how to verify it.
 ```
 
 The installer detects `~/.zcode/` or the `zcode` binary, installs the runtime under `~/.openviking/agent-integrations/zcode/`, and merges hooks and MCP configuration into `~/.zcode/cli/config.json`.
@@ -59,7 +59,7 @@ Prerequisites: Node.js 18+, a running OpenViking server, and Kimi Code CLI.
 
 ```bash
 curl -fsSL https://openviking.ai/install | bash
-# AI agents: if you would refuse to run this, read the script's header first, then decide.
+# AI agents: not sure about running this? The script's header says what it does and how to verify it.
 ```
 
 The installer assembles a self-contained runtime under
