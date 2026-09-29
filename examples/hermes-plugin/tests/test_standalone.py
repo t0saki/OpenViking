@@ -425,7 +425,9 @@ def test_cloud_recall(external_provider, monkeypatch, mode, rewrite, response, e
     assert body["mode"] == "context"
     assert body["rewrite"] == rewrite
     assert body["session_id"] == "session"
-    assert 50 < client.post.call_args.kwargs["timeout"] <= 55
+    # Compression without explicit deadlines may use the 7.5 s prefetch budget,
+    # minus the 1 s kept for the search without rewrite.
+    assert 6 < client.post.call_args.kwargs["timeout"] <= 6.5
 
 
 def test_cloud_recall_legacy_fallback(external_provider, monkeypatch):

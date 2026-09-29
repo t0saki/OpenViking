@@ -243,6 +243,16 @@ Explicit tools retain
 the configured assistant view. Use separate OpenViking users and credentials
 when participants require separate access rights.
 
+### Recall time budget
+
+Hermes waits at most 8 seconds for automatic recall and then drops the result,
+so each turn's recall has one deadline of at most 7.5 seconds. It covers the
+connection check, the once-per-session profile block and the query recall; the
+last two run concurrently. `recall_timeout_seconds` sets a shorter deadline,
+and `recall_request_timeout_seconds` limits each request within it. If one part
+misses the deadline, the turn gets the other part; a profile block that missed
+it is injected on a later turn.
+
 ### Recall indicator
 
 When automatic recall injects OpenViking context, Hermes shows a status line
@@ -365,9 +375,11 @@ The server digest takes precedence over raw rendered context, and `no_relevant`
 suppresses injection. The default remains `off`; no local compressor is launched.
 
 The Hermes config equivalent is `memory.openviking.recall_compress: server`.
-When enabled, the default request and total recall deadlines become 55 seconds;
-explicit recall timeout settings still take precedence. Older servers fall back
-to the existing search path within that deadline.
+When enabled without explicit recall timeout settings, the request and total
+recall deadlines default to the whole 7.5-second recall budget. The rewrite
+request keeps 1 second of that budget for a fallback: if it times out, recall
+falls back to the search without rewrite. Older servers fall back to the
+existing search path within the same budget.
 
 ### Active-session commits
 
