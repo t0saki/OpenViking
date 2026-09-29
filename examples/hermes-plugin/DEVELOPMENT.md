@@ -15,8 +15,10 @@ Preserve the existing copyright and permission notice.
 
 The distribution name is `hermes-plugin-openviking`. The provider, plugin, and
 future Hermes catalog key remain `openviking`. Existing `memory.openviking`
-settings, environment variables, linked `ovcli.conf` files, data paths, and
-`viking_*` tools keep their current behavior.
+settings, environment variables, linked `ovcli.conf` files and data paths keep
+their behavior. Release 3.0.0 replaced the imported `viking_*` tools with the
+server's MCP tools as `openviking_*` and prefixes OpenViking session ids with
+`hermes-`; see README "Upgrading to 3.0.0".
 
 The active-session commit lifecycle was ported from
 [KoNit-K's Hermes PR #112533](https://github.com/NousResearch/hermes-agent/pull/112533),
@@ -82,10 +84,15 @@ install or package the OpenViking server.
 
 The provider was one `__init__.py`. Phase 2b moved its code into `core/` without
 changes to the moved bodies, so an upstream patch to a function applies to the
-same function in the module listed here. Provider methods live in mixin classes
-that `OpenVikingMemoryProvider` inherits. The class itself, `register()`
-and the hooks Hermes calls stay in `__init__.py`, which also re-exports every
-moved module-level name.
+same function in the module listed here, unless the function is listed as
+removed. Later phases changed some bodies and added names; "Added" lines list
+the new names. Provider methods live in mixin classes that
+`OpenVikingMemoryProvider` inherits. The class itself, `register()` and the
+hooks Hermes calls stay in `__init__.py`. It re-exports the moved module-level
+names that still exist, for tests and older callers, except `_default_deps`,
+`_exit_hook_registered` and `fcntl`. Names added after phase 2b, apart from
+`openviking_session_id`, are not re-exported; import them from their `core/`
+module.
 
 Only `core/host.py` imports Hermes (`agent`, `hermes_cli`, `hermes_constants`,
 `tools`, `tui_gateway`, `utils`); function-level Hermes imports in moved code read
@@ -93,7 +100,8 @@ Only `core/host.py` imports Hermes (`agent`, `hermes_cli`, `hermes_constants`,
 `__init__.py` or `_setup.py`. Core modules log through `core/log.py`, which returns
 the logger named after the plugin package, the same one `__init__.py` uses;
 `core/mirror.py` still uses the fixed name `plugins.memory.openviking` it had in
-`native_memory_mirror.py`. `tests/test_structure.py` checks the import rules.
+`native_memory_mirror.py`, and `core/mcp_bridge.py` uses
+`plugins.memory.openviking.mcp`. `tests/test_structure.py` checks the import rules.
 Tests reach a core module through the `core_module` fixture, because Hermes loads
 the plugin under its own namespace.
 
@@ -139,8 +147,10 @@ OpenViking CLI (``ovcli.conf``) profiles: paths, parsing and discovery.
 
 OpenViking REST client, error formatting, timeout classification and identity probe.
 
-- From `__init__.py`: `_OPENVIKING_USER_AGENT`, `_IDENTITY_UNSET`, `_TIMEOUT`, `_OPENVIKING_IDENTIFIED_STATES`, `_OpenVikingHTTPError`, `_sanitize_openviking_error_message`, `_status_code_from_error`, `_format_openviking_exception`, `_get_httpx`, `_is_timeout_error`, `_VikingClient`, `_resolve_user_space`, `_probe_openviking_identity`
+- From `__init__.py`: `_IDENTITY_UNSET`, `_TIMEOUT`, `_OPENVIKING_IDENTIFIED_STATES`, `_OpenVikingHTTPError`, `_sanitize_openviking_error_message`, `_status_code_from_error`, `_format_openviking_exception`, `_get_httpx`, `_is_timeout_error`, `_VikingClient`, `_resolve_user_space`, `_probe_openviking_identity`
 - `OpenVikingMemoryProvider` methods, now in `RestResultMixin`: `_unwrap_result`, `_extract_text_content`
+- Added: `build_user_agent`, `plugin_version`, `_read_plugin_version`, `_openviking_user_agent`, `build_openviking_headers` (shared by REST and MCP), `is_retryable_failure`
+- Removed: `_OPENVIKING_USER_AGENT` (the User-Agent now carries the plugin version)
 
 ### `core/health.py`
 
@@ -162,15 +172,29 @@ Autostart of a local openviking-server and its port diagnostics.
 
 ### `core/tools.py`
 
-The ``viking_*`` tool catalog, tool argument checks and the tool handlers.
+The ``openviking_*`` tool calls over MCP, their local wrappers and argument checks.
 
-- From `__init__.py`: `_REMOTE_RESOURCE_PREFIXES`, `_READ_BATCH_LIMIT`, `_READ_BATCH_FULL_LIMIT`, `_LEVEL_ENDPOINTS`, `_LEVEL_MAX_CHARS`, `_GENERATED_MEMORY_SUMMARY_FILENAMES`, `_tool_schema`, `_str`, `SEARCH_SCHEMA`, `READ_SCHEMA`, `BROWSE_SCHEMA`, `REMEMBER_SCHEMA`, `FORGET_SCHEMA`, `ADD_RESOURCE_SCHEMA`, `_TOOL_SCHEMAS`, `_OPENVIKING_RECALL_TOOL_NAMES`, `_TOOL_HANDLERS`, `_SYSTEM_PROMPT_TOOL_GUIDANCE`, `_zip_directory`, `_is_windows_absolute_path`, `_validate_forget_memory_uri`, `_is_local_path_reference`
-- `OpenVikingMemoryProvider` methods, now in `ToolsMixin`: `_normalize_summary_uri`, `_is_directory_uri`, `_tool_search`, `_read_uri_payload`, `_tool_read`, `_tool_browse`, `_tool_remember`, `_tool_forget`, `_tool_add_resource`
+- From `__init__.py`: `_REMOTE_RESOURCE_PREFIXES`, `_GENERATED_MEMORY_SUMMARY_FILENAMES`, `_OPENVIKING_RECALL_TOOL_NAMES`, `_SYSTEM_PROMPT_TOOL_GUIDANCE`, `_zip_directory`, `_is_windows_absolute_path`, `_validate_forget_memory_uri`, `_is_local_path_reference`
+- Added: `_MCP_PATH`, `_strip_front_matter`, `_mcp_connection`, `prime_tool_cache`; `ToolsMixin` methods `_tool_connection_settings`, `_tools_hermes_home`, `_extra_tools`, `_mcp_connection`, `_catalog_key`, `_list_server_tools`, `_openviking_tool_schemas`, `_refresh_tool_catalog`, `_call_openviking_tool`, `_prepare_search`, `_prepare_forget`, `_prepare_add_resource`
+- Removed in 3.0.0 with the `viking_*` tools: `_READ_BATCH_LIMIT`, `_READ_BATCH_FULL_LIMIT`, `_LEVEL_ENDPOINTS`, `_LEVEL_MAX_CHARS`, `_tool_schema`, `_str`, `SEARCH_SCHEMA`, `READ_SCHEMA`, `BROWSE_SCHEMA`, `REMEMBER_SCHEMA`, `FORGET_SCHEMA`, `ADD_RESOURCE_SCHEMA`, `_TOOL_SCHEMAS`, `_TOOL_HANDLERS`, and the methods `_normalize_summary_uri`, `_is_directory_uri`, `_tool_search`, `_read_uri_payload`, `_tool_read`, `_tool_browse`, `_tool_remember`, `_tool_forget`, `_tool_add_resource`. Upstream patches to these do not apply.
+
+### `core/tool_catalog.py`
+
+Added in phase 6. Which server tools Hermes registers and where the list comes from.
+
+- `TOOL_PREFIX`, `LIVE_LIST_BUDGET_SECONDS`, `DEFAULT_EXPOSED_TOOLS`, `OPTIONAL_TOOLS`, `RECALL_TOOLS`, `RECALL_TOOL_NAMES`, `CACHE_RELATIVE_PATH`, `parse_extra_tools`, `exposed_server_names`, `server_name`, `to_hermes_schema`, `build_schemas`, `fingerprint`, `cache_path`, `read_disk_cache`, `write_disk_cache`, `remember`, `load`, `clear_memory_cache`
+
+### `core/mcp_bridge.py`
+
+Added before phase 6. One short MCP session per call on a one-shot thread; `tools/list`, `tools/call` and result conversion.
+
+- `McpConnection`, `ToolResult`, `McpBridgeError`, `list_tools`, `call_tool`, `content_to_text`, `bound_text`, `to_tool_result`, `READ_ONLY_TOOLS`, `HANDSHAKE_TIMEOUT_SECONDS`, `CALL_TIMEOUT_SECONDS`, `MAX_RESULT_BYTES`, `MAX_RESULT_LINES`
 
 ### `core/transcript.py`
 
 Hermes messages and senders to OpenViking message parts and peer IDs.
 
+- Added: `openviking_session_id` (the `hermes-` prefix)
 - From `__init__.py`: `_gateway_peer_id`, `_derive_openviking_user_text`, `_preview`, `_TOOL_STATUS_ERROR_ALIASES`, `_TOOL_STATUS_COMPLETED_ALIASES`, `_message_text`, `_tool_part`, `_tool_call_id`, `_tool_call_name`, `_is_openviking_recall_tool_name`, `_tool_call_input`, `_tool_result_status`, `_rfind_message`, `_index_tool_calls`
 - `OpenVikingMemoryProvider` methods, now in `TranscriptMixin`: `_sender_peer`, `_current_sender_peer`, `_extract_current_turn_messages`, `_messages_to_openviking_batch`
 
@@ -179,6 +203,7 @@ Hermes messages and senders to OpenViking message parts and peer IDs.
 Connection settings, profile environment, client lifecycle, autostart and commit scopes.
 
 - From `__init__.py`: `_FAILED_CONFIG_RETRY_COOLDOWN_SECONDS`, `_RETRY_LATER`, `_FIX_ENDPOINT`, `_HTTPX_MISSING`, `_load_hermes_openviking_config`, `_profile_openviking_env`, `_resolve_connection_settings`, `_emit_runtime`, `_runtime_openviking_timeout_message`, `_CommitScope`
+- Added: `ConnectionSnapshot`
 - `OpenVikingMemoryProvider` methods, now in `ConnectionMixin`: `_start_runtime_openviking_waiter`, `_settings_tuple`, `_build_client`, `_publish_client`, `_capture_commit_scope`, `_finish_runtime_openviking_start`, `_handle_runtime_openviking_unreachable`, `_ensure_client`, `_profile_config_and_env`, `_resolve_bound_connection_settings`, `_in_cooldown`, `_ensure_client_locked`, `_new_client`, `_user_space`
 
 ### `core/recall.py`
@@ -186,6 +211,7 @@ Connection settings, profile environment, client lifecycle, autostart and commit
 Prefetch: recall routing, deadlines, context-mode recall and recall status.
 
 - From `__init__.py`: `_RECALL_QUERY_MIN_CHARS`, `_RECALL_MIN_TIMEOUT_SECONDS`, `_PREFETCH_BUDGET_SECONDS`, `_RECALL_FALLBACK_RESERVE_SECONDS`, `_SESSION_START_DEFAULT_KEY`, `_RECALL_PENDING, _RECALL_INJECTED, _RECALL_EMPTY`, `_RECALL_TIMEOUT, _RECALL_UNAVAILABLE, _RECALL_ERROR`, `_RECALL_OUTCOMES_KEPT`, `_RECALL_STATUS_LABEL`, `_RecallProbe`
+- Added: `_CONTEXT_QUOTA_WEIGHTS`, `_context_quotas` (context-mode routes)
 - `OpenVikingMemoryProvider` methods, now in `RecallMixin`: `_prefetch_context`, `_run_prefetch_parts`, `_prefetch_budget`, `_recall_budget`, `_begin_recall`, `_finish_recall`, `_recall_record`, `_remaining_recall_timeout`, `_fallback_request_timeout`, `_search_prefetch_context`, `_recall_config`
 
 ### `core/recall_list.py`
@@ -207,6 +233,7 @@ The session-start memory block: profile, preferences and entities.
 Turn upload, tracked workers, session commit and the exit commit.
 
 - From `__init__.py`: `_SESSION_DRAIN_TIMEOUT`, `_DEFERRED_COMMIT_TIMEOUT`, `_SESSION_MESSAGE_BATCH_LIMIT`, `_SYNC_TRACE_ENV`, `_NON_PRIMARY_AGENT_CONTEXTS`, `_exit_registry`, `_exit_registry_lock`, `_exit_hook_registered`, `_EXIT_COMMIT_BUDGET`, `_register_for_exit`, `_deregister_for_exit`, `_atexit_commit_sessions`, `_TurnUpload`
+- Added: `_BACKLOG_MAX_MESSAGES`, `_BACKLOG_MAX_BYTES`, `_upload_failure_kind`, `_Backlog`; `SessionWriterMixin` methods `_backlog_table`, `_prune_backlog`, `_backlog_add`, `_flush_backlog`, `_upload_turn`
 - `OpenVikingMemoryProvider` methods, now in `SessionWriterMixin`: `_spawn_tracked`, `_join_all`, `_drain_finalizers`, `_drain_writers`, `_has_committed_session`, `_mark_session_committed`, `_claim_deferred_sid`, `_maybe_commit_live_session`, `_session_needs_commit`, `_commit_session`, `_finalize_session_async`, `_end_session`, `_has_uncommitted_data`
 
 ### `core/state_store.py`
@@ -266,8 +293,9 @@ PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}" HERMES_TEST_FILE_RETRIES=0 \
 `--confcutdir` keeps pytest from importing the plugin as a test package before
 Hermes loads it under its own namespace. The tests use temporary profile homes
 and remove bundled-provider discovery.
-They cover external loading, profile isolation, setup, tools, session commits,
-and native memory mirroring. The mirror suite includes ordered writes, restart
+They cover external loading, profile isolation, setup, the MCP tool bridge and
+catalogue (against a fake MCP session), recall routing, the upload backlog,
+session commits, and native memory mirroring. The mirror suite includes ordered writes, restart
 continuity, registry failures, connection isolation, and concurrent workers.
 Gateway tests use mock events through Hermes's turn hooks and memory manager.
 They cover sender changes, capture retries, commits, recall scopes, compression
@@ -276,8 +304,8 @@ confirmation, cancellation, profile-local persistence, connection routes, and
 actual Hermes session keys.
 Provider-specific regression tests belong here and must use the shared external
 loader fixture. Generic Hermes framework tests remain in Hermes.
-Inject fakes for the REST transport or client, the clock, the health probe and
-the setup wizard's profile discovery and validators through `Deps`, using the
+Inject fakes for the REST transport or client, the MCP session, the clock, the
+health probe and the setup wizard's profile discovery and validators through `Deps`, using the
 `inject_deps` fixture, instead of patching names on the plugin module. A patched
 module global stops reaching the code that reads it once that code moves into
 `core/`.
@@ -294,3 +322,18 @@ HERMES_TEST_FILE_RETRIES=0 scripts/run_tests.sh \
   tests/plugins/memory/test_openviking_endpoint_always_blocked.py \
   tests/openviking_plugin/test_openviking.py -q
 ```
+
+## Not done yet
+
+The approved refactor plan is not finished. `DESIGN.md` section 6 describes
+each item with its current state:
+
+- synchronous upload on the host's mem-sync worker
+- per-caller lock budgets for `on_session_end`
+- a cooldown after a failed upload
+- re-commit of a finalized sid that receives a late upload
+- `pending_tokens` read from the write response
+- a TTL for backlogs rejected with 401/403
+- the `hermes openviking doctor` / `status` CLI
+- the real-server comparison of context-mode and list recall
+- cross-thread stress tests for the upload backlog
