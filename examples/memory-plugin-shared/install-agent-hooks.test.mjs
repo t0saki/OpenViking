@@ -529,6 +529,38 @@ for (const client of ["cursor", "trae", "trae-cn", "zcode"]) {
   });
 }
 
+test("validation fails a hook host whose files are missing or whose hook does not run", () => {
+  const home = mkdtempSync(join(tmpdir(), "openviking-validate-hooks-"));
+  try {
+    runInstall(home);
+    const source = readFileSync(installer, "utf8");
+    const prelude = source.slice(0, source.indexOf("# ---------------------------------------------------------------------------\n# Main\n"));
+    const validate = (client) => spawnSync("bash", [], {
+      env: { ...process.env, HOME: home, OPENVIKING_HOME: join(home, ".openviking") },
+      input: `${prelude}\nNODE_BIN="$(command -v node)"\nvalidate_hook_host ${client}\n`,
+      encoding: "utf8",
+    });
+
+    for (const client of ["cursor", "trae", "trae-cn", "zcode"]) {
+      const result = validate(client);
+      assert.equal(result.status, 0, `${client}: ${result.stdout}\n${result.stderr}`);
+      assert.match(result.stdout, new RegExp(`${client}: hooks and MCP are configured`));
+    }
+
+    rmSync(join(home, ".cursor", "skills", "openviking-skills"), { recursive: true });
+    const incomplete = validate("cursor");
+    assert.equal(incomplete.status, 1);
+    assert.match(incomplete.stdout, /cursor: OpenViking hook or MCP config is incomplete/);
+
+    writeFileSync(join(home, ".openviking", "agent-integrations", "zcode", "scripts", "hook.mjs"), "process.exit(3);\n");
+    const broken = validate("zcode");
+    assert.equal(broken.status, 1);
+    assert.match(broken.stdout, /zcode: installed Hook runtime failed its smoke test/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 // The documented uninstall pipes install.sh from a URL, so the running script
 // has no lib/ sibling, and the first uninstall drops the assembled copy under
 // $OV_HOME. Nothing left to read is not a reason to abort — and never a reason
