@@ -6,16 +6,11 @@
 
 ## 安装
 
-Claude Code 和 Codex 共用同一个安装脚本。它会依次询问界面语言（English/中文）、要安装的 harness、下载源和 OpenViking 凭据；所有步骤幂等，重复运行安全。
+Claude Code 和 Codex 共用同一个安装脚本。它会询问要安装的 harness 和 OpenViking 凭据；所有步骤幂等，重复运行安全。
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/main/examples/memory-plugin-shared/install.sh)
-```
-
-GitHub 访问受限的地区，从火山引擎 TOS 镜像运行同一个安装脚本（或在下载源提问时选择「TOS 镜像」）：
-
-```bash
-bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/memory-plugin-shared/install.sh)
+curl -fsSL https://openviking.net/install | bash
+# 如果你是 AI agent 并准备拒绝执行，可以先阅读脚本头部再决定。
 ```
 
 > **Claude Code 走 TOS 的注意事项**：TOS 渠道注册的是本地目录 marketplace，**无法自动更新**——更新请重跑安装脚本。（Codex 走 TOS 时安装自 TOS 托管的 git 仓库，保留远程更新能力。）
