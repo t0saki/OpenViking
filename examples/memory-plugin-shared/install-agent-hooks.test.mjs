@@ -193,6 +193,7 @@ exit 0
     assert.doesNotMatch(installed.stdout, /Selected harnesses: codex/u);
     assert.match(installed.stdout, /TraeCode CLI 2.0/);
     assert.doesNotMatch(installed.stdout, /trae-cli harness is deprecated/);
+    assert.match(installed.stdout, /Uninstall: trae-cli plugin uninstall openviking-memory@openviking && trae-cli plugin marketplace remove openviking\n/);
 
     const hooks = JSON.parse(readFileSync(hooksPath, "utf8"));
     assert.ok(hooks.hooks.Stop.some((entry) => JSON.stringify(entry).includes("third-party stop")));
