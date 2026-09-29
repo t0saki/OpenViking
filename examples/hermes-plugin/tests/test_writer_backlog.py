@@ -28,6 +28,9 @@ class FakeServer:
         self.pending = {}
         self.commits = []
         self.requests = []
+        self.gets = []
+        # pending_tokens the write responses report; None leaves the field out.
+        self.reported_pending_tokens = None
 
     def _check(self):
         if self.fail == "down":
@@ -43,9 +46,12 @@ class FakeServer:
             self.commits.append((sid, self.pending.pop(sid, [])))
             return {"result": {}}
         self.pending.setdefault(sid, []).extend(payload["messages"] if path.endswith("/batch") else [payload])
-        return {"result": {}}
+        if self.reported_pending_tokens is None:
+            return {"result": {}}
+        return {"result": {"pending_tokens": self.reported_pending_tokens}}
 
     def get(self, path, **_kwargs):
+        self.gets.append(path)
         self._check()
         return {"result": {"pending_tokens": 10 if self.pending.get(path.split("/")[4]) else 0}}
 
@@ -269,3 +275,20 @@ def test_cooldown_is_per_connection_generation(writer, clock):
     turn(provider, 2)
     # Bob's generation has no failure behind it, so its turn is sent at once.
     assert bob.texts("hermes-sid-1") == pair(2)
+
+
+@pytest.mark.parametrize("reported, committed", [(10**9, True), (0, False)])
+def test_threshold_commit_uses_pending_tokens_from_the_write_response(writer, reported, committed):
+    provider, servers, _, _ = writer
+    alice = servers["alice"]
+    alice.reported_pending_tokens = reported
+    turn(provider, 1)
+    assert alice.gets == []
+    assert alice.committed("hermes-sid-1") == ([pair(1)] if committed else [])
+
+
+def test_threshold_commit_looks_up_the_session_when_the_response_has_no_pending_tokens(writer):
+    provider, servers, _, _ = writer
+    alice = servers["alice"]
+    turn(provider, 1)
+    assert alice.gets == ["/api/v1/sessions/hermes-sid-1"]

@@ -103,6 +103,13 @@ def _upload_failure_kind(error: Exception) -> str:
     return "drop"
 
 
+def _response_pending_tokens(response: Any) -> Optional[int]:
+    """``pending_tokens`` of a message write response, or None when the server did not send it."""
+    result = response.get("result") if isinstance(response, dict) and "result" in response else response
+    value = result.get("pending_tokens") if isinstance(result, dict) else None
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
 @dataclass
 class _Backlog:
     """Unsent messages of one (sid, connection generation), oldest first."""
@@ -127,6 +134,8 @@ class _TurnUpload:
     user_peer_id: str = ""
     next_index: int = 0
     failure_kind: str = ""
+    # Post-write pending_tokens from the last write response, when the server returns it.
+    pending_tokens: Optional[int] = None
 
     def _trace(self, fmt: str, *args) -> None:
         if env_var_enabled(_SYNC_TRACE_ENV):
@@ -153,7 +162,8 @@ class _TurnUpload:
             payload = {"messages": self.batch_messages[self.next_index:batch_end]}
             self._trace("POST /api/v1/sessions/%s/messages/batch range=%d:%d payload=%s",
                         self.sid, self.next_index, batch_end, json.dumps(payload, ensure_ascii=False))
-            client.post(f"/api/v1/sessions/{self.sid}/messages/batch", payload)
+            response = client.post(f"/api/v1/sessions/{self.sid}/messages/batch", payload)
+            self.pending_tokens = _response_pending_tokens(response)
             self.next_index = batch_end
 
     def run(self) -> Optional[_VikingClient]:
@@ -182,7 +192,8 @@ class _TurnUpload:
             path = f"/api/v1/sessions/{self.sid}/messages"
             for payload in self.batch_messages[self.next_index:]:
                 self._trace("POST %s message_index=%d payload=%s", path, self.next_index, json.dumps(payload, ensure_ascii=False))
-                client.post(path, payload)
+                response = client.post(path, payload)
+                self.pending_tokens = _response_pending_tokens(response)
                 self.next_index += 1
             self.failure_kind = ""
             return client
@@ -401,13 +412,16 @@ class SessionWriterMixin:
             return True
 
     def _maybe_commit_live_session(self, sid: str, turn_count: int, threshold: int, client: _VikingClient,
-                                   scope: _CommitScope) -> None:
-        """Check after a successful upload; metadata failures must not replay the turn."""
+                                   scope: _CommitScope, *, pending_tokens: Optional[int] = None) -> None:
+        """Check after a successful upload; metadata failures must not replay the turn.
+        ``pending_tokens`` from the write response saves the session lookup."""
         if self._shutting_down:
             return
         try:
-            session = self._unwrap_result(client.get(f"/api/v1/sessions/{sid}"))
-            if int(session.get("pending_tokens") or 0) >= threshold:
+            if pending_tokens is None:
+                session = self._unwrap_result(client.get(f"/api/v1/sessions/{sid}"))
+                pending_tokens = int(session.get("pending_tokens") or 0)
+            if pending_tokens >= threshold:
                 self._finalize_session_async(sid, turn_count, context="after live token threshold", client=client, scope=scope)
         except Exception as e:
             logger.warning("OpenViking live commit check failed for %s: %s", sid, e)

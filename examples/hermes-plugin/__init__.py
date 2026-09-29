@@ -581,7 +581,7 @@ class OpenVikingMemoryProvider(
                 self._mark_session_pending(sid, scope=scope)
                 client = self._upload_turn(upload, sid, scope)
             if client is not None:
-                self._maybe_commit_live_session(sid, turn_count, threshold, client, scope)
+                self._maybe_commit_live_session(sid, turn_count, threshold, client, scope, pending_tokens=upload.pending_tokens)
 
         with self._session_state_lock:
             sid = openviking_session_id(session_id or self._session_id)
