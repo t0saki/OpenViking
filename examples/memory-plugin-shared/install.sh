@@ -1467,7 +1467,9 @@ fetch_archive() { # fetch_archive <url> <dest> <required-subpath> [sha256]
 
 resolve_self_checkout() {
   local src dir
-  src="${BASH_SOURCE[0]}"
+  # Unset when bash reads the script from stdin (`curl ... | bash`).
+  src="${BASH_SOURCE[0]:-}"
+  [ -n "$src" ] || return 0
   dir="$(cd "$(dirname "$src")" >/dev/null 2>&1 && pwd -P)" || return 0
   # A linked worktree keeps `.git` as a file pointing at the real gitdir, so
   # test for existence rather than for a directory.

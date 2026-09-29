@@ -364,6 +364,25 @@ test("retired GitHub-channel options are accepted, announced and ignored", () =>
   assert.equal(install(["--dist", "gitlab"]).status, 2);
 });
 
+test("the installer runs when bash reads it from stdin", () => {
+  const home = mkdtempSync(join(work, "home-"));
+  const bin = join(home, "bin");
+  mkdirSync(bin);
+  const piped = (args) => spawnSync("/bin/bash", ["-s", "--", ...args], {
+    cwd: home,
+    env: installEnv(home, bin, {}),
+    input: readFileSync(installer),
+    encoding: "utf8",
+  });
+
+  const help = piped(["--help"]);
+  assert.equal(help.status, 0, help.stderr);
+  assert.match(help.stdout, /^Usage: install\.sh/);
+  const installed = piped(["--harness", "cursor", "--lang", "en", "--url", "http://127.0.0.1:9", "--api-key", "", "--yes"]);
+  assert.equal(installed.status, 0, `${installed.stdout}\n${installed.stderr}`);
+  assert.ok(existsSync(join(home, ".openviking", "agent-integrations", "cursor", "scripts", "hook.mjs")));
+});
+
 test("a copy that is not a release build runs the release installer", () => {
   const home = mkdtempSync(join(work, "home-"));
   const bin = join(home, "bin");
