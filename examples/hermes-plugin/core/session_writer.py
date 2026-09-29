@@ -324,6 +324,12 @@ class SessionWriterMixin:
 
     def _upload_turn(self, upload: _TurnUpload, sid: str, scope: _CommitScope) -> Optional[_VikingClient]:
         """Send the backlog first, then the turn; keep whatever could not be sent. Under the writer lock."""
+        with self._session_state_lock:
+            current_sid = self._session_id
+        # Sessions left behind by a switch: once their backlog is sent, commit them off this thread.
+        for other in dict.fromkeys(k[0] for k in self._backlog_table() if k[0] != sid and k[1] == scope.marker_id):
+            if self._flush_backlog(other) and other != current_sid:
+                self._finalize_session_async(other, 0, context="after sending its backlog", scope=scope)
         self._flush_backlog(sid)
         pending = self._backlog_table().get((sid, scope.marker_id))
         if pending is not None:
