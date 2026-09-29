@@ -138,6 +138,7 @@ API_KEY_ARG="__OPENVIKING_UNSET__"
 ACCOUNT_ARG="__OPENVIKING_UNSET__"
 USER_ARG="__OPENVIKING_UNSET__"
 STATUSLINE_ARG=""   # "", yes, no
+STATUSLINE_WRITE=0  # 1 once choose_statusline settled on writing it
 YES=0
 UNINSTALL=0
 NODE_BIN=""
@@ -1808,51 +1809,70 @@ is_own_statusline() {
   case "${1#node \"}" in *\"*\"*) return 1 ;; esac
 }
 
-register_statusline() {
-  [ "$STATUSLINE_ARG" = "no" ] && return 0
-  local cmd existing own=0 ts
-  cmd="$(statusline_command)"
+# Only the native `claude` gets the statusline, and only when it can install
+# the plugin.
+installs_native_claude() {
+  contains_harness claude || return 1
+  while IFS= read -r CLAUDE_BIN; do
+    [ -n "$CLAUDE_BIN" ] && is_native_claude_bin && command -v "$CLAUDE_BIN" >/dev/null 2>&1 \
+      && has_plugin_subcommand && return 0
+  done <<EOF
+$CLAUDE_BINS
+EOF
+  return 1
+}
+
+# Settled before the review, so the plan names the statusline only when the
+# install writes it. Without a tty nothing is asked: only --statusline, or a
+# statusline an earlier installer registered, gets written.
+choose_statusline() {
+  local existing
+  [ "$STATUSLINE_ARG" != "no" ] && installs_native_claude || return 0
   existing=$(node -e '
     try {
       const s = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
       if (s.statusLine && s.statusLine.command) process.stdout.write(String(s.statusLine.command));
     } catch {}
   ' "$CC_SETTINGS" 2>/dev/null || true)
-  if [ "$existing" = "$cmd" ]; then
-    info "$(t 'Statusline already registered.' 'Statusline 已注册。')"
-    return 0
-  fi
+  [ "$existing" != "$(statusline_command)" ] || return 0
   # A statusline this installer registered before is repointed without asking:
   # the user already chose it, only its location changes.
-  is_own_statusline "$existing" && own=1
-  if [ "$own" -eq 0 ] && [ "$STATUSLINE_ARG" != "yes" ]; then
-    [ "$INTERACTIVE" -eq 1 ] || return 0
-    heading "$(t 'Statusline (optional)' 'Statusline 状态栏（可选）')"
-    info "$(t 'OpenViking can show a one-line server/recall status under the input box.' 'OpenViking 可以在输入框下方显示一行服务/召回状态。')"
-    info 'Sample: "OV ✓ │ Fable 5 · ctx 42% │ ↩ 6 mem (0.92) · 50ms │ ✎ 573/20k · 2 arch │ +3 today"'
-    tui_menu "$(t 'Enable the OpenViking statusline?' '启用 OpenViking statusline？')" 1 \
-      "$(t 'Enable' '启用')" \
-      "$(t 'Skip' '跳过')"
+  if [ "$STATUSLINE_ARG" = "yes" ] || is_own_statusline "$existing"; then
+    STATUSLINE_WRITE=1
+    return 0
+  fi
+  [ "$INTERACTIVE" -eq 1 ] || return 0
+  heading "$(t 'Statusline (optional)' 'Statusline 状态栏（可选）')"
+  info "$(t 'OpenViking can show a one-line server/recall status under the input box.' 'OpenViking 可以在输入框下方显示一行服务/召回状态。')"
+  info 'Sample: "OV ✓ │ Fable 5 · ctx 42% │ ↩ 6 mem (0.92) · 50ms │ ✎ 573/20k · 2 arch │ +3 today"'
+  tui_menu "$(t 'Enable the OpenViking statusline?' '启用 OpenViking statusline？')" 1 \
+    "$(t 'Enable' '启用')" \
+    "$(t 'Skip' '跳过')"
+  if [ "$TUI_MENU_CHOICE" -ne 0 ]; then
+    info "$(t 'Skipped statusline registration. Re-run the installer to enable it later.' '跳过 statusline 注册，之后重跑安装脚本可启用。')"
+    return 0
+  fi
+  if [ -n "$existing" ]; then
+    warn "$(t 'Existing statusline detected:' '检测到已有 statusline：') $existing"
+    tui_menu "$(t 'Replace it with the OpenViking statusline?' '替换为 OpenViking statusline？')" 1 \
+      "$(t 'Replace' '替换')" \
+      "$(t 'Keep existing' '保留现有')"
     if [ "$TUI_MENU_CHOICE" -ne 0 ]; then
-      info "$(t 'Skipped statusline registration. Re-run the installer to enable it later.' '跳过 statusline 注册，之后重跑安装脚本可启用。')"
+      info "$(t 'Kept the existing statusline.' '保留了已有 statusline。')"
       return 0
     fi
-    if [ -n "$existing" ]; then
-      warn "$(t 'Existing statusline detected:' '检测到已有 statusline：') $existing"
-      tui_menu "$(t 'Replace it with the OpenViking statusline?' '替换为 OpenViking statusline？')" 1 \
-        "$(t 'Replace' '替换')" \
-        "$(t 'Keep existing' '保留现有')"
-      if [ "$TUI_MENU_CHOICE" -ne 0 ]; then
-        info "$(t 'Kept the existing statusline.' '保留了已有 statusline。')"
-        return 0
-      fi
-    fi
   fi
+  STATUSLINE_WRITE=1
+}
+
+register_statusline() {
+  [ "$STATUSLINE_WRITE" -eq 1 ] || return 0
+  local ts
   mkdir -p "$CC_CONFIG_DIR"
   [ -f "$CC_SETTINGS" ] || echo '{}' > "$CC_SETTINGS"
   ts=$(date +%Y%m%d-%H%M%S)
   cp -p "$CC_SETTINGS" "$CC_SETTINGS.bak.$ts"
-  node - "$CC_SETTINGS" "$cmd" <<'NODE' || { err "writing statusline into $CC_SETTINGS failed"; return 1; }
+  node - "$CC_SETTINGS" "$(statusline_command)" <<'NODE' || { err "writing statusline into $CC_SETTINGS failed"; return 1; }
 const fs = require("node:fs");
 const [settingsPath, cmd] = process.argv.slice(2);
 const settings = JSON.parse(fs.readFileSync(settingsPath, "utf8"));
@@ -2840,8 +2860,10 @@ print_plan() {
         plan_item "$CLAUDE_BIN plugin marketplace add/update $bundle"
       fi
       plan_item "$CLAUDE_BIN plugin install/update $PLUGIN_ID"
-      if is_native_claude_bin; then
+      if is_native_claude_bin && [ "$STATUSLINE_WRITE" -eq 1 ]; then
         plan_item "$(short_path "$CC_SETTINGS") ($(t 'marketplace auto-update, statusline' 'marketplace 自动更新、statusline'))"
+      elif is_native_claude_bin; then
+        plan_item "$(short_path "$CC_SETTINGS") ($(t 'marketplace auto-update' 'marketplace 自动更新'))"
       fi
     done <<EOF
 $CLAUDE_BINS
@@ -3023,6 +3045,7 @@ resolve_source_mode
 count_steps
 gather_credentials
 check_server
+choose_statusline
 print_plan
 warn_default_connection
 # Nothing under $OV_HOME or in any harness config is written before this point.

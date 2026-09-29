@@ -156,6 +156,7 @@ test("a GitHub-channel Claude install moves to TOS, and its statusline follows t
   const repointed = install();
   const command = statusLine();
   assert.match(command, /installed_plugins\.json/);
+  assert.match(repointed.stdout, /~\/\.claude\/settings\.json \(marketplace auto-update, statusline\)\n/);
   assert.equal(existsSync(join(home, ".openviking", "memory-plugin-marketplace")), false);
   assert.match(repointed.stdout, /No longer used by the installer; you can delete it: .*openviking-repo/);
   assert.ok(existsSync(clone));
@@ -190,8 +191,9 @@ test("a GitHub-channel Claude install moves to TOS, and its statusline follows t
   // Someone else's statusline stays unless the user asks for ours, and so does
   // one that only wraps ours.
   setStatusLine("my-statusline");
-  install();
+  const kept = install();
   assert.equal(statusLine(), "my-statusline");
+  assert.match(kept.stdout, /~\/\.claude\/settings\.json \(marketplace auto-update\)\n/);
   const wrapped = `sh -c 'node "${clone}/examples/claude-code-memory-plugin/scripts/statusline.mjs"; echo " | main"'`;
   setStatusLine(wrapped);
   install();

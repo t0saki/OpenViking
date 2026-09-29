@@ -495,6 +495,31 @@ ${mainMarker}`));
   assert.equal(existsSync(dshLog), false);
 });
 
+test("the statusline is asked about before the review, which lists it only when chosen", (t) => {
+  for (const [answer, listed] of [
+    [0, /~\/\.claude\/settings\.json \(marketplace auto-update, statusline\)\n/],
+    [1, /~\/\.claude\/settings\.json \(marketplace auto-update\)\n/],
+  ]) {
+    const { home, run } = detachedInstaller(t, (source) => source.replace(mainMarker, `INTERACTIVE=1
+exec 3</dev/null
+tui_menu() {
+  printf 'menu: %s\\n' "$1"
+  TUI_MENU_CHOICE="$2"
+  case "$1" in *statusline*) TUI_MENU_CHOICE=${answer} ;; *Proceed*) TUI_MENU_CHOICE=1 ;; esac
+}
+${mainMarker}`));
+    writeFileSync(join(home, "bin", "claude"), '#!/bin/sh\n[ "$1" != --version ] || echo "2.1.224 (Claude Code)"\n', { mode: 0o755 });
+
+    const result = run(["--harness", "claude", "--lang", "en", "--url", "http://127.0.0.1:9", "--api-key", ""]);
+
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    const asked = result.stdout.indexOf("menu: Enable the OpenViking statusline?");
+    assert.ok(asked !== -1 && asked < result.stdout.indexOf("] Review"), result.stdout);
+    assert.match(result.stdout, listed);
+    assert.match(result.stdout, /Cancelled; nothing was changed\./);
+  }
+});
+
 test("a non-interactive run with no server says so and how to re-run", (t) => {
   const { home, run } = detachedInstaller(t);
   const notice = /No server was given: the plugin is configured for http:\/\/127\.0\.0\.1:1933 without an API key\./;
