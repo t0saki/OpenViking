@@ -27,6 +27,9 @@ _SESSION_MESSAGE_BATCH_LIMIT = 100
 # Bound of one (sid, generation) backlog of unsent messages; the oldest are dropped first.
 _BACKLOG_MAX_MESSAGES = 2000
 _BACKLOG_MAX_BYTES = 8 * 1024 * 1024
+# After a retryable upload failure, turns of the same connection generation go straight
+# into the backlog for this long instead of each waiting on a server that is known to be down.
+_UPLOAD_COOLDOWN_SECONDS = 30.0
 _SYNC_TRACE_ENV = "HERMES_OPENVIKING_SYNC_TRACE"
 # Host contexts that must not write into OpenViking. Fixed-prompt output from scheduled
 # jobs, delegated subagents, and flush forks has no memory value and would spend server-side
@@ -260,6 +263,26 @@ class SessionWriterMixin:
             table = self.__dict__.setdefault("_upload_backlog", {})
         return table
 
+    def _upload_cooldown_table(self) -> Dict[str, float]:
+        """Connection generation -> monotonic time before which turns are not sent."""
+        table = self.__dict__.get("_upload_cooldown")
+        if table is None:
+            table = self.__dict__.setdefault("_upload_cooldown", {})
+        return table
+
+    def _start_upload_cooldown(self, generation: str) -> None:
+        self._upload_cooldown_table()[generation] = self._deps.monotonic() + _UPLOAD_COOLDOWN_SECONDS
+
+    def _upload_cooling_down(self, generation: str) -> bool:
+        table = self._upload_cooldown_table()
+        until = table.get(generation)
+        if until is None:
+            return False
+        if self._deps.monotonic() < until:
+            return True
+        del table[generation]
+        return False
+
     def _prune_backlog(self) -> None:
         """Messages rejected with 401/403 are never sent under other credentials."""
         table = self._backlog_table()
@@ -312,6 +335,8 @@ class SessionWriterMixin:
                     kind = _upload_failure_kind(e)
                     if kind in ("retry", "auth"):
                         entry.auth_failed = entry.auth_failed or kind == "auth"
+                        if kind == "retry":
+                            self._start_upload_cooldown(key[1])
                         logger.warning("OpenViking could not send %d unsent messages of session %s: %s",
                                        len(entry.messages), sid, e)
                         return False
@@ -324,6 +349,11 @@ class SessionWriterMixin:
 
     def _upload_turn(self, upload: _TurnUpload, sid: str, scope: _CommitScope) -> Optional[_VikingClient]:
         """Send the backlog first, then the turn; keep whatever could not be sent. Under the writer lock."""
+        if self._upload_cooling_down(scope.marker_id):
+            # A recent retryable failure of this connection: queue without a request.
+            upload.materialize()
+            self._backlog_add(sid, scope, upload.client, upload.unsent(), auth_failed=False)
+            return None
         with self._session_state_lock:
             current_sid = openviking_session_id(self._session_id)
         # Sessions left behind by a switch: once their backlog is sent, commit them off this thread.
@@ -339,6 +369,8 @@ class SessionWriterMixin:
             return None
         client = upload.run()
         if client is None and upload.failure_kind in ("retry", "auth"):
+            if upload.failure_kind == "retry":
+                self._start_upload_cooldown(scope.marker_id)
             self._backlog_add(sid, scope, upload.client, upload.unsent(), auth_failed=upload.failure_kind == "auth")
         return client
 

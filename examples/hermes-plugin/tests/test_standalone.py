@@ -2,6 +2,7 @@
 
 import json
 import threading
+import time
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -843,13 +844,15 @@ def test_live_metadata_failure_does_not_replay_uploaded_turn(external_provider, 
     assert provider._has_committed_session(_ov("live-sid"))
 
 
-def test_live_failed_upload_does_not_commit_partial_turn(external_provider, monkeypatch):
-    _, provider, _ = _live_provider(external_provider, monkeypatch)
+def test_live_failed_upload_does_not_commit_partial_turn(external_provider, monkeypatch, inject_deps):
+    _, provider, module = _live_provider(external_provider, monkeypatch)
     provider._client.post.side_effect = RuntimeError("upload unavailable")
     _finish_turn(provider)
     assert not provider._client.get.called
     assert provider._state_path("pending", _ov("live-sid")).exists()
     provider._client.post.side_effect = None
+    # Past the upload cooldown that the failure started.
+    inject_deps(module, provider, monotonic=lambda: time.monotonic() + 3600)
     _finish_turn(provider)
     assert provider._has_committed_session(_ov("live-sid"))
 

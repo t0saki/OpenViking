@@ -1,8 +1,22 @@
 """Failed turn uploads are kept and resent in order, through the public hooks only."""
 
 import logging
+import time
 
 import pytest
+
+
+class Clock:
+    """Monotonic clock that tests move forward past the upload cooldown."""
+
+    def __init__(self):
+        self.offset = 0.0
+
+    def __call__(self):
+        return time.monotonic() + self.offset
+
+    def advance(self, seconds):
+        self.offset += seconds
 
 
 class FakeServer:
@@ -43,7 +57,12 @@ class FakeServer:
 
 
 @pytest.fixture
-def writer(external_provider, monkeypatch, inject_deps, core_module):
+def clock():
+    return Clock()
+
+
+@pytest.fixture
+def writer(external_provider, monkeypatch, inject_deps, core_module, clock):
     home, provider, module, _ = external_provider("writer-backlog")
     monkeypatch.setenv("HERMES_HOME", str(home))
     http_error = core_module(module, "http")._OpenVikingHTTPError
@@ -55,7 +74,7 @@ def writer(external_provider, monkeypatch, inject_deps, core_module):
             self.get = servers[user].get
             self.post = servers[user].post
 
-    inject_deps(module, provider, client=Client, health=lambda *_: ("healthy", ""))
+    inject_deps(module, provider, client=Client, health=lambda *_: ("healthy", ""), monotonic=clock)
 
     def connect(user):
         monkeypatch.setenv("OPENVIKING_USER", user)
@@ -77,30 +96,36 @@ def turn(provider, text, sid="sid-1"):
     assert provider._drain_finalizers(timeout=5)
 
 
+def recover(server, clock):
+    """The server is back and the upload cooldown after its failure has passed."""
+    server.fail = None
+    clock.advance(60)
+
+
 def pair(*turns):
     return [t for n in turns for t in (f"u{n}", f"a{n}")]
 
 
-def test_server_down_then_back_keeps_every_turn_in_order(writer):
+def test_server_down_then_back_keeps_every_turn_in_order(writer, clock):
     provider, servers, _, _ = writer
     alice = servers["alice"]
     alice.fail = "down"
     for n in (1, 2, 3):
         turn(provider, n)
     assert alice.texts("hermes-sid-1") == []
-    alice.fail = None
+    recover(alice, clock)
     turn(provider, 4)
     assert alice.texts("hermes-sid-1") == pair(1, 2, 3, 4)
     provider.on_session_end([])
     assert alice.committed("hermes-sid-1") == [pair(1, 2, 3, 4)]
 
 
-def test_retryable_status_is_backlogged_and_resent(writer):
+def test_retryable_status_is_backlogged_and_resent(writer, clock):
     provider, servers, _, _ = writer
     alice = servers["alice"]
     alice.fail = 503
     turn(provider, 1)
-    alice.fail = None
+    recover(alice, clock)
     turn(provider, 2)
     assert alice.texts("hermes-sid-1") == pair(1, 2)
 
@@ -124,7 +149,7 @@ def test_commit_waits_for_backlog(writer):
     assert not marker.exists()
 
 
-def test_session_switch_with_backlog_commits_old_session_after_resend(writer):
+def test_session_switch_with_backlog_commits_old_session_after_resend(writer, clock):
     provider, servers, _, _ = writer
     alice = servers["alice"]
     alice.fail = "down"
@@ -133,7 +158,7 @@ def test_session_switch_with_backlog_commits_old_session_after_resend(writer):
     assert provider._drain_finalizers(timeout=5)
     assert alice.commits == []
     assert provider._state_path("pending", "hermes-sid-1").exists()
-    alice.fail = None
+    recover(alice, clock)
     turn(provider, 2, sid="sid-2")
     assert alice.committed("hermes-sid-1") == [pair(1)]
     assert alice.texts("hermes-sid-2") == pair(2)
@@ -191,7 +216,7 @@ def test_other_client_errors_are_dropped_with_a_warning(writer, caplog):
     assert alice.texts("hermes-sid-1") == pair(2)
 
 
-def test_backlog_bound_drops_oldest_with_warning(writer, monkeypatch, caplog):
+def test_backlog_bound_drops_oldest_with_warning(writer, monkeypatch, caplog, clock):
     provider, servers, _, session_writer = writer
     alice = servers["alice"]
     monkeypatch.setattr(session_writer, "_BACKLOG_MAX_MESSAGES", 4)
@@ -200,19 +225,47 @@ def test_backlog_bound_drops_oldest_with_warning(writer, monkeypatch, caplog):
         for n in (1, 2, 3):
             turn(provider, n)
     assert any("dropped the 2 oldest" in r.getMessage() for r in caplog.records)
-    alice.fail = None
+    recover(alice, clock)
     turn(provider, 4)
     assert alice.texts("hermes-sid-1") == pair(2, 3, 4)
 
 
-def test_backlog_is_resent_in_batches_of_at_most_100(writer):
+def test_backlog_is_resent_in_batches_of_at_most_100(writer, clock):
     provider, servers, _, _ = writer
     alice = servers["alice"]
     alice.fail = "down"
     for n in range(60):
         turn(provider, n)
-    alice.fail = None
+    recover(alice, clock)
     alice.requests.clear()
     turn(provider, "last")
     assert alice.texts("hermes-sid-1") == pair(*range(60), "last")
     assert alice.requests == ["/api/v1/sessions/hermes-sid-1/messages/batch"] * 3
+
+
+def test_turns_within_the_cooldown_are_queued_without_a_request(writer, clock):
+    provider, servers, _, session_writer = writer
+    alice = servers["alice"]
+    alice.fail = "down"
+    turn(provider, 1)
+    alice.fail = None
+    alice.requests.clear()
+    clock.advance(session_writer._UPLOAD_COOLDOWN_SECONDS / 2)
+    turn(provider, 2)
+    # Still inside the cooldown: turn 2 waits behind turn 1 without touching the server.
+    assert alice.requests == []
+    clock.advance(session_writer._UPLOAD_COOLDOWN_SECONDS)
+    turn(provider, 3)
+    assert alice.requests == ["/api/v1/sessions/hermes-sid-1/messages/batch"] * 2
+    assert alice.texts("hermes-sid-1") == pair(1, 2, 3)
+
+
+def test_cooldown_is_per_connection_generation(writer, clock):
+    provider, servers, connect, _ = writer
+    alice, bob = servers["alice"], servers["bob"]
+    alice.fail = "down"
+    turn(provider, 1)
+    connect("bob")
+    turn(provider, 2)
+    # Bob's generation has no failure behind it, so its turn is sent at once.
+    assert bob.texts("hermes-sid-1") == pair(2)
