@@ -17,6 +17,7 @@ const claudeMarketplaceScript = join(ROOT, ".github", "scripts", "generate-claud
 const stampScript = join(ROOT, ".github", "scripts", "stamp-installer-version.sh");
 const publishGitScript = join(ROOT, ".github", "scripts", "publish-dumb-git-repo.sh");
 const zipScript = join(ROOT, ".github", "scripts", "reproducible-zip.sh");
+const downloadsScript = join(ROOT, ".github", "scripts", "build-plugin-downloads.sh");
 
 function run(command, args, options = {}) {
   return spawnSync(command, args, {
@@ -55,7 +56,7 @@ exit 0
 `, { mode: 0o755 });
 }
 
-test("Claude URL marketplace lists the release's plugin zip as an archive source", () => {
+test("Claude URL marketplace lists the published plugin zip as an archive source", () => {
   const tmp = mkdtempSync(join(tmpdir(), "openviking-claude-marketplace-"));
   try {
     const { stage } = stageMarketplaceZip(tmp);
@@ -63,7 +64,8 @@ test("Claude URL marketplace lists the release's plugin zip as an archive source
     const zipped = run("zip", ["-rq", pluginZip, "claude-code-memory-plugin"], { cwd: stage });
     assert.equal(zipped.status, 0, `${zipped.stdout}\n${zipped.stderr}`);
     const out = join(tmp, "marketplace.json");
-    const generated = run("bash", [claudeMarketplaceScript, "v9.9.9", "https://tos.example.invalid/", pluginZip, stage, out]);
+    const zipUrl = "https://tos.example.invalid/releases/v9.9.9/openviking-memory-claude.zip";
+    const generated = run("bash", [claudeMarketplaceScript, zipUrl, pluginZip, stage, out]);
     assert.equal(generated.status, 0, `${generated.stdout}\n${generated.stderr}`);
 
     const manifest = JSON.parse(readFileSync(out, "utf8"));
@@ -76,7 +78,7 @@ test("Claude URL marketplace lists the release's plugin zip as an archive source
     assert.equal(entry.version, pluginJson.version);
     assert.deepEqual(entry.source, {
       source: "archive",
-      url: "https://tos.example.invalid/releases/v9.9.9/openviking-memory-claude.zip",
+      url: zipUrl,
       sha256: createHash("sha256").update(readFileSync(pluginZip)).digest("hex"),
     });
 
@@ -482,6 +484,55 @@ test("rebuilding a release zip from the same commit gives the same bytes", () =>
       "plugin/scripts/",
       "plugin/scripts/hook.mjs",
     ]);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+// The docs site deploys on every change to the main branch, so its zips keep
+// their bytes until their content changes.
+test("the docs download tree holds what the installer fetches, under the address it is built for", () => {
+  const tmp = mkdtempSync(join(tmpdir(), "openviking-downloads-"));
+  const gitEnv = { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" };
+  try {
+    const out = join(tmp, "dl");
+    const built = run("bash", [downloadsScript, out, "https://docs.example.invalid/dl/"]);
+    assert.equal(built.status, 0, `${built.stdout}\n${built.stderr}`);
+    const sha256 = (file) => createHash("sha256").update(readFileSync(file)).digest("hex");
+
+    const published = readFileSync(join(out, "memory-plugin-shared", "install.sh"), "utf8");
+    const version = published.match(/^INSTALLER_VERSION="(\d{8}-[0-9a-f]{10})"$/m)?.[1];
+    assert.ok(version, "the installer names the date and commit it was built from");
+    assert.equal(published.replace(`"${version}"`, '"dev"'), readFileSync(installer, "utf8"));
+    assert.equal(
+      readFileSync(join(out, "memory-plugin-shared", "bootstrap.sh"), "utf8"),
+      readFileSync(join(dirname(installer), "bootstrap.sh"), "utf8"),
+    );
+
+    const manifest = JSON.parse(readFileSync(join(out, "plugins", "claude", "marketplace.json"), "utf8"));
+    const [entry] = manifest.plugins;
+    const zipName = `openviking-memory-${entry.version}.zip`;
+    assert.deepEqual(entry.source, {
+      source: "archive",
+      url: `https://docs.example.invalid/dl/plugins/claude/${zipName}`,
+      sha256: sha256(join(out, "plugins", "claude", zipName)),
+    });
+
+    const listed = run("unzip", ["-Z1", join(out, "releases", "latest", "memory-plugin-marketplace.zip")]);
+    assert.equal(listed.status, 0, listed.stderr);
+    assert.ok(listed.stdout.split("\n").includes("memory-plugin-marketplace/.claude-plugin/marketplace.json"));
+
+    const cloned = run("git", ["clone", "-q", join(out, "plugins", "memory-plugins.git"), join(tmp, "clone")], { env: gitEnv });
+    assert.equal(cloned.status, 0, cloned.stderr);
+    assert.ok(existsSync(join(tmp, "clone", "codex-memory-plugin", ".codex-plugin", "plugin.json")));
+    assert.ok(existsSync(join(out, "plugins", "memory-plugins.git", "info", "refs")), "dumb HTTP clients read info/refs");
+
+    const again = join(tmp, "again");
+    const rebuilt = run("bash", [downloadsScript, again, "https://docs.example.invalid/dl"]);
+    assert.equal(rebuilt.status, 0, `${rebuilt.stdout}\n${rebuilt.stderr}`);
+    for (const zip of [join("plugins", "claude", zipName), join("releases", "latest", "memory-plugin-marketplace.zip")]) {
+      assert.equal(sha256(join(again, zip)), sha256(join(out, zip)), zip);
+    }
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
