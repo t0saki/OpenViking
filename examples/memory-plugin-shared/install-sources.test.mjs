@@ -198,8 +198,11 @@ test("a GitHub-channel Claude install moves to TOS, and its statusline follows t
   setStatusLine(wrapped);
   install();
   assert.equal(statusLine(), wrapped);
-  install("--statusline");
+  const chinese = install("--statusline", "--lang", "zh");
   assert.equal(statusLine(), command);
+  assert.match(chinese.stdout, /安装来源： OpenViking 发布版\n/);
+  assert.match(chinese.stdout, /Statusline 已注册（备份：.*settings\.json\.bak\.[0-9-]+）\n/);
+  assert.match(chinese.stdout, /可随时用 export OPENVIKING_STATUSLINE=off 关闭\n/);
 });
 
 test("Claude Code without the plugin command is skipped with an upgrade hint", () => {
@@ -359,7 +362,7 @@ test("retired GitHub-channel options are accepted, announced and ignored", () =>
     const result = install(args, extraEnv);
     assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
     assert.match(result.stdout, notice);
-    assert.match(result.stdout, /Source mode: archive/);
+    assert.match(result.stdout, /Source: OpenViking release\n/);
   }
   const tos = install(["--dist", "tos"]);
   assert.equal(tos.status, 0, `${tos.stdout}\n${tos.stderr}`);

@@ -1844,7 +1844,7 @@ choose_statusline() {
   [ "$INTERACTIVE" -eq 1 ] || return 0
   heading "$(t 'Statusline (optional)' 'Statusline 状态栏（可选）')"
   info "$(t 'OpenViking can show a one-line server/recall status under the input box.' 'OpenViking 可以在输入框下方显示一行服务/召回状态。')"
-  info 'Sample: "OV ✓ │ Fable 5 · ctx 42% │ ↩ 6 mem (0.92) · 50ms │ ✎ 573/20k · 2 arch │ +3 today"'
+  info "$(t 'Sample:' '示例：') \"OV ✓ │ Fable 5 · ctx 42% │ ↩ 6 mem (0.92) · 50ms │ ✎ 573/20k · 2 arch │ +3 today\""
   tui_menu "$(t 'Enable the OpenViking statusline?' '启用 OpenViking statusline？')" 1 \
     "$(t 'Enable' '启用')" \
     "$(t 'Skip' '跳过')"
@@ -1879,8 +1879,8 @@ const settings = JSON.parse(fs.readFileSync(settingsPath, "utf8"));
 settings.statusLine = { type: "command", command: cmd, padding: 0 };
 fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n");
 NODE
-  info "statusline registered (backup: $CC_SETTINGS.bak.$ts)"
-  info 'Silence it anytime with: export OPENVIKING_STATUSLINE=off'
+  info "$(t "Statusline registered (backup: $CC_SETTINGS.bak.$ts)" "Statusline 已注册（备份：$CC_SETTINGS.bak.${ts}）")"
+  info "$(t 'Turn it off anytime with: export OPENVIKING_STATUSLINE=off' '可随时用 export OPENVIKING_STATUSLINE=off 关闭')"
 }
 
 claude_install_plugin() {
@@ -2835,8 +2835,14 @@ plan_paths() { # plan_paths <label> <path...>
 }
 
 print_plan() {
-  local bundle fallback account user trae_home
-  if [ "$SOURCE_MODE" = "dev" ]; then bundle="$(short_path "$CHECKOUT_DIR/examples")"; else bundle="$(short_path "$MKT_DIR_ARCHIVE")"; fi
+  local bundle origin fallback account user trae_home
+  if [ "$SOURCE_MODE" = "dev" ]; then
+    bundle="$(short_path "$CHECKOUT_DIR/examples")"
+    origin="$(t 'this checkout' '当前 checkout')"
+  else
+    bundle="$(short_path "$MKT_DIR_ARCHIVE")"
+    origin="$(t 'OpenViking release' 'OpenViking 发布版')"
+  fi
   fallback="$(t 'fallback:' '失败时改用') $bundle"
   account="$(cred_value "$CRED_ACCOUNT" "$CUR_ACCOUNT")"
   user="$(cred_value "$CRED_USER" "$CUR_USER")"
@@ -2846,7 +2852,7 @@ print_plan() {
   info "API key: $(mask_secret "$(cred_value "$CRED_KEY" "$CUR_KEY")")"
   if [ -n "$account" ]; then info "account: $account"; fi
   if [ -n "$user" ]; then info "user: $user"; fi
-  info "$(t 'Source mode:' '安装源模式：') $SOURCE_MODE"
+  info "$(t 'Source:' '安装来源：') $origin"
   info "$(t 'The install will change:' '安装将修改：')"
   plan_item "$(short_path "$OVCLI_CONF")"
   if contains_harness claude; then
