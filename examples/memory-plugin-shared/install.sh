@@ -99,6 +99,13 @@ err()     { printf '%sxx%s  %s\n' "$RED" "$RESET" "$*" >&2; }
 ask()     { printf '%s??%s  %s' "$CYAN" "$RESET" "$*"; }
 heading() { printf '\n%s%s%s\n' "$BOLD" "$*" "$RESET"; }
 
+STEP=0
+STEP_TOTAL=0
+step_heading() {
+  STEP=$((STEP + 1))
+  heading "[$STEP/$STEP_TOTAL] $*"
+}
+
 # t <english> <chinese> — pick the UI language variant.
 t() { if [ "$UI_LANG" = "zh" ]; then printf '%s' "$2"; else printf '%s' "$1"; fi; }
 
@@ -992,7 +999,7 @@ select_dsh_profile() {
 }
 
 install_dsh() {
-  heading "$(t '4. DeepSeek Harness bundle' '4. DeepSeek Harness 插件')"
+  step_heading "$(t 'DeepSeek Harness bundle' 'DeepSeek Harness 插件')"
   if ! command -v dsh >/dev/null 2>&1; then
     warn "$(t 'dsh CLI not found; skipping DeepSeek Harness install.' '未找到 dsh 命令，跳过 DeepSeek Harness 安装。')"
     return 0
@@ -1213,7 +1220,7 @@ cred_value() { # cred_value <chosen> <stored>
 }
 
 gather_credentials() {
-  heading "$(t '2. OpenViking credentials' '2. OpenViking 凭据配置') ($OVCLI_CONF)"
+  step_heading "$(t 'OpenViking credentials' 'OpenViking 凭据配置') ($OVCLI_CONF)"
   CUR_URL="$(json_get "$OVCLI_CONF" url)"
   CUR_KEY="$(json_get "$OVCLI_CONF" api_key)"
   CUR_ACCOUNT="$(json_get "$OVCLI_CONF" account)"
@@ -1329,7 +1336,6 @@ write_ovcli() {
     info "$(t 'Updated:' '已更新：') api_key: $(mask_secret "$CUR_KEY") -> $(mask_secret "$CRED_KEY")"
   fi
   info "$(t 'Credentials saved:' '凭据已保存：') $OVCLI_CONF"
-  info "$(t 'Reconfigure later by re-running this installer.' '之后可重跑本安装脚本重新配置。')"
 }
 
 # ---------------------------------------------------------------------------
@@ -1427,10 +1433,6 @@ resolve_source_mode() {
   if [ "$retired" -eq 1 ]; then
     warn "$(t 'The GitHub install channel was removed and its options are ignored. To install a branch, run install.sh from a checkout of it.' 'GitHub 安装渠道已移除，相关选项不再生效。要安装某个分支，请在该分支的 checkout 中运行 install.sh。')"
   fi
-  if [ "$SOURCE_MODE" = "archive" ] && [ "$HAVE_CLAUDE" -eq 1 ] && contains_harness claude \
-    && ! claude_supports_archive_source; then
-    warn "$(t "Claude Code older than $CC_ARCHIVE_SOURCE_MIN_VERSION cannot auto-update the plugin (local directory marketplace); re-run this installer to update. Codex keeps remote updates via its TOS git marketplace." "Claude Code 低于 $CC_ARCHIVE_SOURCE_MIN_VERSION 时插件无法自动更新（本地目录 marketplace），更新请重跑本安装脚本；Codex 走 TOS git marketplace 仍可远程更新。")"
-  fi
 }
 
 # The release bundle every file-based harness installs from, and the directory
@@ -1502,6 +1504,7 @@ require_install_lib_dir() {
 # ---------------------------------------------------------------------------
 
 CLAUDE_BIN="claude"
+CLAUDE_URL_BINS=""  # Claude-format CLIs registered on the TOS URL marketplace
 
 is_native_claude_bin() {
   [ "$(bin_basename "$CLAUDE_BIN")" = "claude" ]
@@ -1626,6 +1629,8 @@ install_claude_modern() {
   if [ "$SOURCE_MODE" = "dev" ] || ! install_claude_tos_url; then
     ensure_bundle
     claude_marketplace_sync "$MKT_DIR" "$MKT_DIR" || return 1
+  else
+    CLAUDE_URL_BINS="$(append_csv_list "$CLAUDE_URL_BINS" "$CLAUDE_BIN")"
   fi
   if str_contains "$(claude_cmd plugin list 2>/dev/null || true)" "$PLUGIN_ID"; then
     info "$CLAUDE_BIN plugin update ($PLUGIN_ID)"
@@ -1752,7 +1757,7 @@ NODE
 }
 
 install_claude() {
-  heading "$(t '4. Claude Code plugin' '4. Claude Code 插件')"
+  step_heading "$(t 'Claude Code plugin' 'Claude Code 插件')"
   command -v "$CLAUDE_BIN" >/dev/null 2>&1 || {
     warn "$(t 'Claude-format CLI not found; skipping:' '未找到 Claude 格式 CLI，跳过：') $CLAUDE_BIN"
     return 0
@@ -1786,6 +1791,7 @@ install_claude() {
 # ---------------------------------------------------------------------------
 
 CODEX_BIN="codex"
+CODEX_GIT_BINS=""   # Codex-format CLIs registered on the TOS git marketplace
 
 is_native_codex_bin() {
   [ "$(bin_basename "$CODEX_BIN")" = "codex" ]
@@ -1905,9 +1911,9 @@ NODE
 install_codex() {
   local plugin_installed=0
   if is_native_codex_bin; then
-    heading "$(t '4. Codex plugin' '4. Codex 插件')"
+    step_heading "$(t 'Codex plugin' 'Codex 插件')"
   else
-    heading "4. $(codex_bin_label)"
+    step_heading "$(codex_bin_label)"
   fi
   command -v "$CODEX_BIN" >/dev/null 2>&1 || {
     warn "$(t 'Codex-format CLI not found; skipping:' '未找到 Codex 格式 CLI，跳过：') $CODEX_BIN"
@@ -1923,6 +1929,8 @@ install_codex() {
       err "$CODEX_BIN plugin marketplace add failed"
       return 1
     }
+  else
+    CODEX_GIT_BINS="$(append_csv_list "$CODEX_GIT_BINS" "$CODEX_BIN")"
   fi
   if codex_cmd plugin add "$PLUGIN_ID" >/dev/null 2>&1; then
     plugin_installed=1
@@ -2205,7 +2213,7 @@ trae_mcp_path() { # trae_mcp_path <client-id>
 }
 
 install_cursor() {
-  heading "$(t '4. Cursor integration' '4. Cursor 集成')"
+  step_heading "$(t 'Cursor integration' 'Cursor 集成')"
   local root hooks_path mcp_path skill skill_tmp legacy_plugins
   ensure_bundle
   root="$(assemble_agent_integration cursor cursor)" || return 1
@@ -2242,7 +2250,7 @@ zcode_merge_config() { # zcode_merge_config <config_path> <hooks_path> <mcp_path
 }
 
 install_zcode() {
-  heading "$(t 'ZCode integration' 'ZCode 集成')"
+  step_heading "$(t 'ZCode integration' 'ZCode 集成')"
   local root hooks_path mcp_path config_path
   ensure_bundle
   root="$(assemble_agent_integration zcode zcode)" || return 1
@@ -2260,7 +2268,7 @@ install_zcode() {
 }
 
 install_kimicode() {
-  heading "$(t 'Kimi Code CLI integration' 'Kimi Code CLI 集成')"
+  step_heading "$(t 'Kimi Code CLI integration' 'Kimi Code CLI 集成')"
   local bundle kimi_home install_lib persisted_dir persisted_tmp persisted_backup root
   ensure_bundle
   bundle="$OV_HOME/agent-integrations/kimicode-bundle.$$"
@@ -2315,11 +2323,11 @@ install_kimicode() {
   rm -rf "$persisted_backup"
   rm -rf "$bundle"
   info "$(t 'Kimi Code native plugin installed:' 'Kimi Code 原生插件已安装：') openviking-memory"
-  info "$(t 'Run /reload or start a new session to activate it.' '请运行 /reload 或新建会话以启用。')"
 }
 
 install_trae_variant() { # install_trae_variant <trae|trae-cn>
   local client_id="$1" root hooks_path mcp_path
+  step_heading "$(tui_bin_label "$client_id" "$client_id") $(t 'integration' '集成')"
   ensure_bundle
   root="$(assemble_agent_integration trae "$client_id")" || return 1
   hooks_path="$HOME/.$client_id/hooks.json"
@@ -2334,7 +2342,7 @@ install_trae_variant() { # install_trae_variant <trae|trae-cn>
 # ---------------------------------------------------------------------------
 
 install_opencode() {
-  heading "$(t '4. OpenCode plugin' '4. OpenCode 插件')"
+  step_heading "$(t 'OpenCode plugin' 'OpenCode 插件')"
   if ! command -v opencode >/dev/null 2>&1; then
     warn "$(t 'opencode CLI not found; skipping OpenCode install.' '未找到 opencode 命令，跳过 OpenCode 安装。')"
     return 0
@@ -2403,7 +2411,7 @@ sync_shared_runtime() {
 }
 
 install_pi() {
-  heading "$(t '4. pi extension' '4. pi 扩展')"
+  step_heading "$(t 'pi extension' 'pi 扩展')"
   if ! command -v pi >/dev/null 2>&1; then
     warn "$(t 'pi CLI not found; skipping pi extension install.' '未找到 pi 命令，跳过 pi 扩展安装。')"
     return 0
@@ -2457,7 +2465,7 @@ install_pi() {
 # ---------------------------------------------------------------------------
 
 validate_install() {
-  heading "$(t '5. Validation' '5. 安装校验')"
+  step_heading "$(t 'Validation' '安装校验')"
   local ok=1 agent_fatal=0 cached list bin
   if contains_harness claude; then
     while IFS= read -r bin; do
@@ -2742,8 +2750,19 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
-# Plan and confirmation
+# Plan, confirmation and next steps
 # ---------------------------------------------------------------------------
+
+# Credentials, review and validation, plus one step per install.
+count_steps() {
+  local h
+  STEP_TOTAL=3
+  if contains_harness claude; then STEP_TOTAL=$((STEP_TOTAL + $(list_count "$CLAUDE_BINS"))); fi
+  if contains_harness codex; then STEP_TOTAL=$((STEP_TOTAL + $(list_count "$CODEX_BINS"))); fi
+  for h in cursor trae trae-cn zcode kimicode opencode pi dsh; do
+    if contains_harness "$h"; then STEP_TOTAL=$((STEP_TOTAL + 1)); fi
+  done
+}
 
 short_path() {
   case "$1" in
@@ -2775,7 +2794,7 @@ print_plan() {
   fallback="$(t 'fallback:' '失败时改用') $bundle"
   account="$(cred_value "$CRED_ACCOUNT" "$CUR_ACCOUNT")"
   user="$(cred_value "$CRED_USER" "$CUR_USER")"
-  heading "$(t '3. Review' '3. 确认安装内容')"
+  step_heading "$(t 'Review' '确认安装内容')"
   print_selection
   info "$(t 'Server:' '服务地址：') $CRED_URL"
   info "API key: $(mask_secret "$(cred_value "$CRED_KEY" "$CUR_KEY")")"
@@ -2870,6 +2889,75 @@ confirm_plan() {
   fi
 }
 
+next_steps() { # next_steps <name> <next> <updates> <verify> <uninstall>
+  printf '\n  %s%s%s\n' "$BOLD" "$1" "$RESET"
+  printf '    %s %s\n' "$(t 'Next:' '下一步：')" "$2"
+  printf '    %s %s\n' "$(t 'Updates:' '更新：')" "$3"
+  [ -z "$4" ] || printf '    %s %s\n' "$(t 'Verify:' '验证：')" "$4"
+  printf '    %s %s\n' "$(t 'Uninstall:' '卸载：')" "$5"
+}
+
+print_next_steps() {
+  local label updates rerun uninstall doctor client
+  rerun="$(t 're-run this installer' '重新运行本安装脚本')"
+  uninstall="bash <(curl -fsSL $TOS_BASE/memory-plugin-shared/install.sh) --uninstall --yes --harness"
+  heading "$(t 'Done' '完成')"
+  info "$(t 'Credentials:' '凭据：') $OVCLI_CONF"
+  info "$(t 'Reconfigure later by re-running this installer.' '之后可重跑本安装脚本重新配置。')"
+  if contains_harness claude; then
+    while IFS= read -r CLAUDE_BIN; do
+      [ -n "$CLAUDE_BIN" ] || continue
+      command -v "$CLAUDE_BIN" >/dev/null 2>&1 || continue
+      label="$(tui_bin_label claude "$CLAUDE_BIN")"
+      updates="$rerun"
+      if list_contains_line "$CLAUDE_URL_BINS" "$CLAUDE_BIN"; then
+        updates="$(t 'automatic; Claude Code checks in the background and loads a new version after a restart' '自动；Claude Code 在后台检查，重启后加载新版本')"
+      fi
+      next_steps "$label" "$(t "restart $label" "重启 $label")" "$updates" \
+        "$(t 'run /openviking-memory:ov in a session' '在会话中运行 /openviking-memory:ov')" \
+        "$CLAUDE_BIN plugin uninstall $PLUGIN_ID && $CLAUDE_BIN plugin marketplace remove $MARKETPLACE_NAME"
+    done <<EOF
+$CLAUDE_BINS
+EOF
+  fi
+  if contains_harness codex; then
+    while IFS= read -r CODEX_BIN; do
+      [ -n "$CODEX_BIN" ] || continue
+      command -v "$CODEX_BIN" >/dev/null 2>&1 || continue
+      label="$(codex_bin_label)"
+      updates="$rerun"
+      if list_contains_line "$CODEX_GIT_BINS" "$CODEX_BIN"; then
+        updates="$(t "automatic; $label upgrades the marketplace when it starts" "自动；$label 启动时升级 marketplace")"
+      fi
+      next_steps "$label" "$(t "restart $label" "重启 $label")" "$updates" \
+        "$(t "run the \$ov-memory-doctor skill in a session" "在会话中运行 \$ov-memory-doctor skill")" \
+        "$CODEX_BIN plugin uninstall $PLUGIN_ID && $CODEX_BIN plugin marketplace remove $MARKETPLACE_NAME"
+    done <<EOF
+$CODEX_BINS
+EOF
+  fi
+  for client in cursor trae trae-cn zcode; do
+    contains_harness "$client" || continue
+    label="$(tui_bin_label "$client" "$client")"
+    doctor="node $(short_path "$OV_HOME/agent-integrations/$client/scripts/ov-memory-doctor.mjs")"
+    next_steps "$label" "$(t "restart $label" "重启 $label")" "$rerun" "$doctor" "$uninstall $client"
+  done
+  if contains_harness kimicode; then
+    next_steps "Kimi Code" "$(t 'run /reload or start a new session' '运行 /reload 或新建会话')" "$rerun" "" "$uninstall kimicode"
+  fi
+  if contains_harness opencode && command -v opencode >/dev/null 2>&1; then
+    next_steps OpenCode "$(t 'restart OpenCode' '重启 OpenCode')" "$rerun" "" \
+      "$(t "rm -rf ~/.config/opencode/plugins/openviking ~/.config/opencode/plugins/openviking.js, then remove mcp.openviking from $(short_path "$(opencode_config_file)")" "rm -rf ~/.config/opencode/plugins/openviking ~/.config/opencode/plugins/openviking.js，再删除 $(short_path "$(opencode_config_file)") 中的 mcp.openviking")"
+  fi
+  if contains_harness pi && command -v pi >/dev/null 2>&1; then
+    next_steps pi "$(t 'restart pi' '重启 pi')" "$rerun" "" "rm -rf ~/.pi/agent/extensions/openviking"
+  fi
+  if contains_harness dsh && command -v dsh >/dev/null 2>&1; then
+    next_steps "DeepSeek Harness" "$(t 'start a new dsh session' '新开一个 dsh 会话')" "$rerun" "" \
+      "dsh plugin --profile ${DSH_PROFILE:-$DSH_PROFILE_DEFAULT} rm $DSH_PACKAGE"
+  fi
+}
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -2878,16 +2966,15 @@ select_language
 resolve_self_checkout
 reexec_release_installer ${INSTALLER_ARGS[@]+"${INSTALLER_ARGS[@]}"}
 
-heading "$(t '1. Environment check' '1. 环境检查')"
 case "$(uname -s)" in
-  Darwin|Linux) info "OS: $(uname -s)" ;;
+  Darwin|Linux) ;;
   *) err "Unsupported OS: $(uname -s). Only macOS and Linux are supported."; exit 1 ;;
 esac
 command -v node >/dev/null 2>&1 || { err "$(t 'node not found. Install Node.js 18+.' '未找到 node，请先安装 Node.js 18+。')"; exit 1; }
 NODE_BIN="$(command -v node)"
 NODE_MAJOR="$("$NODE_BIN" -p 'Number(process.versions.node.split(".")[0])')"
 [ "$NODE_MAJOR" -ge 18 ] || { err "Node.js 18+ required; found $("$NODE_BIN" --version)."; exit 1; }
-command -v curl >/dev/null 2>&1 || warn "curl not found; archive installs may fail."
+command -v curl >/dev/null 2>&1 || warn "$(t 'curl not found; the server check is skipped and downloads will fail.' '未找到 curl：将跳过服务检查，下载也会失败。')"
 
 select_harnesses
 validate_selected_harnesses
@@ -2901,6 +2988,7 @@ if [ "$UNINSTALL" -eq 1 ]; then
   exit 0
 fi
 resolve_source_mode
+count_steps
 gather_credentials
 check_server
 print_plan
@@ -2934,24 +3022,7 @@ if contains_harness opencode; then install_opencode; fi
 if contains_harness pi; then install_pi; fi
 if contains_harness dsh; then install_dsh; fi
 validate_install
-
-heading "$(t 'Done' '完成')"
-info "$(t 'Credentials:' '凭据：') $OVCLI_CONF"
-if contains_harness claude || contains_harness codex; then info "Marketplace: ${MKT_DIR:-$CODEX_TOS_GIT_URL}"; fi
-if contains_harness claude; then info "Claude-format: $(list_words "$CLAUDE_BINS") -> $PLUGIN_ID"; fi
-if [ -n "$TRAECODE_CLI_BIN" ]; then
-  info "TraeCode CLI 2.0: $TRAECODE_CLI_BIN -> $PLUGIN_ID"
-elif contains_harness codex; then
-  info "Codex-format:  $(list_words "$CODEX_BINS") -> $PLUGIN_ID"
-fi
-if contains_harness cursor; then info "Cursor: Hooks + MCP + Rule + Skill"; fi
-if contains_harness trae; then info "TRAE: ~/.trae/hooks.json + MCP"; fi
-if contains_harness trae-cn; then info "TRAE CN: ~/.trae-cn/hooks.json + MCP"; fi
-if contains_harness zcode; then info "ZCode: ~/.zcode/cli/config.json (hooks + MCP)"; fi
-if contains_harness kimicode; then info "Kimi Code: native plugin (hooks + MCP)"; fi
-if contains_harness opencode; then info "OpenCode: ~/.config/opencode/plugins/openviking"; fi
-if contains_harness pi; then info "pi: ~/.pi/agent/extensions/openviking"; fi
-if contains_harness dsh; then info "DeepSeek Harness: $DSH_PACKAGE ($(t 'profile' '配置档') ${DSH_PROFILE:-$DSH_PROFILE_DEFAULT})"; fi
+print_next_steps
 # Earlier installers cloned the repository here; nothing uses it any more
 # unless a legacy hook or statusline in settings.json still points into it.
 if [ -d "$OV_HOME/openviking-repo" ] && ! grep -qF "$OV_HOME/openviking-repo" "$CC_SETTINGS" 2>/dev/null; then
