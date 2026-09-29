@@ -275,12 +275,15 @@ hook. Not planned for this refactor.
   **Planned** (phase 3): Bearer only.
 - `User-Agent` carries the Hermes version, not the plugin version (H:43, H:63).
   **Planned** (phase 3).
-- `plugin.yaml` declares `hooks: [on_session_end]`, which the host reads as
-  `provides_hooks` (hermes:hermes_cli/plugins_manifest.py:509); memory
-  lifecycle hooks are not `register_hook` hooks, and upstream commit
+- `plugin.yaml` declares no hooks. The host reads `hooks` as `provides_hooks`
+  (hermes:hermes_cli/plugins_manifest.py:509), which lists `register_hook`
+  hooks; memory lifecycle hooks are provider methods, and upstream commit
   `72ee40fa68` removed these declarations from the bundled manifests. Its
-  `pip_dependencies` is ignored because `pyproject.toml` takes precedence
-  (hermes:pm/plugin_declarations.py:132-154). **Planned** (phase 1).
+  `pip_dependencies` only feeds the dashboard's dependency list
+  (hermes:hermes_cli/web_server_memory.py:61-63); installs use
+  `pyproject.toml`, which takes precedence
+  (hermes:pm/plugin_declarations.py:132-154). The two lists are kept
+  identical (phase 1).
 - `_setup.py` imports private names from `hermes_cli.memory_setup`
   (S:48, S:422), and profile resolution reads the private
   `tui_gateway.launch_profile_policy._snapshot` (H:854-862).
