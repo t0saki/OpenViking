@@ -19,6 +19,10 @@
 # release bundle (memory-plugin-marketplace.zip) and update when this installer
 # is re-run. A copy of this script that is not a release build and not in a
 # checkout (for example one fetched from GitHub) runs the release copy instead.
+# Before downloading, it asks OPENVIKING_INSTALL_SITE (https://openviking.net)
+# which release to install, one request per harness naming the harness, OS,
+# architecture and installer version. DO_NOT_TRACK=1 skips the request and
+# installs the latest release.
 # `--dist github`, `--source remote` and OPENVIKING_REPO_URL / _REF / _BRANCH
 # are still accepted and ignored.
 #
@@ -43,6 +47,8 @@ MKT_ARCHIVE_URL="${OPENVIKING_MARKETPLACE_ARCHIVE_URL:-}"
 TOS_BASE="${OPENVIKING_TOS_BASE:-https://ovrelease.tos-cn-beijing.volces.com}"
 TOS_BASE="${TOS_BASE%/}"
 CODEX_TOS_GIT_URL="${OPENVIKING_CODEX_TOS_GIT_URL:-$TOS_BASE/plugins/memory-plugins.git}"
+INSTALL_SITE="${OPENVIKING_INSTALL_SITE:-https://openviking.net}"
+INSTALL_SITE="${INSTALL_SITE%/}"
 CC_TOS_MARKETPLACE_URL="${OPENVIKING_CLAUDE_TOS_MARKETPLACE_URL:-$TOS_BASE/plugins/claude/marketplace.json}"
 # First Claude Code release with the `archive` plugin source.
 CC_ARCHIVE_SOURCE_MIN_VERSION="2.1.224"
@@ -87,6 +93,9 @@ CHECKOUT_DIR=""     # repo checkout the script itself lives in, when applicable
 MKT_DIR=""          # plugin bundle root once ensure_bundle ran (checkout examples/ in dev mode)
 SOURCE_MODE=""
 UI_LANG="en"
+RELEASE_VERSION=""  # release the resolver named, when it answered
+BUNDLE_URL=""       # bundle the resolver named, with the checksum it must have
+BUNDLE_SHA256=""
 
 if [ -t 1 ]; then
   CYAN=$'\033[0;36m'; GREEN=$'\033[0;32m'; YELLOW=$'\033[1;33m'; RED=$'\033[0;31m'; BOLD=$'\033[1m'; RESET=$'\033[0m'
@@ -1342,14 +1351,26 @@ write_ovcli() {
 # Source acquisition
 # ---------------------------------------------------------------------------
 
-fetch_archive() { # fetch_archive <url> <dest> <required-subpath>
-  local url="$1" dest="$2" need="$3" tmp_zip tmp_dir top
+fetch_archive() { # fetch_archive <url> <dest> <required-subpath> [sha256]
+  local url="$1" dest="$2" need="$3" sha256="${4:-}" tmp_zip tmp_dir top actual
   command -v unzip >/dev/null 2>&1 || { err 'unzip not found; required to install from an archive.'; exit 1; }
   tmp_zip=$(mktemp "${TMPDIR:-/tmp}/ov-src.XXXXXX") || { err 'mktemp failed'; exit 1; }
   tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/ov-src.XXXXXX") || { err 'mktemp failed'; rm -f "$tmp_zip"; exit 1; }
   info "$(t 'Downloading archive' '下载归档')"
   info "  $url"
   curl -fsSL -o "$tmp_zip" "$url" || { rm -rf "$tmp_zip" "$tmp_dir"; return 1; }
+  if [ -n "$sha256" ]; then
+    actual="$(node -e '
+      const data = require("node:fs").readFileSync(process.argv[1]);
+      process.stdout.write(require("node:crypto").createHash("sha256").update(data).digest("hex"));
+    ' "$tmp_zip")" || actual=""
+    if [ "$actual" != "$sha256" ]; then
+      err "$(t 'The download does not match the checksum the release published; nothing was installed from it.' '下载内容与发布的校验和不一致，未使用该文件安装。')"
+      err "  $url"
+      err "  $(t 'expected' '期望') sha256 $sha256, $(t 'got' '实际') ${actual:-?}"
+      rm -rf "$tmp_zip" "$tmp_dir"; exit 1
+    fi
+  fi
   unzip -q "$tmp_zip" -d "$tmp_dir" || { err 'unzip failed'; rm -rf "$tmp_zip" "$tmp_dir"; exit 1; }
   top=$(find "$tmp_dir" -mindepth 1 -maxdepth 1 -type d | head -n 1)
   if [ -n "$top" ] && [ ! -e "$top/$need" ] && [ -e "$tmp_dir/$need" ]; then
@@ -1408,6 +1429,81 @@ reexec_release_installer() { # reexec_release_installer <original-args...>
   warn "$(t 'Could not fetch the release installer; continuing with this copy.' '无法获取发布版安装脚本，继续使用当前脚本。')"
 }
 
+# The names the release resolver knows: a Codex-format CLI counts as the
+# TraeCode CLI when it is one, otherwise as Codex.
+resolver_harnesses() {
+  local h bin out=""
+  while IFS= read -r h; do
+    [ -n "$h" ] || continue
+    if [ "$h" = "codex" ]; then
+      while IFS= read -r bin; do
+        [ -n "$bin" ] || continue
+        case "$(bin_basename "$bin")" in
+          trae-cli|traecli|traex) out="$(append_csv_list "$out" trae-cli)" ;;
+          *) out="$(append_csv_list "$out" codex)" ;;
+        esac
+      done <<EOF
+$CODEX_BINS
+EOF
+    else
+      out="$(append_csv_list "$out" "$h")"
+    fi
+  done <<EOF
+$(split_harnesses "$SELECTED_HARNESSES")
+EOF
+  printf '%s\n' "$out"
+}
+
+# Asks the install site which release to install, one request per harness in
+# parallel. Anything short of a well-formed answer that points into the TOS
+# bucket keeps the built-in latest-release URLs, without a word: the answer
+# only pins the release and must never slow down or break the install.
+resolve_release() {
+  [ "$SOURCE_MODE" = "archive" ] || return 0
+  case "${OPENVIKING_SKIP_VERSION_CHECK:-}" in ''|0) ;; *) return 0 ;; esac
+  command -v curl >/dev/null 2>&1 || return 0
+  local dir agent names h key value
+  dir="$(mktemp -d "${TMPDIR:-/tmp}/ov-resolve.XXXXXX")" || return 0
+  agent="openviking-installer/$INSTALLER_VERSION ($(uname -s | tr '[:upper:]' '[:lower:]'); $(uname -m))"
+  names="$(resolver_harnesses)"
+  while IFS= read -r h; do
+    [ -n "$h" ] || continue
+    curl -fsS -m 3 -A "$agent" -o "$dir/$h.json" "$INSTALL_SITE/install/v1/$h.json" >/dev/null 2>&1 || true &
+  done <<EOF
+$names
+EOF
+  wait
+  while IFS='=' read -r key value; do
+    case "$key" in
+      version) RELEASE_VERSION="$value" ;;
+      bundle_url) BUNDLE_URL="$value" ;;
+      sha256) BUNDLE_SHA256="$value" ;;
+      git_url) [ -n "${OPENVIKING_CODEX_TOS_GIT_URL:-}" ] || CODEX_TOS_GIT_URL="$value" ;;
+    esac
+  done <<EOF
+$(node -e '
+  const fs = require("node:fs");
+  const [dir, prefix, names] = process.argv.slice(1);
+  const out = {};
+  for (const name of names.split("\n").filter(Boolean)) {
+    let r;
+    try { r = JSON.parse(fs.readFileSync(dir + "/" + name + ".json", "utf8")); } catch { continue; }
+    if (!r || r.schema !== 1) continue;
+    const urls = Object.keys(r).filter((k) => k.endsWith("_url"));
+    if (urls.some((k) => typeof r[k] !== "string" || !r[k].startsWith(prefix) || /\s/.test(r[k]))) continue;
+    if (!out.version && typeof r.version === "string" && /^[\w.+-]+$/.test(r.version)) out.version = r.version;
+    if (!out.bundle_url && r.bundle_url && /^[0-9a-f]{64}$/i.test(r.sha256 ?? "")) {
+      out.bundle_url = r.bundle_url;
+      out.sha256 = r.sha256.toLowerCase();
+    }
+    if (!out.git_url && r.git_url) out.git_url = r.git_url;
+  }
+  for (const [key, value] of Object.entries(out)) process.stdout.write(key + "=" + value + "\n");
+' "$dir" "$TOS_BASE/" "$names" 2>/dev/null || true)
+EOF
+  rm -rf "$dir"
+}
+
 resolve_source_mode() {
   local retired=0
   case "$DIST_ARG" in
@@ -1446,8 +1542,12 @@ ensure_bundle() {
   if [ "$SOURCE_MODE" = "dev" ]; then
     MKT_DIR="$CHECKOUT_DIR/examples"
   else
-    fetch_archive "${MKT_ARCHIVE_URL:-$TOS_BASE/releases/latest/memory-plugin-marketplace.zip}" \
-      "$MKT_DIR_ARCHIVE" ".claude-plugin/marketplace.json" || {
+    local url="${BUNDLE_URL:-$TOS_BASE/releases/latest/memory-plugin-marketplace.zip}" sha256="$BUNDLE_SHA256"
+    if [ -n "$MKT_ARCHIVE_URL" ]; then
+      url="$MKT_ARCHIVE_URL"
+      sha256=""
+    fi
+    fetch_archive "$url" "$MKT_DIR_ARCHIVE" ".claude-plugin/marketplace.json" "$sha256" || {
       err "$(t 'Plugin bundle download failed.' '插件包下载失败。')"
       exit 1
     }
@@ -2902,6 +3002,7 @@ print_next_steps() {
   rerun="$(t 're-run this installer' '重新运行本安装脚本')"
   uninstall="bash <(curl -fsSL $TOS_BASE/memory-plugin-shared/install.sh) --uninstall --yes --harness"
   heading "$(t 'Done' '完成')"
+  if [ -n "$RELEASE_VERSION" ]; then info "$(t 'Release:' '发布版本：') $RELEASE_VERSION"; fi
   info "$(t 'Credentials:' '凭据：') $OVCLI_CONF"
   info "$(t 'Reconfigure later by re-running this installer.' '之后可重跑本安装脚本重新配置。')"
   if contains_harness claude; then
@@ -2995,6 +3096,7 @@ print_plan
 warn_default_connection
 # Nothing under $OV_HOME or in any harness config is written before this point.
 confirm_plan
+resolve_release
 write_ovcli
 
 if contains_harness claude; then

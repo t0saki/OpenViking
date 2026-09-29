@@ -111,6 +111,7 @@ test("TOS installs register Claude Code's URL marketplace when the CLI supports 
           OPENVIKING_HOME: join(home, ".openviking"),
           OPENVIKING_TOS_BASE: "https://tos.example.invalid",
           OPENVIKING_MARKETPLACE_ARCHIVE_URL: `file://${zip}`,
+          OPENVIKING_SKIP_VERSION_CHECK: "1",
           FAKE_CLAUDE_DIR: fake,
           FAKE_CLAUDE_VERSION: version,
           ...extraEnv,
@@ -188,6 +189,7 @@ test("a Claude-format wrapper sharing Claude Code's config keeps the URL marketp
         PATH: `${bin}:${process.env.PATH}`,
         OPENVIKING_HOME: join(home, ".openviking"),
         OPENVIKING_TOS_BASE: "https://tos.example.invalid",
+        OPENVIKING_SKIP_VERSION_CHECK: "1",
         FAKE_CLAUDE_DIR: fake,
         FAKE_CLAUDE_VERSION: "2.1.284",
       },
@@ -237,6 +239,7 @@ test("release marketplace archive supports ZCode and pi TOS installs", () => {
         HOME: home,
         OPENVIKING_HOME: join(home, ".openviking"),
         OPENVIKING_MARKETPLACE_ARCHIVE_URL: `file://${join(tmp, "memory-plugin-marketplace.zip")}`,
+        OPENVIKING_SKIP_VERSION_CHECK: "1",
       },
     });
     assert.equal(installed.status, 0, `${installed.stdout}\n${installed.stderr}`);
@@ -301,6 +304,7 @@ test("release marketplace archive supports ZCode and pi TOS installs", () => {
         PATH: `${bin}:${process.env.PATH}`,
         OPENVIKING_HOME: join(home, ".openviking"),
         OPENVIKING_MARKETPLACE_ARCHIVE_URL: `file://${join(tmp, "memory-plugin-marketplace.zip")}`,
+        OPENVIKING_SKIP_VERSION_CHECK: "1",
       },
     });
     assert.equal(kimiInstalled.status, 0, kimiInstalled.stdout + kimiInstalled.stderr);
@@ -314,7 +318,7 @@ test("release marketplace archive supports ZCode and pi TOS installs", () => {
       "--lang", "en", "--url", "http://127.0.0.1:1933", "--api-key", "", "--yes"];
     const piEnv = { ...process.env, HOME: home, PATH: bin + ":" + process.env.PATH,
       OPENVIKING_HOME: join(home, ".openviking"),
-      OPENVIKING_MARKETPLACE_ARCHIVE_URL: "file://" + join(tmp, "memory-plugin-marketplace.zip") };
+      OPENVIKING_MARKETPLACE_ARCHIVE_URL: "file://" + join(tmp, "memory-plugin-marketplace.zip"), OPENVIKING_SKIP_VERSION_CHECK: "1" };
     const piInstalled = run("bash", piArgs, { env: piEnv });
     assert.equal(piInstalled.status, 0, piInstalled.stdout + piInstalled.stderr);
     const piRoot = join(home, ".pi", "agent", "extensions", "openviking");

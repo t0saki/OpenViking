@@ -433,6 +433,7 @@ function detachedInstaller(t, transform = (source) => source) {
       OPENVIKING_HOME: join(home, ".openviking"),
       OPENVIKING_TOS_BASE: "https://tos.example.invalid",
       OPENVIKING_INSTALLER_REEXEC: "0",
+      OPENVIKING_SKIP_VERSION_CHECK: "1",
     },
     timeout: 30_000,
   });

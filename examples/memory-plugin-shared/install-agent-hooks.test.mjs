@@ -48,6 +48,7 @@ function runInstaller(home, args, extraEnv = {}, script = installer) {
       HOME: home,
       OPENVIKING_HOME: join(home, ".openviking"),
       OPENVIKING_INSTALLER_REEXEC: "0",
+      OPENVIKING_SKIP_VERSION_CHECK: "1",
       ...extraEnv,
     },
     encoding: "utf8",

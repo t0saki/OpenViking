@@ -8,8 +8,10 @@
  */
 
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
@@ -43,23 +45,37 @@ function writeExecutable(file, body) {
   writeFileSync(file, body, { mode: 0o755 });
 }
 
+function installEnv(home, bin, extraEnv) {
+  return {
+    ...process.env,
+    HOME: home,
+    PATH: `${bin}:${process.env.PATH}`,
+    OPENVIKING_HOME: join(home, ".openviking"),
+    OPENVIKING_TOS_BASE: `file://${tosBase}`,
+    OPENVIKING_MARKETPLACE_ARCHIVE_URL: "",
+    OPENVIKING_INSTALLER_REEXEC: "0",
+    OPENVIKING_REPO_URL: "",
+    OPENVIKING_REPO_REF: "",
+    OPENVIKING_REPO_BRANCH: "",
+    OPENVIKING_CODEX_TOS_GIT_URL: "",
+    OPENVIKING_SKIP_VERSION_CHECK: "1",
+    ...extraEnv,
+  };
+}
+
 function run(home, bin, args, extraEnv = {}) {
-  return spawnSync("bash", [installer, ...args], {
-    cwd: home,
-    env: {
-      ...process.env,
-      HOME: home,
-      PATH: `${bin}:${process.env.PATH}`,
-      OPENVIKING_HOME: join(home, ".openviking"),
-      OPENVIKING_TOS_BASE: `file://${tosBase}`,
-      OPENVIKING_MARKETPLACE_ARCHIVE_URL: "",
-      OPENVIKING_INSTALLER_REEXEC: "0",
-      OPENVIKING_REPO_URL: "",
-      OPENVIKING_REPO_REF: "",
-      OPENVIKING_REPO_BRANCH: "",
-      ...extraEnv,
-    },
-    encoding: "utf8",
+  return spawnSync("bash", [installer, ...args], { cwd: home, env: installEnv(home, bin, extraEnv), encoding: "utf8" });
+}
+
+// For runs that talk to a server in this process, which spawnSync would block.
+function runAsync(home, bin, args, extraEnv = {}) {
+  return new Promise((done) => {
+    const child = spawn("bash", [installer, ...args], { cwd: home, env: installEnv(home, bin, extraEnv) });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => { stdout += chunk; });
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    child.on("close", (status) => done({ status, stdout, stderr }));
   });
 }
 
@@ -236,4 +252,129 @@ test("a copy that is not a release build runs the release installer", () => {
   assert.equal(kept.status, 0, `${kept.stdout}\n${kept.stderr}`);
   assert.match(kept.stdout, /Could not fetch the release installer; continuing with this copy/);
   assert.ok(existsSync(join(home, ".openviking", "agent-integrations", "cursor", "scripts", "hook.mjs")));
+});
+
+// The release resolver: a local stand-in for the install site answers each
+// harness from `answers`, and every request lands in `requests`.
+const pinnedZip = join(tosBase, "releases", "v9.9.9", "memory-plugin-marketplace.zip");
+mkdirSync(dirname(pinnedZip), { recursive: true });
+cpSync(join(tosBase, "releases", "latest", "memory-plugin-marketplace.zip"), pinnedZip);
+const pinnedSha256 = createHash("sha256").update(readFileSync(pinnedZip)).digest("hex");
+const pinnedGit = `file://${tosBase}/plugins/v9.9.9/memory-plugins.git`;
+
+let answers = {};
+const requests = [];
+const site = createServer((req, res) => {
+  requests.push({ path: req.url, agent: req.headers["user-agent"] });
+  const answer = answers[req.url.replace(/^\/install\/v1\/(.*)\.json$/, "$1")] ?? { status: 404, body: {} };
+  res.writeHead(answer.status, { "content-type": "application/json" });
+  res.end(JSON.stringify(answer.body));
+});
+await new Promise((ready) => site.listen(0, "127.0.0.1", ready));
+test.after(() => site.close());
+const siteEnv = { OPENVIKING_INSTALL_SITE: `http://127.0.0.1:${site.address().port}`, OPENVIKING_SKIP_VERSION_CHECK: "" };
+
+function bundleAnswer(overrides = {}) {
+  return {
+    status: 200,
+    body: {
+      schema: 1,
+      harness: "cursor",
+      version: "9.9.9",
+      bundle_url: `file://${pinnedZip}`,
+      sha256: pinnedSha256,
+      source_url: `file://${tosBase}/releases/v9.9.9/openviking-source.zip`,
+      source_sha256: pinnedSha256,
+      ...overrides,
+    },
+  };
+}
+
+function resolverHome() {
+  const home = mkdtempSync(join(work, "home-"));
+  const bin = join(home, "bin");
+  const log = join(home, "curl.log");
+  mkdirSync(bin);
+  const realCurl = spawnSync("bash", ["-c", "command -v curl"], { encoding: "utf8" }).stdout.trim();
+  writeExecutable(join(bin, "curl"), `#!/bin/sh\necho "curl $*" >> "${log}"\nexec "${realCurl}" "$@"\n`);
+  const downloads = () => readFileSync(log, "utf8").split("\n").filter((line) => line.includes("memory-plugin-marketplace.zip"));
+  return { home, bin, downloads };
+}
+
+const cursorArgs = ["--harness", "cursor", "--lang", "en", "--url", "http://127.0.0.1:1933", "--api-key", "", "--yes"];
+const latestZip = `file://${tosBase}/releases/latest/memory-plugin-marketplace.zip`;
+
+test("the resolver pins the release each harness installs, asked for under its public name", async () => {
+  const { home, bin, downloads } = resolverHome();
+  const traeLog = join(home, "trae-cli.log");
+  writeExecutable(join(bin, "trae-cli"), `#!/bin/sh
+echo "$*" >> "${traeLog}"
+case "$*" in
+  "plugin marketplace list --json") echo "[]" ;;
+  "plugin list") echo "openviking-memory" ;;
+esac
+exit 0
+`);
+  answers = {
+    cursor: bundleAnswer(),
+    "trae-cli": { status: 200, body: { schema: 1, harness: "trae-cli", version: "9.9.9", git_url: pinnedGit } },
+  };
+  requests.length = 0;
+
+  const result = await runAsync(home, bin, [
+    "--harness", "cursor,trae-cli", "--lang", "en", "--url", "http://127.0.0.1:1933", "--api-key", "", "--yes",
+  ], siteEnv);
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+
+  assert.deepEqual(requests.map((r) => r.path).sort(), ["/install/v1/cursor.json", "/install/v1/trae-cli.json"]);
+  for (const { agent } of requests) assert.match(agent, /^openviking-installer\/dev \((darwin|linux); [^;)]+\)$/);
+  assert.equal(downloads().length, 1);
+  assert.match(downloads()[0], /releases\/v9\.9\.9\/memory-plugin-marketplace\.zip/);
+  assert.ok(readFileSync(traeLog, "utf8").split("\n").includes(`plugin marketplace add ${pinnedGit}`));
+  assert.match(result.stdout, /Release: 9\.9\.9/);
+  assert.ok(existsSync(join(home, ".openviking", "agent-integrations", "cursor", "scripts", "hook.mjs")));
+});
+
+test("an unavailable or untrusted resolver answer falls back to the latest release without a word", async () => {
+  for (const answer of [
+    { status: 503, body: { error: "unavailable" } },
+    bundleAnswer({ bundle_url: "https://elsewhere.example.invalid/memory-plugin-marketplace.zip" }),
+    bundleAnswer({ source_url: "https://elsewhere.example.invalid/openviking-source.zip" }),
+    bundleAnswer({ schema: 2 }),
+  ]) {
+    const { home, bin, downloads } = resolverHome();
+    answers = { cursor: answer };
+    requests.length = 0;
+    const result = await runAsync(home, bin, cursorArgs, siteEnv);
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.equal(requests.length, 1);
+    assert.deepEqual(downloads().map((line) => line.split(" ").pop()), [latestZip]);
+    assert.doesNotMatch(`${result.stdout}${result.stderr}`, /install\/v1|elsewhere|Release:/);
+  }
+});
+
+test("a bundle that does not match the resolver's checksum is not installed", async () => {
+  answers = { cursor: bundleAnswer({ sha256: "0".repeat(64) }) };
+  const { home, bin } = resolverHome();
+  const mismatch = await runAsync(home, bin, cursorArgs, siteEnv);
+  assert.equal(mismatch.status, 1, `${mismatch.stdout}\n${mismatch.stderr}`);
+  assert.match(mismatch.stderr, /does not match the checksum the release published/);
+  assert.match(mismatch.stderr, new RegExp(`got ${pinnedSha256}`));
+  assert.equal(existsSync(join(home, ".openviking", "memory-plugin-marketplace")), false);
+  assert.equal(existsSync(join(home, ".openviking", "agent-integrations", "cursor")), false);
+
+  // An explicit bundle URL replaces the resolver's, checksum included.
+  const overridden = await runAsync(home, bin, cursorArgs, { ...siteEnv, OPENVIKING_MARKETPLACE_ARCHIVE_URL: latestZip });
+  assert.equal(overridden.status, 0, `${overridden.stdout}\n${overridden.stderr}`);
+  assert.ok(existsSync(join(home, ".openviking", "agent-integrations", "cursor", "scripts", "hook.mjs")));
+});
+
+test("OPENVIKING_SKIP_VERSION_CHECK skips the version check", async () => {
+  answers = { cursor: bundleAnswer() };
+  requests.length = 0;
+  const { home, bin, downloads } = resolverHome();
+  const result = await runAsync(home, bin, cursorArgs, { ...siteEnv, OPENVIKING_SKIP_VERSION_CHECK: "1" });
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  assert.deepEqual(requests, []);
+  assert.deepEqual(downloads().map((line) => line.split(" ").pop()), [latestZip]);
 });
