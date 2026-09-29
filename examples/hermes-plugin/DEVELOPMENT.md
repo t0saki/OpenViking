@@ -80,7 +80,7 @@ install or package the OpenViking server.
 <!-- module-map:start -->
 ## Module map
 
-The provider was one `__init__.py`. Its code is moving into `core/` without
+The provider was one `__init__.py`. Phase 2b moved its code into `core/` without
 changes to the moved bodies, so an upstream patch to a function applies to the
 same function in the module listed here. Provider methods live in mixin classes
 that `OpenVikingMemoryProvider` inherits. The class itself, `register()`
@@ -91,7 +91,9 @@ Only `core/host.py` imports Hermes (`agent`, `hermes_cli`, `hermes_constants`,
 `tools`, `tui_gateway`, `utils`); function-level Hermes imports in moved code read
 `from .host import <name>` and still import at call time. No core module imports
 `__init__.py` or `_setup.py`. Core modules log through `core/log.py`, which returns
-the logger named after the plugin package, the same one `__init__.py` uses.
+the logger named after the plugin package, the same one `__init__.py` uses;
+`core/mirror.py` still uses the fixed name `plugins.memory.openviking` it had in
+`native_memory_mirror.py`. `tests/test_structure.py` checks the import rules.
 Tests reach a core module through the `core_module` fixture, because Hermes loads
 the plugin under its own namespace.
 
