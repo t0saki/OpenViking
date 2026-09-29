@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Write the Claude Code URL marketplace for `install.sh --dist tos`: the staged
+# Write the Claude Code URL marketplace the installer registers: the staged
 # directory marketplace's entry, re-pointed at the release's immutable plugin
 # zip. Claude Code fetches both over HTTPS without git, and updates an
 # installed plugin when the entry's version changes, so the version is the

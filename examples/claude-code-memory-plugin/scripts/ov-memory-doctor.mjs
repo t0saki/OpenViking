@@ -129,7 +129,7 @@ function checkInstall(report, { cliOnPath }) {
     const entry = known.data[MARKETPLACE];
     if (!entry) {
       report.fail(`marketplace '${MARKETPLACE}' is not registered`, `known: ${Object.keys(known.data).join(", ") || "(none)"}`,
-        "re-run the installer, or: claude plugin marketplace add ~/.openviking/marketplaces/openviking-claude");
+        "re-run the installer: bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/memory-plugin-shared/install.sh) --harness claude");
     } else {
       const source = entry.source || {};
       const location = entry.installLocation || source.path || "";

@@ -16,7 +16,7 @@ Long-term semantic memory for Claude Code, powered by [OpenViking](https://githu
 bash <(curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/main/examples/memory-plugin-shared/install.sh) --harness claude
 ```
 
-macOS / Linux only. Claude Code and Codex share this installer (drop `--harness claude` to pick interactively): it asks for your language (English/中文), the download source (GitHub, or a TOS mirror for GitHub-blocked regions — pass `--dist tos`), and your OpenViking credentials, then installs `openviking-memory` via the remote marketplace. The stdio MCP proxy reads `ovcli.conf` at runtime, so no shell wrapper or `.mcp.json` rendering is needed. Re-running is safe.
+macOS / Linux only. Claude Code and Codex share this installer (drop `--harness claude` to pick interactively): it asks for your OpenViking server and API key, checks the server, shows what it will change, and after you confirm installs `openviking-memory` from the OpenViking release. Claude Code 2.1.224 and newer then updates the plugin on its own. The stdio MCP proxy reads `ovcli.conf` at runtime, so no shell wrapper or `.mcp.json` rendering is needed. Re-running is safe.
 
 If you'd rather do it by hand, follow the four steps below.
 

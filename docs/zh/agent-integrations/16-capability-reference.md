@@ -193,7 +193,7 @@ per-harness 章节（档案卡）只写差异；所有共享事实均在本章�
 
 统一安装脚本 `examples/memory-plugin-shared/install.sh` 覆盖 11 个 harness id：`claude, codex, cursor, trae, trae-cn, trae-cli, zcode, kimicode, opencode, pi, dsh`（其中 openclaw 走自有渠道；`trae-cli` 则复用 codex 安装流程，[§3.1.1](#_3-1-1-判定矩阵)）。要点如下：
 
-- 双分发：`--dist github|tos`；三源：`--source remote|archive|dev`。以 `bash <(curl …)` 方式执行时会从 `/dev/tty` 读取输入，从而保留交互。
+- 安装源与交互：全部从火山引擎 TOS 上的 OpenViking 发布包安装；在仓库 checkout 中运行时改用该 checkout（`--source archive|dev`）。以 `bash <(curl …)` 方式执行时会从 `/dev/tty` 读取输入，从而保留交互。
 - 官方 docs 的规范一键命令是不带 `--harness` 的裸命令（执行后进入 TUI 多选）；而各插件自带的 setup-helper 转发脚本在调用时会自动补 `--harness`。
 - 幂等合并：hooks/mcp 条目按 `OPENVIKING_INTEGRATION_ID` 标记识别自有条目，做到剔旧追新的同时不动第三方；写入采用原子操作——先备份 `.bak`，写 tmp 后 rename 覆盖，权限 0600。
 - 凭据向导写 `~/.openviking/ovcli.conf`：三选一（本地 `http://127.0.0.1:1933` / 火山云 `https://api.vikingdb.cn-beijing.volces.com/openviking` / 自定义），已有配置先展示当前值再问"沿用/重配"，API key 掩码。

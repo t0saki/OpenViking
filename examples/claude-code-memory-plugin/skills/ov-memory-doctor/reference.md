@@ -18,8 +18,8 @@ and `OPENVIKING_PENDING_DIR` relocate individual pieces.
 | `~/.claude/plugins/known_marketplaces.json` | Marketplace `openviking` → `source` (`directory` path, `github`, or `url` of the TOS manifest), `installLocation`, `autoUpdate`. |
 | `~/.claude/plugins/cache/openviking/openviking-memory/<version>/` | The copy Claude Code actually runs. Keyed by `plugin.json` version. |
 | `~/.claude/settings.json` | `enabledPlugins`, `statusLine`, optional `env`, legacy `hooks`. |
-| `~/.openviking/marketplaces/openviking-claude/` | Installer-generated directory marketplace (GitHub dist) whose manifest points at `git-subdir` `examples/claude-code-memory-plugin`. |
-| `~/.openviking/memory-plugin-marketplace/` | Unpacked TOS archive (TOS dist); the Claude Code marketplace only before Claude Code 2.1.224, and cannot self-update. |
+| `~/.openviking/marketplaces/openviking-claude/` | Directory marketplace that older installers generated for GitHub installs; its manifest points at `git-subdir` `examples/claude-code-memory-plugin`. The installer no longer writes it, and a re-run moves the registration to the TOS URL marketplace. |
+| `~/.openviking/memory-plugin-marketplace/` | Unpacked plugin bundle from the release; the Claude Code marketplace only before Claude Code 2.1.224, and cannot self-update. |
 | `~/.openviking/state/` | `last-recall.json`, `last-capture.json`, `last-session-event.json`, `daily-stats.json`, `server-probe.json`, `host-cli-probe.json`, `context-face.json`, `recall-digest.json`, `ws-peer-<session>.json`, `ws-identity-<hash>.json` (60s cache of the git identity behind the peer). Anything else there is residue. |
 | `~/.openviking/last_inject.md` | Full text of the last SessionStart injection. |
 | `~/.openviking/logs/cc-hooks.log` | JSONL hook + proxy log; written only when `OPENVIKING_DEBUG=1` or `debug: true`. |
