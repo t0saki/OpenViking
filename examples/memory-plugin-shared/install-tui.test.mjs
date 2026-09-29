@@ -489,6 +489,7 @@ ${mainMarker}`));
   assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
   assert.match(result.stdout, /\[2\/5\] Review/);
   assert.match(result.stdout, /~\/\.cursor\/hooks\.json/);
+  assert.match(result.stdout, /Shared hook runtime: ~\/\.openviking\/agent-integrations\/memory-plugin-shared\n/);
   assert.match(result.stdout, /Cancelled; nothing was changed\./);
   assert.doesNotMatch(`${result.stdout}${result.stderr}`, /secret-api-key/);
   assert.deepEqual(readdirSync(home), ["bin"]);

@@ -2835,7 +2835,7 @@ plan_paths() { # plan_paths <label> <path...>
 }
 
 print_plan() {
-  local bundle fallback account user
+  local bundle fallback account user trae_home
   if [ "$SOURCE_MODE" = "dev" ]; then bundle="$(short_path "$CHECKOUT_DIR/examples")"; else bundle="$(short_path "$MKT_DIR_ARCHIVE")"; fi
   fallback="$(t 'fallback:' '失败时改用') $bundle"
   account="$(cred_value "$CRED_ACCOUNT" "$CUR_ACCOUNT")"
@@ -2880,6 +2880,13 @@ EOF
       fi
       plan_item "$CODEX_BIN plugin add $PLUGIN_ID"
       if is_native_codex_bin; then plan_item "$(short_path "$CODEX_CONFIG")"; fi
+      case "$(bin_basename "$CODEX_BIN")" in
+        trae-cli|traecli|traex)
+          trae_home="${TRAE_HOME:-$HOME/.trae}"
+          plan_paths "$(t 'Removes the deprecated TRAE CLI Hooks integration' '移除弃用的 TRAE CLI Hooks 集成')" \
+            "${TRAECLI_HOME:-$trae_home/cli}/hooks.json" "$trae_home/traecli.toml" "$OV_HOME/agent-integrations/trae-cli"
+          ;;
+      esac
     done <<EOF
 $CODEX_BINS
 EOF
@@ -2900,6 +2907,9 @@ EOF
   fi
   if contains_harness zcode; then
     plan_paths ZCode "$HOME/.zcode/cli/config.json" "$HOME/.zcode/hooks.json" "$(zcode_mcp_path)" "$OV_HOME/agent-integrations/zcode"
+  fi
+  if contains_harness cursor || contains_harness trae || contains_harness trae-cn || contains_harness zcode; then
+    plan_paths "$(t 'Shared hook runtime' '共享 hook 运行时')" "$OV_HOME/agent-integrations/memory-plugin-shared"
   fi
   if contains_harness kimicode; then
     plan_paths "Kimi Code" "${KIMI_CODE_HOME:-$HOME/.kimi-code}/plugins" "$OV_HOME/agent-integrations/kimicode"
