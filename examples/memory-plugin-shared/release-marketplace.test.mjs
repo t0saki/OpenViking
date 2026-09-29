@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const installer = join(ROOT, "examples", "memory-plugin-shared", "install.sh");
@@ -13,6 +15,7 @@ const stageScript = join(ROOT, ".github", "scripts", "stage-memory-plugin-market
 const archiveCheck = join(ROOT, ".github", "scripts", "check-marketplace-archive.mjs");
 const claudeMarketplaceScript = join(ROOT, ".github", "scripts", "generate-claude-marketplace-json.sh");
 const stampScript = join(ROOT, ".github", "scripts", "stamp-installer-version.sh");
+const publishGitScript = join(ROOT, ".github", "scripts", "publish-dumb-git-repo.sh");
 
 function run(command, args, options = {}) {
   return spawnSync(command, args, {
@@ -429,6 +432,116 @@ test("published installer copies carry the release version and nothing else chan
       assert.equal(existsSync(join(tmp, "unsafe.sh")), false);
     }
   } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+// A stand-in for `aws s3 cp|sync` against one directory per bucket. It logs
+// each call and applies it the way the real command would for these arguments.
+const FAKE_AWS = `#!/usr/bin/env node
+const fs = require("node:fs");
+const path = require("node:path");
+const [, op, ...rest] = process.argv.slice(2);
+const args = [];
+const flags = [];
+for (let i = 0; i < rest.length; i += 1) {
+  if (!rest[i].startsWith("--")) args.push(rest[i]);
+  else if (["--endpoint-url", "--cache-control"].includes(rest[i])) flags.push(rest[i], rest[++i]);
+  else flags.push(rest[i]);
+}
+fs.appendFileSync(process.env.FAKE_AWS_LOG, JSON.stringify({ op, args, flags }) + "\\n");
+const local = (url) => (url.startsWith("s3://") ? path.join(process.env.FAKE_S3, url.slice(5)) : url);
+const [src, dest] = args.map(local);
+// Git writes pack files read-only, so replace rather than overwrite.
+const copy = (from, to) => {
+  if (fs.statSync(from).isDirectory()) {
+    for (const entry of fs.readdirSync(from)) copy(path.join(from, entry), path.join(to, entry));
+    return;
+  }
+  fs.mkdirSync(path.dirname(to), { recursive: true });
+  fs.rmSync(to, { force: true });
+  fs.copyFileSync(from, to);
+};
+copy(src, dest);
+if (op === "sync" && flags.includes("--delete")) {
+  for (const entry of fs.readdirSync(dest, { recursive: true })) {
+    const target = path.join(dest, entry);
+    if (fs.statSync(target).isFile() && !fs.existsSync(path.join(src, entry))) fs.rmSync(target);
+  }
+}
+`;
+
+test("the Codex git marketplace is replaced packs first, refs next, old objects last", async () => {
+  const tmp = mkdtempSync(join(tmpdir(), "openviking-dumb-git-"));
+  const gitEnv = { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1", NO_PROXY: "*", no_proxy: "*" };
+  const git = (args, cwd) => {
+    const result = run("git", args, { cwd, env: gitEnv });
+    assert.equal(result.status, 0, `git ${args.join(" ")}\n${result.stdout}\n${result.stderr}`);
+  };
+  // Built the way the release workflow builds it.
+  const buildRepo = (release) => {
+    const src = join(tmp, `${release}-src`);
+    mkdirSync(src);
+    writeFileSync(join(src, "release.txt"), release);
+    git(["init", "-q", "-b", "main"], src);
+    git(["add", "-A"], src);
+    git(["-c", "user.email=release@example.invalid", "-c", "user.name=Release", "commit", "-qm", release], src);
+    const bare = join(tmp, `${release}.git`);
+    git(["clone", "-q", "--bare", src, bare], tmp);
+    git(["repack", "-adq"], bare);
+    git(["update-server-info"], bare);
+    return bare;
+  };
+
+  const bucket = join(tmp, "s3");
+  const bin = join(tmp, "bin");
+  mkdirSync(bin);
+  writeFileSync(join(bin, "aws"), FAKE_AWS, { mode: 0o755 });
+  const log = join(tmp, "aws.log");
+  const dest = "s3://bucket/plugins/memory-plugins.git";
+  const publish = (repo) => {
+    rmSync(log, { force: true });
+    const published = run("bash", [publishGitScript, repo, `${dest}/`, "--endpoint-url", "https://tos.example.invalid"], {
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, FAKE_S3: bucket, FAKE_AWS_LOG: log },
+    });
+    assert.equal(published.status, 0, `${published.stdout}\n${published.stderr}`);
+    return readFileSync(log, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+  };
+
+  const server = createServer((req, res) => {
+    const file = join(bucket, decodeURIComponent(req.url.split("?")[0]));
+    if (!existsSync(file)) {
+      res.writeHead(404).end();
+      return;
+    }
+    res.writeHead(200, { "content-type": "application/octet-stream" }).end(readFileSync(file));
+  });
+  await new Promise((listening) => server.listen(0, "127.0.0.1", listening));
+  try {
+    publish(buildRepo("v1"));
+    const v2 = buildRepo("v2");
+    const calls = publish(v2);
+
+    const repoPath = (url) => url.slice(dest.length).replace(/^\//, "");
+    assert.deepEqual(
+      calls.map(({ op, args }) => [op, repoPath(args[1])]),
+      [["cp", "objects/pack"], ["cp", "objects/info/packs"], ["cp", "packed-refs"], ["cp", "info/refs"], ["cp", "HEAD"], ["sync", ""]],
+    );
+    assert.ok(calls.at(-1).flags.includes("--delete"));
+    for (const { flags } of calls) {
+      assert.equal(flags[flags.indexOf("--endpoint-url") + 1], "https://tos.example.invalid");
+      assert.match(flags[flags.indexOf("--cache-control") + 1], /no-store/);
+    }
+
+    // The previous release's pack is gone and the new one is what clients get.
+    const published = join(bucket, "bucket", "plugins", "memory-plugins.git");
+    assert.deepEqual(readdirSync(join(published, "objects", "pack")).sort(), readdirSync(join(v2, "objects", "pack")).sort());
+    const clone = join(tmp, "clone");
+    const { port } = server.address();
+    await promisify(execFile)("git", ["clone", "-q", `http://127.0.0.1:${port}/bucket/plugins/memory-plugins.git`, clone], { env: gitEnv });
+    assert.equal(readFileSync(join(clone, "release.txt"), "utf8"), "v2");
+  } finally {
+    server.close();
     rmSync(tmp, { recursive: true, force: true });
   }
 });
