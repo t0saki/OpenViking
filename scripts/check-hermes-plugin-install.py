@@ -94,7 +94,7 @@ def check(host, repository, root, timeout):
         for name in (
             "__init__.py",
             "_setup.py",
-            "native_memory_mirror.py",
+            "core/mirror.py",
             "plugin.yaml",
             "pyproject.toml",
         ):

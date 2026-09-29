@@ -73,7 +73,7 @@ class _FakeVikingClient:
 def mirror(external_provider):
     home, _, module, _ = external_provider("mirror")
     mirror_type = importlib.import_module(
-        module.__name__ + ".native_memory_mirror"
+        module.__name__ + ".core.mirror"
     ).NativeMemoryMirror
 
     def provider(client):

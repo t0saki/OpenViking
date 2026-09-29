@@ -20,11 +20,15 @@ import logging
 import queue
 import threading
 import time
+import uuid
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from agent.memory_provider import spawn_context_thread
-from utils import atomic_json_write
+from .host import atomic_json_write, spawn_context_thread
+from .settings import _DEFAULT_RECALL_REQUEST_TIMEOUT_SECONDS
+
+# Built-in memory tool `target` -> mirror subdir (user facts -> preferences, agent notes -> patterns).
+_MEMORY_WRITE_TARGET_SUBDIR_MAP = {"user": "preferences", "memory": "patterns"}
 
 logger = logging.getLogger("plugins.memory.openviking")
 
@@ -166,7 +170,7 @@ class NativeMemoryMirror:
     def _registry_path(self) -> Path:
         root = str(getattr(self._provider, "_hermes_home", "") or "").strip()
         if not root:
-            from hermes_constants import get_hermes_home
+            from .host import get_hermes_home
 
             root = str(get_hermes_home())
         return Path(root) / _REGISTRY_RELATIVE_PATH
@@ -389,3 +393,36 @@ def shutdown_native_memory_mirror(provider: Any, timeout: float = 5.0) -> None:
         mirror = getattr(provider, _MIRROR_ATTR, None)
     if mirror is not None:
         mirror.shutdown(timeout=timeout)
+
+
+class MirrorMixin:
+    """Methods of ``OpenVikingMemoryProvider`` moved here unchanged; mixed into that class."""
+
+    def _build_memory_uri(
+        self,
+        subdir: str,
+        *,
+        client=None,
+        timeout: Optional[float] = None,
+        require_confirmed_user: bool = False,
+    ) -> str:
+        """Explicit-uid user memory URI, under the configured peer when one is set.
+
+        The peer is read from the captured client (not the provider) so a config
+        reload mid-write can't borrow a later peer; an empty peer there is intentional.
+        getattr(): hand-wired providers (``__new__``) may lack ``_client`` / ``_agent``.
+        """
+        # Explicit-uid URIs are canonical across supported OpenViking versions. The
+        # uid-less shorthand was removed upstream, and `viking://~` is newer.
+        active_client = client if client is not None else getattr(self, "_client", None)
+        agent = str(getattr(active_client, "_agent", getattr(self, "_agent", "")) or "").strip()
+        peer_prefix = f"peers/{agent}/" if agent else ""
+        identity_timeout = timeout
+        if require_confirmed_user and identity_timeout is None:
+            identity_timeout = _DEFAULT_RECALL_REQUEST_TIMEOUT_SECONDS
+        user_space = self._user_space(
+            active_client,
+            timeout=identity_timeout,
+            require_confirmed=require_confirmed_user,
+        )
+        return f"viking://user/{user_space}/{peer_prefix}memories/{subdir}/mem_{uuid.uuid4().hex[:12]}.md"

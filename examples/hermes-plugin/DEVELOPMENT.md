@@ -163,6 +163,7 @@ Autostart of a local openviking-server and its port diagnostics.
 The ``viking_*`` tool catalog, tool argument checks and the tool handlers.
 
 - From `__init__.py`: `_REMOTE_RESOURCE_PREFIXES`, `_READ_BATCH_LIMIT`, `_READ_BATCH_FULL_LIMIT`, `_LEVEL_ENDPOINTS`, `_LEVEL_MAX_CHARS`, `_GENERATED_MEMORY_SUMMARY_FILENAMES`, `_tool_schema`, `_str`, `SEARCH_SCHEMA`, `READ_SCHEMA`, `BROWSE_SCHEMA`, `REMEMBER_SCHEMA`, `FORGET_SCHEMA`, `ADD_RESOURCE_SCHEMA`, `_TOOL_SCHEMAS`, `_OPENVIKING_RECALL_TOOL_NAMES`, `_TOOL_HANDLERS`, `_SYSTEM_PROMPT_TOOL_GUIDANCE`, `_zip_directory`, `_is_windows_absolute_path`, `_validate_forget_memory_uri`, `_is_local_path_reference`
+- `OpenVikingMemoryProvider` methods, now in `ToolsMixin`: `_normalize_summary_uri`, `_is_directory_uri`, `_tool_search`, `_read_uri_payload`, `_tool_read`, `_tool_browse`, `_tool_remember`, `_tool_forget`, `_tool_add_resource`
 
 ### `core/transcript.py`
 
@@ -178,23 +179,48 @@ Connection settings, profile environment, client lifecycle, autostart and commit
 - From `__init__.py`: `_FAILED_CONFIG_RETRY_COOLDOWN_SECONDS`, `_RETRY_LATER`, `_FIX_ENDPOINT`, `_HTTPX_MISSING`, `_load_hermes_openviking_config`, `_profile_openviking_env`, `_resolve_connection_settings`, `_emit_runtime`, `_runtime_openviking_timeout_message`, `_CommitScope`
 - `OpenVikingMemoryProvider` methods, now in `ConnectionMixin`: `_start_runtime_openviking_waiter`, `_settings_tuple`, `_build_client`, `_publish_client`, `_capture_commit_scope`, `_finish_runtime_openviking_start`, `_handle_runtime_openviking_unreachable`, `_ensure_client`, `_profile_config_and_env`, `_resolve_bound_connection_settings`, `_in_cooldown`, `_ensure_client_locked`, `_new_client`, `_user_space`
 
+### `core/recall.py`
+
+Prefetch: recall routing, deadlines, context-mode recall and recall status.
+
+- From `__init__.py`: `_RECALL_QUERY_MIN_CHARS`, `_RECALL_MIN_TIMEOUT_SECONDS`, `_PREFETCH_BUDGET_SECONDS`, `_RECALL_FALLBACK_RESERVE_SECONDS`, `_SESSION_START_DEFAULT_KEY`, `_RECALL_PENDING, _RECALL_INJECTED, _RECALL_EMPTY`, `_RECALL_TIMEOUT, _RECALL_UNAVAILABLE, _RECALL_ERROR`, `_RECALL_OUTCOMES_KEPT`, `_RECALL_STATUS_LABEL`, `_RecallProbe`
+- `OpenVikingMemoryProvider` methods, now in `RecallMixin`: `_prefetch_context`, `_run_prefetch_parts`, `_prefetch_budget`, `_recall_budget`, `_begin_recall`, `_finish_recall`, `_recall_record`, `_remaining_recall_timeout`, `_fallback_request_timeout`, `_search_prefetch_context`, `_recall_config`
+
+### `core/recall_list.py`
+
+List-mode recall: search/find, candidate ranking and entry building.
+
+- From `__init__.py`: `_RECALL_SUMMARY_KEYS`
+- `OpenVikingMemoryProvider` methods, now in `RecallListMixin`: `_post_prefetch_search`, `_clamp_score`, `_recall_abstract`, `_select_recall_candidates`, `_build_prefetch_entries`
+
+### `core/profile.py`
+
+The session-start memory block: profile, preferences and entities.
+
+- From `__init__.py`: `_SESSION_START_SUFFIXES`, `_SESSION_START_LIST_PARAMS`
+- `OpenVikingMemoryProvider` methods, now in `ProfileMixin`: `_claim_session_start`, `_settle_session_start`, `_rearm_session_start`, `_profile_token_budget`, `_extract_memory_listing`, `_token_units`, `_estimate_tokens`, `_take_tokens`, `_truncate_profile_content`, `_assemble_session_start_memory_block`, `_format_memory_listing`, `_build_session_start_memory_block`, `_session_start_memory_context`
+
+### `core/session_writer.py`
+
+Turn upload, tracked workers, session commit and the exit commit.
+
+- From `__init__.py`: `_SESSION_DRAIN_TIMEOUT`, `_DEFERRED_COMMIT_TIMEOUT`, `_SESSION_MESSAGE_BATCH_LIMIT`, `_SYNC_TRACE_ENV`, `_NON_PRIMARY_AGENT_CONTEXTS`, `_exit_registry`, `_exit_registry_lock`, `_exit_hook_registered`, `_EXIT_COMMIT_BUDGET`, `_register_for_exit`, `_deregister_for_exit`, `_atexit_commit_sessions`, `_TurnUpload`
+- `OpenVikingMemoryProvider` methods, now in `SessionWriterMixin`: `_spawn_tracked`, `_join_all`, `_drain_finalizers`, `_drain_writers`, `_has_committed_session`, `_mark_session_committed`, `_claim_deferred_sid`, `_maybe_commit_live_session`, `_session_needs_commit`, `_commit_session`, `_finalize_session_async`, `_end_session`, `_has_uncommitted_data`
+
 ### `core/state_store.py`
 
 Pending-session markers, run locks and recovery of dead runs' sessions.
 
 - From `__init__.py`: `fcntl`, `_PENDING_SESSIONS_RELATIVE_DIR`, `_RUN_LOCKS_RELATIVE_DIR`, `_LEGACY_RECOVERY_LOCK_FILENAME`, `_LOCK_BUSY_ERRNOS`
+- `OpenVikingMemoryProvider` methods, now in `StateStoreMixin`: `_state_path`, `_flock_open`, `_flock_close`, `_acquire_run_lock`, `_release_run_lock`, `_claim_owner_run_for_recovery`, `_mark_session_pending`, `_clear_pending_session`, `_pending_sessions`, `_recover_pending_sessions`
 
-### Not moved yet
+### `core/mirror.py`
 
-Still in `__init__.py` or `native_memory_mirror.py`; planned home:
+Mirror of Hermes native MEMORY.md / USER.md entries into OpenViking.
 
-- `core/tools.py`: methods `_normalize_summary_uri`, `_is_directory_uri`, `_tool_search`, `_read_uri_payload`, `_tool_read`, `_tool_browse`, `_tool_remember`, `_tool_forget`, `_tool_add_resource` (`ToolsMixin`)
-- `core/recall.py`: `_RECALL_QUERY_MIN_CHARS`, `_RECALL_MIN_TIMEOUT_SECONDS`, `_PREFETCH_BUDGET_SECONDS`, `_RECALL_FALLBACK_RESERVE_SECONDS`, `_SESSION_START_DEFAULT_KEY`, `_RECALL_PENDING, _RECALL_INJECTED, _RECALL_EMPTY`, `_RECALL_TIMEOUT, _RECALL_UNAVAILABLE, _RECALL_ERROR`, `_RECALL_OUTCOMES_KEPT`, `_RECALL_STATUS_LABEL`, `_RecallProbe`; methods `_prefetch_context`, `_run_prefetch_parts`, `_prefetch_budget`, `_recall_budget`, `_begin_recall`, `_finish_recall`, `_recall_record`, `_remaining_recall_timeout`, `_fallback_request_timeout`, `_search_prefetch_context`, `_recall_config` (`RecallMixin`)
-- `core/recall_list.py`: `_RECALL_SUMMARY_KEYS`; methods `_post_prefetch_search`, `_clamp_score`, `_recall_abstract`, `_select_recall_candidates`, `_build_prefetch_entries` (`RecallListMixin`)
-- `core/profile.py`: `_SESSION_START_SUFFIXES`, `_SESSION_START_LIST_PARAMS`; methods `_claim_session_start`, `_settle_session_start`, `_rearm_session_start`, `_profile_token_budget`, `_extract_memory_listing`, `_token_units`, `_estimate_tokens`, `_take_tokens`, `_truncate_profile_content`, `_assemble_session_start_memory_block`, `_format_memory_listing`, `_build_session_start_memory_block`, `_session_start_memory_context` (`ProfileMixin`)
-- `core/session_writer.py`: `_SESSION_DRAIN_TIMEOUT`, `_DEFERRED_COMMIT_TIMEOUT`, `_SESSION_MESSAGE_BATCH_LIMIT`, `_SYNC_TRACE_ENV`, `_NON_PRIMARY_AGENT_CONTEXTS`, `_exit_registry`, `_exit_registry_lock`, `_exit_hook_registered`, `_EXIT_COMMIT_BUDGET`, `_register_for_exit`, `_deregister_for_exit`, `_atexit_commit_sessions`, `_TurnUpload`; methods `_spawn_tracked`, `_join_all`, `_drain_finalizers`, `_drain_writers`, `_has_committed_session`, `_mark_session_committed`, `_claim_deferred_sid`, `_maybe_commit_live_session`, `_session_needs_commit`, `_commit_session`, `_finalize_session_async`, `_end_session`, `_has_uncommitted_data` (`SessionWriterMixin`)
-- `core/state_store.py`: methods `_state_path`, `_flock_open`, `_flock_close`, `_acquire_run_lock`, `_release_run_lock`, `_claim_owner_run_for_recovery`, `_mark_session_pending`, `_clear_pending_session`, `_pending_sessions`, `_recover_pending_sessions` (`StateStoreMixin`)
-- `core/mirror.py`: `_MEMORY_WRITE_TARGET_SUBDIR_MAP`; from `native_memory_mirror.py` `logger`, `_REGISTRY_VERSION`, `_REGISTRY_RELATIVE_PATH`, `_SUPPORTED_ACTIONS`, `_POLL_SECONDS`, `_REGISTRY_LOCKS_GUARD`, `_REGISTRY_LOCKS`, `_MappingError`, `_registry_lock`, `_connection_fingerprint`, `NativeMemoryMirror`, `_MIRROR_ATTR`, `enqueue_native_memory_write`, `shutdown_native_memory_mirror`; methods `_build_memory_uri` (`MirrorMixin`)
+- From `__init__.py`: `_MEMORY_WRITE_TARGET_SUBDIR_MAP`
+- From `native_memory_mirror.py`: `logger`, `_REGISTRY_VERSION`, `_REGISTRY_RELATIVE_PATH`, `_SUPPORTED_ACTIONS`, `_POLL_SECONDS`, `_REGISTRY_LOCKS_GUARD`, `_REGISTRY_LOCKS`, `_MappingError`, `_registry_lock`, `_connection_fingerprint`, `NativeMemoryMirror`, `_MIRROR_ATTR`, `enqueue_native_memory_write`, `shutdown_native_memory_mirror`
+- `OpenVikingMemoryProvider` methods, now in `MirrorMixin`: `_build_memory_uri`
 
 <!-- module-map:end -->
 

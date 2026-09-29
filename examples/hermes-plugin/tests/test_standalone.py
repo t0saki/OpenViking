@@ -1036,7 +1036,9 @@ def _wire_live_client(provider, sid, pending_tokens=1):
     return client
 
 
-def test_soft_eviction_cycles_do_not_grow_exit_registry(external_provider, monkeypatch, inject_deps):
+def test_soft_eviction_cycles_do_not_grow_exit_registry(
+    external_provider, monkeypatch, inject_deps, core_module
+):
     """Gateway soft eviction ends a session without shutdown(); the dropped provider must be collectable."""
     import atexit
     import gc
@@ -1048,7 +1050,7 @@ def test_soft_eviction_cycles_do_not_grow_exit_registry(external_provider, monke
     inject_deps(module, first, health=lambda *_: ("healthy", ""))
     hooks = []
     monkeypatch.setattr(atexit, "register", hooks.append)
-    assert not module._exit_hook_registered and len(module._exit_registry) == 0
+    assert not core_module(module, "session_writer")._exit_hook_registered and len(module._exit_registry) == 0
 
     dropped = []
     for cycle in range(5):
