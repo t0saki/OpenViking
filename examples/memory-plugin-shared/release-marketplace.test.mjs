@@ -108,7 +108,7 @@ test("TOS installs register Claude Code's URL marketplace when the CLI supports 
       rmSync(join(fake, "calls.log"), { force: true });
       const result = run("bash", [
         installer, "--harness", "claude", "--dist", "tos", "--lang", "en",
-        "--url", "http://127.0.0.1:1933", "--api-key", "", "--no-statusline", "--yes",
+        "--url", "http://127.0.0.1:9", "--api-key", "", "--no-statusline", "--yes",
       ], {
         env: {
           ...process.env,
@@ -195,7 +195,7 @@ test("a Claude-format wrapper sharing Claude Code's config keeps the URL marketp
 
     const result = run("bash", [
       installer, "--harness", "claude", "--claude-bin", "claude,claude-wrap", "--dist", "tos", "--lang", "en",
-      "--url", "http://127.0.0.1:1933", "--api-key", "", "--no-statusline", "--yes",
+      "--url", "http://127.0.0.1:9", "--api-key", "", "--no-statusline", "--yes",
     ], {
       env: {
         ...process.env,
@@ -244,7 +244,7 @@ test("release marketplace archive supports ZCode and pi TOS installs", () => {
       "--dist", "tos",
       "--source", "archive",
       "--lang", "en",
-      "--url", "http://127.0.0.1:1933",
+      "--url", "http://127.0.0.1:9",
       "--api-key", "",
       "--yes",
     ], {
@@ -308,7 +308,7 @@ test("release marketplace archive supports ZCode and pi TOS installs", () => {
       "--dist", "tos",
       "--source", "archive",
       "--lang", "en",
-      "--url", "http://127.0.0.1:1933",
+      "--url", "http://127.0.0.1:9",
       "--api-key", "",
       "--yes",
     ], {
@@ -329,7 +329,7 @@ test("release marketplace archive supports ZCode and pi TOS installs", () => {
 
     writeFileSync(join(bin, "pi"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
     const piArgs = [installer, "--harness", "pi", "--dist", "tos", "--source", "archive",
-      "--lang", "en", "--url", "http://127.0.0.1:1933", "--api-key", "", "--yes"];
+      "--lang", "en", "--url", "http://127.0.0.1:9", "--api-key", "", "--yes"];
     const piEnv = { ...process.env, HOME: home, PATH: bin + ":" + process.env.PATH,
       OPENVIKING_HOME: join(home, ".openviking"),
       OPENVIKING_MARKETPLACE_ARCHIVE_URL: "file://" + join(tmp, "memory-plugin-marketplace.zip"), OPENVIKING_SKIP_VERSION_CHECK: "1" };

@@ -60,7 +60,7 @@ function runInstall(home, harnesses = "cursor,trae,trae-cn,zcode") {
     "--harness", harnesses,
     "--source", "dev",
     "--lang", "en",
-    "--url", "http://127.0.0.1:1933",
+    "--url", "http://127.0.0.1:9",
     "--api-key", "",
     "--yes",
   ]);
@@ -88,7 +88,7 @@ test("Kimi installs a self-contained native bundle without legacy config edits",
       "--harness", "kimicode",
       "--source", "dev",
       "--lang", "en",
-      "--url", "http://127.0.0.1:1933",
+      "--url", "http://127.0.0.1:9",
       "--api-key", "",
       "--yes",
     ]);
@@ -181,7 +181,7 @@ exit 0
       "--harness", "trae-cli",
       "--source", "dev",
       "--lang", "en",
-      "--url", "http://127.0.0.1:1933",
+      "--url", "http://127.0.0.1:9",
       "--api-key", "",
       "--yes",
     ], {
@@ -245,7 +245,7 @@ exit 0
       "--harness", "trae-cli",
       "--source", "dev",
       "--lang", "en",
-      "--url", "http://127.0.0.1:1933",
+      "--url", "http://127.0.0.1:9",
       "--api-key", "",
       "--yes",
     ], { PATH: `${binDir}:${dirname(installedNode)}:/usr/bin:/bin` });
@@ -292,7 +292,7 @@ exit 0
       "--harness", "trae-cli",
       "--source", "dev",
       "--lang", "en",
-      "--url", "http://127.0.0.1:1933",
+      "--url", "http://127.0.0.1:9",
       "--api-key", "",
       "--yes",
     ], { PATH: `${binDir}:${dirname(installedNode)}:/usr/bin:/bin` });
@@ -516,7 +516,7 @@ for (const client of ["cursor", "trae", "trae-cn", "zcode"]) {
         "--harness", client,
         "--source", "dev",
         "--lang", "en",
-        "--url", "http://127.0.0.1:1933",
+        "--url", "http://127.0.0.1:9",
         "--api-key", "",
         "--yes",
       ]);
@@ -609,7 +609,7 @@ test("cursor installs and uninstalls through a symlinked OPENVIKING_HOME", () =>
       "--harness", "cursor",
       "--source", "dev",
       "--lang", "en",
-      "--url", "http://127.0.0.1:1933",
+      "--url", "http://127.0.0.1:9",
       "--api-key", "",
       "--yes",
     ], { OPENVIKING_HOME: ovHome });
@@ -642,7 +642,7 @@ test("malformed existing agent JSON fails without overwriting user configuration
       "--harness", "cursor",
       "--source", "dev",
       "--lang", "en",
-      "--url", "http://127.0.0.1:1933",
+      "--url", "http://127.0.0.1:9",
       "--api-key", "",
       "--yes",
     ]);

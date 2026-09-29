@@ -423,6 +423,9 @@ function detachedInstaller(t, transform = (source) => source) {
   writeFileSync(script, transform(installerSource));
   const dshLog = join(dir, "dsh.log");
   writeFileSync(join(bin, "dsh"), `#!/bin/sh\necho "$*" >> "${dshLog}"\necho "@openviking/dsh-memory-plugin openviking-memory-runtime"\n`, { mode: 0o755 });
+  // Nothing here downloads, and a curl that cannot connect keeps the server
+  // check away from whatever listens on the default port.
+  writeFileSync(join(bin, "curl"), "#!/bin/sh\nexit 7\n", { mode: 0o755 });
   const run = (args) => spawnSync("bash", [script, ...args], {
     cwd: home,
     encoding: "utf8",

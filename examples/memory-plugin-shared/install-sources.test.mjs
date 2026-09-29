@@ -91,7 +91,7 @@ test("a default install of cursor, zcode and opencode downloads the bundle once 
 
   const result = run(home, bin, [
     "--harness", "cursor,zcode,opencode", "--lang", "en",
-    "--url", "http://127.0.0.1:1933", "--api-key", "", "--yes",
+    "--url", "http://127.0.0.1:9", "--api-key", "", "--yes",
   ]);
   assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
 
@@ -133,7 +133,7 @@ test("a GitHub-channel Claude install moves to TOS, and its statusline follows t
   const install = (...extra) => {
     const result = run(home, bin, [
       "--harness", "claude", "--lang", "en",
-      "--url", "http://127.0.0.1:1933", "--api-key", "", "--yes", ...extra,
+      "--url", "http://127.0.0.1:9", "--api-key", "", "--yes", ...extra,
     ], { OPENVIKING_TOS_BASE: "https://tos.example.invalid" });
     assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
     return result;
@@ -215,7 +215,7 @@ exit 0
 `);
 
   const result = run(home, bin, [
-    "--harness", "claude", "--lang", "en", "--url", "http://127.0.0.1:1933", "--api-key", "", "--yes",
+    "--harness", "claude", "--lang", "en", "--url", "http://127.0.0.1:9", "--api-key", "", "--yes",
   ], { OPENVIKING_TOS_BASE: "https://tos.example.invalid" });
   assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
   assert.match(result.stdout, /Skipping claude: it has no 'plugin' command\. The plugin needs Claude Code 2\.0 or newer/);
@@ -255,7 +255,7 @@ test("Codex moves to the TOS git marketplace, falls back to the bundle, and says
   const install = (extraEnv) => {
     rmSync(join(fake, "calls.log"), { force: true });
     const result = run(home, bin, [
-      "--harness", "codex", "--lang", "en", "--url", "http://127.0.0.1:1933", "--api-key", "", "--yes",
+      "--harness", "codex", "--lang", "en", "--url", "http://127.0.0.1:9", "--api-key", "", "--yes",
     ], extraEnv);
     assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
     return { stdout: result.stdout, calls: readFileSync(join(fake, "calls.log"), "utf8").split("\n") };
@@ -297,7 +297,7 @@ test("Claude Code and Codex files go where CLAUDE_CONFIG_DIR and CODEX_HOME poin
   writeFileSync(cachedProxy, "");
 
   const result = run(home, bin, [
-    "--harness", "claude,codex", "--lang", "en", "--url", "http://127.0.0.1:1933", "--api-key", "", "--statusline", "--yes",
+    "--harness", "claude,codex", "--lang", "en", "--url", "http://127.0.0.1:9", "--api-key", "", "--statusline", "--yes",
   ], { OPENVIKING_TOS_BASE: "https://tos.example.invalid", CLAUDE_CONFIG_DIR: claudeDir, CODEX_HOME: codexDir });
   assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
 
@@ -316,7 +316,7 @@ test("retired GitHub-channel options are accepted, announced and ignored", () =>
   mkdirSync(bin);
   const notice = /The GitHub install channel was removed and its options are ignored/;
   const install = (args, extraEnv) => run(home, bin, [
-    "--harness", "cursor", "--lang", "en", "--url", "http://127.0.0.1:1933", "--api-key", "", "--yes", ...args,
+    "--harness", "cursor", "--lang", "en", "--url", "http://127.0.0.1:9", "--api-key", "", "--yes", ...args,
   ], extraEnv);
 
   for (const [args, extraEnv] of [
@@ -341,7 +341,7 @@ test("a copy that is not a release build runs the release installer", () => {
   mkdirSync(bin);
   const release = join(home, "tos", "memory-plugin-shared", "install.sh");
   mkdirSync(dirname(release), { recursive: true });
-  const args = ["--harness", "cursor", "--lang", "en", "--url", "http://127.0.0.1:1933", "--api-key", "", "--yes"];
+  const args = ["--harness", "cursor", "--lang", "en", "--url", "http://127.0.0.1:9", "--api-key", "", "--yes"];
   const reexec = { OPENVIKING_INSTALLER_REEXEC: "", OPENVIKING_TOS_BASE: `file://${join(home, "tos")}` };
 
   writeFileSync(release, [
@@ -411,7 +411,7 @@ function resolverHome() {
   return { home, bin, downloads };
 }
 
-const cursorArgs = ["--harness", "cursor", "--lang", "en", "--url", "http://127.0.0.1:1933", "--api-key", "", "--yes"];
+const cursorArgs = ["--harness", "cursor", "--lang", "en", "--url", "http://127.0.0.1:9", "--api-key", "", "--yes"];
 const latestZip = `file://${tosBase}/releases/latest/memory-plugin-marketplace.zip`;
 
 test("the resolver pins the release each harness installs, asked for under its public name", async () => {
@@ -432,7 +432,7 @@ exit 0
   requests.length = 0;
 
   const result = await runAsync(home, bin, [
-    "--harness", "cursor,trae-cli", "--lang", "en", "--url", "http://127.0.0.1:1933", "--api-key", "", "--yes",
+    "--harness", "cursor,trae-cli", "--lang", "en", "--url", "http://127.0.0.1:9", "--api-key", "", "--yes",
   ], siteEnv);
   assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
 

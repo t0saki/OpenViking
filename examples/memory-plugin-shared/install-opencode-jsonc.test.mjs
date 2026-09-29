@@ -208,7 +208,7 @@ for (const sourceMode of ["dev", "archive"]) {
         "--harness", "opencode",
         "--source", sourceMode,
         "--lang", "en",
-        "--url", "http://127.0.0.1:1933",
+        "--url", "http://127.0.0.1:9",
         "--api-key", "",
         "--yes",
       ], {
