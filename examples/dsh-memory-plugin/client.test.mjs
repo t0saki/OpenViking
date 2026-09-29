@@ -61,7 +61,6 @@ test("per-session actor peer overrides the process default", async () => {
     peerId: "process-peer",
     userAgent: "",
     requestTimeoutMs: 1000,
-    commitKeepRecentCount: 10,
   });
 
   await client.ensureSessionResult("dsh-2", "workspace-peer");
@@ -85,7 +84,6 @@ test("client normalizes non-2xx OpenViking envelopes", async () => {
     peerId: "",
     userAgent: "",
     requestTimeoutMs: 1000,
-    commitKeepRecentCount: 10,
   });
   const response = await client.fetchJSON("/probe");
 
