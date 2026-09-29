@@ -70,14 +70,13 @@ async function maybeCommitByThreshold(ovSessionId, added) {
     ovSessionId,
     pending: pendingTokens,
     threshold: cfg.commitTokenThreshold,
-    keepRecentCount: cfg.commitKeepRecentCount,
   });
   if (pendingTokens < cfg.commitTokenThreshold) {
     return { committed: false, pendingTokens, commitCount, totalMessageCount, traceId: "" };
   }
   const commit = await fetchJSONRes(`/api/v1/sessions/${encodeURIComponent(ovSessionId)}/commit`, {
     method: "POST",
-    body: JSON.stringify({ keep_recent_count: cfg.commitKeepRecentCount }),
+    body: JSON.stringify({ keep_recent_count: 0 }),
   });
   const committed = commit.ok;
   const traceId = commit.traceId || commit.result?.trace_id || "";
