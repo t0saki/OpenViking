@@ -137,7 +137,7 @@ Options:
   --codex-bin LIST   Comma-separated Codex-format CLI commands (default: codex).
   --dsh-profile NAME DeepSeek Harness profile to install into (default: web).
   --dist CHANNEL     Accepted for compatibility and ignored; installs come from the OpenViking release.
-  --lang LANG        en | zh (interactive prompts language; auto-detected).
+  --lang LANG        en | zh (default: from OPENVIKING_LANG or the system locale).
   --source MODE      Advanced: archive | dev (default: auto-detect).
   --url URL          OpenViking server base URL.
   --api-key KEY      OpenViking API key. Pass '' for unauthenticated local mode.
@@ -274,25 +274,24 @@ tui_menu() { # tui_menu <title> <default-index> <option...>  -> TUI_MENU_CHOICE
 # ---------------------------------------------------------------------------
 
 detect_lang_default() {
-  case "${OPENVIKING_LANG:-${LC_ALL:-${LANG:-}}}" in
+  local locale="${OPENVIKING_LANG:-${LC_ALL:-${LANG:-}}}"
+  # A terminal started from the macOS GUI often has no locale variables, or
+  # just C; the system language is then only in the user defaults.
+  case "$locale" in
+    ''|C|C.*|POSIX)
+      if [ "$(uname -s)" = "Darwin" ]; then
+        locale="$(defaults read -g AppleLocale 2>/dev/null || true)"
+      fi
+      ;;
+  esac
+  case "$locale" in
     zh*|*zh_CN*|*zh_TW*|*zh_HK*) printf 'zh' ;;
     *) printf 'en' ;;
   esac
 }
 
 select_language() {
-  local detected def
-  detected="$(detect_lang_default)"
-  if [ -n "$LANG_ARG" ]; then
-    UI_LANG="$LANG_ARG"
-  elif [ "$INTERACTIVE" -eq 1 ]; then
-    def=0
-    [ "$detected" = "zh" ] && def=1
-    tui_menu "Language / 语言" "$def" "English" "中文"
-    if [ "$TUI_MENU_CHOICE" -eq 1 ]; then UI_LANG="zh"; else UI_LANG="en"; fi
-  else
-    UI_LANG="$detected"
-  fi
+  UI_LANG="${LANG_ARG:-$(detect_lang_default)}"
   case "$UI_LANG" in
     en|zh) ;;
     *) err "Invalid --lang: $UI_LANG (expected en or zh)"; exit 2 ;;
@@ -1316,9 +1315,7 @@ resolve_self_checkout() {
 reexec_release_installer() { # reexec_release_installer <original-args...>
   [ "$INSTALLER_VERSION" = "dev" ] && [ -z "$CHECKOUT_DIR" ] \
     && [ "${OPENVIKING_INSTALLER_REEXEC:-}" != "0" ] || return 0
-  # The language is only chosen later, so this one message follows the flag
-  # or the locale.
-  local UI_LANG="${LANG_ARG:-$(detect_lang_default)}" tmp status=0
+  local tmp status=0
   tmp="$(mktemp "${TMPDIR:-/tmp}/ov-install.XXXXXX")" || return 0
   if curl -fsSL --connect-timeout 10 -o "$tmp" "$TOS_BASE/memory-plugin-shared/install.sh" 2>/dev/null; then
     case "$(head -n 5 "$tmp")" in
@@ -2677,9 +2674,9 @@ EOF
 # Main
 # ---------------------------------------------------------------------------
 
+select_language
 resolve_self_checkout
 reexec_release_installer ${INSTALLER_ARGS[@]+"${INSTALLER_ARGS[@]}"}
-select_language
 
 heading "$(t '1. Environment check' '1. 环境检查')"
 case "$(uname -s)" in

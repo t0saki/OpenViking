@@ -11,10 +11,17 @@ const installerSource = readFileSync(installer, "utf8");
 const mainMarker = "# ---------------------------------------------------------------------------\n# Main\n";
 const installerPrelude = installerSource.slice(0, installerSource.indexOf(mainMarker));
 
-function runInstallerPrelude(body) {
+// An `undefined` value removes the variable from the child's environment.
+function preludeEnv(env) {
+  const merged = { ...process.env, OPENVIKING_LANG: "en", ...env };
+  for (const [key, value] of Object.entries(merged)) if (value === undefined) delete merged[key];
+  return merged;
+}
+
+function runInstallerPrelude(body, env = {}) {
   return spawnSync("/bin/bash", [], {
     encoding: "utf8",
-    env: { ...process.env, OPENVIKING_LANG: "en" },
+    env: preludeEnv(env),
     input: `${installerPrelude}\n${body}\n`,
     timeout: 10_000,
   });
@@ -242,4 +249,44 @@ configure_ovcli
   assert.doesNotMatch(result.stdout, /Updated: url:/);
   assert.match(result.stdout, /Updated: api_key: stor…-key \(10\) -> rota…-key \(11\)/);
   assert.equal(JSON.parse(readFileSync(conf, "utf8")).api_key, "rotated-key");
+});
+
+test("the language follows --lang, OPENVIKING_LANG, the locale, then the macOS setting", (t) => {
+  const fake = makeTempHome(t);
+  writeFileSync(join(fake, "uname"), '#!/bin/sh\nprintf \'%s\\n\' "$FAKE_UNAME"\n', { mode: 0o755 });
+  writeFileSync(join(fake, "defaults"), [
+    "#!/bin/sh",
+    '[ "$*" = "read -g AppleLocale" ] && [ -n "$FAKE_APPLE_LOCALE" ] || exit 1',
+    'printf \'%s\\n\' "$FAKE_APPLE_LOCALE"',
+    "",
+  ].join("\n"), { mode: 0o755 });
+  const detect = (env, langArg = "") => {
+    const result = runInstallerPrelude(`
+LANG_ARG=${JSON.stringify(langArg)}
+select_language
+printf '%s\\n' "$UI_LANG"
+`, {
+      OPENVIKING_LANG: undefined,
+      LC_ALL: undefined,
+      LANG: undefined,
+      FAKE_UNAME: "Darwin",
+      FAKE_APPLE_LOCALE: "zh_CN",
+      PATH: `${fake}:/usr/bin:/bin`,
+      ...env,
+    });
+    assert.equal(result.status, 0, result.stderr);
+    return result.stdout.trim();
+  };
+
+  assert.equal(detect({ OPENVIKING_LANG: "zh" }, "en"), "en");
+  assert.equal(detect({ OPENVIKING_LANG: "zh", LC_ALL: "en_US.UTF-8" }), "zh");
+  assert.equal(detect({ OPENVIKING_LANG: "en", LANG: "zh_CN.UTF-8" }), "en");
+  assert.equal(detect({ LC_ALL: "zh_CN.UTF-8", LANG: "en_US.UTF-8" }), "zh");
+  assert.equal(detect({ LANG: "zh_TW.UTF-8" }), "zh");
+  assert.equal(detect({ LANG: "en_US.UTF-8" }), "en");
+  assert.equal(detect({ LANG: "C" }), "zh");
+  assert.equal(detect({ LC_ALL: "POSIX" }), "zh");
+  assert.equal(detect({ FAKE_APPLE_LOCALE: "zh-Hans_CN" }), "zh");
+  assert.equal(detect({ FAKE_APPLE_LOCALE: "" }), "en");
+  assert.equal(detect({ FAKE_UNAME: "Linux" }), "en");
 });
