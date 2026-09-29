@@ -3080,7 +3080,14 @@ class OpenVikingMemoryProvider(MemoryProvider):
         def expired() -> bool:
             return deadline is not None and remaining() <= 0
 
-        with self._writer_commit_lock:
+        # At exit the lock wait counts against the budget too: an older sid's finalizer or
+        # recovery thread may hold it for a whole commit POST at the 30 s client default.
+        if deadline is None:
+            self._writer_commit_lock.acquire()
+        elif not self._writer_commit_lock.acquire(timeout=max(0.0, remaining())):
+            logger.warning("OpenViking exit budget used up waiting to commit; leaving session %s pending", sid)
+            return
+        try:
             with self._session_state_lock:
                 turn_count = self._turn_count if self._session_id == sid and self._commit_scope is scope else 0
             if expired():
@@ -3092,6 +3099,8 @@ class OpenVikingMemoryProvider(MemoryProvider):
             # Under the write lock: a later writer re-registers before it marks its sid pending.
             if not self._has_uncommitted_data(scope):
                 _deregister_for_exit(self)
+        finally:
+            self._writer_commit_lock.release()
 
     def _has_uncommitted_data(self, scope: _CommitScope) -> bool:
         """A writer still running, or a turn or pending marker of this connection generation not committed."""

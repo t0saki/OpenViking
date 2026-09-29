@@ -1133,6 +1133,42 @@ def test_exit_hook_stops_starting_commits_when_the_budget_is_spent(external_prov
     other.shutdown()
 
 
+def test_exit_hook_bounds_the_wait_for_the_commit_lock(external_provider, monkeypatch):
+    import threading
+    import time
+
+    home, provider, module = _live_provider(external_provider, monkeypatch, "exit-lock-wait")
+    client = _wire_live_client(provider, "exit-lock-sid")
+    _finish_turn(provider, sid="exit-lock-sid")
+    assert provider in module._exit_registry
+
+    # Stands in for an older sid's finalizer or recovery thread inside its commit POST.
+    held, release = threading.Event(), threading.Event()
+
+    def hold_lock():
+        with provider._writer_commit_lock:
+            held.set()
+            release.wait(5)
+
+    holder = threading.Thread(target=hold_lock, daemon=True)
+    holder.start()
+    assert held.wait(2)
+    monkeypatch.setattr(module, "_EXIT_COMMIT_BUDGET", 0.3)
+    try:
+        started = time.monotonic()
+        module._atexit_commit_sessions()
+        elapsed = time.monotonic() - started
+    finally:
+        release.set()
+        holder.join(5)
+
+    assert elapsed < 2.0
+    assert not any(call.args[0].endswith("/commit") for call in client.post.call_args_list)
+    assert provider._state_path("pending", "exit-lock-sid").exists()  # left for the next run's recovery
+    assert provider._run_lock_path is None
+    assert len(module._exit_registry) == 0
+
+
 @pytest.fixture
 def reload_provider(external_provider, monkeypatch):
     from unittest.mock import Mock
