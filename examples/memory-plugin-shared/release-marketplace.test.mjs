@@ -116,7 +116,7 @@ test("TOS installs register Claude Code's URL marketplace when the CLI supports 
           HOME: home,
           PATH: `${bin}:${process.env.PATH}`,
           OPENVIKING_HOME: join(home, ".openviking"),
-          OPENVIKING_TOS_BASE: "https://tos.example.invalid",
+          OPENVIKING_DOWNLOAD_BASE: "https://tos.example.invalid",
           OPENVIKING_MARKETPLACE_ARCHIVE_URL: `file://${zip}`,
           OPENVIKING_SKIP_VERSION_CHECK: "1",
           FAKE_CLAUDE_DIR: fake,
@@ -154,7 +154,7 @@ test("TOS installs register Claude Code's URL marketplace when the CLI supports 
     assert.equal(readSettings().extraKnownMarketplaces.openviking.autoUpdate, false);
 
     // Unreachable URL marketplace: fall back to the unpacked archive.
-    const failed = install("2.1.284", { FAKE_CLAUDE_URL_FAILS: "1", OPENVIKING_TOS_BASE: "https://other.example.invalid" });
+    const failed = install("2.1.284", { FAKE_CLAUDE_URL_FAILS: "1", OPENVIKING_DOWNLOAD_BASE: "https://other.example.invalid" });
     log = calls();
     assert.ok(log.includes(`plugin marketplace add ${archiveDir}`), log.join("\n"));
     assert.match(failed.stdout + failed.stderr, /falling back to the archive directory/);
@@ -203,7 +203,7 @@ test("a Claude-format wrapper sharing Claude Code's config keeps the URL marketp
         HOME: home,
         PATH: `${bin}:${process.env.PATH}`,
         OPENVIKING_HOME: join(home, ".openviking"),
-        OPENVIKING_TOS_BASE: "https://tos.example.invalid",
+        OPENVIKING_DOWNLOAD_BASE: "https://tos.example.invalid",
         OPENVIKING_SKIP_VERSION_CHECK: "1",
         FAKE_CLAUDE_DIR: fake,
         FAKE_CLAUDE_VERSION: "2.1.284",
@@ -254,6 +254,7 @@ test("release marketplace archive supports ZCode and pi TOS installs", () => {
         HOME: home,
         OPENVIKING_HOME: join(home, ".openviking"),
         OPENVIKING_MARKETPLACE_ARCHIVE_URL: `file://${join(tmp, "memory-plugin-marketplace.zip")}`,
+        OPENVIKING_DOWNLOAD_BASE: "https://downloads.example.invalid",
         OPENVIKING_SKIP_VERSION_CHECK: "1",
       },
     });
@@ -319,6 +320,7 @@ test("release marketplace archive supports ZCode and pi TOS installs", () => {
         PATH: `${bin}:${process.env.PATH}`,
         OPENVIKING_HOME: join(home, ".openviking"),
         OPENVIKING_MARKETPLACE_ARCHIVE_URL: `file://${join(tmp, "memory-plugin-marketplace.zip")}`,
+        OPENVIKING_DOWNLOAD_BASE: "https://downloads.example.invalid",
         OPENVIKING_SKIP_VERSION_CHECK: "1",
       },
     });
@@ -333,7 +335,8 @@ test("release marketplace archive supports ZCode and pi TOS installs", () => {
       "--lang", "en", "--url", "http://127.0.0.1:9", "--api-key", "", "--yes"];
     const piEnv = { ...process.env, HOME: home, PATH: bin + ":" + process.env.PATH,
       OPENVIKING_HOME: join(home, ".openviking"),
-      OPENVIKING_MARKETPLACE_ARCHIVE_URL: "file://" + join(tmp, "memory-plugin-marketplace.zip"), OPENVIKING_SKIP_VERSION_CHECK: "1" };
+      OPENVIKING_MARKETPLACE_ARCHIVE_URL: "file://" + join(tmp, "memory-plugin-marketplace.zip"),
+      OPENVIKING_DOWNLOAD_BASE: "https://downloads.example.invalid", OPENVIKING_SKIP_VERSION_CHECK: "1" };
     const piInstalled = run("bash", piArgs, { env: piEnv });
     assert.equal(piInstalled.status, 0, piInstalled.stdout + piInstalled.stderr);
     const piRoot = join(home, ".pi", "agent", "extensions", "openviking");
