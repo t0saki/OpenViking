@@ -145,7 +145,7 @@ agent 会先问你用哪家模型服务，以及它的 API key。
 <details>
 <summary><strong>自己动手部署</strong></summary>
 
-安装 OpenViking 并运行配置向导，跟着向导配置模型：
+安装 OpenViking 并运行配置向导，在向导里配置模型：
 
 ```bash
 uv tool install openviking --upgrade && openviking-server init
