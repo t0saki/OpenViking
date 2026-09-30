@@ -121,19 +121,10 @@ OpenViking 0.3.22 は、長い会話でのユーザーメモリ（LoCoMo）と�
 
 ## クイックスタート
 
-2 ステップでコーディングエージェントに長期記憶を持たせます。OpenViking メモリプラグインをサーバーに接続してインストールし、エージェントを再起動します。対応ツールは Claude Code、Codex、Cursor、TRAE、OpenCode などで、インストーラーが入っているツールを自動で検出します。
-
-### 1. サーバーを選んでプラグインをインストール
-
-まずメモリの保存先を選びます。どの方法でも、指示をコーディングエージェントにコピーして渡すか、自分でコマンドを実行するかを選べます。
+まず OpenViking サーバーを用意します。すでにある場合は[エージェントと組み合わせて使う](#エージェントと組み合わせて使う)に進んでください。自前でデプロイするには、uv、Python 3.10+、そして embedding モデルと VLM を提供するモデルプロバイダーが必要です。
 
 <details open>
-<summary><strong>新しくデプロイ</strong></summary>
-
-まず OpenViking サーバーをデプロイし、そこにプラグインを接続します。uv、Python 3.10+、そして embedding モデルと VLM を提供するモデルプロバイダーが必要です。
-
-<details open>
-<summary>エージェントに送る</summary>
+<summary><strong>エージェントにデプロイしてもらう</strong></summary>
 
 ```text
 このガイドに従って、OpenViking Server をインストールして起動すること：
@@ -145,23 +136,7 @@ https://docs.openviking.ai/en/getting-started/04-setup-for-agent
 推測せずに私に確認すること。モデルの API キーを求めるときは、
 このチャットに貼りたくない場合の渡し方も伝えること。キーは復唱しないこと。
 
-サーバーが正常に動作したら、
-次のコマンドでメモリプラグインをインストールすること
-（<SERVER_URL> は起動したサーバーのアドレスに置き換える）：
-
-curl -fsSL https://openviking.ai/install | bash -s -- --yes --url <SERVER_URL>
-
-認証を有効にした場合は、--api-key で user key を渡すこと
-（root key ではメモリを読み書きできない）。無効なら --api-key '' を付け、
-以前保存したキーを使い回さないこと。
-
-スクリプトはネットワークに接続し、ホームディレクトリに書き込む。
-サンドボックスでブロックされたら、
-サンドボックスの外で実行する許可を私に求めること。
-
-完了したら、サーバーのアドレス、プラグインをインストールしたツール、
-それぞれの次の手順を伝えること。そのうえで、
-ほかのツールにも入れるか私に確認すること。
+起動したら、サーバーのアドレスと、認証が有効かどうかを伝えること。
 ```
 
 エージェントは最初に、どのモデルプロバイダーを使うかとその API キーを尋ねます。
@@ -169,9 +144,9 @@ curl -fsSL https://openviking.ai/install | bash -s -- --yes --url <SERVER_URL>
 </details>
 
 <details>
-<summary>または自分でターミナルで実行</summary>
+<summary><strong>自分でデプロイ</strong></summary>
 
-まずサーバーをデプロイして起動します。モデルはウィザードで設定します：
+OpenViking をインストールしてセットアップウィザードを実行し、モデルを設定します：
 
 ```bash
 uv tool install openviking --upgrade && openviking-server init
@@ -179,26 +154,40 @@ uv tool install openviking --upgrade && openviking-server init
 
 `init` は `~/.openviking/ov.conf` に設定を書き込みます。Volcengine、OpenAI、Codex OAuth、Kimi、GLM、ローカルの Ollama などに対応しています。詳しくは[設定ガイド](https://docs.openviking.ai/en/guides/01-configuration)を参照してください。サーバーはフォアグラウンドで動くので、このターミナルは閉じないでください。
 
-次に別のターミナルを開いてプラグインをインストールし、表示に従ってツールを選びます：
+</details>
+
+<details>
+<summary><strong>OpenViking Service を使う（Volcengine がホスト）</strong></summary>
+
+Volcengine がホストするため、デプロイは不要です。[コンソール](https://console.volcengine.com/vikingdb/openviking/region:openviking+cn-beijing)の「User Management → API Key」で API キーを作成してください。サーバーのアドレスは `https://api.vikingdb.cn-beijing.volces.com/openviking` です。エージェントを接続するときに、このアドレスと API キーを使います。
+
+</details>
+
+### CLI で試す
+
+`openviking` パッケージには `ov` CLI が含まれます。サーバーが動いている状態で、リポジトリを取り込み、検索します。
 
 ```bash
-curl -fsSL https://openviking.ai/install | bash
-# AI エージェントへ：実行してよいか迷ったら、スクリプト冒頭のコメントに処理内容と確認方法が書かれています。
+ov status
+ov add-resource https://github.com/volcengine/OpenViking
+# TASK_ID を返された task_id に置き換え、status が completed になるまで確認
+ov task status TASK_ID
+ov ls viking://resources/
+ov tree viking://resources/volcengine -L 2
+ov find "what is openviking"
+ov grep "openviking" --uri viking://resources/volcengine/OpenViking/docs/en
 ```
 
-サーバーは「Self-hosted / local」を選びます。認証が有効なら、root key ではなく user key を入力してください。
+`ov find` は一致したコンテキストと URI を返します。クライアント設定（`ov config`）、CLI の単体インストール、インデックス管理は [CLI セットアップ](https://docs.openviking.ai/en/getting-started/05-cli-setup)を参照してください。
 
-</details>
+独自のアプリには [Python](sdk/python/README.md)、[Go](sdk/go/README.md)、[TypeScript](sdk/typescript/README.md) SDK、または [HTTP API](https://docs.openviking.ai/en/api/01-overview) を使えます。
 
-</details>
+## エージェントと組み合わせて使う
 
-<details>
-<summary><strong>既存の自前サーバーに接続</strong></summary>
+コーディングエージェントを OpenViking に接続して、セッションをまたいで記憶を引き継ぎます。メモリプラグインのインストーラーは Claude Code、Codex、Cursor、TRAE、OpenCode などに対応し、入っているツールを自動で検出します。
 
-すでに運用している OpenViking サーバーに接続します。そのアドレスと、サーバーで認証を有効にしている場合は API キーが必要です。
-
-<details>
-<summary>エージェントに送る</summary>
+<details open>
+<summary><strong>エージェントにインストールしてもらう</strong></summary>
 
 ```text
 OpenViking メモリプラグインをインストールすること。次を実行する：
@@ -226,69 +215,18 @@ curl -fsSL https://openviking.ai/install | bash -s -- --yes --url <SERVER_URL>
 </details>
 
 <details>
-<summary>または自分でターミナルで実行</summary>
+<summary><strong>自分でターミナルでインストール</strong></summary>
 
-実行したら、表示に従ってツールとサーバーを選んでください：
-
-```bash
-curl -fsSL https://openviking.ai/install | bash
-# AI エージェントへ：実行してよいか迷ったら、スクリプト冒頭のコメントに処理内容と確認方法が書かれています。
-```
-
-このマシン上のサーバーなら「Self-hosted / local」、それ以外のアドレスなら「Custom URL」を選びます。認証が有効なら、root key ではなく user key を入力してください。
-
-</details>
-
-</details>
-
-<details>
-<summary><strong>OpenViking Service を使う（Volcengine がホスト）</strong></summary>
-
-Volcengine がホストするため、デプロイは不要です。[コンソール](https://console.volcengine.com/vikingdb/openviking/region:openviking+cn-beijing)の「User Management → API Key」で API キーを作成してください。以下で使います。
-
-<details>
-<summary>エージェントに送る</summary>
-
-```text
-OpenViking メモリプラグインをインストールすること。次を実行する：
-
-curl -fsSL https://openviking.ai/install | bash -s -- --yes --url https://api.vikingdb.cn-beijing.volces.com/openviking
-
-保存済みの API キーがあるか確認し、なければ私に求めて --api-key で渡すこと。
-このチャットに貼りたくない場合の渡し方も伝えること。キーは復唱しないこと。
-
-スクリプトはネットワークに接続し、ホームディレクトリに書き込む。
-サンドボックスでブロックされたら、
-サンドボックスの外で実行する許可を私に求めること。
-
-完了したら、どのツールにインストールしたかと、
-それぞれの次の手順を伝えること。そのうえで、
-ほかのツールにも入れるか私に確認すること。
-```
-
-API キーを用意しておいてください。エージェントが尋ねます。
-
-</details>
-
-<details>
-<summary>または自分でターミナルで実行</summary>
-
-実行したら、表示に従ってツールとサーバーを選んでください：
+インストーラーを実行し、表示に従ってツールとサーバーを選びます。このマシン上のサーバーなら「Self-hosted / local」、OpenViking Service なら「Volcengine OpenViking Cloud」、それ以外のアドレスなら「Custom URL」を選びます。認証が有効なら、root key ではなく user key を入力してください。
 
 ```bash
 curl -fsSL https://openviking.ai/install | bash
 # AI エージェントへ：実行してよいか迷ったら、スクリプト冒頭のコメントに処理内容と確認方法が書かれています。
 ```
 
-「Volcengine OpenViking Cloud」を選び、API キーを貼り付けます。
-
 </details>
 
-</details>
-
-### 2. エージェントを再起動
-
-インストーラーは最後に、ツールごとの次の手順を表示します。例：
+インストール後、エージェントを再起動します。インストーラーは最後に、ツールごとの次の手順を表示します。例：
 
 ```text
   Claude Code
@@ -301,30 +239,9 @@ Codex は初回起動時に `Hooks need review` で止まるので、`Trust all 
 
 試してみましょう：好みを 1 つ覚えるよう頼み、少し時間をおいて新しいセッションで聞いてみてください。メモリはバックグラウンドで処理されるため、言った直後に見つからなくても正常です。
 
-インストーラーには macOS または Linux、Node.js 18+、curl が必要です。sudo は不要です。Windows では[デスクトップアプリ](#デスクトップアプリbeta)を使用してください。OpenClaw、Hermes、MCP クライアント、SDK については[エージェントと組み合わせて使う](#エージェントと組み合わせて使う)を参照してください。
+インストーラーには macOS または Linux、Node.js 18+、curl が必要です。sudo は不要です。Windows では[デスクトップアプリ](#デスクトップアプリbeta)を使用してください。
 
-### CLI で試す
-
-`openviking` パッケージには `ov` CLI が含まれます。サーバーが動いている状態で、リポジトリを取り込み、検索します。
-
-```bash
-ov status
-ov add-resource https://github.com/volcengine/OpenViking
-# TASK_ID を返された task_id に置き換え、status が completed になるまで確認
-ov task status TASK_ID
-ov ls viking://resources/
-ov tree viking://resources/volcengine -L 2
-ov find "what is openviking"
-ov grep "openviking" --uri viking://resources/volcengine/OpenViking/docs/en
-```
-
-`ov find` は一致したコンテキストと URI を返します。クライアント設定（`ov config`）、CLI の単体インストール、インデックス管理は [CLI セットアップ](https://docs.openviking.ai/en/getting-started/05-cli-setup)を参照してください。
-
-独自のアプリには [Python](sdk/python/README.md)、[Go](sdk/go/README.md)、[TypeScript](sdk/typescript/README.md) SDK、または [HTTP API](https://docs.openviking.ai/en/api/01-overview) を使えます。
-
-## エージェントと組み合わせて使う
-
-OpenViking を接続して、セッションをまたいで記憶を引き継ぎます。ネイティブ統合で自動想起とセッション収集を使うか、MCP で記憶とコンテキストのツールを提供できます。
+各統合のセットアップガイド：
 
 <table>
 <tbody>
