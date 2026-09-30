@@ -325,7 +325,9 @@ tui_menu() { # tui_menu <title> <default-index> <option...>  -> TUI_MENU_CHOICE
     esac
     return 0
   fi
-  printf '%s%s%s\n' "$BOLD" "$title" "$RESET" >/dev/tty
+  # The keys sit beside the question, where the eye already is.
+  printf '%s%s  %s%s%s\n' "$BOLD" "$title" "$CYAN" \
+    "${TUI_MENU_HINT:-$(t '(↑/↓ to choose, Enter to confirm)' '（↑/↓ 选择，回车确认）')}" "$RESET" >/dev/tty
   printf '\033[?25l' >/dev/tty
   trap 'printf "\033[?25h" >/dev/tty' EXIT
   while :; do
@@ -339,8 +341,7 @@ tui_menu() { # tui_menu <title> <default-index> <option...>  -> TUI_MENU_CHOICE
       fi
       i=$((i + 1))
     done
-    printf '\r\033[K   %s%s%s\n' "$CYAN" "$(t '↑/↓ move · 1-9 jump · enter confirm' '↑/↓ 移动 · 数字跳转 · 回车确认')" "$RESET" >/dev/tty
-    lines=$((n + 1))
+    lines="$n"
     IFS= read -rsn1 key <&3 || key=""
     case "$key" in
       $'\x1b')
@@ -396,13 +397,20 @@ select_language() {
   if [ -z "$LANG_ARG" ] && [ -z "${OPENVIKING_LANG:-}" ] && [ "$INTERACTIVE" -eq 1 ]; then
     local def=0
     [ "$UI_LANG" = "zh" ] && def=1
-    tui_menu "Language / 语言" "$def" "English" "中文"
+    TUI_MENU_HINT="(↑/↓ + Enter / 上下键选择，回车确认)" tui_menu "Language / 语言" "$def" "English" "中文"
     if [ "$TUI_MENU_CHOICE" -eq 1 ]; then UI_LANG="zh"; else UI_LANG="en"; fi
   fi
   case "$UI_LANG" in
     en|zh) ;;
     *) err "Invalid --lang: $UI_LANG (expected en or zh)"; exit 2 ;;
   esac
+}
+
+print_intro() {
+  [ "$INTERACTIVE" -eq 1 ] && [ "$UNINSTALL" -eq 0 ] || return 0
+  heading "$(t 'OpenViking memory plugin installer' 'OpenViking 记忆插件安装')"
+  info "$(t 'Installs the OpenViking memory plugin into the AI tools on this computer.' '为这台电脑上的 AI 工具安装 OpenViking 记忆插件。')"
+  info "$(t 'Every change is listed for you to confirm before anything is written.' '写入任何内容前，会先列出全部改动请你确认。')"
 }
 
 split_harnesses() {
@@ -820,7 +828,7 @@ tui_item_line() { # tui_item_line <index> <kind> <bin>
   if tui_bin_detected "$kind" "$bin"; then
     note="  ${GREEN}$(t '(detected)' '（已检测到）')${RESET}"
   else
-    note="  ${YELLOW}$(t '(not found in PATH)' '（PATH 中未找到）')${RESET}"
+    note="  ${YELLOW}$(t '(not installed)' '（未安装）')${RESET}"
   fi
   printf '\r\033[K %s%s %s%s\n' "$cur" "$mark" "$label" "$note" >/dev/tty
 }
@@ -828,7 +836,12 @@ tui_item_line() { # tui_item_line <index> <kind> <bin>
 tui_add_item_line() {
   local idx="$1" cur='  '
   [ "$TUI_CURSOR" -eq "$idx" ] && cur="${CYAN}>${RESET} "
-  printf '\r\033[K %s%s %s\n' "$cur" "${CYAN}+${RESET}" "$(t 'Add compatible CLI...' '新增兼容 CLI...')" >/dev/tty
+  printf '\r\033[K %s%s %s\n' "$cur" "${CYAN}+${RESET}" "$(t 'Other compatible command (advanced)...' '其他兼容命令（高级）…')" >/dev/tty
+}
+
+tui_select_title() {
+  printf '%s%s  %s%s%s\n' "$BOLD" "$(t 'Select the AI tools to install for' '选择要安装的 AI 工具')" "$CYAN" \
+    "$(t '(↑/↓ to move, Space to check or uncheck, Enter to confirm)' '（↑/↓ 移动，空格 勾选/取消，回车 确认）')" "$RESET" >/dev/tty
 }
 
 tui_draw() {
@@ -847,7 +860,7 @@ tui_draw() {
     fi
     idx=$((idx + 1))
   done
-  printf '\r\033[K   %s%s%s\n' "$CYAN" "$(t '↑/↓ move · space toggle · enter confirm · enter on + to add · a all' '↑/↓ 移动 · 空格勾选 · 回车确认 · 在 + 上回车新增 · a 全选')" "$RESET" >/dev/tty
+  printf '\r\033[K   %s%s%s\n' "$CYAN" "$(t 'a: check all · Enter on +: add another command' 'a：全选 · 在 + 上按回车：添加其他命令')" "$RESET" >/dev/tty
   TUI_LINES=$((total + 1))
 }
 
@@ -944,7 +957,7 @@ tui_add_compatible_cli() {
   if [ -z "$kind" ]; then
     warn "$(t 'Skipped adding compatible CLI.' '已跳过新增兼容 CLI。')"
     TUI_LINES=0
-    printf '%s%s%s\n' "$BOLD" "$(t 'Select the harnesses to install for:' '选择要安装的 harness：')" "$RESET" >/dev/tty
+    tui_select_title
     printf '\033[?25l' >/dev/tty
     return 0
   fi
@@ -954,7 +967,7 @@ tui_add_compatible_cli() {
   if [ -z "$bin" ]; then
     warn "$(t 'Skipped adding compatible CLI.' '已跳过新增兼容 CLI。')"
     TUI_LINES=0
-    printf '%s%s%s\n' "$BOLD" "$(t 'Select the harnesses to install for:' '选择要安装的 harness：')" "$RESET" >/dev/tty
+    tui_select_title
     printf '\033[?25l' >/dev/tty
     return 0
   fi
@@ -969,7 +982,7 @@ tui_add_compatible_cli() {
   fi
   TUI_CURSOR="$(tui_find_bin_index "$kind" "$bin")"
   TUI_LINES=0
-  printf '%s%s%s\n' "$BOLD" "$(t 'Select the harnesses to install for:' '选择要安装的 harness：')" "$RESET" >/dev/tty
+  tui_select_title
   printf '\033[?25l' >/dev/tty
 }
 
@@ -1000,7 +1013,7 @@ tui_finish_selection() {
 tui_select_harnesses() {
   local key rest spec kind bin total add_idx
   tui_reset_bin_selection
-  printf '%s%s%s\n' "$BOLD" "$(t 'Select the harnesses to install for:' '选择要安装的 harness：')" "$RESET" >/dev/tty
+  tui_select_title
   printf '\033[?25l' >/dev/tty
   trap 'printf "\033[?25h" >/dev/tty' EXIT
   TUI_LINES=0
@@ -1077,8 +1090,8 @@ select_harnesses() {
   if [ "$INTERACTIVE" -eq 1 ] && [ -w /dev/tty ]; then
     tui_select_harnesses
   elif [ "$INTERACTIVE" -eq 1 ]; then
-    info "$(t 'Detected harnesses:' '检测到的 harness：') ${detected:-none}"
-    ask "$(t 'Install harnesses' '要安装的 harness') [${default}]: "
+    info "$(t 'Detected AI tools:' '检测到的 AI 工具：') ${detected:-none}"
+    ask "$(t 'AI tools to install' '要安装的 AI 工具') [${default}]: "
     read_tty reply
     SELECTED_HARNESSES="${reply:-$default}"
   else
@@ -1087,17 +1100,12 @@ select_harnesses() {
 }
 
 select_dsh_profile() {
-  local reply
   contains_harness dsh || return 0
   if [ -n "$DSH_PROFILE_ARG" ]; then
     DSH_PROFILE="$DSH_PROFILE_ARG"
     return 0
   fi
   DSH_PROFILE="$DSH_PROFILE_DEFAULT"
-  [ "$INTERACTIVE" -eq 1 ] || return 0
-  ask "$(t 'DeepSeek Harness profile to install into' '要安装到的 DeepSeek Harness profile') [$DSH_PROFILE_DEFAULT]: "
-  read_tty reply
-  DSH_PROFILE="${reply:-$DSH_PROFILE_DEFAULT}"
 }
 
 install_dsh() {
@@ -1273,12 +1281,17 @@ EOF
 # ---------------------------------------------------------------------------
 
 prompt_connection() { # sets WIZ_URL / WIZ_KEY (WIZ_KEY may stay __OPENVIKING_KEEP__)
-  local current_url="$1" current_key="$2" url_input reply def=2
-  [ -n "$current_url" ] || def=0
+  local current_url="$1" current_key="$2" url_input reply def=2 custom hidden
+  custom="$(t 'Custom URL' '自定义 URL')"
+  if [ -n "$current_url" ]; then
+    custom="$(t 'Custom URL / keep current' '自定义 URL / 保持当前')  [$current_url]"
+  else
+    def=0
+  fi
   tui_menu "$(t 'Where do you connect to OpenViking?' '连接到哪个 OpenViking 服务？')" "$def" \
     "$(t 'Self-hosted / local' '自建 / 本地')  [http://127.0.0.1:1933]" \
     "$(t 'Volcengine OpenViking Cloud' '火山引擎 OpenViking 云服务')  [api.vikingdb.cn-beijing.volces.com]" \
-    "$(t 'Custom URL / keep current' '自定义 URL / 保持当前')  [${current_url:-http://127.0.0.1:1933}]"
+    "$custom"
   case "$TUI_MENU_CHOICE" in
     0) WIZ_URL="http://127.0.0.1:1933" ;;
     1) WIZ_URL="https://api.vikingdb.cn-beijing.volces.com/openviking" ;;
@@ -1289,10 +1302,15 @@ prompt_connection() { # sets WIZ_URL / WIZ_KEY (WIZ_KEY may stay __OPENVIKING_KE
       ;;
   esac
 
+  hidden="$(t 'typing is not shown' '输入内容不会显示')"
   if [ -n "$current_key" ]; then
-    ask "$(t "API key [enter = keep $(mask_secret "$current_key"), '-' = clear]: " "API key [回车 = 保留 $(mask_secret "$current_key")，输入 '-' 清空]: ")"
+    ask "$(t "API key [Enter = keep $(mask_secret "$current_key"), '-' = clear; $hidden]: " "API key [回车 = 保留 $(mask_secret "$current_key")，输入 '-' 清空；$hidden]: ")"
+  elif [ "$TUI_MENU_CHOICE" -eq 1 ]; then
+    info "$(t 'Get an API key in the OpenViking console, under User Management → API Key:' '在 OpenViking 控制台的「用户管理 → API Key」获取密钥：')"
+    info "  https://console.volcengine.com/vikingdb/openviking/region:openviking+cn-beijing"
+    ask "$(t "API key ($hidden): " "API key（$hidden）: ")"
   else
-    ask "$(t 'API key (leave empty for unauthenticated local mode): ' 'API key（本地免鉴权模式请直接回车）: ')"
+    ask "$(t "API key (press Enter if the server needs none; $hidden): " "API key（服务未开启鉴权可直接回车；$hidden）: ")"
   fi
   read_tty reply -s
   if [ "$reply" = "-" ]; then
@@ -1906,7 +1924,7 @@ choose_statusline() {
     return 0
   fi
   [ "$INTERACTIVE" -eq 1 ] || return 0
-  heading "$(t 'Statusline (optional)' 'Statusline 状态栏（可选）')"
+  heading "$(t 'Claude Code statusline (optional)' 'Claude Code 状态栏（可选）')"
   info "$(t 'OpenViking can show a one-line server/recall status under the input box.' 'OpenViking 可以在输入框下方显示一行服务/召回状态。')"
   info "$(t 'Sample:' '示例：') \"OV ✓ │ Fable 5 · ctx 42% │ ↩ 6 mem (0.92) · 50ms │ ✎ 573/20k · 2 arch │ +3 today\""
   tui_menu "$(t 'Enable the OpenViking statusline?' '启用 OpenViking statusline？')" 1 \
@@ -2072,6 +2090,17 @@ codex_bin_label() {
   esac
 }
 
+has_legacy_trae_cli_integration() {
+  case "$(bin_basename "$CODEX_BIN")" in
+    trae-cli|traecli|traex) ;;
+    *) return 1 ;;
+  esac
+  local trae_home="${TRAE_HOME:-$HOME/.trae}"
+  grep -qi 'openviking' "${TRAECLI_HOME:-$trae_home/cli}/hooks.json" 2>/dev/null \
+    || [ -d "$OV_HOME/agent-integrations/trae-cli" ] \
+    || grep -qF '[mcp_servers."openviking-memory"]' "$trae_home/traecli.toml" 2>/dev/null
+}
+
 remove_legacy_trae_cli_integration() {
   case "$(bin_basename "$CODEX_BIN")" in
     trae-cli|traecli|traex) ;;
@@ -2079,9 +2108,7 @@ remove_legacy_trae_cli_integration() {
   esac
   local trae_home="${TRAE_HOME:-$HOME/.trae}"
   local trae_cli_home="${TRAECLI_HOME:-$trae_home/cli}"
-  if grep -qi 'openviking' "$trae_cli_home/hooks.json" 2>/dev/null \
-    || [ -d "$OV_HOME/agent-integrations/trae-cli" ] \
-    || grep -qF '[mcp_servers."openviking-memory"]' "$trae_home/traecli.toml" 2>/dev/null; then
+  if has_legacy_trae_cli_integration; then
     agent_remove_trae_cli_configs "$trae_cli_home/hooks.json" "$trae_home/traecli.toml"
     rm -rf "$OV_HOME/agent-integrations/trae-cli"
     info "$(t 'Removed the deprecated TRAE CLI Hooks integration after installing the TraeCode CLI 2.0 plugin.' 'TraeCode CLI 2.0 插件安装成功后，已移除弃用的 TRAE CLI Hooks 集成。')"
@@ -3052,13 +3079,11 @@ EOF
         plan_item "$(t 'Removes the old marketplace' '移除旧 marketplace') $LEGACY_MARKETPLACE_NAME ($CODEX_BIN plugin marketplace remove)"
       fi
       if is_native_codex_bin; then plan_item "$(short_path "$CODEX_CONFIG")"; fi
-      case "$(bin_basename "$CODEX_BIN")" in
-        trae-cli|traecli|traex)
-          trae_home="${TRAE_HOME:-$HOME/.trae}"
-          plan_paths "$(t 'Removes the deprecated TRAE CLI Hooks integration' '移除弃用的 TRAE CLI Hooks 集成')" \
-            "${TRAECLI_HOME:-$trae_home/cli}/hooks.json" "$trae_home/traecli.toml" "$OV_HOME/agent-integrations/trae-cli"
-          ;;
-      esac
+      if has_legacy_trae_cli_integration; then
+        trae_home="${TRAE_HOME:-$HOME/.trae}"
+        plan_paths "$(t 'Removes the deprecated TRAE CLI Hooks integration' '移除弃用的 TRAE CLI Hooks 集成')" \
+          "${TRAECLI_HOME:-$trae_home/cli}/hooks.json" "$trae_home/traecli.toml" "$OV_HOME/agent-integrations/trae-cli"
+      fi
     done <<EOF
 $CODEX_BINS
 EOF
@@ -3202,6 +3227,7 @@ UI_LANG="${LANG_ARG:-$(detect_lang_default)}"
 resolve_self_checkout
 reexec_release_installer ${INSTALLER_ARGS[@]+"${INSTALLER_ARGS[@]}"}
 select_language
+print_intro
 
 case "$(uname -s)" in
   Darwin|Linux) ;;

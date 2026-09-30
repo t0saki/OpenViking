@@ -195,6 +195,21 @@ printf '%s|%s\\n' "$WIZ_URL" "$WIZ_KEY"
   );
 });
 
+test("choosing the cloud service says where to get an API key", () => {
+  const result = runInstallerPrelude(`
+tui_menu() { TUI_MENU_CHOICE=1; }
+INTERACTIVE=1
+exec 3< <(printf 'cloud-key\\n')
+prompt_connection "" ""
+printf '%s|%s\\n' "$WIZ_URL" "$WIZ_KEY"
+`);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /User Management → API Key/);
+  assert.match(result.stdout, /https:\/\/console\.volcengine\.com\/vikingdb\/openviking\//);
+  assert.equal(result.stdout.trim().split("\n").pop(), "https://api.vikingdb.cn-beijing.volces.com/openviking|cloud-key");
+});
+
 test("the credentials step writes ovcli.conf when the stored key is kept", (t) => {
   const home = makeTempHome(t);
   const conf = join(home, "ovcli.conf");

@@ -567,6 +567,7 @@ exit 0
   assert.match(downloads()[0], /releases\/v9\.9\.9\/memory-plugin-marketplace\.zip/);
   assert.ok(readFileSync(traeLog, "utf8").split("\n").includes(`plugin marketplace add ${pinnedGit}`));
   assert.match(result.stdout, /Release: 9\.9\.9/);
+  assert.doesNotMatch(result.stdout, /Removes the deprecated TRAE CLI Hooks integration/);
   assert.ok(existsSync(join(home, ".openviking", "agent-integrations", "cursor", "scripts", "hook.mjs")));
 });
 
