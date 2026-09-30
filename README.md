@@ -132,7 +132,8 @@ Pick where the memory lives. Each option works two ways: copy the prompt to your
 
 Deploy an OpenViking server first, then connect the plugin to it. You need uv, Python 3.10+ and a model provider with an embedding model and a VLM.
 
-**Send to your agent**
+<details open>
+<summary>Send to your agent</summary>
 
 ```text
 Follow this guide to install and start an OpenViking Server for me:
@@ -162,7 +163,10 @@ other tool.
 
 Your agent will first ask which model provider to use and for its API key.
 
-**Or run it yourself in a terminal**
+</details>
+
+<details>
+<summary>Or run it yourself in a terminal</summary>
 
 First deploy and start the server; the wizard sets up the models:
 
@@ -183,12 +187,15 @@ For the server, choose Self-hosted / local. If auth is on, enter a user key, not
 
 </details>
 
+</details>
+
 <details>
 <summary><strong>Connect to my own server</strong></summary>
 
 Connect to an OpenViking server you already run. You'll need its address, and an API key if the server has auth turned on.
 
-**Send to your agent**
+<details>
+<summary>Send to your agent</summary>
 
 ```text
 Install the OpenViking memory plugin for me by running:
@@ -211,7 +218,10 @@ each, then ask whether I want it in any other tool.
 
 Have your server's address ready, plus its API key if it has auth turned on.
 
-**Or run it yourself in a terminal**
+</details>
+
+<details>
+<summary>Or run it yourself in a terminal</summary>
 
 Run it, then pick the tools and a server when asked:
 
@@ -224,12 +234,15 @@ Choose Self-hosted / local for a server on this machine, or Custom URL for any o
 
 </details>
 
+</details>
+
 <details>
 <summary><strong>Use OpenViking Service (hosted by Volcengine)</strong></summary>
 
 Hosted by Volcengine, nothing to deploy. Create an API key in the [console](https://console.volcengine.com/vikingdb/openviking/region:openviking+cn-beijing) under User Management → API Key; you'll need it below.
 
-**Send to your agent**
+<details>
+<summary>Send to your agent</summary>
 
 ```text
 Install the OpenViking memory plugin for me by running:
@@ -249,7 +262,10 @@ each, then ask whether I want it in any other tool.
 
 Have your API key ready; your agent will ask for it.
 
-**Or run it yourself in a terminal**
+</details>
+
+<details>
+<summary>Or run it yourself in a terminal</summary>
 
 Run it, then pick the tools and a server when asked:
 
@@ -259,6 +275,8 @@ curl -fsSL https://openviking.ai/install | bash
 ```
 
 Choose Volcengine OpenViking Cloud, then paste your API key.
+
+</details>
 
 </details>
 

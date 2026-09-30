@@ -132,7 +132,8 @@ OpenViking 0.3.22 的评测覆盖长对话用户记忆（LoCoMo）和多轮智�
 
 先部署一个 OpenViking 服务，再把插件接上去。需要 uv、Python 3.10+，以及一个提供 embedding 模型和 VLM 的模型服务。
 
-**发给你的 agent**
+<details open>
+<summary>发给你的 agent</summary>
 
 ```text
 按这份文档，帮我安装并启动 OpenViking Server：
@@ -158,7 +159,10 @@ curl -fsSL https://openviking.ai/install | bash -s -- --yes --url <SERVER_URL>
 
 agent 会先问你用哪家模型服务，以及它的 API key。
 
-**或者自己在终端运行**
+</details>
+
+<details>
+<summary>或者自己在终端运行</summary>
 
 先部署并启动服务，跟着向导配置模型：
 
@@ -179,12 +183,15 @@ curl -fsSL https://openviking.ai/install | bash
 
 </details>
 
+</details>
+
 <details>
 <summary><strong>连接已有的自部署服务</strong></summary>
 
 连接你已经部署好的 OpenViking 服务。需要它的地址；服务开了鉴权的话，还要 API key。
 
-**发给你的 agent**
+<details>
+<summary>发给你的 agent</summary>
 
 ```text
 帮我安装 OpenViking 记忆插件，运行：
@@ -203,7 +210,10 @@ curl -fsSL https://openviking.ai/install | bash -s -- --yes --url <SERVER_URL>
 
 准备好服务地址；服务开了鉴权的话，还要它的 API key。
 
-**或者自己在终端运行**
+</details>
+
+<details>
+<summary>或者自己在终端运行</summary>
 
 运行后按提示勾选工具、选择服务：
 
@@ -216,12 +226,15 @@ curl -fsSL https://openviking.ai/install | bash
 
 </details>
 
+</details>
+
 <details>
 <summary><strong>使用 OpenViking Service（火山引擎托管）</strong></summary>
 
 由火山引擎托管，不用部署。先在[控制台](https://console.volcengine.com/vikingdb/openviking/region:openviking+cn-beijing)的「用户管理 → API Key」创建一个 API key，下面要用。
 
-**发给你的 agent**
+<details>
+<summary>发给你的 agent</summary>
 
 ```text
 帮我安装 OpenViking 记忆插件，运行：
@@ -238,7 +251,10 @@ curl -fsSL https://openviking.ai/install | bash -s -- --yes --url https://api.vi
 
 准备好 API key，agent 会向你要。
 
-**或者自己在终端运行**
+</details>
+
+<details>
+<summary>或者自己在终端运行</summary>
 
 运行后按提示勾选工具、选择服务：
 
@@ -248,6 +264,8 @@ curl -fsSL https://openviking.ai/install | bash
 ```
 
 服务选「火山引擎 OpenViking 云服务」，再粘贴 API key。
+
+</details>
 
 </details>
 

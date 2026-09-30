@@ -132,7 +132,8 @@ OpenViking 0.3.22 は、長い会話でのユーザーメモリ（LoCoMo）と�
 
 まず OpenViking サーバーをデプロイし、そこにプラグインを接続します。uv、Python 3.10+、そして embedding モデルと VLM を提供するモデルプロバイダーが必要です。
 
-**エージェントに送る**
+<details open>
+<summary>エージェントに送る</summary>
 
 ```text
 このガイドに従って、OpenViking Server をインストールして起動すること：
@@ -165,7 +166,10 @@ curl -fsSL https://openviking.ai/install | bash -s -- --yes --url <SERVER_URL>
 
 エージェントは最初に、どのモデルプロバイダーを使うかとその API キーを尋ねます。
 
-**または自分でターミナルで実行**
+</details>
+
+<details>
+<summary>または自分でターミナルで実行</summary>
 
 まずサーバーをデプロイして起動します。モデルはウィザードで設定します：
 
@@ -186,12 +190,15 @@ curl -fsSL https://openviking.ai/install | bash
 
 </details>
 
+</details>
+
 <details>
 <summary><strong>既存の自前サーバーに接続</strong></summary>
 
 すでに運用している OpenViking サーバーに接続します。そのアドレスと、サーバーで認証を有効にしている場合は API キーが必要です。
 
-**エージェントに送る**
+<details>
+<summary>エージェントに送る</summary>
 
 ```text
 OpenViking メモリプラグインをインストールすること。次を実行する：
@@ -216,7 +223,10 @@ curl -fsSL https://openviking.ai/install | bash -s -- --yes --url <SERVER_URL>
 
 サーバーのアドレスを用意しておいてください。認証が有効なら API キーも必要です。
 
-**または自分でターミナルで実行**
+</details>
+
+<details>
+<summary>または自分でターミナルで実行</summary>
 
 実行したら、表示に従ってツールとサーバーを選んでください：
 
@@ -229,12 +239,15 @@ curl -fsSL https://openviking.ai/install | bash
 
 </details>
 
+</details>
+
 <details>
 <summary><strong>OpenViking Service を使う（Volcengine がホスト）</strong></summary>
 
 Volcengine がホストするため、デプロイは不要です。[コンソール](https://console.volcengine.com/vikingdb/openviking/region:openviking+cn-beijing)の「User Management → API Key」で API キーを作成してください。以下で使います。
 
-**エージェントに送る**
+<details>
+<summary>エージェントに送る</summary>
 
 ```text
 OpenViking メモリプラグインをインストールすること。次を実行する：
@@ -255,7 +268,10 @@ curl -fsSL https://openviking.ai/install | bash -s -- --yes --url https://api.vi
 
 API キーを用意しておいてください。エージェントが尋ねます。
 
-**または自分でターミナルで実行**
+</details>
+
+<details>
+<summary>または自分でターミナルで実行</summary>
 
 実行したら、表示に従ってツールとサーバーを選んでください：
 
@@ -265,6 +281,8 @@ curl -fsSL https://openviking.ai/install | bash
 ```
 
 「Volcengine OpenViking Cloud」を選び、API キーを貼り付けます。
+
+</details>
 
 </details>
 
