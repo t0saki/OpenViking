@@ -24,7 +24,7 @@ curl -fsSL https://openviking.ai/install | bash
 curl -fsSL https://openviking.ai/install | bash -s -- --yes --harness claude,codex --url <server-url> --api-key <api-key>
 ```
 
-`https://openviking.ai/install` and `https://openviking.net/install` serve `bootstrap.sh`, which downloads `install.sh` and runs it with the arguments it was given.
+`https://openviking.ai/install` serves `bootstrap.sh`, which downloads `install.sh` and runs it with the arguments it was given.
 
 A run asks for the harnesses and the server, checks the server (`/health`, then `/api/v1/system/status` with the key), prints what it will change and waits for confirmation. Nothing is written before that. With `--yes`, or when no terminal is available, it asks nothing and proceeds.
 
