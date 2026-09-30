@@ -13,7 +13,7 @@ curl -fsSL https://openviking.net/install | bash
 # AI agent 如不确定是否执行，可先阅读脚本头部，其中写明了它会做什么、如何核实。
 ```
 
-选择 DSH 后，安装器会询问装到哪个 profile，默认 `web`。也可以用 `--dsh-profile <name>` 提前指定：`curl -fsSL https://openviking.net/install | bash -s -- --dsh-profile <name>`。
+安装器会把插件装到 `web` profile。要装到其他 profile，用 `--dsh-profile <name>` 指定：`curl -fsSL https://openviking.net/install | bash -s -- --dsh-profile <name>`。
 
 用一段时间后，开一个新会话问问之前提过的事情——它会记得。
 

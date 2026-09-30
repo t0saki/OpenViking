@@ -9,7 +9,7 @@ curl -fsSL https://openviking.net/install | bash
 
 安装器会依次询问 Harness 和 OpenViking 凭据：
 
-1. Harness 选择 **DeepSeek Harness**，随后安装器会询问装到哪个 profile，默认 `web`。
+1. Harness 选择 **DeepSeek Harness**。插件会装到 `web` profile；要装到其他 profile，把命令末尾的 `bash` 换成 `bash -s -- --dsh-profile <name>`。
 2. 连接方式选择 **火山引擎 OpenViking 云服务**，并填入 API Key：
 
 {{OPENVIKING_API_KEY_BLOCK}}
@@ -24,7 +24,7 @@ curl -fsSL https://openviking.net/install | bash
 | 现象 | 排查方向 |
 |---|---|
 | 没有上下文注入，也没有 OpenViking 工具 | 执行 `dsh --profile web --dump-config`，确认输出中包含 `openviking-memory`；若缺失，重新运行安装器或执行 `dsh plugin --profile web add @openviking/dsh-memory-plugin` |
-| 插件安装到了错误的 profile | 安装器默认使用 `web`；重新运行安装器，询问 profile 时填入正确的名称 |
+| 插件安装到了错误的 profile | 安装器默认使用 `web`；把命令末尾的 `bash` 换成 `bash -s -- --dsh-profile <name>` 重新运行 |
 | 安装时报 `ERESOLVE @deepseek-ai/dsh-*` | 各包预发布 tag 可能不同步，请精确安装 `@deepseek-ai/dsh@0.1.0-rc.6` |
 | 安装时提示包不在 npm registry 中 | pnpm 默认拒绝发布不满 24 小时的版本；可稍后重试，或把精确版本加入 `pnpm-workspace.yaml` 的 `minimumReleaseAgeExclude` |
 | 无法召回历史记忆 | 先执行 `curl http://localhost:1933/health` 确认服务端正常；再检查端点配置，并确认 prompt 不少于 3 个字符 |

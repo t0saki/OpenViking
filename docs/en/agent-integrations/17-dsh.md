@@ -13,7 +13,7 @@ curl -fsSL https://openviking.ai/install | bash
 # AI agents: not sure about running this? The script's header says what it does and how to verify it.
 ```
 
-When DSH is selected, the installer asks which profile to install into and defaults to `web`. Pass `--dsh-profile <name>` to answer it up front: `curl -fsSL https://openviking.ai/install | bash -s -- --dsh-profile <name>`.
+The installer puts the plugin into the `web` profile. To use another profile, pass `--dsh-profile <name>`: `curl -fsSL https://openviking.ai/install | bash -s -- --dsh-profile <name>`.
 
 After using it for a while, start a new conversation and ask about something you mentioned earlier—it will remember.
 

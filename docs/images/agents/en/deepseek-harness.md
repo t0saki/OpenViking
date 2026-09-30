@@ -9,7 +9,7 @@ curl -fsSL https://openviking.ai/install | bash
 
 The installer asks for the harness and OpenViking credentials:
 
-1. Select **DeepSeek Harness**. The installer then asks which profile to install into; the default is `web`.
+1. Select **DeepSeek Harness**. The plugin goes into the `web` profile; for another profile, run the command with `bash -s -- --dsh-profile <name>` in place of `bash`.
 2. Select **Volcengine OpenViking Cloud** and enter the API key:
 
 {{OPENVIKING_API_KEY_BLOCK}}
@@ -24,7 +24,7 @@ The installer asks for the harness and OpenViking credentials:
 | Issue | What to check |
 |---|---|
 | No context injection or OpenViking tools | Run `dsh --profile web --dump-config` and confirm it contains `openviking-memory`; otherwise rerun the installer or run `dsh plugin --profile web add @openviking/dsh-memory-plugin` |
-| Installed into the wrong profile | The installer defaults to `web`; rerun it and enter the profile when asked |
+| Installed into the wrong profile | The installer uses `web`; rerun it with `bash -s -- --dsh-profile <name>` in place of `bash` |
 | `ERESOLVE @deepseek-ai/dsh-*` during install | Prerelease tags may be out of sync; install `@deepseek-ai/dsh@0.1.0-rc.6` exactly |
 | Package reported missing from npm | pnpm rejects releases younger than 24 hours by default; wait and retry, or add the exact version to `minimumReleaseAgeExclude` in `pnpm-workspace.yaml` |
 | Recall returns no history | Run `curl http://localhost:1933/health` to confirm the server is healthy, then check the endpoint and make sure the prompt is at least 3 characters long |
