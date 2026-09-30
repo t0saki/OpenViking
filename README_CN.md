@@ -158,7 +158,7 @@ uv tool install openviking --upgrade && openviking-server init
 <details>
 <summary><strong>使用 OpenViking Service（火山引擎托管）</strong></summary>
 
-由火山引擎托管，不用部署。在[控制台](https://console.volcengine.com/vikingdb/openviking/region:openviking+cn-beijing)的「用户管理 → API Key」创建一个 API key。服务地址是 `https://api.vikingdb.cn-beijing.volces.com/openviking`，接入 agent 时要用到它和 API key。
+同一个 OpenViking 服务，由火山引擎替你运行。前 50 个文件免费。在[控制台](https://console.volcengine.com/vikingdb/openviking/region:openviking+cn-beijing)的「用户管理 → API Key」创建一个 API key。服务地址是 `https://api.vikingdb.cn-beijing.volces.com/openviking`，接入 agent 时要用到它和 API key。
 
 </details>
 
