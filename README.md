@@ -159,7 +159,7 @@ uv tool install openviking --upgrade && openviking-server init
 <details>
 <summary><strong>Use OpenViking Service (hosted by Volcengine)</strong></summary>
 
-The same OpenViking service, run for you by Volcengine. The first 50 files are free. Create an API key in the [console](https://console.volcengine.com/vikingdb/openviking/region:openviking+cn-beijing) under User Management → API Key. The server address is `https://api.vikingdb.cn-beijing.volces.com/openviking`; you'll need it and the API key when you connect your agent.
+The same OpenViking service, run for you by Volcengine. The first 50 files are free. Activate it on the [Volcengine product page](https://www.volcengine.com/product/openviking-service), then create an API key in the console under User Management → API Key. The server address is `https://api.vikingdb.cn-beijing.volces.com/openviking`; you'll need it and the API key when you connect your agent.
 
 </details>
 
