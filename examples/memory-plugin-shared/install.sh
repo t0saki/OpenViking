@@ -215,7 +215,8 @@ Options:
   --claude-bin LIST  Comma-separated Claude-format CLI commands (default: claude).
   --codex-bin LIST   Comma-separated Codex-format CLI commands (default: codex).
   --dsh-profile NAME DeepSeek Harness profile to install into (default: web).
-  --lang LANG        en | zh (default: from OPENVIKING_LANG or the system locale).
+  --lang LANG        en | zh (default: asked first, with the system locale preselected;
+                     with --yes or no terminal, the system locale).
   --source MODE      Advanced: archive (the OpenViking release) | dev (this checkout's plugins).
                      Default: dev when run from a repository checkout, archive otherwise.
   --dist CHANNEL     Ignored; kept so older commands keep working.
@@ -390,6 +391,12 @@ detect_lang_default() {
 
 select_language() {
   UI_LANG="${LANG_ARG:-$(detect_lang_default)}"
+  if [ -z "$LANG_ARG" ] && [ -z "${OPENVIKING_LANG:-}" ] && [ "$INTERACTIVE" -eq 1 ]; then
+    local def=0
+    [ "$UI_LANG" = "zh" ] && def=1
+    tui_menu "Language / 语言" "$def" "English" "中文"
+    if [ "$TUI_MENU_CHOICE" -eq 1 ]; then UI_LANG="zh"; else UI_LANG="en"; fi
+  fi
   case "$UI_LANG" in
     en|zh) ;;
     *) err "Invalid --lang: $UI_LANG (expected en or zh)"; exit 2 ;;
@@ -3087,9 +3094,10 @@ EOF
 # Main
 # ---------------------------------------------------------------------------
 
-select_language
+UI_LANG="${LANG_ARG:-$(detect_lang_default)}"
 resolve_self_checkout
 reexec_release_installer ${INSTALLER_ARGS[@]+"${INSTALLER_ARGS[@]}"}
+select_language
 
 case "$(uname -s)" in
   Darwin|Linux) ;;
