@@ -17,7 +17,7 @@
 # Install without prompts:
 #   curl -fsSL https://openviking.ai/install | bash -s -- --yes --url <server-url> --api-key <api-key>
 # (https://openviking.ai/install is a short script that downloads this one and
-# runs it.)
+# runs it; https://openviking.net/install serves the same.)
 # The server URL and API key come from the user; without them it uses an
 # existing ~/.openviking/ovcli.conf, then http://127.0.0.1:1933 without a key.
 # It installs into the agents it detects (claude,codex when it detects none);

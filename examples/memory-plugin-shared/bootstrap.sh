@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 #
 # OpenViking memory plugin installer (bootstrap). Served at
-# https://openviking.ai/install.
+# https://openviking.net/install and https://openviking.ai/install; both serve
+# this same file.
 #
 # In short:
 #   - Open source. This script, the installer and every OpenViking plugin file
