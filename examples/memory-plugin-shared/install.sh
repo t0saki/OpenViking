@@ -123,6 +123,8 @@ MARKETPLACE_NAME="${OPENVIKING_MARKETPLACE_NAME:-openviking}"
 PLUGIN_NAME="openviking-memory"
 DSH_PACKAGE="@openviking/dsh-memory-plugin"
 PLUGIN_ID="${PLUGIN_NAME}@${MARKETPLACE_NAME}"
+# The marketplace installers used before the unified name.
+LEGACY_MARKETPLACE_NAME="openviking-plugins-local"
 
 CODEX_DIR="${CODEX_HOME:-$HOME/.codex}"
 CODEX_CONFIG="${CODEX_CONFIG_FILE:-$CODEX_DIR/config.toml}"
@@ -1945,6 +1947,58 @@ NODE
   info "$(t 'Turn it off anytime with: export OPENVIKING_STATUSLINE=off' '可随时用 export OPENVIKING_STATUSLINE=off 关闭')"
 }
 
+# What installers before the unified marketplace left behind: a marketplace of
+# the old name with its plugin, and, from their fallback for older Claude Code,
+# hooks merged into settings.json plus a user-scope `openviking` MCP server
+# running the plugin's proxy. Any of them runs next to the plugin and repeats
+# every hook or tool.
+claude_legacy_leftovers() {
+  if str_contains "$(claude_cmd plugin marketplace list 2>/dev/null || true)
+$(claude_cmd plugin list 2>/dev/null || true)" "$LEGACY_MARKETPLACE_NAME"; then
+    echo plugin
+  fi
+  is_native_claude_bin || return 0
+  node - "$CC_SETTINGS" "${CLAUDE_CONFIG_DIR:-$HOME}/.claude.json" <<'NODE' 2>/dev/null || true
+const fs = require("node:fs");
+const read = (file) => { try { return JSON.parse(fs.readFileSync(file, "utf8")); } catch { return {}; } };
+const hooks = read(process.argv[2]).hooks || {};
+if (JSON.stringify(hooks).includes("claude-code-memory-plugin/scripts/")) console.log("hooks");
+const server = (read(process.argv[3]).mcpServers || {}).openviking;
+if (JSON.stringify(server || {}).includes("claude-code-memory-plugin/servers/mcp-proxy.mjs")) console.log("mcp");
+NODE
+}
+
+claude_remove_legacy() {
+  local leftovers id
+  leftovers="$(claude_legacy_leftovers)"
+  [ -n "$leftovers" ] || return 0
+  info "$(t 'Removing the OpenViking integration an earlier installer set up' '移除旧版安装器留下的 OpenViking 集成')"
+  if list_contains_line "$leftovers" plugin; then
+    for id in "claude-code-memory-plugin@$LEGACY_MARKETPLACE_NAME" "$PLUGIN_NAME@$LEGACY_MARKETPLACE_NAME"; do
+      claude_cmd plugin uninstall "$id" >/dev/null 2>&1 || true
+    done
+    claude_cmd plugin marketplace remove "$LEGACY_MARKETPLACE_NAME" >/dev/null 2>&1 || true
+  fi
+  if list_contains_line "$leftovers" mcp; then
+    claude_cmd mcp remove openviking -s user >/dev/null 2>&1 || true
+  fi
+  if list_contains_line "$leftovers" hooks; then
+    node - "$CC_SETTINGS" <<'NODE' || warn "$(t 'could not remove the old hooks from' '无法移除以下文件中的旧 hook：') $CC_SETTINGS"
+const fs = require("node:fs");
+const file = process.argv[2];
+const settings = JSON.parse(fs.readFileSync(file, "utf8"));
+for (const [event, groups] of Object.entries(settings.hooks || {})) {
+  if (!Array.isArray(groups)) continue;
+  const kept = groups.filter((group) => !JSON.stringify(group).includes("claude-code-memory-plugin/scripts/"));
+  if (kept.length) settings.hooks[event] = kept;
+  else delete settings.hooks[event];
+}
+if (settings.hooks && !Object.keys(settings.hooks).length) delete settings.hooks;
+fs.writeFileSync(file, JSON.stringify(settings, null, 2) + "\n");
+NODE
+  fi
+}
+
 claude_install_plugin() {
   if str_contains "$(claude_cmd plugin list 2>/dev/null || true)" "$PLUGIN_ID"; then
     info "$CLAUDE_BIN plugin update ($PLUGIN_ID)"
@@ -1969,6 +2023,7 @@ install_claude() {
     warn "$(t "Skipping $CLAUDE_BIN: it has no 'plugin' command. The plugin needs Claude Code 2.0 or newer; upgrade it and re-run this installer." "跳过 ${CLAUDE_BIN}：它没有 plugin 子命令。插件需要 Claude Code 2.0 或更新版本，请升级后重跑本安装脚本。")"
     return 0
   fi
+  claude_remove_legacy
   local url=0
   if [ "$SOURCE_MODE" = "archive" ] && claude_supports_archive_source; then
     if claude_marketplace_sync "$CC_MARKETPLACE_URL" && claude_install_plugin; then
@@ -2059,6 +2114,28 @@ codex_marketplace_current_source() {
   ' "$MARKETPLACE_NAME" 2>/dev/null || true
 }
 
+# Once the directory of the old marketplace is gone, Codex fails every
+# `marketplace list`, which hides the registration codex_marketplace_sync has
+# to replace; while it is there, its plugin runs next to this one.
+codex_has_legacy() {
+  if is_native_codex_bin; then
+    grep -qF "$LEGACY_MARKETPLACE_NAME" "$CODEX_CONFIG" 2>/dev/null
+  else
+    str_contains "$(codex_cmd plugin marketplace list 2>&1 || true)" "$LEGACY_MARKETPLACE_NAME"
+  fi
+}
+
+codex_remove_legacy() {
+  codex_has_legacy || return 0
+  info "$(t 'Removing the OpenViking marketplace an earlier installer registered' '移除旧版安装器注册的 OpenViking marketplace') ($LEGACY_MARKETPLACE_NAME)"
+  codex_cmd plugin remove "$PLUGIN_NAME@$LEGACY_MARKETPLACE_NAME" >/dev/null 2>&1 || true
+  codex_cmd plugin uninstall "$PLUGIN_NAME@$LEGACY_MARKETPLACE_NAME" >/dev/null 2>&1 || true
+  codex_cmd plugin marketplace remove "$LEGACY_MARKETPLACE_NAME" >/dev/null 2>&1 || true
+  if is_native_codex_bin; then
+    rm -rf "$CODEX_DIR/$LEGACY_MARKETPLACE_NAME-marketplace" "$CODEX_DIR/plugins/cache/$LEGACY_MARKETPLACE_NAME"
+  fi
+}
+
 codex_unregister() {
   codex_cmd plugin remove "$PLUGIN_ID" >/dev/null 2>&1 || true
   codex_cmd plugin uninstall "$PLUGIN_ID" >/dev/null 2>&1 || true
@@ -2080,6 +2157,14 @@ codex_marketplace_sync() { # codex_marketplace_sync <source>
     codex_unregister
   fi
   info "$CODEX_BIN plugin marketplace add $source"
+  local out
+  out="$(codex_cmd plugin marketplace add "$source" 2>&1 >/dev/null)" && return 0
+  # A registration `marketplace list` did not report still holds the name.
+  if ! str_contains "$out" "different source"; then
+    printf '%s\n' "$out" >&2
+    return 1
+  fi
+  codex_unregister
   codex_cmd plugin marketplace add "$source" >/dev/null
 }
 
@@ -2127,6 +2212,7 @@ install_codex() {
     warn "$(t 'Codex-format CLI not found; skipping:' '未找到 Codex 格式 CLI，跳过：') $CODEX_BIN"
     return 0
   }
+  codex_remove_legacy
   # Codex clones git marketplaces served over dumb HTTP from static hosting,
   # so the release carries a slim marketplace git repo that Codex upgrades.
   if [ "$SOURCE_MODE" = "dev" ] || ! codex_marketplace_sync "$CODEX_GIT_URL" 2>/dev/null; then
@@ -2896,6 +2982,20 @@ plan_paths() { # plan_paths <label> <path...>
   plan_item "$label: $out"
 }
 
+claude_plan_legacy() {
+  local leftovers
+  leftovers="$(claude_legacy_leftovers)"
+  if list_contains_line "$leftovers" plugin; then
+    plan_item "$(t 'Removes the old marketplace' '移除旧 marketplace') $LEGACY_MARKETPLACE_NAME ($CLAUDE_BIN plugin marketplace remove)"
+  fi
+  if list_contains_line "$leftovers" mcp; then
+    plan_item "$(t 'Removes the old MCP server' '移除旧 MCP 服务') openviking ($CLAUDE_BIN mcp remove -s user)"
+  fi
+  if list_contains_line "$leftovers" hooks; then
+    plan_item "$(short_path "$CC_SETTINGS") ($(t 'removes the old OpenViking hooks' '移除旧的 OpenViking hook'))"
+  fi
+}
+
 print_plan() {
   local bundle origin fallback account user trae_home
   if [ "$SOURCE_MODE" = "dev" ]; then
@@ -2928,6 +3028,7 @@ print_plan() {
         plan_item "$CLAUDE_BIN plugin marketplace add/update $bundle"
       fi
       plan_item "$CLAUDE_BIN plugin install/update $PLUGIN_ID"
+      claude_plan_legacy
       if is_native_claude_bin && [ "$STATUSLINE_WRITE" -eq 1 ]; then
         plan_item "$(short_path "$CC_SETTINGS") ($(t 'marketplace auto-update, statusline' 'marketplace 自动更新、statusline'))"
       elif is_native_claude_bin; then
@@ -2947,6 +3048,9 @@ EOF
         plan_item "$CODEX_BIN plugin marketplace add/upgrade $bundle"
       fi
       plan_item "$CODEX_BIN plugin add $PLUGIN_ID"
+      if codex_has_legacy; then
+        plan_item "$(t 'Removes the old marketplace' '移除旧 marketplace') $LEGACY_MARKETPLACE_NAME ($CODEX_BIN plugin marketplace remove)"
+      fi
       if is_native_codex_bin; then plan_item "$(short_path "$CODEX_CONFIG")"; fi
       case "$(bin_basename "$CODEX_BIN")" in
         trae-cli|traecli|traex)
