@@ -32,7 +32,7 @@ curl http://localhost:1933/health
 OpenCode 与 Claude Code、Codex 共用同一个安装器。它会询问要安装的 harness 和 OpenViking 凭据；每一步都是幂等的，重复运行完全安全。
 
 ```bash
-curl -fsSL https://openviking.net/install | bash
+curl -fsSL https://openviking.ai/install | bash
 # AI agent 如不确定是否执行，可先阅读脚本头部，其中写明了它会做什么、如何核实。
 ```
 

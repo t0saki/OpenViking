@@ -9,11 +9,11 @@
 DSH 与其他记忆插件共用同一个安装器。它会询问要安装的 harness 和 OpenViking 凭据；每一步都是幂等的，重复运行完全安全。
 
 ```bash
-curl -fsSL https://openviking.net/install | bash
+curl -fsSL https://openviking.ai/install | bash
 # AI agent 如不确定是否执行，可先阅读脚本头部，其中写明了它会做什么、如何核实。
 ```
 
-安装器会把插件装到 `web` profile。要装到其他 profile，用 `--dsh-profile <name>` 指定：`curl -fsSL https://openviking.net/install | bash -s -- --dsh-profile <name>`。
+安装器会把插件装到 `web` profile。要装到其他 profile，用 `--dsh-profile <name>` 指定：`curl -fsSL https://openviking.ai/install | bash -s -- --dsh-profile <name>`。
 
 用一段时间后，开一个新会话问问之前提过的事情——它会记得。
 

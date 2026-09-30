@@ -76,7 +76,7 @@ Agent Plugins 1.0 只覆盖 skills 和 MCP servers；hooks、commands、agents �
 Claude Code、Codex、Cursor、TRAE / TRAE CN、ZCode、OpenCode、pi 共用同一个安装脚本。它会询问要安装的 harness 和 OpenViking 凭据，所有步骤幂等，重复运行安全：
 
 ```bash
-curl -fsSL https://openviking.net/install | bash
+curl -fsSL https://openviking.ai/install | bash
 # AI agent 如不确定是否执行，可先阅读脚本头部，其中写明了它会做什么、如何核实。
 ```
 

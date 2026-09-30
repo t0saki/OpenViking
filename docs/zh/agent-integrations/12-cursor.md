@@ -9,7 +9,7 @@
 安装器询问连接方式时，火山引擎云服务用户请选择 **火山引擎 OpenViking 云服务** 并填写 API Key。只有本机已运行 OpenViking 服务时才选择 **自建 / 本地**。
 
 ```bash
-curl -fsSL https://openviking.net/install | bash
+curl -fsSL https://openviking.ai/install | bash
 # AI agent 如不确定是否执行，可先阅读脚本头部，其中写明了它会做什么、如何核实。
 ```
 
@@ -46,7 +46,7 @@ skill 清单先列你自己的 skill，再列账号内共享的 skill；共享 s
 重复运行安装命令即可升级。卸载时运行：
 
 ```bash
-curl -fsSL https://openviking.net/install | bash -s -- --uninstall --yes --harness cursor
+curl -fsSL https://openviking.ai/install | bash -s -- --uninstall --yes --harness cursor
 ```
 
 卸载仅移除 OpenViking 管理的 Cursor Hook、MCP、Rule、Skill 和运行文件，保留其他配置。

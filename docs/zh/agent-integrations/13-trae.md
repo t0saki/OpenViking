@@ -9,7 +9,7 @@
 安装器询问连接方式时，火山引擎云服务用户请选择 **火山引擎 OpenViking 云服务** 并填写 API Key。只有本机已运行 OpenViking 服务时才选择 **自建 / 本地**。
 
 ```bash
-curl -fsSL https://openviking.net/install | bash
+curl -fsSL https://openviking.ai/install | bash
 # AI agent 如不确定是否执行，可先阅读脚本头部，其中写明了它会做什么、如何核实。
 ```
 
@@ -66,7 +66,7 @@ skill 清单先列你自己的 skill，再列账号内共享的 skill，每条�
 重复运行安装命令即可升级。卸载 TRAE CN：
 
 ```bash
-curl -fsSL https://openviking.net/install | bash -s -- --uninstall --yes --harness trae-cn
+curl -fsSL https://openviking.ai/install | bash -s -- --uninstall --yes --harness trae-cn
 ```
 
 将 `trae-cn` 替换为 `trae` 可管理 TRAE 集成。TraeCode CLI 2.0 请执行 `trae-cli plugin uninstall openviking-memory@openviking`。安装器的 `--harness trae-cli --uninstall` 只用于移除旧安装中已弃用的独立 Hooks 集成。

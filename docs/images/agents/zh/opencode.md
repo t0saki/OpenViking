@@ -3,7 +3,7 @@
 1. 在终端执行以下安装命令：
 
    ```bash
-   curl -fsSL https://openviking.net/install | bash
+   curl -fsSL https://openviking.ai/install | bash
    # AI agent 如不确定是否执行，可先阅读脚本头部，其中写明了它会做什么、如何核实。
    ```
 
