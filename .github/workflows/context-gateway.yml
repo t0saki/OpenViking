@@ -1,0 +1,20 @@
+name: Context Gateway
+on:
+  pull_request:
+    paths: ["openviking_context_gateway/**", "tests/context_gateway/**", "examples/memory-plugin-shared/**", "scripts/*context*gateway*", "openviking/server/routers/context_gateway.py", "openviking_cli/utils/config/context_gateway_config.py"]
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: pip install aiohttp==3.13.3 orjson==3.11.7 fastapi uvicorn cryptography pydantic packaging pytest pytest-asyncio httpx
+      - run: PYTHONPATH=. pytest tests/context_gateway --confcutdir=tests/context_gateway -o addopts=''
+      - run: node scripts/sync-context-gateway-rules.mjs --check
+      - run: node examples/memory-plugin-shared/sync.mjs --check

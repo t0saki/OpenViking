@@ -430,6 +430,14 @@ function AppShellInner({ children }: { children: React.ReactNode }) {
                 </SidebarMenuItem>
                 {canManageUsers ? (
                   <SidebarMenuItem>
+                    <SidebarMenuButton render={<Link to="/context-gateway" />} isActive={pathname === '/context-gateway'} className="h-9">
+                      <CableIcon />
+                      <span>{t('title', { ns: 'contextGateway' })}</span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                ) : null}
+                {canManageUsers ? (
+                  <SidebarMenuItem>
                     <SidebarMenuButton
                       render={<Link to="/users" />}
                       isActive={usersActive}

@@ -22,6 +22,7 @@ import { Route as PlaygroundRouteRouteImport } from './routes/playground/route'
 import { Route as PermissionsRouteRouteImport } from './routes/permissions/route'
 import { Route as MonitoringRouteRouteImport } from './routes/monitoring/route'
 import { Route as HomeRouteRouteImport } from './routes/home/route'
+import { Route as ContextGatewayRouteRouteImport } from './routes/context-gateway/route'
 import { Route as AgentExperienceRouteRouteImport } from './routes/agent-experience/route'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as VikingbotIndexRouteImport } from './routes/vikingbot/index'
@@ -101,6 +102,11 @@ const MonitoringRouteRoute = MonitoringRouteRouteImport.update({
 const HomeRouteRoute = HomeRouteRouteImport.update({
   id: '/home',
   path: '/home',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ContextGatewayRouteRoute = ContextGatewayRouteRouteImport.update({
+  id: '/context-gateway',
+  path: '/context-gateway',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AgentExperienceRouteRoute = AgentExperienceRouteRouteImport.update({
@@ -183,6 +189,7 @@ const CompileTasksTaskIdRoute = CompileTasksTaskIdRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/agent-experience': typeof AgentExperienceRouteRouteWithChildren
+  '/context-gateway': typeof ContextGatewayRouteRoute
   '/home': typeof HomeRouteRoute
   '/monitoring': typeof MonitoringRouteRoute
   '/permissions': typeof PermissionsRouteRoute
@@ -212,6 +219,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/context-gateway': typeof ContextGatewayRouteRoute
   '/home': typeof HomeRouteRoute
   '/monitoring': typeof MonitoringRouteRoute
   '/permissions': typeof PermissionsRouteRoute
@@ -240,6 +248,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/agent-experience': typeof AgentExperienceRouteRouteWithChildren
+  '/context-gateway': typeof ContextGatewayRouteRoute
   '/home': typeof HomeRouteRoute
   '/monitoring': typeof MonitoringRouteRoute
   '/permissions': typeof PermissionsRouteRoute
@@ -272,6 +281,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/agent-experience'
+    | '/context-gateway'
     | '/home'
     | '/monitoring'
     | '/permissions'
@@ -301,6 +311,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/context-gateway'
     | '/home'
     | '/monitoring'
     | '/permissions'
@@ -328,6 +339,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/agent-experience'
+    | '/context-gateway'
     | '/home'
     | '/monitoring'
     | '/permissions'
@@ -359,6 +371,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AgentExperienceRouteRoute: typeof AgentExperienceRouteRouteWithChildren
+  ContextGatewayRouteRoute: typeof ContextGatewayRouteRoute
   HomeRouteRoute: typeof HomeRouteRoute
   MonitoringRouteRoute: typeof MonitoringRouteRoute
   PermissionsRouteRoute: typeof PermissionsRouteRoute
@@ -470,6 +483,13 @@ declare module '@tanstack/react-router' {
       path: '/home'
       fullPath: '/home'
       preLoaderRoute: typeof HomeRouteRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/context-gateway': {
+      id: '/context-gateway'
+      path: '/context-gateway'
+      fullPath: '/context-gateway'
+      preLoaderRoute: typeof ContextGatewayRouteRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/agent-experience': {
@@ -638,6 +658,7 @@ const VikingbotRouteRouteWithChildren = VikingbotRouteRoute._addFileChildren(
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AgentExperienceRouteRoute: AgentExperienceRouteRouteWithChildren,
+  ContextGatewayRouteRoute: ContextGatewayRouteRoute,
   HomeRouteRoute: HomeRouteRoute,
   MonitoringRouteRoute: MonitoringRouteRoute,
   PermissionsRouteRoute: PermissionsRouteRoute,

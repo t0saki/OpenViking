@@ -28,6 +28,15 @@ spec:
     - host: {{ .host | quote }}
       http:
         paths:
+          {{- if $.Values.contextGateway.enabled }}
+          - path: /v1
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "openviking.fullname" $ }}
+                port:
+                  name: context-gateway
+          {{- end }}
           {{- range .paths }}
           - path: {{ .path }}
             pathType: {{ .pathType }}

@@ -1,3 +1,4 @@
+import { CLIENT_RULES } from "./client-rules.mjs";
 import { applyInputFilters, compileInputFilters } from "./input-filters.mjs";
 
 const TEXT_BLOCK_TYPES = new Set(["text", "input_text", "output_text"]);
@@ -588,13 +589,11 @@ function stripInjectedDigestBlocks(text) {
  */
 export function sanitizeCapturedText(text) {
   let value = String(text || "");
+  for (const tag of CLIENT_RULES.noise_tags) {
+    value = value.replace(new RegExp(`<${tag}\\b[^>]*>[\\s\\S]*?</${tag}>`, "gi"), " ");
+  }
   value = value
     .replace(/\u0000/g, "")
-    .replace(/<openviking-context\b[^>]*>[\s\S]*?<\/openviking-context>/gi, " ")
-    .replace(/<relevant-memor(?:y|ies)\b[^>]*>[\s\S]*?<\/relevant-memor(?:y|ies)>/gi, " ")
-    // Claude Code wraps its own out-of-band notes to the model in these two
-    // shapes. They are the host talking to itself, not the conversation.
-    .replace(/<system-reminder\b[^>]*>[\s\S]*?<\/system-reminder>/gi, " ")
     .replace(/^[ \t]*\[Subagent Context\][^\n]*$/gim, " ")
     .replace(/^\s*Sender\s*\([^)]+\)\s*```[\s\S]*?```\s*/gim, " ")
     .replace(/^\s*Conversation (?:metadata|info):\s*```[\s\S]*?```\s*/gim, " ")

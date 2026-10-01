@@ -1,0 +1,34 @@
+// GENERATED FROM examples/memory-plugin-shared/lib. DO NOT EDIT.
+// Shared gateway/plugin noise tags and request classifiers.
+export const CLIENT_RULES = {
+  "plugin_tags": [
+    "openviking-context",
+    "relevant-memories",
+    "relevant-memory",
+    "memory-context"
+  ],
+  "noise_tags": [
+    "openviking-context",
+    "relevant-memories",
+    "relevant-memory",
+    "memory-context",
+    "system-reminder",
+    "local-command-caveat",
+    "local-command-stdout",
+    "command-name",
+    "command-message",
+    "command-args",
+    "environment_context",
+    "environment_details",
+    "skills_instructions",
+    "available_skills"
+  ],
+  "auxiliary_patterns": [
+    "Please provide a detailed summary of the conversation",
+    "Your task is to create a detailed summary of the conversation",
+    "You are a helpful AI assistant tasked with summarizing",
+    "Generate a concise.{0,40}title",
+    "Create a short.{0,40}title",
+    "You are a permission classifier"
+  ]
+};
