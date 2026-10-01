@@ -159,7 +159,7 @@ uv tool install openviking --upgrade && openviking-server init
 <details>
 <summary><strong>OpenViking Service を使う（Volcengine がホスト）</strong></summary>
 
-Volcengine がホストするため、デプロイは不要です。[コンソール](https://console.volcengine.com/vikingdb/openviking/region:openviking+cn-beijing)の「User Management → API Key」で API キーを作成してください。サーバーのアドレスは `https://api.vikingdb.cn-beijing.volces.com/openviking` です。エージェントを接続するときに、このアドレスと API キーを使います。
+同じ OpenViking サービスを Volcengine が代わりに運用します。最初の 50 ファイルは無料です。[Volcengine の製品ページ](https://www.volcengine.com/product/openviking-service)で利用を開始したら、コンソールの「User Management → API Key」で API キーを作成してください。サーバーのアドレスは `https://api.vikingdb.cn-beijing.volces.com/openviking` です。エージェントを接続するときに、このアドレスと API キーを使います。
 
 </details>
 
