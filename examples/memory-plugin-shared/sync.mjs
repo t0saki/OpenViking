@@ -106,6 +106,11 @@ export const SKILL_TARGETS = [
     dir: join(ROOT, "examples", "dsh-memory-plugin", "skills"),
     committed: true,
   },
+  {
+    skill: "openviking-memory",
+    dir: join(ROOT, "examples", "pi-coding-agent-extension", "skills"),
+    committed: true,
+  },
   // The harnesses that bundle skills. agent-plugins has no hooks, so no
   // session-start catalog: there the skill is the only way the model learns
   // that the skills in OpenViking exist.
@@ -132,6 +137,11 @@ export const SKILL_TARGETS = [
   {
     skill: "openviking-skills",
     dir: join(ROOT, "agent-plugins", "skills"),
+    committed: true,
+  },
+  {
+    skill: "openviking-skills",
+    dir: join(ROOT, "examples", "pi-coding-agent-extension", "skills"),
     committed: true,
   },
   // The harnesses that ship the experience workflow today. agent-plugins has
