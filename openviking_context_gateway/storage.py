@@ -34,6 +34,9 @@ class KernelStore(Protocol):
     async def ack(self, item: dict, success: bool) -> None: ...
     async def reconcile(self, scope: str, session: str, anchors: list[str]) -> None: ...
     async def expire(self, before: float, scope: str | None = None) -> None: ...
+    async def reserve_rate(
+        self, scope: str, session: str, key: str, limit: int, seconds: float
+    ) -> float: ...
 
 
 class Database:
@@ -87,7 +90,11 @@ class SQLiteKernelStore(Database):
                     FOREIGN KEY(scope,session) REFERENCES sessions ON DELETE CASCADE);
                 CREATE INDEX IF NOT EXISTS queue_ready ON queue(ready,lease);
                 CREATE TABLE IF NOT EXISTS deleted_scopes (scope TEXT PRIMARY KEY);
-                PRAGMA user_version=1;
+                CREATE TABLE IF NOT EXISTS rate_reservations (
+                    scope TEXT, session TEXT, key TEXT, at REAL,
+                    FOREIGN KEY(scope,session) REFERENCES sessions ON DELETE CASCADE);
+                CREATE INDEX IF NOT EXISTS rate_lookup ON rate_reservations(scope,key,at);
+                PRAGMA user_version=2;
             """)
 
     def _touch(self, c, scope, session):
@@ -158,6 +165,29 @@ class SQLiteKernelStore(Database):
             ).fetchone()
             c.commit()
             return self.decode(row[0])
+
+    async def reserve_rate(self, scope, session, key, limit, seconds):
+        def reserve():
+            with self.connect() as c:
+                c.execute("BEGIN IMMEDIATE")
+                now = time.time()
+                self._touch(c, scope, session)
+                c.execute("DELETE FROM rate_reservations WHERE at<=?", (now - seconds,))
+                rows = c.execute(
+                    "SELECT at FROM rate_reservations WHERE scope=? AND key=? ORDER BY at",
+                    (scope, key),
+                ).fetchall()
+                if len(rows) >= limit:
+                    delay = max(0.001, rows[0][0] + seconds - now)
+                else:
+                    c.execute(
+                        "INSERT INTO rate_reservations VALUES (?,?,?,?)", (scope, session, key, now)
+                    )
+                    delay = 0
+                c.commit()
+                return delay
+
+        return await self.run(reserve)
 
     async def enqueue(self, scope, session, anchor, value, ready):
         await self.run(self._enqueue, scope, session, anchor, value, ready)

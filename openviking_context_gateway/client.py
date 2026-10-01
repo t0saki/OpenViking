@@ -26,7 +26,7 @@ class VikingClient:
                 method,
                 self.base_url + path,
                 json=body,
-                headers={"X-API-Key": key},
+                headers={"X-API-Key": key, "Accept-Encoding": "identity"},
                 timeout=aiohttp.ClientTimeout(total=timeout),
                 allow_redirects=False,
             ) as response:
@@ -114,3 +114,62 @@ class VikingClient:
             "GET", f"/api/v1/sessions/{session}/archives/{archive}", key, timeout=5
         )
         return result.get("overview", "")
+
+    async def mcp(self, name, key, arguments):
+        """Stateless Streamable HTTP MCP; accept both JSON and SSE responses."""
+        from .protocols import SSEDecoder
+
+        try:
+            async with self.http.post(
+                self.base_url + "/mcp",
+                headers={
+                    "X-API-Key": key,
+                    "Accept": "application/json, text/event-stream",
+                    "MCP-Protocol-Version": "2025-06-18",
+                    "Accept-Encoding": "identity",
+                },
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "tools/call",
+                    "params": {"name": name, "arguments": arguments},
+                },
+                timeout=aiohttp.ClientTimeout(total=120),
+                allow_redirects=False,
+            ) as response:
+                if response.status >= 300:
+                    raise VikingError("openviking_mcp_failed", response.status)
+                if "text/event-stream" in response.headers.get("content-type", ""):
+                    decoder = SSEDecoder()
+                    async for chunk in response.content.iter_any():
+                        for frame in decoder.feed(chunk):
+                            value = decoder.data(frame)
+                            if value and value.get("id") == 1:
+                                if "error" in value:
+                                    raise VikingError("openviking_mcp_error")
+                                return value["result"]
+                    raise VikingError("openviking_mcp_incomplete")
+                value = await response.json()
+                if "error" in value:
+                    raise VikingError("openviking_mcp_error")
+                return value["result"]
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError, KeyError) as error:
+            raise VikingError("openviking_mcp_unavailable") from error
+
+    async def upload(self, token, filename, content):
+        data = aiohttp.FormData()
+        data.add_field("file", content, filename=filename, content_type="application/octet-stream")
+        try:
+            async with self.http.post(
+                self.base_url + "/api/v1/resources/temp_upload",
+                params={"token": token},
+                headers={"Accept-Encoding": "identity"},
+                data=data,
+                timeout=aiohttp.ClientTimeout(total=120),
+                allow_redirects=False,
+            ) as response:
+                if response.status >= 300:
+                    raise VikingError("openviking_upload_failed", response.status)
+                return await response.json()
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as error:
+            raise VikingError("openviking_upload_unavailable") from error

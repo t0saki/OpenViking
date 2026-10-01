@@ -28,6 +28,16 @@ class Policy(BaseModel):
     keep_recent_turns: int = Field(default=3, ge=1, le=100)
     context_window: int = Field(default=128000, ge=1024)
     archive_wait_seconds: float = Field(default=30, ge=0, le=60)
+    gateway_tools: bool = False
+    allow_write_tools: bool = False
+    tool_allowlist: list[
+        Literal["search", "read", "list", "write", "add_resource", "add_skill"]
+    ] = Field(default_factory=lambda: ["search", "read", "list"])
+    tool_max_rounds: int = Field(default=5, ge=1, le=20)
+    tool_timeout_seconds: float = Field(default=30, gt=0, le=120)
+    tool_result_bytes: int = Field(default=65536, ge=1024, le=1048576)
+    tool_total_seconds: float = Field(default=120, gt=0, le=600)
+    tool_total_tokens: int = Field(default=100000, ge=1024, le=1000000)
 
 
 class Upstream(BaseModel):
@@ -42,7 +52,11 @@ class Upstream(BaseModel):
     aliases: dict[str, str] = Field(default_factory=dict)
     priority: int = 0
     enabled: bool = True
-    vendor: Literal["generic", "anthropic", "openai", "deepseek"] = "generic"
+    vendor: Literal["generic", "anthropic", "openai", "deepseek", "ark"] = "generic"
+    allow_gateway_tools: bool = True
+    coding_plan: bool = False
+    allow_coding_plan: bool = False
+    cache_min_tokens: int = Field(default=1024, ge=0)
 
     @field_validator("base_url")
     @classmethod

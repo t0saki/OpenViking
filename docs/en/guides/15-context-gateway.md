@@ -106,7 +106,7 @@ Detected OpenViking plugins permanently disable new gateway recall/capture for
 that session. Previous gateway injections still replay. Tool continuations,
 subagents, auxiliary calls and token-count calls replay without new recall.
 Explicit session headers improve capture attribution; without them, matching is
-best effort and identical prefixes can share an injection. Truncating history
+best effort and identical initial prefixes can share a session snapshot and injection. Truncating history
 can start a new inferred session.
 
 ## Deploy
@@ -116,7 +116,8 @@ Use an image built from this branch. For Compose set gateway `host` to `0.0.0.0`
 `url` to `http://context-gateway:1935`, `openviking_url` to
 `http://openviking:1933` and `storage_path` to
 `/app/.openviking/context-gateway`. The shared server must use authenticated mode.
-Caddy forwards `/v1/*` to the gateway and the remaining paths to OpenViking.
+Caddy forwards `/v1/*`, native Ark paths and the signed upload proxy to the gateway,
+with the remaining paths going to OpenViking.
 Copy these handlers into a public TLS domain block when enabling HTTPS.
 
 Helm supports `contextGateway.enabled`, `workers`, `port`, `existingSecret` and
@@ -172,3 +173,112 @@ successful HTTP write and durable acknowledgment can duplicate that batch; the
 gateway preserves source-message IDs for diagnosis. Normal retries and copied
 prefixes are deduplicated. User attribution and last-turn retention are inherently
 less precise than a harness plugin because the gateway sees only API requests.
+
+## Hidden tools (phase two)
+
+Hidden tools are opt-in and supported only by Chat Completions. In Studio, enable
+`gateway_tools` in the context policy. The default allowlist is `search`, `read`,
+`list`, exposed as `openviking_search`, `openviking_read`, `openviking_list`. Calls
+use the downstream user's OpenViking identity through the existing stateless MCP
+endpoint. The gateway owns and versions its schemas; it does not publish dynamic
+MCP descriptions. Existing MCP/plugin clients should continue using their tools.
+
+The first request freezes the gateway tool definitions for the session. Detection
+of an existing OpenViking plugin, `n > 1`, structured output, forced tool choice,
+non-function tools or an upstream with `allow_gateway_tools: false` suppresses
+injection. DeepSeek thinking mode suppresses injection unless the request
+explicitly sets `thinking.type: disabled`. If a session with frozen gateway tools
+later requests an incompatible mode, it receives HTTP 409 and must start a new
+session. Auxiliary requests retain definitions with `tool_choice: none`.
+
+Text and reasoning deltas continue streaming as they arrive. Gateway tool calls
+are hidden; client tool calls are returned after their complete names and arguments
+are known. If both occur in one round, the gateway executes only its own calls and
+returns the client calls. On the next request, the original assistant message and
+gateway results precede the client's results. Encrypted immutable records retain
+the exact hidden messages, including reasoning and unknown provider fields. The
+visible assistant content and calls identify the branch, so editing or regenerating
+an answer does not reuse another answer's transcript. The gateway publishes one
+completion ID and one terminal event. It sums provider usage across model calls;
+first-call cache metrics exclude hidden continuation usage.
+
+Default bounds are five hidden rounds, 30 seconds per tool, 64 KiB per tool result,
+120 seconds for the complete model/tool request and a 100,000-token request budget.
+These are configurable through `tool_max_rounds`, `tool_timeout_seconds`,
+`tool_result_bytes`, `tool_total_seconds`, `tool_total_tokens`. The token budget
+uses provider usage when available and a local byte-based estimate for admission
+and continuation output limits; it is not an exact tokenizer or billing cap.
+At the round limit, definitions stay present and `tool_choice` becomes `none`.
+Further gateway calls fail explicitly. A tool error is a bounded result for the
+model; an upstream/loop failure is an HTTP error, or a terminal SSE error if text
+has already started. Incomplete streams are not captured. A Chat replay-storage
+failure returns 503, because continuing could lose hidden history.
+
+`write`, `add_resource` and `add_skill` require both `allow_write_tools: true` and
+an explicit entry in `tool_allowlist`. Retries of the same call within the same
+session share a durable claim and result across workers. A crashed or timed-out
+write is not automatically re-executed; its outcome must be inspected before a
+new attempt. Different model-generated call IDs are different operations, so this
+is not an end-to-end exactly-once guarantee.
+
+### File import
+
+The first request must contain a shell tool or an attachment for file import tools
+to be selected. The gateway never opens a client path on its own filesystem.
+
+- With a client shell, MCP returns a signed upload URL. The gateway replaces its
+  address with `<context_gateway.public_url>/context-gateway/uploads?token=…`.
+  The model can then request the client's ordinary shell tool to upload the file;
+  skill directories must be zipped first. Set `public_url` to a client-reachable
+  gateway address before enabling these tools.
+- Without a shell, use `attachment_index` to import a file embedded in a user
+  message as `file.file_data` / `input_file.file_data` (base64 or a base64 data URL),
+  or an explicit attachment `text` field. Open WebUI `<context><source …>` extracted
+  text is imported as a `.txt` file, without pretending to recover the original
+  binary document. Source tags are also recognized in its system context.
+- File IDs and remote attachment URLs without embedded bytes are not fetched by
+  the gateway. A local path without shell access requires an attachment instead.
+
+The upload proxy forwards only to OpenViking's fixed `/api/v1/resources/temp_upload`
+endpoint. The one-time signed token authorizes upload; user/model API keys are
+never passed to the client or this endpoint. OpenViking validates expiration and
+consumes the token. The configured `max_body_bytes` also bounds uploads. Caddy and
+Helm route `/context-gateway/uploads` to the gateway; custom proxies must do so too.
+The gateway CLI disables raw access logs; also omit query strings in external
+proxy logs on this route to avoid retaining signed tokens.
+
+## Volcano Engine Ark (phase two)
+
+Configure `vendor: ark` and a model API key. Use the Ark origin as `base_url`, or
+`…/api/v3` for Chat/Responses, or `…/api/compatible/v1` for Messages. Configure
+separate upstream records for each protocol. Client-facing paths are:
+
+| Gateway path | Handler |
+| --- | --- |
+| `/api/v3/chat/completions` | Chat Completions |
+| `/api/v3/responses` and response-ID subpaths | Responses |
+| `/api/compatible/v1/messages` | Anthropic Messages |
+
+The existing `/v1/…` paths work with Ark upstreams too. Caddy and Helm include the
+native paths. Unknown fields such as `thinking`, `encrypted_content`, `caching`
+and `expire_at` survive forwarding, and Responses SSE `[DONE]` is preserved.
+Enhanced Chat/Responses sessions receive a stable `prompt_cache_key`; cross-worker
+reservations limit that key to 15 requests in a sliding minute, counting hidden
+continuations, with HTTP 429 and `Retry-After` on exhaustion. Keep model, thinking,
+sampling, system and tool settings stable; changes are logged as
+`ark_cache_parameters_changed`. Set `cache_min_tokens` for the selected model
+(default 1024); logs report the threshold and eligibility from actual input usage.
+Cache hits still depend on the provider and model, not just gateway replay.
+
+Coding Plan credentials are rejected when an upstream is marked `coding_plan`,
+unless an administrator explicitly overrides `allow_coding_plan`. The gateway
+cannot identify a subscription solely from an opaque API key; administrators must
+classify it correctly. Studio warns that a shared API gateway should use model API
+keys. Legacy Context API is not supported as an enhanced protocol.
+
+Phase-two tests cover fragmented tool streams, immediate text delivery, mixed
+client/gateway calls, restart and branch replay, file import, signed upload proxying,
+timeouts, write claims, round bounds, Ark routing and shared rate limits. They
+use simulated providers, the real FastMCP transport, and synthetic conversations. Live Ark/model cache hits,
+real-client recordings and conversations crossing a real model's context window
+remain separate operator acceptance checks.

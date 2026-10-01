@@ -15,8 +15,13 @@ from openviking_context_gateway.config import ContextGatewayConfig
 async def running_gateway(tmp_path, monkeypatch):
     captured = []
     writes = []
+    override = {}
 
     async def backend(request):
+        if override.get("handler"):
+            response = await override["handler"](request)
+            if response is not None:
+                return response
         raw = await request.read()
         body = json.loads(raw) if raw else {}
         if request.path == "/health":
@@ -116,6 +121,7 @@ async def running_gateway(tmp_path, monkeypatch):
     monkeypatch.setenv("OPENVIKING_CONTEXT_GATEWAY_ADMIN_TOKEN", "admin-" + "x" * 32)
     config = ContextGatewayConfig(enabled=True, storage_path=str(tmp_path), openviking_url=base)
     app = create_app(config)
+    app.state.test_backend = override
     async with app.router.lifespan_context(app):
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://gateway"
@@ -254,3 +260,535 @@ async def test_stateful_responses_and_counting(running_gateway):
     first = orjson.loads(seen[-1][1])
     await client.post("/v1/messages/count_tokens", headers=headers, json=body)
     assert orjson.loads(seen[-1][1]) == first
+
+
+async def enable_tools(client, admin, **policy):
+    response = await client.put(
+        "/admin/policies/default",
+        headers=admin,
+        json={"name": "Tools", "gateway_tools": True, "recall": False, "takeover": False, **policy},
+    )
+    assert response.status_code == 200, response.text
+
+
+def tool_call(name="openviking_search", identifier="g-1", arguments=None):
+    return {
+        "id": identifier,
+        "type": "function",
+        "function": {"name": name, "arguments": json.dumps(arguments or {"query": "blue"})},
+    }
+
+
+def completion(message, finish="stop", **extra):
+    return {
+        "id": "upstream-id",
+        "object": "chat.completion",
+        "model": "model",
+        "choices": [{"index": 0, "message": message, "finish_reason": finish}],
+        "usage": {
+            "prompt_tokens": 100,
+            "completion_tokens": 20,
+            "prompt_tokens_details": {"cached_tokens": 80},
+        },
+        **extra,
+    }
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize("mixed", [False, True])
+async def test_hidden_tools_mixed_replay_and_usage(running_gateway, streaming, mixed):
+    app, client, admin, key, _, _ = running_gateway
+    await enable_tools(client, admin)
+    calls, model_requests = [], []
+
+    async def backend(request):
+        if request.path == "/mcp":
+            payload = await request.json()
+            calls.append(payload)
+            assert request.headers["X-API-Key"] == "user-key"
+            assert payload["params"]["name"] == "find"
+            return web.json_response(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "result": {"content": [{"type": "text", "text": "the answer is blue"}]},
+                }
+            )
+        if request.path != "/v1/chat/completions":
+            return None
+        payload = await request.json()
+        model_requests.append(payload)
+        first = len(model_requests) == 1
+        message = {
+            "role": "assistant",
+            "content": "Looking. " if first else "Blue.",
+            "reasoning_content": "private-1" if first else "private-2",
+            "vendor_extension": {"signature": "opaque"},
+        }
+        if first:
+            message["tool_calls"] = [tool_call()]
+            if mixed:
+                message["tool_calls"].append(tool_call("client_weather", "c-1", {"city": "Paris"}))
+        value = completion(message, "tool_calls" if first else "stop", provider_field="keep")
+        if not streaming:
+            return web.json_response(value)
+        response = web.StreamResponse(headers={"Content-Type": "text/event-stream"})
+        await response.prepare(request)
+        content = dict(message)
+        tools = content.pop("tool_calls", [])
+        events = [
+            {
+                "id": "u-id",
+                "provider_field": "keep",
+                "choices": [{"index": 0, "delta": content, "finish_reason": None}],
+            }
+        ]
+        # Split names and arguments across SSE fragments, including both kinds.
+        for index, call in enumerate(tools):
+            function = call["function"]
+            events += [
+                {
+                    "choices": [
+                        {
+                            "delta": {
+                                "tool_calls": [
+                                    {
+                                        "index": index,
+                                        "id": call["id"],
+                                        "type": "function",
+                                        "function": {"name": function["name"][:5], "arguments": ""},
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                },
+                {
+                    "choices": [
+                        {
+                            "delta": {
+                                "tool_calls": [
+                                    {
+                                        "index": index,
+                                        "function": {
+                                            "name": function["name"][5:],
+                                            "arguments": function["arguments"],
+                                        },
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                },
+            ]
+        events.append(
+            {
+                "choices": [{"delta": {}, "finish_reason": value["choices"][0]["finish_reason"]}],
+                "usage": value["usage"],
+            }
+        )
+        raw = (
+            b"".join(b"data: " + orjson.dumps(event) + b"\n\n" for event in events)
+            + b"data: [DONE]\n\n"
+        )
+        for i in range(0, len(raw), 13):
+            await response.write(raw[i : i + 13])
+        await response.write_eof()
+        return response
+
+    app.state.test_backend["handler"] = backend
+    body = {
+        "model": "model",
+        "messages": [{"role": "user", "content": "Find blue"}],
+        "stream": streaming,
+        "stream_options": {"include_usage": True},
+        "tools": [
+            {
+                "type": "function",
+                "function": {"name": "client_weather", "parameters": {"type": "object"}},
+            }
+        ],
+    }
+    headers = {"Authorization": "Bearer " + key["key"], "X-OpenViking-Session": "tool-session"}
+    response = await client.post("/v1/chat/completions", headers=headers, json=body)
+    assert response.status_code == 200, response.text
+    assert "openviking_search" not in response.text
+    from openviking_context_gateway.storage import digest
+
+    stored = await app.state.store.read(digest("tenant\0alice\0chat"), digest("tool-session"), [])
+    assert [v["input_tokens"] for (kind, _), v in stored.items() if kind == "usage"] == [100]
+    assert len(calls) == 1 and len(model_requests) == (1 if mixed else 2)
+    if streaming:
+        from openviking_context_gateway.protocols import SSEDecoder
+        from openviking_context_gateway.tool_loop import merge_delta
+
+        visible = {"role": "assistant", "content": ""}
+        events = [SSEDecoder.data(f) for f in SSEDecoder().feed(response.content)]
+        events = [event for event in events if event]
+        for event in events:
+            for choice in event.get("choices", []):
+                delta = dict(choice.get("delta", {}))
+                if delta.get("tool_calls"):
+                    visible["tool_calls"] = [
+                        {k: v for k, v in c.items() if k != "index"}
+                        for c in delta.pop("tool_calls")
+                    ]
+                merge_delta(visible, delta)
+        assert response.content.count(b"data: [DONE]") == 1
+        assert sum(bool(c.get("finish_reason")) for e in events for c in e.get("choices", [])) == 1
+        assert events[-1]["usage"]["prompt_tokens"] == (100 if mixed else 200)
+    else:
+        visible = response.json()["choices"][0]["message"]
+        assert response.json()["provider_field"] == "keep"
+    assert visible["content"] == ("Looking. " if mixed else "Looking. Blue.")
+    # A typical chat UI drops reasoning/unknown fields from its returned history.
+    visible = {k: v for k, v in visible.items() if k in {"role", "content", "tool_calls"}}
+    body["messages"].append(visible)
+    if mixed:
+        body["messages"].append({"role": "tool", "tool_call_id": "c-1", "content": "Sunny"})
+    else:
+        body["messages"].append({"role": "user", "content": "Continue"})
+    # Change the live policy; the existing root must retain its frozen tools.
+    await enable_tools(client, admin, tool_allowlist=["list"])
+    response = await client.post("/v1/chat/completions", headers=headers, json=body)
+    assert response.status_code == 200, response.text
+    replay = model_requests[-1]
+    assert replay["tools"] == model_requests[0]["tools"]
+    hidden = replay["messages"][1]
+    assert hidden["reasoning_content"] == "private-1"
+    assert hidden["vendor_extension"] == {"signature": "opaque"}
+    assert hidden["tool_calls"][0]["function"]["name"] == "openviking_search"
+    assert replay["messages"][2]["tool_call_id"] == "g-1"
+    if mixed:
+        assert replay["messages"][3]["tool_call_id"] == "c-1"
+    assert len(calls) == 1
+    logs = (await client.get("/admin/logs", headers=admin)).json()
+    assert any(log.get("hidden_rounds") == 1 for log in logs)
+    assert not any("private-1" in str(log) for log in logs)
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"n": 2},
+        {"response_format": {"type": "json_object"}},
+        {"tool_choice": "required"},
+        {"tool_choice": {"type": "function", "function": {"name": "foo"}}},
+    ],
+)
+async def test_tool_capability_gate_and_frozen_conflict(running_gateway, extra):
+    _, client, admin, key, seen, _ = running_gateway
+    await enable_tools(client, admin)
+    headers = {"Authorization": "Bearer " + key["key"], "X-OpenViking-Session": "blocked"}
+    body = {"model": "model", "messages": [{"role": "user", "content": "hello"}]}
+    response = await client.post("/v1/chat/completions", headers=headers, json={**body, **extra})
+    assert response.status_code == 200
+    assert not orjson.loads(seen[-1][1]).get("tools")
+    headers["X-OpenViking-Session"] = "enabled"
+    response = await client.post("/v1/chat/completions", headers=headers, json=body)
+    assert response.status_code == 200
+    assert len(orjson.loads(seen[-1][1])["tools"]) == 3
+    response = await client.post("/v1/chat/completions", headers=headers, json={**body, **extra})
+    assert response.status_code == 409
+
+
+async def test_tool_round_limit_disables_without_removing_definitions(running_gateway):
+    app, client, admin, key, _, _ = running_gateway
+    await enable_tools(client, admin, tool_max_rounds=1)
+    requests, mcp_calls = [], []
+
+    async def backend(request):
+        if request.path == "/mcp":
+            mcp_calls.append(await request.json())
+            return web.json_response({"id": 1, "result": {"content": []}})
+        if request.path == "/v1/chat/completions":
+            requests.append(await request.json())
+            return web.json_response(
+                completion(
+                    {"role": "assistant", "content": None, "tool_calls": [tool_call()]},
+                    "tool_calls",
+                )
+            )
+        return None
+
+    app.state.test_backend["handler"] = backend
+    response = await client.post(
+        "/v1/chat/completions",
+        headers={"Authorization": "Bearer " + key["key"]},
+        json={"model": "model", "messages": [{"role": "user", "content": "find blue"}]},
+    )
+    assert response.status_code == 502
+    assert len(requests) == 2 and len(mcp_calls) == 1
+    assert requests[1]["tool_choice"] == "none"
+    assert requests[0]["tools"] == requests[1]["tools"]
+
+
+@pytest.mark.parametrize(
+    "path,protocol,target",
+    [
+        ("/api/v3/chat/completions", "chat", "/api/v3/chat/completions"),
+        ("/api/v3/responses", "responses", "/api/v3/responses"),
+        ("/api/compatible/v1/messages", "anthropic", "/api/compatible/v1/messages"),
+    ],
+)
+async def test_ark_paths_unknown_fields_and_cache_key(running_gateway, path, protocol, target):
+    _, client, admin, key, seen, _ = running_gateway
+    upstream = (await client.get("/admin/upstreams", headers=admin)).json()
+    configured = next(u for u in upstream if u["id"] == protocol)
+    payload = {
+        k: v
+        for k, v in configured.items()
+        if k not in {"id", "revision", "has_api_key", "header_names", "account"}
+    }
+    payload["vendor"] = "ark"
+    response = await client.put("/admin/upstreams/" + protocol, headers=admin, json=payload)
+    assert response.status_code == 200, response.text
+    field = "input" if protocol == "responses" else "messages"
+    body = {
+        "model": "model",
+        "store": False,
+        field: [{"role": "user", "content": "Remember blue"}],
+        "thinking": {"type": "enabled"},
+        "caching": {"type": "enabled"},
+        "expire_at": 1893456000,
+        "encrypted_content": "opaque",
+    }
+    headers = {"Authorization": "Bearer " + key["key"], "X-OpenViking-Session": "ark"}
+    for _ in range(2):
+        response = await client.post(path, headers=headers, json=body)
+        assert response.status_code == 200, response.text
+        forwarded = orjson.loads(seen[-1][1])
+        assert seen[-1][0] == target
+        assert all(
+            forwarded[k] == body[k]
+            for k in ["thinking", "caching", "expire_at", "encrypted_content"]
+        )
+    if protocol != "anthropic":
+        assert orjson.loads(seen[-2][1])["prompt_cache_key"] == forwarded["prompt_cache_key"]
+    payload["coding_plan"] = True
+    assert (
+        await client.put("/admin/upstreams/" + protocol, headers=admin, json=payload)
+    ).status_code == 200
+    assert (await client.post(path, headers=headers, json=body)).status_code == 403
+
+
+@pytest.mark.parametrize("name", ["add_resource", "add_skill"])
+async def test_attachment_import_and_signed_upload_proxy(running_gateway, name):
+    import base64
+
+    app, client, admin, key, _, _ = running_gateway
+    app.state.config.public_url = "https://gateway.example"
+    await enable_tools(client, admin, allow_write_tools=True, tool_allowlist=[name])
+    model_requests, uploads, mcp_requests = [], [], []
+
+    async def backend(request):
+        if request.path == "/mcp":
+            payload = await request.json()
+            mcp_requests.append(payload)
+            assert payload["params"]["name"] == name
+            assert payload["params"]["arguments"]["path"].startswith("/client-upload/")
+            return web.Response(
+                content_type="text/event-stream",
+                text="data: "
+                + json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "result": {
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": "POST multipart field file to http://private-ov/api/v1/resources/temp_upload?token=signed-once",
+                                }
+                            ]
+                        },
+                    }
+                )
+                + "\n\n",
+            )
+        if request.path == "/api/v1/resources/temp_upload":
+            assert request.query["token"] == "signed-once"
+            assert "Authorization" not in request.headers and "X-API-Key" not in request.headers
+            multipart = await request.multipart()
+            part = await multipart.next()
+            uploads.append((part.name, part.filename, bytes(await part.read())))
+            return web.json_response(
+                {"status": "ok", "result": {"uri": "viking://resources/imported"}}
+            )
+        if request.path == "/v1/chat/completions":
+            payload = await request.json()
+            model_requests.append(payload)
+            if len(model_requests) == 1:
+                return web.json_response(
+                    completion(
+                        {
+                            "role": "assistant",
+                            "content": None,
+                            "tool_calls": [
+                                tool_call("openviking_" + name, arguments={"attachment_index": 0})
+                            ],
+                        },
+                        "tool_calls",
+                    )
+                )
+            return web.json_response(completion({"role": "assistant", "content": "Imported."}))
+        return None
+
+    app.state.test_backend["handler"] = backend
+    body = {
+        "model": "model",
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Import the attached file"},
+                    {
+                        "type": "file",
+                        "file": {
+                            "filename": "SKILL.md",
+                            "file_data": "data:text/plain;base64,"
+                            + base64.b64encode(b"# Test skill\ncontent").decode(),
+                        },
+                    },
+                ],
+            }
+        ],
+    }
+    response = await client.post(
+        "/v1/chat/completions", headers={"Authorization": "Bearer " + key["key"]}, json=body
+    )
+    assert response.status_code == 200, response.text
+    assert len(mcp_requests) == 1 and uploads == [("file", "SKILL.md", b"# Test skill\ncontent")]
+    assert "signed-once" not in response.text
+    assert "viking://resources/imported" in model_requests[1]["messages"][-1]["content"]
+    # The token is the sole upload authorization, and the destination is fixed.
+    response = await client.post(
+        "/context-gateway/uploads?token=signed-once&url=http://attacker",
+        files={"file": ("notes.txt", b"upload")},
+        headers={"Authorization": "Bearer not-forwarded"},
+    )
+    assert response.status_code == 200, response.text
+    assert uploads[-1] == ("file", "notes.txt", b"upload")
+    assert (
+        await client.post("/context-gateway/uploads", files={"file": ("x.txt", b"x")})
+    ).status_code == 400
+
+
+async def test_shell_upload_instructions_use_public_proxy(running_gateway):
+    app, client, admin, key, _, _ = running_gateway
+    app.state.config.public_url = "https://gateway.example"
+    await enable_tools(client, admin, allow_write_tools=True, tool_allowlist=["add_resource"])
+    requests = []
+
+    async def backend(request):
+        if request.path == "/mcp":
+            return web.json_response(
+                {
+                    "id": 1,
+                    "result": {
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": "POST to http://private-ov/api/v1/resources/temp_upload?token=opaque%2Btoken",
+                            }
+                        ]
+                    },
+                }
+            )
+        if request.path == "/v1/chat/completions":
+            payload = await request.json()
+            requests.append(payload)
+            if len(requests) == 1:
+                return web.json_response(
+                    completion(
+                        {
+                            "role": "assistant",
+                            "content": None,
+                            "tool_calls": [
+                                tool_call(
+                                    "openviking_add_resource",
+                                    arguments={"path": "/home/client/file.md"},
+                                )
+                            ],
+                        },
+                        "tool_calls",
+                    )
+                )
+            result = payload["messages"][-1]["content"]
+            assert "https://gateway.example/context-gateway/uploads?token=opaque%2Btoken" in result
+            assert "private-ov" not in result and "user-key" not in result
+            return web.json_response(
+                completion(
+                    {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [tool_call("bash", "shell-call", {"command": "upload"})],
+                    },
+                    "tool_calls",
+                )
+            )
+        return None
+
+    app.state.test_backend["handler"] = backend
+    response = await client.post(
+        "/v1/chat/completions",
+        headers={"Authorization": "Bearer " + key["key"]},
+        json={
+            "model": "model",
+            "messages": [{"role": "user", "content": "import file"}],
+            "tools": [{"type": "function", "function": {"name": "bash"}}],
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["choices"][0]["message"]["tool_calls"][0]["function"]["name"] == "bash"
+
+
+async def test_ark_responses_stream_keeps_native_fields_and_done(running_gateway):
+    app, client, admin, key, _, _ = running_gateway
+    upstreams = (await client.get("/admin/upstreams", headers=admin)).json()
+    upstream = next(u for u in upstreams if u["id"] == "responses")
+    allowed = {"name", "protocol", "base_url", "models", "aliases", "vendor"}
+    payload = {k: v for k, v in upstream.items() if k in allowed}
+    payload["vendor"] = "ark"
+    assert (
+        await client.put("/admin/upstreams/responses", headers=admin, json=payload)
+    ).status_code == 200
+    native = {
+        "type": "response.completed",
+        "response": {
+            "id": "ark-response",
+            "status": "completed",
+            "output": [
+                {"type": "reasoning", "encrypted_content": "opaque-signature"},
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "hello"}],
+                },
+            ],
+            "caching": {"type": "enabled"},
+            "expire_at": 1893456000,
+            "usage": {
+                "input_tokens": 3000,
+                "output_tokens": 12,
+                "input_tokens_details": {"cached_tokens": 2048},
+            },
+        },
+    }
+    raw = b"data: " + orjson.dumps(native) + b"\n\ndata: [DONE]\n\n"
+
+    async def backend(request):
+        if request.path == "/api/v3/responses":
+            return web.Response(body=raw, content_type="text/event-stream")
+        return None
+
+    app.state.test_backend["handler"] = backend
+    response = await client.post(
+        "/api/v3/responses",
+        headers={"Authorization": "Bearer " + key["key"]},
+        json={"model": "model", "store": False, "stream": True, "input": "hello there"},
+    )
+    assert response.content == raw
+    log = (await client.get("/admin/logs", headers=admin)).json()[0]
+    assert log["cached_tokens"] == 2048 and log["input_tokens"] == 3000
+    assert log["cache_eligible"] is True

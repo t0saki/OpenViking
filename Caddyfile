@@ -21,7 +21,7 @@
 # OPENVIKING_PUBLIC_BASE_URL=https://your-domain.com in .env.
 
 :1934 {
-	@context_gateway path /v1/*
+	@context_gateway path /v1/* /api/v3/* /api/compatible/v1/* /context-gateway/uploads
 	handle @context_gateway {
 		reverse_proxy context-gateway:1935 {
 			flush_interval -1

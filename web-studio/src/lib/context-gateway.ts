@@ -49,6 +49,10 @@ export const upstreamFields: GatewayField[] = [
   { name: 'api_key', type: 'password', initial: '' },
   { name: 'auth_mode', initial: 'managed' },
   { name: 'vendor', initial: 'generic' },
+  { name: 'allow_gateway_tools', type: 'boolean', initial: true },
+  { name: 'coding_plan', type: 'boolean', initial: false },
+  { name: 'allow_coding_plan', type: 'boolean', initial: false },
+  { name: 'cache_min_tokens', type: 'number', initial: 1024 },
   { name: 'models', type: 'json', initial: [] },
   { name: 'aliases', type: 'json', initial: {} },
   { name: 'headers', type: 'json', initial: {} },
@@ -77,6 +81,14 @@ export const policyFields: GatewayField[] = [
   { name: 'keep_recent_turns', type: 'number', initial: 3 },
   { name: 'context_window', type: 'number', initial: 128000 },
   { name: 'archive_wait_seconds', type: 'number', initial: 30 },
+  { name: 'gateway_tools', type: 'boolean', initial: false },
+  { name: 'allow_write_tools', type: 'boolean', initial: false },
+  { name: 'tool_allowlist', type: 'json', initial: ['search', 'read', 'list'] },
+  { name: 'tool_max_rounds', type: 'number', initial: 5 },
+  { name: 'tool_timeout_seconds', type: 'number', initial: 30 },
+  { name: 'tool_result_bytes', type: 'number', initial: 65536 },
+  { name: 'tool_total_seconds', type: 'number', initial: 120 },
+  { name: 'tool_total_tokens', type: 'number', initial: 100000 },
 ]
 
 export function formValues(fields: GatewayField[], value?: GatewayObject) {

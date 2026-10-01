@@ -31,9 +31,9 @@ export default {
   keyOnce: 'Copy this key now. It will not be shown again.',
   bindingOptions: 'Available policies and upstreams (name and ID):',
   upstreamsNote:
-    'Use API keys. A conversation keeps the same upstream whenever its model remains available. Leave stored credentials blank when editing to retain them.',
+    'Use model API keys. Coding Plan credentials are rejected by default and are unsuitable for a shared API gateway. A conversation keeps the same upstream whenever its model remains available. Leave stored credentials blank when editing to retain them.',
   policiesNote:
-    'Changes apply to new conversations. Current conversations keep their original policy.',
+    'Changes apply to new conversations. Current conversations keep their original policy. Hidden tools are Chat-only and off by default; write tools also require explicit permission and an allowlist. DeepSeek thinking mode disables injection.',
   keysNote:
     'Each gateway key belongs to one OpenViking user. Root keys are rejected.',
   logsNote:
@@ -43,12 +43,24 @@ export default {
   first_call: 'First call cache hit rate',
   continuation: 'Within-turn cache hit rate',
   fields: {
+    allow_gateway_tools: 'Upstream supports gateway tools',
+    coding_plan: 'Subscription / Coding Plan credential',
+    allow_coding_plan: 'Override Coding Plan rejection',
+    cache_min_tokens: 'Model minimum cache tokens',
+    gateway_tools: 'Enable hidden Chat tools',
+    allow_write_tools: 'Allow persistent write tools',
+    tool_allowlist: 'Tool names (JSON array)',
+    tool_max_rounds: 'Maximum hidden rounds',
+    tool_timeout_seconds: 'Timeout per tool (seconds)',
+    tool_result_bytes: 'Maximum result bytes',
+    tool_total_seconds: 'Total tool request deadline (seconds)',
+    tool_total_tokens: 'Total tool request token budget',
     name: 'Name',
     protocol: 'Protocol (chat, responses, anthropic)',
     base_url: 'Base URL',
     api_key: 'Upstream API key',
     auth_mode: 'Credentials (managed or passthrough)',
-    vendor: 'Vendor (generic, openai, anthropic, deepseek)',
+    vendor: 'Vendor (generic, openai, anthropic, deepseek, ark)',
     models: 'Allowed models (JSON array; empty allows all)',
     aliases: 'Model aliases (JSON object)',
     headers: 'Additional headers (JSON object)',

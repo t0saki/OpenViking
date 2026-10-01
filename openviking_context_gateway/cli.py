@@ -35,6 +35,8 @@ def main():
         port=config.port,
         workers=config.workers,
         log_level="info",
+        # Signed upload tokens live in query strings; use metadata-only gateway logs.
+        access_log=False,
     )
 
 

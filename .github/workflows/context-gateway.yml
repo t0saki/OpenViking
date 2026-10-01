@@ -14,7 +14,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - run: pip install aiohttp==3.13.3 orjson==3.11.7 fastapi uvicorn cryptography pydantic packaging pytest pytest-asyncio httpx
+      - run: pip install async-timeout==5.0.1 aiohttp==3.13.3 orjson==3.11.7 fastapi uvicorn cryptography pydantic packaging pytest pytest-asyncio httpx "mcp>=1.27,<2"
       - run: PYTHONPATH=. pytest tests/context_gateway --confcutdir=tests/context_gateway -o addopts=''
       - run: node scripts/sync-context-gateway-rules.mjs --check
       - run: node examples/memory-plugin-shared/sync.mjs --check

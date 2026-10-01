@@ -2,4 +2,4 @@
 # SPDX-License-Identifier: AGPL-3.0
 """HTTP-only Context Gateway. The memory kernel has no web framework dependency."""
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"

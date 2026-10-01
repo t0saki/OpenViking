@@ -259,9 +259,8 @@ def session_id(headers: dict, messages: list[dict], chain: list[str]) -> str:
     ):
         if headers.get(key):
             return hashlib.sha256(headers[key].encode()).hexdigest()
-    for message, anchor in zip(messages, chain, strict=True):
-        if message.get("role") == "assistant" and anchor:
-            return anchor
+    # The first assistant is absent on the initial request. Using it as the
+    # session key would replace the policy/tool snapshot on the second request.
     return next((p for p in chain if p), hashlib.sha256(b"empty").hexdigest())
 
 
@@ -279,6 +278,8 @@ def append_context(message: dict, text: str, protocol: str) -> None:
 def strip_thinking(messages: list[dict]) -> list[dict]:
     result = copy.deepcopy(messages)
     for message in result:
+        message.pop("reasoning_content", None)
+        message.pop("reasoning_details", None)
         if isinstance(message.get("content"), list):
             message["content"] = [
                 b
@@ -348,6 +349,7 @@ class ResponseCapture:
     response_id: str = ""
     complete: bool = False
     output_items: list | None = None
+    context_usage: dict | None = None
 
     def nonstream(self, body):
         self.usage = usage_of(body)

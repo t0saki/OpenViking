@@ -28,6 +28,14 @@ from .protocols import (
     unwrap_client,
 )
 from .storage import KernelStore, digest
+from .tool_catalog import (
+    TOOL_VERSION,
+    ToolPolicyConflict,
+    hidden_chain,
+    replay_hidden,
+    select_tools,
+    tool_block_reason,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +82,8 @@ class Prepared:
     records: dict
     disabled: bool = False
     metrics: dict = field(default_factory=dict)
+    body_chain: list[str] = field(default_factory=list)
+    strip_replayed_thinking: bool = False
 
 
 class MemoryKernel:
@@ -91,7 +101,9 @@ class MemoryKernel:
         # Identity is from /health at issuance, not caller-supplied tenant headers.
         scope = digest(credential["account"] + "\0" + credential["user_id"] + "\0" + protocol)
         sid = session_id(headers, messages, chain)
-        records = await self.store.read(scope, sid, [a for c in chains for a in c if a])
+        records = await self.store.read(
+            scope, sid, [a for c in [*chains, hidden_chain(messages)] for a in c if a]
+        )
         root = await self.store.put(
             scope,
             sid,
@@ -99,6 +111,10 @@ class MemoryKernel:
             "",
             {
                 "upstream_id": upstream["id"],
+                "tool_version": TOOL_VERSION,
+                "tools": []
+                if plugin_present(body, headers)
+                else select_tools(body, protocol, upstream, policy),
                 "policy": policy,
                 "credential_id": credential["id"],
                 "ov_session": "context-gateway-" + digest(scope + sid)[:40],
@@ -130,6 +146,26 @@ class MemoryKernel:
             disabled,
             {"kind": kind, "replay_hits": 0, "recall_count": 0, "recall_ms": 0},
         )
+        prepared.body_chain = hidden_chain(messages)
+        tools = root.get("tools", [])
+        if tools:
+            reason = tool_block_reason(body, protocol, upstream)
+            names = {t["function"]["name"] for t in tools}
+            collision = any(
+                t.get("function", {}).get("name") in names for t in body.get("tools", [])
+            )
+            if reason or collision:
+                raise ToolPolicyConflict(
+                    "Start a new session for incompatible tool settings: "
+                    + (reason or "tool_name_collision")
+                )
+            result["tools"] = [*copy.deepcopy(body.get("tools", [])), *copy.deepcopy(tools)]
+            if disabled or kind not in {"user", "continuation"}:
+                result["tool_choice"] = "none"
+        elif policy.gateway_tools:
+            prepared.metrics["tool_skip_reason"] = (
+                tool_block_reason(body, protocol, upstream) or "tools_not_selected_at_session_start"
+            )
         # Always replay, even after plugin detection or on auxiliary requests.
         missing = False
         for index, _message in enumerate(messages):
@@ -154,6 +190,7 @@ class MemoryKernel:
             prepared.metrics["degradation"] = "plugin_present"
             if result_messages == messages and isinstance(body.get("input"), str):
                 result["input"] = body["input"]
+            self._replay_tools(prepared)
             return prepared
         if kind == "user" and anchor >= 0 and ("injection", chain[anchor]) not in records:
             started = time.monotonic()
@@ -198,7 +235,17 @@ class MemoryKernel:
             and isinstance(body.get("input"), str)
         ):
             result["input"] = body["input"]
+        self._replay_tools(prepared)
         return prepared
+
+    @staticmethod
+    def _replay_tools(request):
+        if request.protocol == "chat":
+            request.body["messages"] = replay_hidden(
+                request.body["messages"], request.body_chain, request.records
+            )
+            if request.strip_replayed_thinking:
+                request.body["messages"] = strip_thinking(request.body["messages"])
 
     async def _confirm_history(self, request, credential, policy):
         # At a new user turn, the preceding turns are the branch the client kept.
@@ -234,12 +281,14 @@ class MemoryKernel:
             if kind == "injection" and decision.get("text") and anchor in request.chain:
                 await self.store.put(request.scope, request.session, "sent", anchor, {})
         if response.usage and request.chain:
+            # Archive pressure is the last model call size, not cumulative billing
+            # across hidden continuations.
             await self.store.put(
                 request.scope,
                 request.session,
                 "usage",
                 request.chain[-1],
-                {**response.usage, "time": time.time()},
+                {**(response.context_usage or response.usage), "time": time.time()},
             )
         if (
             request.disabled
@@ -269,7 +318,15 @@ class MemoryKernel:
             key=lambda v: v.get("time", 0),
             default={},
         ).get("input_tokens", 0)
-        urgent = token_estimate(orjson.dumps(request.body).decode()) >= policy.context_window * 0.9
+        measured_body = request.body
+        if request.protocol == "chat":
+            measured_body = {
+                **request.body,
+                "messages": replay_hidden(
+                    request.body["messages"], request.body_chain, request.records
+                ),
+            }
+        urgent = token_estimate(orjson.dumps(measured_body).decode()) >= policy.context_window * 0.9
         if (
             usage < policy.takeover_tokens
             and not urgent
@@ -283,7 +340,9 @@ class MemoryKernel:
             if not urgent or time.monotonic() >= deadline:
                 break
             await asyncio.sleep(min(0.25, max(0, deadline - time.monotonic())))
-            request.records = await self.store.read(request.scope, request.session, request.chain)
+            request.records = await self.store.read(
+                request.scope, request.session, [*request.chain, *request.body_chain]
+            )
         if urgent:
             starts = [i for i, message in enumerate(request.messages) if is_user(message)]
             if len(starts) > policy.keep_recent_turns:
@@ -346,6 +405,8 @@ class MemoryKernel:
         prefix = [
             m for m in request.body[key][: index + 1] if m.get("role") in {"system", "developer"}
         ]
+        request.strip_replayed_thinking = True
+        request.body_chain = ["" for _ in prefix] + [""] + request.body_chain[index + 1 :]
         request.body[key] = [
             *prefix,
             {"role": "user", "content": replacement["text"]},

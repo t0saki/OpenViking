@@ -32,6 +32,10 @@ from .protocols import (
     strip_thinking,
 )
 from .storage import ManagementStore, SQLiteKernelStore, digest
+from .tool_catalog import ToolPolicyConflict, tool_block_reason
+from .tool_executor import ToolExecutor
+from .tool_loop import ChatToolLoop, ToolLoopError, limit_completion, sse
+from .vendors import ARK_PATHS, VendorRateLimit, apply_vendor, ark_url, reserve_vendor
 
 logger = logging.getLogger(__name__)
 HOP_HEADERS = {
@@ -73,6 +77,8 @@ def filtered_headers(headers, request=False):
 
 
 def upstream_url(upstream, path):
+    if upstream.get("vendor") == "ark":
+        return ark_url(upstream, path)
     base = upstream["base_url"].rstrip("/")
     # Accept both https://host and https://host/v1 as a configured base URL.
     if urlsplit(base).path.endswith("/v1") and path.startswith("/v1/"):
@@ -243,10 +249,20 @@ def create_app(config: ContextGatewayConfig | None = None):
         groups = {}
         for label, kinds in (("first_call", {"user"}), ("continuation", {"continuation"})):
             subset = [log for log in logs if log.get("kind") in kinds]
-            total = sum(log.get("input_tokens", 0) for log in subset)
-            cached = sum(log.get("cached_tokens", 0) for log in subset)
+            total = sum(
+                log.get("first_upstream_input_tokens", log.get("input_tokens", 0)) for log in subset
+            )
+            cached = sum(
+                log.get("first_upstream_cached_tokens", log.get("cached_tokens", 0))
+                for log in subset
+            )
+            hidden_calls = 0
+            if label == "continuation":
+                total += sum(log.get("hidden_upstream_input_tokens", 0) for log in logs)
+                cached += sum(log.get("hidden_upstream_cached_tokens", 0) for log in logs)
+                hidden_calls = sum(log.get("hidden_upstream_calls", 0) for log in logs)
             groups[label] = {
-                "requests": len(subset),
+                "requests": len(subset) + hidden_calls,
                 "input_tokens": total,
                 "cached_tokens": cached,
                 "cache_hit_ratio": cached / total if total else 0,
@@ -389,6 +405,7 @@ def create_app(config: ContextGatewayConfig | None = None):
         await management.delete_account(account)
         return {"deleted": True}
 
+    @app.get("/api/v3/models")
     @app.get("/v1/models")
     async def models(request: Request):
         credential = await authenticate(request)
@@ -409,16 +426,51 @@ def create_app(config: ContextGatewayConfig | None = None):
             ],
         }
 
+    @app.websocket("/api/v3/responses")
     @app.websocket("/v1/responses")
     async def websocket_fallback(websocket: WebSocket):
         await websocket.send_denial_response(
             Response(status_code=426, headers={"Upgrade": "HTTP/1.1"})
         )
 
+    @app.post("/context-gateway/uploads")
+    async def proxy_upload(request: Request):
+        token = request.query_params.get("token", "")
+        if not token or len(token) > 16384:
+            raise HTTPException(400, "A signed upload token is required")
+        content_type = request.headers.get("content-type", "")
+        if not content_type.startswith("multipart/form-data;"):
+            raise HTTPException(415, "Expected a multipart file upload")
+        raw = bytearray()
+        async for chunk in request.stream():
+            raw.extend(chunk)
+            if len(raw) > config.max_body_bytes:
+                raise HTTPException(413, "Upload exceeds configured body limit")
+        try:
+            async with app.state.http.post(
+                config.openviking_url + "/api/v1/resources/temp_upload",
+                params={"token": token},
+                data=bytes(raw),
+                headers={"content-type": content_type, "accept-encoding": "identity"},
+                timeout=aiohttp.ClientTimeout(total=120),
+                allow_redirects=False,
+            ) as response:
+                return Response(
+                    await response.read(),
+                    status_code=response.status,
+                    headers=filtered_headers(response.headers),
+                )
+        except (aiohttp.ClientError, asyncio.TimeoutError):
+            raise HTTPException(502, "OpenViking upload is unavailable")
+
     @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
     async def proxy(path: str, request: Request):
         credential = await authenticate(request)
         path = "/" + path
+        if path.startswith("/api/v3/responses/"):
+            path = "/v1/responses/" + path.removeprefix("/api/v3/responses/")
+        else:
+            path = ARK_PATHS.get(path, path)
         if request.headers.get("upgrade", "").lower() == "websocket":
             return Response(status_code=426, headers={"Upgrade": "HTTP/1.1"})
         if path.startswith("/admin") or path == "/health":
@@ -504,21 +556,47 @@ def create_app(config: ContextGatewayConfig | None = None):
                     prepared.metrics["degradation"] = "upstream_changed"
                 metrics.update(prepared.metrics)
                 body = prepared.body
+            except ToolPolicyConflict as error:
+                raise HTTPException(409, str(error))
             except Exception:
                 # Storage loss is different from recall unavailability. Anthropic
                 # cannot verify old signatures without the missing injected prefix.
                 logger.exception("Context Gateway preparation failed")
                 metrics["degradation"] = "memory_store_failure"
+                if protocol == "chat":
+                    raise HTTPException(
+                        503, "Conversation replay storage is unavailable; retry later"
+                    )
                 if protocol == "anthropic":
                     body = copy.deepcopy(body)
                     body["messages"] = strip_thinking(body.get("messages", []))
                 prepared = None
         elif raw and body is None:
             metrics["degradation"] = "unsafe_json"
+        if upstream.get("coding_plan") and not upstream.get("allow_coding_plan"):
+            raise HTTPException(
+                403, "Coding Plan upstreams are disabled; configure a model API key"
+            )
+        if prepared and prepared.root.get("tools") and tool_block_reason(body, protocol, upstream):
+            raise HTTPException(
+                409,
+                "This upstream cannot use the session's frozen gateway tools; start a new session",
+            )
         if body:
+            body = await apply_vendor(body, upstream, prepared, store)
+            if prepared:
+                prepared.body = body
+                metrics.update(prepared.metrics)
             mapped = upstream.get("aliases", {}).get(model)
             if mapped:
                 body = {**body, "model": mapped}
+                if prepared:
+                    prepared.body = body
+            if prepared and prepared.root.get("tools"):
+                try:
+                    limit_completion(body, prepared.root["policy"].get("tool_total_tokens", 100000))
+                except ToolLoopError as error:
+                    raise HTTPException(error.status, str(error))
             original = await asyncio.to_thread(parse_body, raw)
             if body != original:
                 raw = await asyncio.to_thread(orjson.dumps, body)
@@ -531,12 +609,23 @@ def create_app(config: ContextGatewayConfig | None = None):
         metrics["upstream_id"] = upstream["id"]
         started = time.monotonic()
         try:
+            await reserve_vendor(upstream, body or {}, prepared, store)
+        except VendorRateLimit as error:
+            raise HTTPException(429, str(error), headers={"Retry-After": error.retry_after})
+        try:
             response = await app.state.http.request(
                 request.method,
                 target,
                 data=raw or None,
                 headers=headers,
-                timeout=aiohttp.ClientTimeout(total=config.upstream_timeout_seconds),
+                timeout=aiohttp.ClientTimeout(
+                    total=min(
+                        config.upstream_timeout_seconds,
+                        prepared.root["policy"].get("tool_total_seconds", 120),
+                    )
+                    if prepared and prepared.root.get("tools")
+                    else config.upstream_timeout_seconds
+                ),
                 allow_redirects=False,
             )
         except (aiohttp.ClientError, asyncio.TimeoutError):
@@ -547,6 +636,11 @@ def create_app(config: ContextGatewayConfig | None = None):
 
         async def finish():
             metrics.update(capture.usage or {})
+            if upstream.get("vendor") == "ark":
+                metrics["cache_min_tokens"] = upstream.get("cache_min_tokens", 1024)
+                metrics["cache_eligible"] = (
+                    metrics.get("input_tokens", 0) >= metrics["cache_min_tokens"]
+                )
             metrics["duration_ms"] = round((time.monotonic() - started) * 1000, 2)
             try:
                 if (
@@ -567,6 +661,81 @@ def create_app(config: ContextGatewayConfig | None = None):
                 await management.log(credential["account"], metrics)
             except Exception:
                 logger.exception("Context Gateway response bookkeeping failed")
+
+        if prepared and prepared.root.get("tools") and response.status < 300:
+            executor = ToolExecutor(
+                app.state.viking,
+                store,
+                prepared,
+                credential,
+                config.public_url,
+                config.max_body_bytes,
+            )
+            loop = ChatToolLoop(prepared, executor, store, capture)
+            loop.deadline = started + prepared.root["policy"].get("tool_total_seconds", 120)
+            out_headers = {
+                k.lower(): v
+                for k, v in out_headers.items()
+                if k.lower() not in {"content-length", "etag", "content-encoding"}
+            }
+
+            async def send_tool_continuation(payload, timeout):
+                try:
+                    await reserve_vendor(upstream, payload, prepared, store)
+                except VendorRateLimit as error:
+                    raise ToolLoopError(str(error), 429, headers={"Retry-After": error.retry_after})
+                return await app.state.http.post(
+                    target,
+                    data=orjson.dumps(payload),
+                    headers=headers,
+                    timeout=aiohttp.ClientTimeout(total=timeout),
+                    allow_redirects=False,
+                )
+
+            async def tool_stream():
+                finished = False
+                try:
+                    async for chunk in loop.run(response, send_tool_continuation):
+                        yield chunk
+                    finished = True
+                except (ToolLoopError, aiohttp.ClientError) as error:
+                    capture.complete = False
+                    metrics["degradation"] = "hidden_tool_loop_failed"
+                    yield sse({"error": {"message": str(error), "type": "gateway_tool_error"}})
+                    yield b"data: [DONE]\n\n"
+                finally:
+                    if not finished:
+                        capture.complete = False
+                    metrics.update(prepared.metrics)
+                    await finish()
+
+            if body.get("stream"):
+                out_headers["content-type"] = "text/event-stream"
+                return StreamingResponse(tool_stream(), headers=out_headers)
+            try:
+                async for _ in loop.run(response, send_tool_continuation):
+                    pass
+            except (ToolLoopError, aiohttp.ClientError) as error:
+                capture.complete = False
+                metrics["degradation"] = "hidden_tool_loop_failed"
+                metrics["status"] = getattr(error, "status", 502)
+                await finish()
+                if isinstance(error, ToolLoopError) and error.content is not None:
+                    return Response(
+                        error.content,
+                        status_code=error.status,
+                        headers=filtered_headers(error.headers),
+                    )
+                raise HTTPException(
+                    getattr(error, "status", 502),
+                    str(error),
+                    headers=getattr(error, "headers", None),
+                )
+            metrics.update(prepared.metrics)
+            await finish()
+            return Response(
+                orjson.dumps(loop.final), headers=out_headers, media_type="application/json"
+            )
 
         if "text/event-stream" in response.headers.get("content-type", ""):
 
