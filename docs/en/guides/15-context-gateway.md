@@ -139,24 +139,36 @@ node scripts/sync-context-gateway-rules.mjs --check
 node examples/memory-plugin-shared/sync.mjs --check
 ```
 
-Tests use local mock HTTP upstreams and synthetic client sequences. They check
+Tests use local mock HTTP upstreams, synthetic sequences and sanitized real-client
+request fixtures. They check
 immutable replay, normalized signed prefixes, restart/concurrency behavior,
 scope isolation, branch capture, numeric fidelity, SSE framing and error headers.
-These are **not recordings of real clients or evidence of provider cache hits**.
+Mock test success is not evidence of provider cache hits or native signed thinking.
 Run the opt-in live acceptance script separately:
 
 ```bash
 export OV_CG_TEST_BASE_URL=https://ov.example.com
 export OV_CG_TEST_KEY='<gateway-key>'
 export OV_CG_TEST_MODEL='<model-id>'
-python scripts/context_gateway_acceptance.py --protocol anthropic
+python scripts/context_gateway_acceptance.py --protocol anthropic --require-cache \
+  --output /tmp/gateway-anthropic-acceptance.json
 ```
 
-Run again with `chat` and `responses` on corresponding upstreams, and exercise
-Claude Code, Codex and your selected chat client. Confirm cache-read usage extends
-to the previous request, Anthropic reports no input transformations and no binding
-400s, and a conversation can cross its context window. A single live smoke run
-does not establish those full acceptance criteria. Re-run the recorded sequences
+The script sends three turns with a stable synthetic prefix and streams the second
+turn. `--require-cache` checks that cache reads cover the previous input, allowing
+the provider's final partial block (`--cache-block-tokens`, default 128). Set this
+allowance for your provider. Reports contain usage and protocol metadata, without
+credentials or message bodies. Use `--prefix-rows 0` for a minimal connectivity
+check. Run again with `chat` and `responses` on their corresponding upstreams;
+`--disable-thinking` is available for providers that support that extension.
+
+For native Anthropic binding acceptance, add `--binding-check`. This enables the
+binding-control beta with `prefix_mismatch_behavior: error` and requires thinking
+signatures and empty `input_transformations` metadata. A compatible endpoint that
+does not expose these fields cannot pass this check merely by returning HTTP 200.
+Exercise Claude Code, Codex and your selected chat client separately, including a
+conversation crossing its model context window. See the [live acceptance record](../../testing/context-gateway-live-acceptance.md)
+for measured results and remaining checks. Re-run the recorded sequences
 when clients change their serialization. Request metrics distinguish first calls
 from within-turn calls; alert on falling first-call cache hits, missing replay and
 degradation reasons.

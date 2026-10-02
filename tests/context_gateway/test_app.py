@@ -1,4 +1,6 @@
+import asyncio
 import json
+from pathlib import Path
 
 import httpx
 import orjson
@@ -9,6 +11,7 @@ from cryptography.fernet import Fernet
 
 from openviking_context_gateway.app import create_app
 from openviking_context_gateway.config import ContextGatewayConfig
+from openviking_context_gateway.protocols import normalize
 
 
 @pytest_asyncio.fixture
@@ -195,6 +198,89 @@ async def test_http_replay_and_client_visibility(running_gateway, path, protocol
     assert seen[-1][2].get(
         "Authorization", seen[-1][2].get("x-api-key", seen[-1][2].get("X-Api-Key"))
     ) in {"Bearer model-secret", "model-secret"}
+
+
+@pytest.mark.parametrize("client_name", ["claude-code", "codex-cli", "openai-python"])
+@pytest.mark.parametrize("session_header", [True, False])
+async def test_recorded_client_prefixes(running_gateway, client_name, session_header):
+    app, client, admin, key, seen, writes = running_gateway
+    fixture = json.loads((Path(__file__).parent / "fixtures" / f"{client_name}.json").read_text())
+    upstream = []
+    for recorded in fixture["requests"]:
+        headers = {"Authorization": "Bearer " + key["key"]}
+        headers.update(
+            {k: v for k, v in recorded["headers"].items() if session_header or "session" not in k}
+        )
+        # Keep the captured message representation, but use the local JSON mock
+        # response. SSE framing is exercised separately and in live acceptance.
+        body = {**recorded["body"], "stream": False}
+        response = await client.post(recorded["path"], headers=headers, json=body)
+        assert response.status_code == 200, response.text
+        assert "openviking-context" not in response.text
+        forwarded = [raw for path, raw, _ in seen if path == recorded["path"]][-1]
+        upstream.append(orjson.loads(forwarded))
+    field = "input" if client_name == "codex-cli" else "messages"
+    old, new = (body[field] for body in upstream)
+    assert "openviking-context" in str(old)
+    assert [normalize(m) for m in old] == [normalize(m) for m in new[: len(old)]]
+    assert "openviking-context" not in str(fixture)
+    for field_name in ("tools", "system", "instructions"):
+        if field_name in fixture["requests"][1]["body"]:
+            assert upstream[1][field_name] == fixture["requests"][1]["body"][field_name]
+
+    # A client retry and simultaneous duplicate requests must reuse the same
+    # injection and must not capture the confirmed first turn more than once.
+    repeated = await asyncio.gather(
+        *(client.post(recorded["path"], headers=headers, json=body) for _ in range(3))
+    )
+    assert all(r.status_code == 200 for r in repeated)
+    forwarded = [raw for path, raw, _ in seen if path == recorded["path"]][-3:]
+    assert all(orjson.loads(raw) == upstream[1] for raw in forwarded)
+    for _ in range(20):
+        await app.state.worker.once()
+        if writes:
+            break
+        await asyncio.sleep(0.01)
+    source_ids = [
+        source_id
+        for batch in writes
+        for message in batch["messages"]
+        for source_id in message["source_message_ids"]
+    ]
+    assert source_ids and len(source_ids) == len(set(source_ids))
+    logs = (await client.get("/admin/logs", headers=admin)).json()
+    assert logs[0]["replay_hits"] >= 1
+
+
+@pytest.mark.parametrize("client_name", ["claude-code", "codex-cli", "openai-python"])
+async def test_recorded_client_disabled_passthrough(running_gateway, client_name):
+    _, client, admin, _, seen, _ = running_gateway
+    fixture = json.loads((Path(__file__).parent / "fixtures" / f"{client_name}.json").read_text())
+    await client.put(
+        "/admin/policies/off",
+        headers=admin,
+        json={"name": "Off", "recall": False, "capture": False, "takeover": False},
+    )
+    minted = await client.post(
+        "/admin/keys",
+        headers=admin,
+        json={
+            "name": "off",
+            "openviking_key": "user-key",
+            "policy_id": "off",
+            "upstream_ids": ["chat", "anthropic", "responses"],
+        },
+    )
+    assert minted.status_code == 200
+    for recorded in fixture["requests"]:
+        raw = json.dumps({**recorded["body"], "stream": False}, indent=2).encode()
+        response = await client.post(
+            recorded["path"],
+            headers={"Authorization": "Bearer " + minted.json()["key"]},
+            content=raw,
+        )
+        assert response.status_code == 200
+        assert [data for path, data, _ in seen if path == recorded["path"]][-1] == raw
 
 
 async def test_raw_passthrough_errors_sse_and_large_numbers(running_gateway):

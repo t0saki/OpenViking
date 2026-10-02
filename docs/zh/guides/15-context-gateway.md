@@ -94,11 +94,27 @@ node scripts/sync-context-gateway-rules.mjs --check
 node examples/memory-plugin-shared/sync.mjs --check
 ```
 
-测试序列为合成样例，本地模拟上游通过不代表真实客户端或厂商缓存验收通过。
+测试包含合成序列和脱敏后的真实客户端请求样本；模拟上游通过不代表厂商缓存
+或原生签名校验通过。
 设置 `OV_CG_TEST_BASE_URL`、`OV_CG_TEST_KEY`、`OV_CG_TEST_MODEL` 后，可执行
-`python scripts/context_gateway_acceptance.py --protocol anthropic`，再分别使用
-`chat`、`responses`。完整验收还需真实 Claude Code、Codex 和聊天客户端的录制回放，
+以下命令，再分别使用 `chat`、`responses`：
+
+```bash
+python scripts/context_gateway_acceptance.py --protocol anthropic --require-cache \
+  --output /tmp/gateway-anthropic-acceptance.json
+```
+
+脚本运行三轮，第二轮使用 SSE；缓存读取须覆盖前次输入，允许厂商最后一个未满的
+缓存块（`--cache-block-tokens`，默认 128，应按厂商调整）。报告仅保存用量和
+协议元数据，不保存凭据或消息正文。`--prefix-rows 0` 用于最小连通性检查；
+支持 `thinking.type` 扩展的 Chat/Responses 上游可使用 `--disable-thinking`。
+
+原生 Anthropic 签名绑定验收使用 `--binding-check`：开启绑定控制测试版、设置
+`prefix_mismatch_behavior: error`，并要求真实 thinking 签名和空的
+`input_transformations` 元数据。缺少这些字段的兼容接口即使返回 HTTP 200，
+也不能通过此项检查。完整验收还需真实 Claude Code、Codex 和聊天客户端的录制回放，
 检查签名、缓存覆盖前缀与超过模型上下文窗口后的对话。
+已测结果与待验项目见[真实接口验收记录](../../testing/context-gateway-live-acceptance.md)。
 
 召回失败会固化为空决策，不在后续补注入。无法无损处理的数值原样透传。
 已知 Anthropic 注入记录缺失时剥离旧 thinking 并记录原因。归档摘要未就绪且即将
@@ -179,4 +195,6 @@ Responses 流的 `[DONE]` 保留。增强的 Chat/Responses 会话固定
 
 二期测试包含工具流分片、即时文本、混合调用、重启和分支重放、附件上传、签名
 代理、超时、写调用去重、轮数上限、方舟路由与跨进程限流。使用模拟厂商、真实 FastMCP 传输层和合成
-对话；真实厂商缓存、真实客户端录制、跨真实模型窗口仍需独立验收。
+对话。方舟真实缓存、Claude Code/Codex/SDK 客户端和真实工具导入的实测结果
+见[验收记录](../../testing/context-gateway-live-acceptance.md)；跨真实模型最大窗口
+与原生 Anthropic 签名绑定仍待验收。
