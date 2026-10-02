@@ -29,6 +29,7 @@ def digest(value: str) -> str:
 class KernelStore(Protocol):
     async def read(self, scope, session, anchors=None, kinds=None) -> dict: ...
     async def lookup(self, scope, anchors, kinds) -> dict: ...
+    async def owners(self, scope, anchors, kind) -> dict: ...
     async def put(self, scope, session, kind, anchor, value) -> dict: ...
     async def put_many(self, scope, session, values) -> None: ...
     async def commit(
@@ -107,7 +108,7 @@ class SQLiteKernelStore(Database):
                 CREATE TABLE IF NOT EXISTS queue (
                     id TEXT PRIMARY KEY, scope TEXT, session TEXT, anchor TEXT,
                     value BLOB NOT NULL, ready REAL, lease REAL DEFAULT 0, owner TEXT,
-                    UNIQUE(scope,anchor),
+                    UNIQUE(scope,session,anchor),
                     FOREIGN KEY(scope,session) REFERENCES sessions ON DELETE CASCADE);
                 CREATE INDEX IF NOT EXISTS queue_ready ON queue(ready,lease);
                 CREATE TABLE IF NOT EXISTS deleted_scopes (scope TEXT PRIMARY KEY);
@@ -117,8 +118,27 @@ class SQLiteKernelStore(Database):
             for name in ("position", "attempts", "failed"):
                 if name not in columns:
                     c.execute(f"ALTER TABLE queue ADD COLUMN {name} INTEGER NOT NULL DEFAULT 0")
+            if c.execute("PRAGMA user_version").fetchone()[0] < 4:
+                # Rebuild the old cross-session unique key without losing leases
+                # or delivery progress. All workers must run the same schema.
+                c.executescript("""
+                    BEGIN IMMEDIATE;
+                    ALTER TABLE queue RENAME TO queue_old;
+                    CREATE TABLE queue (
+                        id TEXT PRIMARY KEY, scope TEXT, session TEXT, anchor TEXT,
+                        value BLOB NOT NULL, ready REAL, lease REAL DEFAULT 0, owner TEXT,
+                        position INTEGER NOT NULL DEFAULT 0,
+                        attempts INTEGER NOT NULL DEFAULT 0, failed INTEGER NOT NULL DEFAULT 0,
+                        UNIQUE(scope,session,anchor),
+                        FOREIGN KEY(scope,session) REFERENCES sessions ON DELETE CASCADE);
+                    INSERT INTO queue SELECT id,scope,session,anchor,value,ready,lease,owner,
+                        position,attempts,failed FROM queue_old;
+                    DROP TABLE queue_old;
+                    PRAGMA user_version=4;
+                    COMMIT;
+                """)
+            c.execute("CREATE INDEX IF NOT EXISTS queue_ready ON queue(ready,lease)")
             c.execute("CREATE INDEX IF NOT EXISTS queue_order ON queue(scope,session,position)")
-            c.execute("PRAGMA user_version=3")
 
     def _touch(self, c, scope, session):
         if c.execute("SELECT 1 FROM deleted_scopes WHERE scope=?", (scope,)).fetchone():
@@ -154,6 +174,24 @@ class SQLiteKernelStore(Database):
 
     async def lookup(self, scope, anchors, kinds):
         return await self.read(scope, None, anchors, kinds)
+
+    async def owners(self, scope, anchors, kind):
+        """Find record owners without reading/decrypting their values."""
+
+        def read():
+            with self.connect() as c:
+                result = {}
+                for row in c.execute(
+                    "SELECT anchor,session FROM records WHERE scope=? AND kind=? "
+                    "AND anchor IN (SELECT value FROM json_each(?))",
+                    (scope, kind, orjson.dumps(anchors).decode()),
+                ):
+                    owners = result.setdefault(row["anchor"], [])
+                    if len(owners) < 2:
+                        owners.append(row["session"])
+                return result
+
+        return await self.run(read)
 
     async def put(self, scope, session, kind, anchor, value):
         def put():
@@ -232,7 +270,7 @@ class SQLiteKernelStore(Database):
                 for job in jobs:
                     c.execute(
                         "INSERT INTO queue(id,scope,session,anchor,value,ready,position) VALUES (?,?,?,?,?,?,?) "
-                        "ON CONFLICT(scope,anchor) DO UPDATE SET value=excluded.value,ready=excluded.ready,position=excluded.position "
+                        "ON CONFLICT(scope,session,anchor) DO UPDATE SET value=excluded.value,ready=excluded.ready,position=excluded.position "
                         "WHERE queue.session=excluded.session AND queue.ready IS NOT NULL AND queue.lease=0 AND queue.failed=0",
                         (
                             uuid.uuid4().hex,

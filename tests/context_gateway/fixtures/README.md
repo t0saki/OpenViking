@@ -26,8 +26,7 @@ or native Anthropic signed samples.
 `test_recorded_client_prefixes` sends the recorded histories to the local mock
 upstream, overriding only `stream` to use its JSON response. It checks normalized
 prefix continuity with and without session headers, frozen injection reuse,
-concurrent retries, capture deduplication with a session header, capture suppression
-without one, and client visibility. A separate check
+concurrent retries, capture deduplication with a session header, anonymous capture and prefix reuse, and client visibility. A separate check
 verifies exact bytes of the sanitized requests when enhancement is disabled.
 Protocol streaming is covered by the existing SSE tests and the live run.
 

@@ -52,18 +52,16 @@ def sse(value):
     return b"data: " + orjson.dumps(value) + b"\n\n"
 
 
-def limit_completion(body, remaining, input_tokens):
-    """Only a hidden continuation consumes this budget; never mutate the first request."""
-    if remaining <= input_tokens:
-        raise ToolLoopError("Hidden tool token budget exhausted")
-    name = "max_completion_tokens" if "max_completion_tokens" in body else "max_tokens"
-    body[name] = min(body.get(name) or remaining, remaining - input_tokens)
+def added_tokens(value):
+    # Only gateway-added messages are estimated. Client history, tool schemas
+    # and images never consume the hidden-continuation budget.
+    return (len(orjson.dumps(value)) + 2) // 3
 
 
 class ChatToolLoop:
     def __init__(self, prepared, executor, store, capture):
         self.prepared, self.executor, self.store, self.capture = prepared, executor, store, capture
-        self.body = copy.deepcopy(prepared.body)
+        self.body = {**prepared.body, "messages": list(prepared.body["messages"])}
         self.policy = prepared.root["policy"]
         self.allowed = executor.allowed
         self.deadline = time.monotonic() + self.policy.get("tool_total_seconds", 120)
@@ -104,7 +102,7 @@ class ChatToolLoop:
                         received = 0
                         async for chunk in response.content.iter_any():
                             received += len(chunk)
-                            if received > self.policy.get("tool_total_tokens", 100000) * 32:
+                            if received > 64 * 1024 * 1024:
                                 raise ToolLoopError("Model stream exceeds tool response budget")
                             for frame in decoder.feed(chunk):
                                 value = decoder.data(frame)
@@ -188,7 +186,7 @@ class ChatToolLoop:
                     normalized = usage_of({"usage": usage})
                     self.capture.context_usage = normalized
                     if self.rounds:
-                        self.token_cost += normalized["input_tokens"] + normalized["output_tokens"]
+                        self.token_cost += normalized["output_tokens"] or added_tokens(message)
                         self.prepared.metrics["hidden_upstream_calls"] = (
                             self.prepared.metrics.get("hidden_upstream_calls", 0) + 1
                         )
@@ -216,12 +214,21 @@ class ChatToolLoop:
                             or self.body.get("tool_choice") == "none"
                         ):
                             raise ToolLoopError("Model exceeded the hidden tool round limit")
-                        if self.token_cost >= self.policy.get("tool_total_tokens", 100000):
-                            raise ToolLoopError("Hidden tool token budget exhausted")
+                        if not self.rounds:
+                            self.token_cost += added_tokens(owned)
                         self.hidden = True
                         results = []
                         for call in owned:
-                            results.append(await self.executor.execute(call))
+                            if self.token_cost >= self.policy.get("tool_total_tokens", 100000):
+                                result = {
+                                    "role": "tool",
+                                    "tool_call_id": call["id"],
+                                    "content": "Gateway tool budget reached; answer using the available results.",
+                                }
+                            else:
+                                result = await self.executor.execute(call)
+                            results.append(result)
+                            self.token_cost += added_tokens(result)
                         self.transcript.extend(results)
                         self.body["messages"].extend([message, *results])
                         self.rounds += 1
@@ -299,17 +306,14 @@ class ChatToolLoop:
                                 )
                             yield b"data: [DONE]\n\n"
                         return
-                    remaining = self.policy.get("tool_total_tokens", 100000) - self.token_cost
-                    # Use the last provider usage plus newly added tool results.
-                    # Raw request bytes (especially images) are not token counts.
-                    extra = sum(len(result.get("content", "").encode()) for result in results) // 3
-                    limit_completion(
-                        self.body,
-                        remaining,
-                        normalized["input_tokens"] + normalized["output_tokens"] + extra,
-                    )
-                    if self.rounds >= self.policy.get("tool_max_rounds", 5):
+                    exhausted = self.token_cost >= self.policy.get("tool_total_tokens", 100000)
+                    self.prepared.metrics["hidden_added_tokens"] = self.token_cost
+                    if exhausted or self.rounds >= self.policy.get("tool_max_rounds", 5):
+                        # Finish the answer after tool execution; never fail after
+                        # a write merely because its result consumed the budget.
                         self.body["tool_choice"] = "none"
+                    if exhausted:
+                        self.prepared.metrics["tool_stop_reason"] = "token_budget"
                     response = await send(self.body, max(0.01, self.deadline - time.monotonic()))
         except (ValueError, TypeError, KeyError) as error:
             raise ToolLoopError("Invalid model tool response") from error

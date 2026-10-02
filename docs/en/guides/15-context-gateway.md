@@ -108,10 +108,15 @@ one OpenViking user. Studio also provides OpenCode and pi configuration snippets
 Detected OpenViking plugins permanently disable new gateway recall/capture for
 that session. Previous gateway injections still replay. Tool continuations,
 subagents, auxiliary calls and token-count calls replay without new recall.
-Without a recognized session header, requests can recall and replay immutable
-prefixes, but capture, archive takeover and new hidden tools are disabled. Identical
-opening text cannot prove that two chats are the same session. After editing
-already captured history or truncating it, use a new session ID. Plugin detection
+Without a recognized session header, the gateway reuses a session when the longest
+matching completed assistant prefix has one recorded owner. New or ambiguous
+histories start isolated sessions with capture enabled. Identical opening user
+text alone never joins sessions. Chat matching ignores assistant reasoning metadata
+that frontends commonly omit. A per-conversation header remains the most reliable
+option, particularly for retries and identical chats. Editing or compacting
+delivered history starts a new capture destination and resyncs the supplied
+history; matching immutable replay survives.
+Plugin detection
 inspects user/system/developer text and OpenViking tool definitions, not assistant
 prose, tool results or attachment names.
 
@@ -191,12 +196,22 @@ archive overview can become an immutable replacement.
 
 Takeover activation counts sanitized conversation content synchronized to OV.
 Further commits use OV's `pending_tokens` against the takeover/commit threshold.
-An outstanding archive blocks another commit until its overview is available.
-Capture has an incremental cursor and an ordered queue. A failed delivery blocks
-later turns from that session, retries at most five times with backoff, then stops
-capture/takeover for the session while model forwarding continues. Start a new
-session after addressing the failure. A delivered idle response that is later
-regenerated also stops capture, so divergent histories cannot be mixed.
+An outstanding archive blocks another commit while its summary is pending. The
+gateway checks `.done` and `.failed.json`: a terminal archive without a summary
+releases the commit gate without replacing history. Checks are shared across
+requests, at most once per five seconds; unresolved archives are abandoned after
+15 minutes. Emergency waiting requires a matching, confirmed-pending archive that
+can replace history. Paused capture and unknown/terminal archives do not trigger
+emergency waiting.
+
+Capture uses an incremental cursor and a queue isolated by session. A failing head
+blocks later turns. After five fast attempts, it pauses for five minutes between
+recovery probes; writes resume in order when health and delivery recover. Studio
+logs show capture state/reason and offer **Resync capture**, rebuilding capture
+from the next request in a new OV session. This also recovers queues stopped by
+older releases. Existing matching replacements replay during outages and resets.
+Queue schema upgrades preserve queued work and leases; restart all gateway workers
+together when upgrading from a release with the old cross-session queue key.
 
 OpenViking message writes do not provide an idempotency key. A crash between a
 successful HTTP write and durable acknowledgment can duplicate that batch; the
@@ -219,7 +234,8 @@ non-function tools or an upstream with `allow_gateway_tools: false` suppresses
 injection. DeepSeek thinking mode suppresses injection unless the request
 explicitly sets `thinking.type: disabled`. If a session with frozen gateway tools
 later requests an incompatible mode, new gateway tools are omitted for that
-request while existing hidden history still replays. The frozen contract remains
+request, keeping client-visible history instead of expanding undeclared hidden
+tool calls. This mode change can invalidate prompt cache. The frozen contract remains
 available if subsequent requests are compatible. Auxiliary requests retain definitions with `tool_choice: none`.
 
 Text and reasoning deltas continue streaming as they arrive. Gateway tool calls
@@ -237,9 +253,13 @@ Default bounds are five hidden rounds, 30 seconds per tool, 64 KiB per tool resu
 120 seconds for the tool loop and a 100,000-token hidden-continuation budget.
 These are configurable through `tool_max_rounds`, `tool_timeout_seconds`,
 `tool_result_bytes`, `tool_total_seconds`, `tool_total_tokens`. The token budget
-counts hidden upstream calls only. The first request retains the client
-`max_tokens`/`max_completion_tokens`. Continuation admission uses the last provider
-usage plus an estimate of new tool-result text; it is not an exact billing cap.
+counts gateway-added calls/results and hidden-round output, using provider output
+usage when present and a deterministic estimate otherwise. Client history, tool
+schemas and image bytes do not count. Neither `max_tokens` nor
+`max_completion_tokens` is changed. Reaching the budget disables further gateway
+tools and allows one final continuation to finish the answer. Its output can
+exceed the threshold: this controls tool expansion, not exact billing. A completed
+write does not become an HTTP error because its result consumed the budget.
 At the round limit, definitions stay present and `tool_choice` becomes `none`.
 Further gateway calls fail explicitly. A tool error is a bounded result for the
 model; an upstream/loop failure is an HTTP error, or a terminal SSE error if text

@@ -2,12 +2,13 @@
 # SPDX-License-Identifier: AGPL-3.0
 """Versioned gateway-owned tool contracts; never export dynamic MCP descriptions."""
 
-import copy
 import html
 import re
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from .records import RecordKind as K
 
 TOOL_VERSION = 1
 PREFIX = "openviking_"
@@ -182,9 +183,9 @@ def replay_hidden(messages, chain, records):
     """
     result = []
     for message, anchor in zip(messages, chain, strict=True):
-        record = records.get(("hidden", anchor))
+        record = records.get((K.HIDDEN, anchor))
         if record and message.get("role") == "assistant":
-            result.extend(copy.deepcopy(record["messages"]))
+            result.extend(record["messages"])
         else:
             result.append(message)
     return result

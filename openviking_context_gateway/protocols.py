@@ -268,8 +268,8 @@ def session_id(headers: dict, messages: list[dict], chain: list[str]) -> str | N
     ):
         if headers.get(key):
             return hashlib.sha256(headers[key].encode()).hexdigest()
-    # Identical opening text is not proof of session identity. Callers may still
-    # replay immutable prefixes, but must not capture or archive ambiguous chats.
+    # The kernel resolves completed reply prefixes or allocates an isolated
+    # anonymous session. Opening user text alone is not an identity.
     return None
 
 
@@ -285,7 +285,7 @@ def append_context(message: dict, text: str, protocol: str) -> None:
 
 
 def strip_thinking(messages: list[dict]) -> list[dict]:
-    result = copy.deepcopy(messages)
+    result = [dict(message) for message in messages]
     for message in result:
         message.pop("reasoning_content", None)
         message.pop("reasoning_details", None)

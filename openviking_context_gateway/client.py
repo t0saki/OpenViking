@@ -4,6 +4,7 @@
 
 import asyncio
 import re
+from urllib.parse import urlencode
 
 import aiohttp
 from packaging.version import InvalidVersion, Version
@@ -114,6 +115,24 @@ class VikingClient:
             "GET", f"/api/v1/sessions/{session}/archives/{archive}", key, timeout=5
         )
         return result.get("overview", "")
+
+    async def archive_state(self, key, session, archive, uri=""):
+        if not uri:
+            info = await self.request("GET", f"/api/v1/sessions/{session}", key, timeout=5)
+            uri = info["uri"].rstrip("/") + "/history/" + archive
+        for marker, state in ((".done", "completed"), (".failed.json", "failed")):
+            try:
+                await self.request(
+                    "GET",
+                    "/api/v1/content/read?" + urlencode({"uri": uri.rstrip("/") + "/" + marker}),
+                    key,
+                    timeout=5,
+                )
+                return state
+            except VikingError as error:
+                if error.status != 404 and error.reason != "openviking_NOT_FOUND":
+                    raise
+        return "pending"
 
     async def mcp(self, name, key, arguments):
         """Stateless Streamable HTTP MCP; accept both JSON and SSE responses."""

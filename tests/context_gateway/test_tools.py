@@ -120,6 +120,7 @@ async def test_tool_claim_timeout_and_byte_bound(setup_kernel, credential, polic
 
 
 async def test_hidden_branch_restart_and_archive_mapping(setup_kernel, credential, policy):
+    policy.update(gateway_tools=True)
     kernel, store, _, encryption = setup_kernel
     messages = [
         {"role": "system", "content": "sys"},
@@ -277,3 +278,39 @@ async def test_explicit_session_keeps_initial_tool_snapshot(setup_kernel, creden
     )
     assert first.session == second.session
     assert first.body["tools"] == second.body["tools"]
+
+
+async def test_incompatible_tools_keep_visible_history(setup_kernel, credential, policy):
+    kernel, store, _, _ = setup_kernel
+    policy.update(gateway_tools=True, recall=False)
+    messages = [{"role": "user", "content": "search"}, {"role": "assistant", "content": "answer"}]
+    headers = {"x-openviking-session": "downgrade"}
+    first = await kernel.prepare(
+        {"messages": messages}, "chat", headers, credential, {"id": "u"}, policy
+    )
+    transcript = [
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": "owned",
+                    "type": "function",
+                    "function": {"name": "openviking_search", "arguments": "{}"},
+                }
+            ],
+        },
+        {"role": "tool", "tool_call_id": "owned", "content": "result"},
+        messages[1],
+    ]
+    await store.put(
+        first.scope, first.session, "hidden", hidden_chain(messages)[-1], {"messages": transcript}
+    )
+    body = {
+        "messages": [*messages, {"role": "user", "content": "continue"}],
+        "response_format": {"type": "json_object"},
+    }
+    prepared = await kernel.prepare(body, "chat", headers, credential, {"id": "u"}, policy)
+    assert not prepared.tools_active
+    assert prepared.body == body
+    assert all(not message.get("tool_calls") for message in prepared.body["messages"])

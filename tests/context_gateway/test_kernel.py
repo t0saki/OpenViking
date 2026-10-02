@@ -119,7 +119,7 @@ async def test_plugin_stop_is_sticky_but_replays_existing_prefix(setup_kernel, c
     assert three.disabled and len(viking.recalls) == 1
 
 
-async def test_capture_confirms_branch_and_deduplicates_forks(setup_kernel, credential, policy):
+async def test_capture_confirms_branch_and_isolates_forks(setup_kernel, credential, policy):
     kernel, store, viking, key = setup_kernel
     management = ManagementStore(store.path.parent / "management.sqlite3", key)
     await management.initialize()
@@ -141,8 +141,9 @@ async def test_capture_confirms_branch_and_deduplicates_forks(setup_kernel, cred
     assert "Kept answer" in str(viking.writes) and "Discarded answer" not in str(viking.writes)
     assert "openviking-context" not in str(viking.writes)
     await prepare(kernel, body, credential, policy, session="fork")
-    assert not await worker.once()
-    assert len(viking.writes) == 1
+    assert await worker.once()
+    assert len(viking.writes) == 2
+    assert viking.write_sessions[0] != viking.write_sessions[1]
 
 
 async def test_lease_is_exclusive_and_old_owner_cannot_ack(setup_kernel):
@@ -338,7 +339,7 @@ async def test_large_body_does_not_trigger_placeholder_archive(setup_kernel, cre
         {("usage", ""): {"input_tokens": 1000, "model": "test", "upstream_id": "upstream"}},
     )
     second = await prepare(kernel, body, credential, policy)
-    assert second.metrics["degradation"] == "archive_wait_timeout"
+    assert "degradation" not in second.metrics
     assert second.body == body
     assert not await store.read(first.scope, first.session, kinds=["replacement"])
 

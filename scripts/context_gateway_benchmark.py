@@ -30,6 +30,43 @@ from openviking_context_gateway.protocols import parse_body
 from openviking_context_gateway.storage import SQLiteKernelStore, digest
 
 
+def cycle(i):
+    return [
+        {"role": "user", "content": f"Check module {i} and explain the changes."},
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": f"call-{i}-{k}",
+                    "type": "function",
+                    "function": {
+                        "name": "read_file",
+                        "arguments": json.dumps(
+                            {"path": f"src/module{i}/file{k}.py", "offset": 1, "limit": 60}
+                        ),
+                    },
+                }
+                for k in range(4)
+            ],
+        },
+        *[
+            {
+                "role": "tool",
+                "tool_call_id": f"call-{i}-{k}",
+                "content": json.dumps(
+                    {
+                        "path": f"src/module{i}/file{k}.py",
+                        "lines": [f"{x}: return calculate(value_{x})" for x in range(14)],
+                    }
+                ),
+            }
+            for k in range(4)
+        ],
+        {"role": "assistant", "content": "These modules implement validation and dispatch."},
+    ]
+
+
 def distribution(values):
     ordered = sorted(values)
     return {
@@ -100,6 +137,38 @@ async def benchmark(args):
                 await kernel.prepare(body, "chat", headers, credential, {"id": "upstream"}, policy)
                 times.append((time.perf_counter() - started) * 1000)
             result["replay"][str(turns)] = distribution(times)
+        count = int(8_500_000 / len(orjson.dumps(cycle(1000))))
+        dense = {
+            "model": "benchmark",
+            "messages": [m for i in range(count) for m in cycle(i)]
+            + [{"role": "user", "content": "Summarize the changes."}],
+        }
+        raw = orjson.dumps(dense)
+        result["tool_dense"] = {
+            "bytes": len(raw),
+            "messages": len(dense["messages"]),
+            "tool_calls": count * 4,
+        }
+        for name, parse in (("parse", parse_body), ("orjson", orjson.loads)):
+            times = []
+            for _ in range(7):
+                started = time.perf_counter()
+                assert parse(raw)
+                times.append((time.perf_counter() - started) * 1000)
+            result["tool_dense"][name] = distribution(times)
+        times = []
+        for _ in range(7):
+            started = time.perf_counter()
+            await kernel.prepare(
+                dense,
+                "chat",
+                {"x-openviking-session": "dense"},
+                credential,
+                {"id": "upstream"},
+                policy,
+            )
+            times.append((time.perf_counter() - started) * 1000)
+        result["tool_dense"]["prepare"] = distribution(times[1:])
         if hasattr(store, "close"):
             store.close()
 
@@ -194,6 +263,7 @@ async def benchmark(args):
                     return first, (time.perf_counter() - started) * 1000
 
                 await asyncio.gather(*(measure(gateway_url, i) for i in range(args.concurrency)))
+                await asyncio.gather(*(measure(base, i) for i in range(args.concurrency)))
                 for name, url in (("direct_sse", base), ("gateway_sse", gateway_url)):
                     measured = await asyncio.gather(
                         *(measure(url, i) for i in range(args.concurrency))

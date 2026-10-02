@@ -19,6 +19,9 @@ class RecordKind(str, Enum):
     CAPTURE_CURSOR = "capture_cursor"
     CAPTURE_STATE = "capture_state"
     CAPTURE_FAILED = "capture_failed"
+    CAPTURE_HEAD = "capture_head"
+    CAPTURE_ROUTE = "capture_route"
+    SESSION_PREFIX = "session_prefix"
     CREATED = "created"
     WRITTEN = "written"
     CAPTURED = "captured"
@@ -34,6 +37,7 @@ SESSION_KINDS = [
     RecordKind.RECALL_STATE,
     RecordKind.CAPTURE_CURSOR,
     RecordKind.CAPTURE_FAILED,
+    RecordKind.CAPTURE_ROUTE,
     RecordKind.TAKEOVER,
 ]
 REPLAY_KINDS = [

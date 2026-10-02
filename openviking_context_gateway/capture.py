@@ -1,15 +1,17 @@
 # Copyright (c) 2026 Beijing Volcano Engine Technology Co., Ltd.
 # SPDX-License-Identifier: AGPL-3.0
-"""Capture reconciliation and ordered delivery, independent of HTTP and SQL."""
+"""Branch reconciliation and ordered capture, independent of HTTP and SQL."""
 
+import asyncio
 import copy
 import logging
 import time
+import uuid
 
 import async_timeout
 import orjson
 
-from .client import VikingError
+from .archives import TERMINAL, refresh_archive
 from .models import Policy
 from .protocols import clean_text, is_user, prefix_chain, text_content, unwrap_client
 from .records import RecordKind as K
@@ -18,7 +20,27 @@ logger = logging.getLogger(__name__)
 
 
 class CaptureBranchChanged(Exception):
-    """Delivered history no longer matches the client branch."""
+    """A queued turn belongs to history that has already changed."""
+
+
+async def reset_capture(store, scope, session, reason, expected):
+    """Switch capture destinations; immutable replay stays with the client session.
+
+    In-flight workers can finish against the old OV session. They cannot publish
+    archives into the new branch, and its independent queue never waits for them.
+    """
+    identifier = uuid.uuid4().hex
+    route = {
+        "session": session + ":" + identifier,
+        "ov_session": "context-gateway-" + identifier,
+        "reason": reason,
+        "time": time.time(),
+    }
+    if await store.commit(
+        scope, session, {(K.CAPTURE_ROUTE, ""): route}, expected={(K.CAPTURE_ROUTE, ""): expected}
+    ):
+        return route
+    return None
 
 
 class CapturePipeline:
@@ -31,6 +53,7 @@ class CapturePipeline:
         if not captured:
             return None
         anchor = next((a for a in reversed(chain[start:end]) if a), "")
+        first_user = next((i for i, m in enumerate(messages) if is_user(m)), start)
         return {
             "anchor": anchor,
             "position": end,
@@ -39,12 +62,13 @@ class CapturePipeline:
                 "messages": captured,
                 "credential_id": credential["id"],
                 "account": credential["account"],
-                "ov_session": request.root["ov_session"],
+                "owner_session": request.session,
+                "protocol": request.protocol,
+                "ov_session": request.capture_ov_session,
                 "policy": policy.model_dump(),
                 "confirmed": confirmed,
-                "boundary": anchor,
                 "previous": next((chain[i] for i in range(start - 1, -1, -1) if chain[i]), "")
-                if start > next((i for i, m in enumerate(messages) if is_user(m)), start)
+                if start > first_user
                 else "",
                 "user_anchor": chain[start],
             },
@@ -52,39 +76,86 @@ class CapturePipeline:
 
     async def confirm(self, request, credential, policy):
         key = K.CAPTURE_CURSOR, ""
+        positions = {a: i for i, a in enumerate(request.chain) if a}
+        starts = [i for i, m in enumerate(request.messages) if is_user(m)]
         while True:
+            routes = await self.store.read(request.scope, request.session, [""], [K.CAPTURE_ROUTE])
+            route = routes.get((K.CAPTURE_ROUTE, ""))
+            request.capture_session = route["session"] if route else request.session
+            request.capture_ov_session = (
+                route["ov_session"] if route else request.root["ov_session"]
+            )
             records = await self.store.read(
-                request.scope, request.session, [""], [K.CAPTURE_CURSOR]
+                request.scope,
+                request.capture_session,
+                [""],
+                [K.CAPTURE_CURSOR, K.CAPTURE_HEAD, K.CAPTURE_FAILED],
             )
             old = records.get(key)
             cursor = dict(old or {})
-            endpoint = cursor.get("confirmed", "")
-            positions = {a: i for i, a in enumerate(request.chain) if a}
-            if endpoint and endpoint not in positions:
-                # Already delivered history cannot be retracted from an OV session.
-                # A divergent client branch needs a new explicit session ID.
-                request.capture_safe = False
-                request.metrics["capture_skip_reason"] = "history_branch_changed"
-                return
-            after = positions.get(endpoint, -1)
-            starts = [i for i, message in enumerate(request.messages) if is_user(message)]
-            jobs = [
-                self.job(
-                    request, credential, policy, request.messages, request.chain, start, end, True
+            head = records.get((K.CAPTURE_HEAD, ""))
+            if head is None:
+                legacy = await self.store.read(
+                    request.scope, request.capture_session, [""], [K.CAPTURE_STATE]
                 )
-                for start, end in zip(starts, starts[1:], strict=False)
-                if end - 1 > after
-            ]
-            jobs = [job for job in jobs if job]
-            staged = cursor.get("staged")
+                head = {"anchor": legacy.get((K.CAPTURE_STATE, ""), {}).get("last_anchor", "")}
+                await self.store.put(
+                    request.scope, request.capture_session, K.CAPTURE_HEAD, "", head
+                )
+            failure = records.get((K.CAPTURE_FAILED, ""), {})
+            endpoints = [cursor.get("confirmed"), head.get("anchor")]
+            changed = any(a and a not in positions for a in endpoints)
+            # Old releases wrote permanent failures. Rebuild from the current
+            # history once rather than inheriting an unrecoverable queue.
+            restart = changed or (failure and not failure.get("retry_at"))
+            if restart:
+                route = await reset_capture(
+                    self.store,
+                    request.scope,
+                    request.session,
+                    "history_changed" if changed else "capture_recovered",
+                    route,
+                )
+                if route:
+                    request.metrics["capture_reason"] = route["reason"]
+                continue
+            request.metrics.update(
+                capture_status=("paused" if failure.get("attempts", 5) >= 5 else "retrying")
+                if failure
+                else "active",
+                capture_reason=failure.get("reason", (route or {}).get("reason", "")),
+                capture_retry_at=failure.get("retry_at"),
+            )
+            after = positions.get(cursor.get("confirmed"), -1)
+
+            def build_jobs(after=after):
+                return [
+                    job
+                    for start, end in zip(starts, starts[1:], strict=False)
+                    if end - 1 > after
+                    if (
+                        job := self.job(
+                            request,
+                            credential,
+                            policy,
+                            request.messages,
+                            request.chain,
+                            start,
+                            end,
+                            True,
+                        )
+                    )
+                ]
+
+            jobs = await asyncio.to_thread(build_jobs)
+            staged = cursor.pop("staged", None)
             if not jobs and not staged:
                 return
-            cursor.pop("staged", None)
             if jobs:
                 cursor["confirmed"] = jobs[-1]["anchor"]
             if await self.store.commit(
                 request.scope,
-                request.session,
+                request.capture_session,
                 {key: cursor},
                 expected={key: old},
                 jobs=jobs,
@@ -93,29 +164,40 @@ class CapturePipeline:
                 return
 
     async def stage(self, request, credential, policy, response):
+        routes = await self.store.read(request.scope, request.session, [""], [K.CAPTURE_ROUTE])
+        route = routes.get((K.CAPTURE_ROUTE, ""))
+        if (route["session"] if route else request.session) != request.capture_session:
+            return  # A response from the branch before a reset finished late.
         messages = [*request.messages, *(response.output_items or [response.message])]
-        chain = prefix_chain(messages)
-        job = self.job(
-            request, credential, policy, messages, chain, request.anchor, len(messages), False
+        chain = await asyncio.to_thread(prefix_chain, messages)
+        job = await asyncio.to_thread(
+            self.job,
+            request,
+            credential,
+            policy,
+            messages,
+            chain,
+            request.anchor,
+            len(messages),
+            False,
         )
         if not job:
             return
         key = K.CAPTURE_CURSOR, ""
         while True:
             records = await self.store.read(
-                request.scope, request.session, [""], [K.CAPTURE_CURSOR]
+                request.scope, request.capture_session, [""], [K.CAPTURE_CURSOR]
             )
             old = records.get(key)
             cursor = dict(old or {})
             endpoint = cursor.get("confirmed", "")
-            # Ignore an older request completing after a newer turn was confirmed.
             if endpoint and (endpoint not in chain or chain.index(endpoint) >= request.anchor):
                 return
             staged = cursor.get("staged")
             cursor["staged"] = {"anchor": job["anchor"], "user_anchor": chain[request.anchor]}
             if await self.store.commit(
                 request.scope,
-                request.session,
+                request.capture_session,
                 {key: cursor},
                 expected={key: old},
                 jobs=[job],
@@ -126,6 +208,7 @@ class CapturePipeline:
 
 class CaptureWorker:
     MAX_ATTEMPTS = 5
+    RECOVERY_SECONDS = 300
 
     def __init__(self, store, management, viking):
         self.store, self.management, self.viking = store, management, viking
@@ -134,53 +217,79 @@ class CaptureWorker:
         item = await self.store.claim(120)
         if item is None:
             return False
+        owner = item["payload"].get("owner_session", item["session"])
         try:
-            # Finish or cancel before the lease expires. Later jobs from this
-            # session remain behind this one throughout retries and failures.
             async with async_timeout.timeout(100):
                 await self._deliver(item)
+            await self.store.commit(item["scope"], item["session"], {(K.CAPTURE_FAILED, ""): None})
             await self.store.ack(item, True)
+            if item.get("attempts"):
+                await self.management.log(
+                    item["payload"]["account"],
+                    {
+                        "kind": "capture",
+                        "session": owner,
+                        "protocol": item["payload"].get("protocol"),
+                        "credential_id": item["payload"]["credential_id"],
+                        "capture_status": "active",
+                        "capture_reason": "delivery_recovered",
+                    },
+                )
         except Exception as error:
             attempts = item.get("attempts", 0) + 1
-            failed = attempts >= self.MAX_ATTEMPTS or isinstance(error, CaptureBranchChanged)
-            if failed:
-                await self.store.put(
-                    item["scope"],
-                    item["session"],
-                    K.CAPTURE_FAILED,
-                    "",
-                    {"reason": "delivery_failed", "attempts": attempts},
-                )
-            await self.store.ack(
-                item,
-                False,
-                retry_at=time.time() + min(10 * 2 ** (attempts - 1), 300),
-                failed=failed,
+            branch_changed = isinstance(error, CaptureBranchChanged)
+            paused = attempts >= self.MAX_ATTEMPTS
+            retry_at = time.time() + (self.RECOVERY_SECONDS if paused else 10 * 2 ** (attempts - 1))
+            reason = (
+                "history_changed" if branch_changed else getattr(error, "reason", "delivery_failed")
             )
-            logger.warning(
-                "Context Gateway capture %s after attempt %s",
-                "stopped" if failed else "retry scheduled",
-                attempts,
+            status = {
+                "reason": reason,
+                "attempts": attempts,
+                "retry_at": None if branch_changed else retry_at,
+            }
+            await self.store.commit(
+                item["scope"], item["session"], {(K.CAPTURE_FAILED, ""): status}
             )
+            await self.store.ack(item, False, retry_at=retry_at, failed=branch_changed)
+            await self.management.log(
+                item["payload"]["account"],
+                {
+                    "kind": "capture",
+                    "protocol": item["payload"].get("protocol"),
+                    "session": owner,
+                    "credential_id": item["payload"]["credential_id"],
+                    "capture_status": "paused" if paused or branch_changed else "retrying",
+                    **status,
+                    "capture_reason": reason,
+                },
+            )
+            logger.warning("Context Gateway capture %s: %s (attempt %s)", owner, reason, attempts)
         return True
 
     async def _deliver(self, item):
         scope, session, payload = item["scope"], item["session"], item["payload"]
-        key = await self.management.get(payload["account"], "keys", payload["credential_id"])
-        records = await self.store.read(
-            scope, session, ["", item["id"]], [K.DISABLED, K.CREATED, K.CAPTURE_STATE, K.WRITTEN]
-        )
-        if not key or (K.DISABLED, "") in records:
+        owner = payload.get("owner_session", session)
+        routing = await self.store.read(scope, owner, [""], [K.DISABLED, K.CAPTURE_ROUTE])
+        route = routing.get((K.CAPTURE_ROUTE, ""))
+        if (K.DISABLED, "") in routing or (route["session"] if route else owner) != session:
             return
+        key = await self.management.get(payload["account"], "keys", payload["credential_id"])
+        if not key:
+            return
+        records = await self.store.read(
+            scope, session, ["", item["id"]], [K.CREATED, K.CAPTURE_STATE, K.WRITTEN]
+        )
         policy = Policy.model_validate(payload["policy"])
         token, ov_session = key["openviking_key"], payload["ov_session"]
+        # After the fast retry budget, this is a periodic recovery probe. Failed
+        # health checks do not retry writes; the head job continues to hold order.
         await self.viking.health(token)
         if (K.CREATED, "") not in records:
             await self.viking.create_session(token, ov_session)
             await self.store.put(scope, session, K.CREATED, "", {})
         state = copy.deepcopy(records.get((K.CAPTURE_STATE, "")) or {})
         if not state:
-            # One-time import of the previous ledger format on upgrade.
             legacy = await self.store.read(scope, session, kinds=[K.CAPTURED, K.ARCHIVE])
             covered = {
                 a for (k, _), v in legacy.items() if k == K.ARCHIVE for a in v.get("covered", [])
@@ -216,25 +325,51 @@ class CaptureWorker:
             )
         if state.get("last_job") != item["id"]:
             state.setdefault("turns", []).append({"anchor": item["anchor"], "count": len(messages)})
-            # Only sanitized messages accepted by OV count toward takeover. The
-            # provider's system prompt, tool schemas and image bytes never do.
             state["dialogue_tokens"] = state.get("dialogue_tokens", 0) + sum(
                 (len(orjson.dumps(m["parts"])) + 2) // 3 for m in messages
             )
-            state["last_job"] = item["id"]
-            state["last_anchor"] = item["anchor"]
-            await self.store.commit(scope, session, {(K.CAPTURE_STATE, ""): state})
+            state.update(last_job=item["id"], last_anchor=item["anchor"])
+            await self.store.commit(
+                scope,
+                session,
+                {(K.CAPTURE_STATE, ""): state, (K.CAPTURE_HEAD, ""): {"anchor": item["anchor"]}},
+            )
         takeover = policy.takeover and state.get("dialogue_tokens", 0) >= policy.takeover_tokens
         if takeover:
-            await self.store.put(scope, session, K.TAKEOVER, "", {})
+            await self.store.put(scope, owner, K.TAKEOVER, "", {})
         previous = state.get("pending_archive")
         if previous:
-            try:
-                summary = await self.viking.overview(token, ov_session, previous["archive_id"])
-            except VikingError:
-                summary = ""
-            if not summary:
-                return
+            anchor = previous.get("boundary")
+            if not anchor:
+                archives = await self.store.read(scope, owner, kinds=[K.ARCHIVE])
+                anchor = next(
+                    (
+                        a
+                        for (_, a), v in archives.items()
+                        if v.get("archive_id") == previous["archive_id"]
+                    ),
+                    None,
+                )
+            if anchor:
+                archives = await self.store.read(scope, owner, [anchor], [K.ARCHIVE])
+                archive = archives.get((K.ARCHIVE, anchor))
+                if archive is None:
+                    # State precedes publication. Recover a store interruption
+                    # without asking OpenViking to commit the same work twice.
+                    archive = {k: v for k, v in previous.items() if k != "boundary"}
+                    if not await self.store.commit(
+                        scope,
+                        owner,
+                        {(K.ARCHIVE, anchor): archive},
+                        expected={(K.CAPTURE_ROUTE, ""): route},
+                    ):
+                        return
+                if archive:
+                    archive = await refresh_archive(
+                        self.store, self.viking, scope, owner, anchor, archive, token, ov_session
+                    )
+                    if archive.get("status") not in TERMINAL:
+                        return
             state.pop("pending_archive")
             await self.store.commit(scope, session, {(K.CAPTURE_STATE, ""): state})
         threshold = policy.takeover_tokens if takeover else policy.commit_tokens
@@ -257,17 +392,22 @@ class CaptureWorker:
         uri = result.get("archive_uri", "")
         if not uri:
             return
-        archive = {"archive_id": uri.rstrip("/").split("/")[-1], "takeover": takeover}
-        state["pending_archive"] = archive
+        archive = {
+            "archive_id": uri.rstrip("/").split("/")[-1],
+            "archive_uri": uri,
+            "ov_session": ov_session,
+            "takeover": takeover,
+            "status": "pending",
+            "created": time.time(),
+        }
+        boundary = archived[-1]["anchor"]
+        state["pending_archive"] = {**archive, "boundary": boundary}
         state["turns"] = turns[len(archived) :]
         await self.store.commit(
-            scope,
-            session,
-            {
-                (K.ARCHIVE, archived[-1]["anchor"]): archive,
-                (K.CAPTURE_STATE, ""): state,
-                (K.WRITTEN, item["id"]): None,
-            },
+            scope, session, {(K.CAPTURE_STATE, ""): state, (K.WRITTEN, item["id"]): None}
+        )
+        await self.store.commit(
+            scope, owner, {(K.ARCHIVE, boundary): archive}, expected={(K.CAPTURE_ROUTE, ""): route}
         )
 
 

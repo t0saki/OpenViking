@@ -80,7 +80,7 @@ async def test_emergency_usage_matches_model_and_configured_window(
     first = await kernel.prepare(body, "chat", headers, credential, upstream, policy)
     await kernel.completed(first, credential, ResponseCapture("chat", usage={"input_tokens": 1950}))
     small = await kernel.prepare(body, "chat", headers, credential, upstream, policy)
-    assert small.metrics["degradation"] == "archive_wait_timeout"
+    assert "degradation" not in small.metrics  # No archive is being generated.
     large = await kernel.prepare(
         {**body, "model": "large"}, "chat", headers, credential, upstream, policy
     )
@@ -129,7 +129,7 @@ async def test_pending_overview_blocks_repeated_commit(setup_kernel, credential,
     assert len(viking.commits) == 1
 
 
-async def test_capture_retry_blocks_later_turns_and_stops(setup_kernel, credential, policy):
+async def test_capture_retry_blocks_later_turns_and_recovers(setup_kernel, credential, policy):
     kernel, store, viking, encryption = setup_kernel
     policy.update(recall=False)
     request = await prepare(
@@ -154,8 +154,20 @@ async def test_capture_retry_blocks_later_turns_and_stops(setup_kernel, credenti
     next_request = await prepare(
         kernel, credential, policy, [*history(3), {"role": "user", "content": "more"}]
     )
-    assert not next_request.capture_safe and next_request.body["messages"][-1]["content"] == "more"
+    assert next_request.metrics["capture_status"] == "paused"
     assert ("capture_failed", "") in await store.read(request.scope, request.session)
+
+    async def recovered(key, session, messages):
+        attempted.append(messages[0]["parts"][0]["text"])
+        return {"pending_tokens": 10}
+
+    viking.write = recovered
+    with store.connect() as c:
+        c.execute("UPDATE queue SET ready=0 WHERE attempts>0")
+    assert await worker.once()
+    assert await worker.once()
+    assert attempted[-2:] == ["Question 0", "Question 1"]
+    assert ("capture_failed", "") not in await store.read(request.scope, request.session)
 
 
 async def test_capture_retry_recovers_in_order(setup_kernel, credential, policy):
@@ -198,8 +210,10 @@ async def test_idle_capture_does_not_mix_a_regenerated_branch(setup_kernel, cred
     ]
     await prepare(kernel, credential, policy, messages)
     await worker.once()
-    assert len(viking.writes) == 1
-    assert ("capture_failed", "") in await store.read(p.scope, p.session)
+    assert len(viking.writes) == 2
+    assert viking.write_sessions[0] != viking.write_sessions[1]
+    assert "Edited answer" in str(viking.writes[1])
+    assert ("capture_failed", "") not in await store.read(p.scope, p.session)
 
 
 async def test_only_new_turns_are_enqueued(setup_kernel, credential, policy, monkeypatch):
@@ -303,6 +317,7 @@ async def test_anonymous_greetings_cannot_share_capture_or_archive(
 ):
     kernel, store, _, _ = setup_kernel
     policy.update(gateway_tools=True)
+    sessions = []
     for answer in ("Project A", "Project B"):
         body = {
             "messages": [
@@ -312,13 +327,15 @@ async def test_anonymous_greetings_cannot_share_capture_or_archive(
             ]
         }
         request = await kernel.prepare(body, "chat", {}, credential, {"id": "upstream"}, policy)
-        assert not request.capture_safe and not request.tools_active
+        sessions.append(request.session)
+        assert request.tools_active
         await kernel.completed(
             request,
             credential,
             ResponseCapture("chat", {"role": "assistant", "content": "OK"}, complete=True),
         )
-    assert await store.claim() is None
+    assert len(set(sessions)) == 2
+    assert await store.claim() is not None
 
 
 async def test_management_get_uses_one_row_and_response_expiry(setup_kernel, monkeypatch):
@@ -361,6 +378,12 @@ async def test_legacy_placeholder_never_replaces_history_without_real_overview(
     result = await prepare(kernel, credential, policy, messages)
     assert result.body["messages"] == messages
     viking.summary = "Verified archive of Question 0 and Answer 0"
+    archive = (await store.read(request.scope, request.session, [anchor], ["archive"]))[
+        "archive", anchor
+    ]
+    await store.commit(
+        request.scope, request.session, {("archive", anchor): {**archive, "next_check": 0}}
+    )
     result = await prepare(kernel, credential, policy, messages)
     assert viking.summary in result.body["messages"][0]["content"]
     assert "unavailable" not in str(result.body)

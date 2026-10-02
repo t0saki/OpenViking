@@ -3,6 +3,7 @@
 import argparse
 import json
 import os
+from importlib.util import find_spec
 from pathlib import Path
 
 from .config import ContextGatewayConfig
@@ -25,6 +26,17 @@ def main():
     args = parser.parse_args()
     if args.config:
         os.environ["OPENVIKING_CONFIG_FILE"] = str(Path(args.config).resolve())
+    missing = [
+        name
+        for name in ("aiohttp", "async_timeout", "orjson", "packaging")
+        if find_spec(name) is None
+    ]
+    if missing:
+        raise SystemExit(
+            "Missing Context Gateway dependencies: "
+            + ", ".join(missing)
+            + ". Install with: pip install 'openviking[context-gateway]'"
+        )
     config = load_config()
     import uvicorn
 

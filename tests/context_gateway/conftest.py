@@ -15,6 +15,8 @@ class FakeViking:
     def __init__(self):
         self.recalls = []
         self.writes = []
+        self.write_sessions = []
+        self.archive_status = "pending"
         self.commits = []
         self.entries = [
             {
@@ -39,11 +41,15 @@ class FakeViking:
 
     async def write(self, key, session, messages):
         self.writes.append(copy.deepcopy(messages))
+        self.write_sessions.append(session)
         return {"pending_tokens": 22000}
 
     async def commit(self, key, session, keep=0):
         self.commits.append((session, keep))
         return {"archive_uri": "viking://user/alice/sessions/s/history/archive_001"}
+
+    async def archive_state(self, key, session, archive, uri=""):
+        return self.archive_status
 
     async def overview(self, key, session, archive):
         return self.summary

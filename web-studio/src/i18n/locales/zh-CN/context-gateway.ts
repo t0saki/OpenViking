@@ -38,7 +38,12 @@ export default {
   sampleNote: '指标统计保留期内最近 10,000 条请求。',
   first_call: '每轮首次调用缓存命中率',
   continuation: '轮内调用缓存命中率',
+  captureReset: '重新同步捕获',
+  captureResetReady: '下一次请求将按当前历史重新同步，已有历史替换仍会重放。',
   fields: {
+    capture_status: '捕获状态',
+    capture_reason: '捕获原因',
+
     allow_gateway_tools: '上游支持网关工具',
     coding_plan: '订阅 / Coding Plan 凭据',
     allow_coding_plan: '允许接入 Coding Plan',

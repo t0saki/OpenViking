@@ -247,10 +247,7 @@ async def test_recorded_client_prefixes(running_gateway, client_name, session_he
         for message in batch["messages"]
         for source_id in message["source_message_ids"]
     ]
-    if session_header:
-        assert source_ids and len(source_ids) == len(set(source_ids))
-    else:
-        assert not source_ids  # Ambiguous chats are replay-only.
+    assert source_ids and len(source_ids) == len(set(source_ids))
     logs = (await client.get("/admin/logs", headers=admin)).json()
     assert logs[0]["replay_hits"] >= 1
 
@@ -948,3 +945,134 @@ async def test_storage_failure_still_forwards_plain_chat(running_gateway, monkey
     )
     assert response.status_code == 200
     assert seen[-1][1] == raw
+
+
+@pytest.mark.parametrize("limit", [{}, {"max_tokens": 1024}, {"max_completion_tokens": 2048}])
+async def test_long_context_tool_continuation_preserves_output_limit(running_gateway, limit):
+    app, client, admin, key, _, _ = running_gateway
+    await enable_tools(client, admin, allow_write_tools=True, tool_allowlist=["write"])
+    requests, writes = [], []
+
+    async def backend(request):
+        if request.path not in {"/mcp", "/v1/chat/completions"}:
+            return None
+        payload = await request.json()
+        if request.path == "/mcp":
+            writes.append(payload)
+            return web.json_response(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "result": {"content": [{"type": "text", "text": "saved"}]},
+                }
+            )
+        if request.path != "/v1/chat/completions":
+            return None
+        requests.append(payload)
+        if len(requests) == 1:
+            value = completion(
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        tool_call(
+                            "openviking_write",
+                            arguments={"uri": "viking://~/notes/test", "content": "saved"},
+                        )
+                    ],
+                },
+                "tool_calls",
+            )
+        else:
+            value = completion({"role": "assistant", "content": "saved"})
+        value["usage"] = {"prompt_tokens": 110000, "completion_tokens": 20}
+        return web.json_response(value)
+
+    app.state.test_backend["handler"] = backend
+    response = await client.post(
+        "/v1/chat/completions",
+        headers={"Authorization": "Bearer " + key["key"], "X-OpenViking-Session": "long-tools"},
+        json={"model": "model", "messages": [{"role": "user", "content": "save this"}], **limit},
+    )
+    assert response.status_code == 200, response.text
+    assert len(writes) == 1 and len(requests) == 2
+    assert {
+        k: v for k, v in requests[1].items() if k in {"max_tokens", "max_completion_tokens"}
+    } == limit
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+async def test_tool_budget_finishes_after_results_without_usage(running_gateway, streaming):
+    app, client, admin, key, _, _ = running_gateway
+    await enable_tools(client, admin, tool_total_tokens=1024)
+    requests, calls = [], []
+
+    async def backend(request):
+        if request.path not in {"/mcp", "/v1/chat/completions"}:
+            return None
+        payload = await request.json()
+        if request.path == "/mcp":
+            calls.append(payload)
+            return web.json_response(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "result": {"content": [{"type": "text", "text": "result " * 1000}]},
+                }
+            )
+        if request.path != "/v1/chat/completions":
+            return None
+        requests.append(payload)
+        first = len(requests) == 1
+        message = (
+            {"role": "assistant", "content": None, "tool_calls": [tool_call()]}
+            if first
+            else {"role": "assistant", "content": "done"}
+        )
+        finish = "tool_calls" if first else "stop"
+        if not streaming:
+            value = completion(message, finish)
+            value.pop("usage")
+            return web.json_response(value)
+        if first:
+            message["tool_calls"][0]["index"] = 0
+        event = {"choices": [{"index": 0, "delta": message, "finish_reason": finish}]}
+        return web.Response(
+            body=b"data: " + orjson.dumps(event) + b"\n\ndata: [DONE]\n\n",
+            content_type="text/event-stream",
+        )
+
+    app.state.test_backend["handler"] = backend
+    response = await client.post(
+        "/v1/chat/completions",
+        headers={"Authorization": "Bearer " + key["key"], "X-OpenViking-Session": "budget-tools"},
+        json={
+            "model": "model",
+            "stream": streaming,
+            "messages": [{"role": "user", "content": "search"}],
+        },
+    )
+    assert response.status_code == 200 and "gateway_tool_error" not in response.text
+    assert len(calls) == 1 and len(requests) == 2
+    assert requests[1]["tool_choice"] == "none"
+    assert "max_tokens" not in requests[1]
+    logs = (await client.get("/admin/logs", headers=admin)).json()
+    assert logs[0]["tool_stop_reason"] == "token_budget"
+
+
+async def test_capture_reset_is_scoped_to_the_key_account(running_gateway):
+    app, client, admin, key, _, _ = running_gateway
+    await client.post(
+        "/v1/chat/completions",
+        headers={"Authorization": "Bearer " + key["key"], "X-OpenViking-Session": "reset"},
+        json={"model": "model", "messages": [{"role": "user", "content": "hello"}]},
+    )
+    log = (await client.get("/admin/logs", headers=admin)).json()[0]
+    path = "/admin/keys/" + log["credential_id"] + "/capture/reset"
+    body = {"session": log["session"], "protocol": "chat"}
+    wrong = await client.post(path, headers={**admin, "X-OpenViking-Account": "other"}, json=body)
+    assert wrong.status_code == 404
+    assert (await client.post(path, headers=admin, json=body)).status_code == 200
+    assert (
+        await client.post(path, headers=admin, json={**body, "session": "unknown"})
+    ).status_code == 404

@@ -42,7 +42,13 @@ export default {
     'Metrics cover the latest 10,000 requests within the configured retention period.',
   first_call: 'First call cache hit rate',
   continuation: 'Within-turn cache hit rate',
+  captureReset: 'Resync capture',
+  captureResetReady:
+    'The next request will resync its current history. Existing replacements remain available.',
   fields: {
+    capture_status: 'Capture status',
+    capture_reason: 'Capture reason',
+
     allow_gateway_tools: 'Upstream supports gateway tools',
     coding_plan: 'Subscription / Coding Plan credential',
     allow_coding_plan: 'Override Coding Plan rejection',

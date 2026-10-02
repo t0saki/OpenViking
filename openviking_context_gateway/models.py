@@ -8,6 +8,11 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 ProtocolName = Literal["anthropic", "chat", "responses"]
 
 
+class CaptureReset(BaseModel):
+    session: str = Field(min_length=1, max_length=128)
+    protocol: ProtocolName
+
+
 class Policy(BaseModel):
     model_config = ConfigDict(extra="forbid")
     name: str = "Default"

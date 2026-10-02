@@ -16,11 +16,13 @@ from fastapi import FastAPI, HTTPException, Request, WebSocket
 from fastapi.responses import JSONResponse, Response
 from pydantic import ValidationError
 
+from .capture import reset_capture
 from .client import VikingClient, VikingError
 from .config import ContextGatewayConfig
 from .kernel import CaptureWorker, MemoryKernel
-from .models import KeyRequest, Policy, Upstream
+from .models import CaptureReset, KeyRequest, Policy, Upstream
 from .proxy import ProxyRequest, filtered_headers, upstream_headers, upstream_url
+from .records import RecordKind as K
 from .storage import ManagementStore, SQLiteKernelStore, digest
 
 logger = logging.getLogger(__name__)
@@ -193,6 +195,26 @@ def create_app(config: ContextGatewayConfig | None = None):
     @app.get("/admin/logs")
     async def logs(request: Request, limit: int = 200):
         return await management.logs(admin_account(request), max(1, min(limit, 1000)))
+
+    @app.post("/admin/keys/{identifier}/capture/reset")
+    async def reset_session_capture(identifier: str, data: CaptureReset, request: Request):
+        account = admin_account(request)
+        key = await management.get(account, "keys", identifier)
+        if not key:
+            raise HTTPException(404, "Gateway key not found")
+        scope = digest(account + "\0" + key["user_id"] + "\0" + data.protocol)
+        while True:
+            records = await store.read(scope, data.session, [""], [K.ROOT, K.CAPTURE_ROUTE])
+            if (K.ROOT, "") not in records:
+                raise HTTPException(404, "Gateway session not found")
+            route = await reset_capture(
+                store, scope, data.session, "manual_reset", records.get((K.CAPTURE_ROUTE, ""))
+            )
+            if route:
+                return {
+                    "status": "ready",
+                    "message": "Capture will resync from the next request history",
+                }
 
     @app.get("/admin/guides")
     async def guides(request: Request):

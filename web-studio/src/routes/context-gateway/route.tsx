@@ -47,6 +47,8 @@ const logFields = [
   'input_tokens',
   'cached_tokens',
   'degradation',
+  'capture_status',
+  'capture_reason',
 ] as const
 type Tab = (typeof tabs)[number]
 
@@ -122,6 +124,20 @@ function Report({
 }) {
   const { t } = useTranslation('contextGateway')
   const query = useGateway(connection, kind)
+  const reset = useMutation({
+    mutationFn: (log: Record<string, unknown>) =>
+      gatewayRequest(
+        connection,
+        `keys/${encodeURIComponent(String(log.credential_id))}/capture/reset`,
+        'POST',
+        {
+          session: log.session,
+          protocol: log.protocol,
+        },
+      ),
+    onSuccess: () => toast.success(t('captureResetReady')),
+    onError: (error: Error) => toast.error(error.message),
+  })
   if (query.isPending) return <p>{t('loading')}</p>
   if (query.error) return <p role="alert">{query.error.message}</p>
   if (kind === 'guides')
@@ -207,6 +223,7 @@ function Report({
       <table className="w-full text-left text-sm">
         <thead>
           <tr>
+            <th className="p-2">{t('captureReset')}</th>
             {logFields.map((name) => (
               <th className="p-2" key={name}>
                 {t(`fields.${name}`)}
@@ -217,6 +234,18 @@ function Report({
         <tbody>
           {logs.map((log, index) => (
             <tr className="border-t" key={String(log.request_id ?? index)}>
+              <td className="p-2">
+                {Boolean(log.session && log.protocol && log.credential_id) && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={reset.isPending}
+                    onClick={() => reset.mutate(log)}
+                  >
+                    {t('captureReset')}
+                  </Button>
+                )}
+              </td>
               {logFields.map((name) => (
                 <td className="p-2" key={name}>
                   {name === 'time'

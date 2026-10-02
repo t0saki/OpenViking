@@ -1,75 +1,90 @@
 # Context Gateway review fixes
 
-The review's runtime findings were confirmed. This revision changes the following
-behavior and keeps the existing immutable replay format:
+This revision addresses the follow-up review of `6ef27559`. Prior phase-one,
+phase-two and live-provider results are historical evidence; they do not substitute
+for this revision's regressions or native Anthropic signature acceptance.
 
-- Emergency waiting uses provider input/output usage for the same upstream/model,
-  with per-model `context_windows`. Request bytes never trigger it. A missing
-  overview leaves the full history intact; no placeholder replacement is written.
-- Takeover activation counts sanitized conversation content accepted by OV.
-  Further commits use OV's pending dialogue tokens. An outstanding overview
-  prevents another commit while captures continue in order.
-- The first Chat request retains the client's token limit. Only hidden
-  continuations consume the gateway tool budget. Incompatible tool settings
-  omit new gateway tools for that request and still replay existing history.
-- Ark has no gateway-imposed 15-request/minute limit.
-- Without an explicit session header, capture, takeover and new hidden tools are
-  disabled. Recall/replay still work. Plugin detection ignores assistant prose,
-  tool results and attachment names.
-- Capture confirms only new turns. A failing job blocks subsequent jobs from
-  that session, retries at most five times, then disables further capture/takeover.
-  Editing history already delivered to OV also stops capture instead of mixing branches.
-- Indexed storage reads exclude unrelated usage/write records. Usage is one
-  mutable row; sent markers are batched and SQLite connections are pooled.
-  Conditional writes are generic storage primitives; recall budgets and queue
-  reconciliation live in the kernel/capture pipeline.
-- Responses mappings use indexed lookups and expiry, and are not saved for
-  `store: false`. The default mapping lifetime is 30 days.
+## Capture, archives and replay
 
-HTTP processing is split into routing, preparation, forwarding and observation
-in `proxy.py`; `app.py` hosts the routes and management API. Record kinds are
-centralized in `records.py`. No Redis backend is implemented or claimed as tested.
+- Existing matching replacements replay independently of capture health, plugin
+  detection and permission to create a new replacement. Missing summaries never
+  replace history with a placeholder.
+- Capture has a separate destination from the immutable client-session ledger.
+  Editing, compacting or resetting delivered history switches that destination
+  and resyncs the supplied branch. Old in-flight workers cannot publish archives
+  into the new branch. Common-prefix replacement records remain available.
+- The queue key includes scope, session and anchor. Forked sessions can capture
+  identical prefixes independently. Migration preserves tasks, progress and leases;
+  all gateway workers should restart together for the schema upgrade.
+- A failed head holds later turns in order. Five fast attempts are followed by
+  five-minute recovery probes, with health checked before writes. Successful
+  delivery clears the failure. Studio logs display state/reason and expose an
+  account-scoped resync action; legacy permanently stopped captures resync too.
+- Archive observation is shared by request preparation and capture. `.done` and
+  `.failed.json` release a terminal archive without a summary; missing terminal
+  markers are bounded by a 15-minute lifetime. Checks are throttled to five seconds.
+  Only a matching, confirmed-pending archive permits emergency waiting.
+- Anonymous continuations reuse a unique longest completed reply prefix recorded
+  by the gateway. New or ambiguous histories get isolated sessions with capture
+  and tools enabled. Identical opening user text never identifies a session.
+  A per-conversation header is still the reliable solution for indistinguishable
+  transcripts/retries; prefix inference cannot prove identity in those cases.
 
-Gateway dependencies live in `openviking[context-gateway]` with minimum versions.
-The Docker image opts into that extra. Plugin capture changes/version bumps were
-reverted. Generated live-result JSON is no longer committed. User/account deletion
-still intentionally calls the gateway's HTTP cleanup endpoint from the server's
-own adapter; the deletion service does not import the gateway runtime.
+## Tools and request work
+
+Hidden tool budgets count added calls/results and hidden output, excluding client
+history and schemas. Missing streaming usage falls back to estimating added data.
+Output parameters are preserved on every request. Reaching the threshold disables
+further gateway calls and allows a final answer, whose output may exceed the
+threshold. A completed write does not become a budget-related HTTP error.
+Incompatible tool settings forward client-visible history without expanding
+undeclared hidden calls. Compatible requests keep the frozen definitions/replay.
+
+Preparation uses shallow message copies with replacement of changed fields;
+immutable nested tool/image data are not deep-copied. Hidden-prefix hashing runs
+only where it is needed, and local indexed ledger reads are batched. JSON numeric
+and duplicate-key checks remain: replacing them with plain orjson parsing would
+lose the existing fidelity guarantees.
+
+Record kinds are centralized. Missing optional dependencies explain how to install
+`openviking[context-gateway]`; CI now installs that extra through package metadata.
+No shared JS plugin changes or generated acceptance JSON are included. Redis is
+not implemented or verified. A backend must still provide the documented atomic
+conditional writes and shared-key consistency; cluster placement is not proven.
 
 ## Verification
 
-The local Python gateway suite passes 95 tests, including sanitized Claude Code,
-Codex and OpenAI SDK fixture replay, concurrent writes across two store instances,
-capture retries/branch handling and the review regressions. Studio's three gateway
-tests, targeted lint, production build, Ruff and `uv lock --check` pass. These are
-local results, not a claim about remote CI.
+The local gateway suite passes 120 tests. Added coverage includes archive terminal
+states/poll contention, outage recovery and ordering, fork isolation, edit/compact
+resync, an in-flight reset, interrupted archive publication, queue migration, anonymous ownership ambiguity,
+undeclared tool history, long-context writes, streaming without usage, preserved
+output limits, optional-dependency errors and account-scoped reset authorization.
+Studio's three existing gateway tests, targeted lint, production build, Ruff,
+`git diff --check` and `uv lock --check` pass. Remote CI is not
+claimed as executed. This run uses synthetic providers; native Anthropic signature
+binding and physical context-window acceptance remain unverified.
 
-The prior [live acceptance record](context-gateway-live-acceptance.md) identifies
-its tested revision. This review run uses local synthetic providers; it does not
-replace native Anthropic signature/binding or physical-window acceptance. Those
-checks still need suitable live-provider evidence.
+## Local performance
 
-## Local performance comparison
+Run `PYTHONPATH=. python scripts/context_gateway_benchmark.py --concurrency 300`.
+Both revisions use the same expanded script, Python 3.10.20 and temporary local
+services. The gateway and synthetic upstream share one process; both HTTP routes
+are warmed before the 300-request burst. The dense fixture is 8,477,215 bytes,
+18,586 messages and 10,620 tool calls. Values are p50 / p95 milliseconds.
 
-Reproduce with `PYTHONPATH=. python scripts/context_gateway_benchmark.py --concurrency 300`.
-The baseline is `7e05a3c2`; the same script and Python 3.10.20 environment were used
-for both revisions, in separate runs. The synthetic upstream and gateway share one
-process; HTTP connections and session roots are warmed before the measured burst.
-Each history case also contains ten old write records per dialogue turn. Values
-below are wall-clock milliseconds, shown as p50 / p95.
-
-| Measurement | Before | After |
+| Measurement | `6ef27559` | This revision |
 | --- | ---: | ---: |
-| Parse 8 MiB JSON | 23.65 / 27.01 | 14.98 / 15.52 |
-| Prepare/replay 10 turns | 11.85 / 16.01 | 1.40 / 1.83 |
-| Prepare/replay 100 turns | 34.39 / 36.51 | 3.59 / 4.14 |
-| Prepare/replay 1,000 turns | 263.45 / 291.93 | 25.92 / 28.03 |
-| Direct SSE first byte, 300-request burst | 124.31 / 148.60 | 189.20 / 215.92 |
-| Gateway SSE first byte, same burst | 2245.90 / 2301.98 | 1341.45 / 1388.85 |
-| Gateway SSE completion, same burst | 3198.80 / 3471.61 | 1741.05 / 1944.66 |
+| Parse 8 MiB single string | 14.80 / 25.12 | 15.00 / 15.31 |
+| Parse dense tool history | 80.93 / 87.73 | 82.47 / 95.90 |
+| Plain orjson, dense history (without fidelity checks) | 26.87 / 52.81 | 28.05 / 55.34 |
+| Prepare dense tool history | 464.48 / 484.76 | 196.06 / 251.81 |
+| Prepare 1,000 short turns plus 10,000 old records | 26.55 / 30.89 | 21.25 / 24.23 |
+| Direct SSE first byte, 300-request burst | 56.21 / 67.43 | 110.71 / 122.25 |
+| Gateway SSE first byte, same burst | 1387.58 / 1405.13 | 1315.68 / 1340.29 |
+| Gateway SSE completion, same burst | 1887.59 / 2124.52 | 1782.58 / 1940.17 |
 
-Parsing alone is not the total overhead of an 8 MiB request. The 300-request burst
-still adds substantial latency and does **not** establish the design's millisecond
-overhead target for 300 active streams. The direct baseline also shows scheduling
-variation. Results demonstrate reduced work, not a production latency guarantee;
-measure the deployed process count, storage and actual traffic before sizing it.
+The dense preparation path improves, while parsing is unchanged. The direct
+baseline varies between runs; the 300-request burst still adds about 1.2 seconds
+at p50 and does not satisfy a millisecond overhead claim. These samples measure
+preparation/transport with capture and new recall disabled, not production load.
+They do not establish end-to-end 8 MiB or 300-active-stream acceptance.
