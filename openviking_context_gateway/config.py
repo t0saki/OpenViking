@@ -24,6 +24,7 @@ class ContextGatewayConfig(BaseModel):
     admin_token_env: str = "OPENVIKING_CONTEXT_GATEWAY_ADMIN_TOKEN"
     min_server_version: str = "0.4.16"
     session_ttl_days: int = Field(default=30, ge=1)
+    response_ttl_seconds: int = Field(default=30 * 86400, ge=60)
     log_retention_days: int = Field(default=30, ge=1)
     max_body_bytes: int = Field(default=32 * 1024 * 1024, ge=1024)
     upstream_timeout_seconds: float = Field(default=600, gt=0)

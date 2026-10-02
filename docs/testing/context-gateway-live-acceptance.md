@@ -4,8 +4,9 @@ The phase-one and phase-two implementation at `3cdf1a80` was exercised against
 Ark's live `deepseek-v4-1-flash-260910` model. Protocol, client replay, hidden
 tools, file import and a configured archive threshold passed. Native Anthropic
 binding and the model's physical maximum context window remain unverified.
-The [machine-readable results](context-gateway-live-acceptance.json) retain usage
-and outcome metadata. They contain no credentials or message recordings.
+This is historical evidence for the stated revision, not a fresh live run of
+subsequent review fixes. Generate machine-readable output locally with the
+acceptance script; generated result files are not maintained in the repository.
 
 ## Environment and isolation
 

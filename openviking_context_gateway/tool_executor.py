@@ -15,6 +15,7 @@ import async_timeout
 import orjson
 
 from .client import VikingError
+from .records import RecordKind as K
 from .storage import digest
 from .tool_catalog import CATALOG, PREFIX, attachments, has_shell
 
@@ -78,16 +79,16 @@ class ToolExecutor:
         owner = uuid.uuid4().hex
         scope, session = self.request.scope, self.request.session
         claim = await self.store.put(
-            scope, session, "tool_claim", anchor, {"owner": owner, "time": time.time()}
+            scope, session, K.TOOL_CLAIM, anchor, {"owner": owner, "time": time.time()}
         )
         timeout = self.policy.get("tool_timeout_seconds", 30)
         try:
             async with async_timeout.timeout(timeout):
                 if claim["owner"] != owner:
                     while True:
-                        records = await self.store.read(scope, session, [])
-                        if ("tool_result", anchor) in records:
-                            return {**result, "content": records["tool_result", anchor]["content"]}
+                        records = await self.store.read(scope, session, [anchor], [K.TOOL_RESULT])
+                        if (K.TOOL_RESULT, anchor) in records:
+                            return {**result, "content": records[K.TOOL_RESULT, anchor]["content"]}
                         if time.time() - claim["time"] > timeout:
                             raise asyncio.TimeoutError
                         await asyncio.sleep(0.05)
@@ -108,7 +109,7 @@ class ToolExecutor:
                     value = {"truncated": True, "text": text}
                 content = orjson.dumps(value).decode()
                 saved = await self.store.put(
-                    scope, session, "tool_result", anchor, {"content": content}
+                    scope, session, K.TOOL_RESULT, anchor, {"content": content}
                 )
                 return {**result, "content": saved["content"]}
         except asyncio.TimeoutError:
@@ -117,7 +118,7 @@ class ToolExecutor:
             # Pydantic errors can echo complete arguments and secrets.
             content = '{"error":"Invalid tool arguments or OpenViking operation failed"}'
         if claim["owner"] == owner:
-            await self.store.put(scope, session, "tool_result", anchor, {"content": content})
+            await self.store.put(scope, session, K.TOOL_RESULT, anchor, {"content": content})
         return {**result, "content": content}
 
     async def _call(self, name, args):

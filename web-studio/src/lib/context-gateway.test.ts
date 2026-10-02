@@ -40,6 +40,7 @@ describe('Context Gateway management', () => {
     values.score_threshold = '0'
     values.quotas = '{"resources": 200}'
     expect(formPayload(policyFields, values)).toMatchObject({
+      context_window: null,
       recall: false,
       score_threshold: 0,
       quotas: { resources: 200 },

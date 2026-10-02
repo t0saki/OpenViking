@@ -7,7 +7,8 @@ It does not translate between model protocols, bill users or balance providers.
 
 ## Start the gateway
 
-Install the OpenViking wheel from this branch. Generate two secrets and keep them
+Install the OpenViking wheel from this branch with the `context-gateway` extra
+(`pip install "openviking[context-gateway]"`). Generate two secrets and keep them
 outside `ov.conf` and source control:
 
 ```bash
@@ -35,7 +36,7 @@ Add the following section to `ov.conf`:
 Run `openviking-context-gateway --config /path/to/ov.conf`. Start OpenViking Server
 with the same configuration and management-token environment variable. Model
 requests go to port 1935; Studio remains on the OpenViking server. Optional
-`openviking[context-gateway-fast]` installs uvloop and httptools where supported.
+`openviking[context-gateway,context-gateway-fast]` installs uvloop and httptools where supported.
 
 The gateway periodically checks OpenViking's `/health`. Root credentials are
 rejected when issuing a downstream key. If OpenViking uses dev authentication,
@@ -95,9 +96,11 @@ Export `OPENVIKING_GATEWAY_KEY` in the shell. Only full-history HTTP requests wi
 `store: false` receive memory enhancement. WebSocket handshakes receive 426 so
 Codex can fall back to HTTP. Stateful Responses requests are passed through;
 subsequent response lookup/cancellation stays on the creating upstream and key.
+Mappings are indexed and expire after `response_ttl_seconds` (default 30 days).
+`store: false` responses do not create mappings.
 
 For a generic chat client, use base URL `https://ov.example.com/v1`, the gateway
-key, and optionally `X-OpenViking-Session: <conversation-id>`. Open WebUI can use
+key, and `X-OpenViking-Session: <conversation-id>` for capture, takeover and hidden tools. Open WebUI can use
 `X-OpenViking-Session: {{CHAT_ID}}` and `X-OpenViking-Task: {{TASK}}`; enable
 `RAG_SYSTEM_CONTEXT`. One shared frontend connection key maps all its users to
 one OpenViking user. Studio also provides OpenCode and pi configuration snippets.
@@ -105,9 +108,12 @@ one OpenViking user. Studio also provides OpenCode and pi configuration snippets
 Detected OpenViking plugins permanently disable new gateway recall/capture for
 that session. Previous gateway injections still replay. Tool continuations,
 subagents, auxiliary calls and token-count calls replay without new recall.
-Explicit session headers improve capture attribution; without them, matching is
-best effort and identical initial prefixes can share a session snapshot and injection. Truncating history
-can start a new inferred session.
+Without a recognized session header, requests can recall and replay immutable
+prefixes, but capture, archive takeover and new hidden tools are disabled. Identical
+opening text cannot prove that two chats are the same session. After editing
+already captured history or truncating it, use a new session ID. Plugin detection
+inspects user/system/developer text and OpenViking tool definitions, not assistant
+prose, tool results or attachment names.
 
 ## Deploy
 
@@ -135,8 +141,7 @@ that user's gateway keys and purges their kernel state. OpenViking's durable use
 
 ```bash
 pytest tests/context_gateway --confcutdir=tests/context_gateway -o addopts=''
-node scripts/sync-context-gateway-rules.mjs --check
-node examples/memory-plugin-shared/sync.mjs --check
+PYTHONPATH=. python scripts/context_gateway_benchmark.py --concurrency 300
 ```
 
 Tests use local mock HTTP upstreams, synthetic sequences and sanitized real-client
@@ -176,9 +181,22 @@ degradation reasons.
 If recall fails, its empty decision is persisted and never backfilled. Unsafe
 numbers or duplicate JSON keys cause byte-for-byte passthrough. Missing known
 Anthropic replay records strip historical thinking and record a degradation.
-Archive summaries are published asynchronously: near the context limit the
-gateway waits up to the configured deadline, then uses a persistent recent-tail
-fallback and records `archive_wait_timeout`.
+Configure each upstream's `context_windows` with actual model IDs, for example
+`{"claude-sonnet-4-5": 200000}`. Emergency waiting uses the most recent provider
+input/output usage for that same upstream and model. `context_window` is an
+optional policy fallback for a deployment with one known model; the default is
+unset. Tool schemas, image bytes and request size never trigger emergency waiting.
+On timeout the full history is forwarded with `archive_wait_timeout`; only a real
+archive overview can become an immutable replacement.
+
+Takeover activation counts sanitized conversation content synchronized to OV.
+Further commits use OV's `pending_tokens` against the takeover/commit threshold.
+An outstanding archive blocks another commit until its overview is available.
+Capture has an incremental cursor and an ordered queue. A failed delivery blocks
+later turns from that session, retries at most five times with backoff, then stops
+capture/takeover for the session while model forwarding continues. Start a new
+session after addressing the failure. A delivered idle response that is later
+regenerated also stops capture, so divergent histories cannot be mixed.
 
 OpenViking message writes do not provide an idempotency key. A crash between a
 successful HTTP write and durable acknowledgment can duplicate that batch; the
@@ -200,8 +218,9 @@ of an existing OpenViking plugin, `n > 1`, structured output, forced tool choice
 non-function tools or an upstream with `allow_gateway_tools: false` suppresses
 injection. DeepSeek thinking mode suppresses injection unless the request
 explicitly sets `thinking.type: disabled`. If a session with frozen gateway tools
-later requests an incompatible mode, it receives HTTP 409 and must start a new
-session. Auxiliary requests retain definitions with `tool_choice: none`.
+later requests an incompatible mode, new gateway tools are omitted for that
+request while existing hidden history still replays. The frozen contract remains
+available if subsequent requests are compatible. Auxiliary requests retain definitions with `tool_choice: none`.
 
 Text and reasoning deltas continue streaming as they arrive. Gateway tool calls
 are hidden; client tool calls are returned after their complete names and arguments
@@ -215,16 +234,18 @@ completion ID and one terminal event. It sums provider usage across model calls;
 first-call cache metrics exclude hidden continuation usage.
 
 Default bounds are five hidden rounds, 30 seconds per tool, 64 KiB per tool result,
-120 seconds for the complete model/tool request and a 100,000-token request budget.
+120 seconds for the tool loop and a 100,000-token hidden-continuation budget.
 These are configurable through `tool_max_rounds`, `tool_timeout_seconds`,
 `tool_result_bytes`, `tool_total_seconds`, `tool_total_tokens`. The token budget
-uses provider usage when available and a local byte-based estimate for admission
-and continuation output limits; it is not an exact tokenizer or billing cap.
+counts hidden upstream calls only. The first request retains the client
+`max_tokens`/`max_completion_tokens`. Continuation admission uses the last provider
+usage plus an estimate of new tool-result text; it is not an exact billing cap.
 At the round limit, definitions stay present and `tool_choice` becomes `none`.
 Further gateway calls fail explicitly. A tool error is a bounded result for the
 model; an upstream/loop failure is an HTTP error, or a terminal SSE error if text
-has already started. Incomplete streams are not captured. A Chat replay-storage
-failure returns 503, because continuing could lose hidden history.
+has already started. Incomplete streams are not captured. Preparation storage
+failures degrade to ordinary forwarding; Anthropic historical thinking is stripped
+when its injected prefix cannot be recovered. The degradation is logged.
 
 `write`, `add_resource` and `add_skill` require both `allow_write_tools: true` and
 an explicit entry in `tool_allowlist`. Retries of the same call within the same
@@ -274,9 +295,9 @@ separate upstream records for each protocol. Client-facing paths are:
 The existing `/v1/…` paths work with Ark upstreams too. Caddy and Helm include the
 native paths. Unknown fields such as `thinking`, `encrypted_content`, `caching`
 and `expire_at` survive forwarding, and Responses SSE `[DONE]` is preserved.
-Enhanced Chat/Responses sessions receive a stable `prompt_cache_key`; cross-worker
-reservations limit that key to 15 requests in a sliding minute, counting hidden
-continuations, with HTTP 429 and `Retry-After` on exhaustion. Keep model, thinking,
+Enhanced Chat/Responses sessions receive a stable `prompt_cache_key`. The gateway
+does not impose a local 15-request/minute limit; provider rate-limit responses are
+forwarded unchanged. Keep model, thinking,
 sampling, system and tool settings stable; changes are logged as
 `ark_cache_parameters_changed`. Set `cache_min_tokens` for the selected model
 (default 1024); logs report the threshold and eligibility from actual input usage.
@@ -290,7 +311,15 @@ keys. Legacy Context API is not supported as an enhanced protocol.
 
 Phase-two tests cover fragmented tool streams, immediate text delivery, mixed
 client/gateway calls, restart and branch replay, file import, signed upload proxying,
-timeouts, write claims, round bounds, Ark routing and shared rate limits. They
+timeouts, write claims, round bounds, Ark routing and bursts without local throttling. They
 use simulated providers, the real FastMCP transport, and synthetic conversations. Live Ark/model cache hits,
 real-client recordings and conversations crossing a real model's context window
 remain separate operator acceptance checks.
+
+The store boundary consists of indexed reads, first-writer inserts, conditional
+batch updates and an ordered leased queue. Budget checks, branch reconciliation
+and archive decisions live in the kernel/capture pipeline. Request preparation
+loads only matching replay records and constant session state; usage overwrites a
+single row. SQL connections are pooled and sent markers are written in batches.
+See [review regression and benchmark notes](../../testing/context-gateway-review.md)
+for measured overhead and remaining acceptance limits.

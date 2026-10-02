@@ -182,9 +182,9 @@ async def test_encryption_and_whole_session_expiry(setup_kernel):
     await store.put("scope", "session", "injection", "anchor", {"text": "VERY_PRIVATE_MEMORY"})
     assert b"VERY_PRIVATE_MEMORY" not in store.path.read_bytes()
     await store.expire(time.time() - 1)
-    assert ("injection", "anchor") in await store.read("scope", "session", [])
+    assert ("injection", "anchor") in await store.read("scope", "session")
     await store.expire(time.time() + 1)
-    assert not await store.read("scope", "session", [])
+    assert not await store.read("scope", "session")
 
 
 def test_normalization_client_equivalence():
@@ -218,6 +218,7 @@ def test_normalization_client_equivalence():
         b'{"arg":0.123456789123456789}',
         b'{"x":1,"x":2}',
         b'{"x":NaN}',
+        b'{"x":1e400}',
     ],
 )
 def test_lossy_input_is_not_modified(raw):
@@ -317,24 +318,29 @@ async def test_known_missing_record_drops_old_thinking(setup_kernel, credential,
     assert all(block["type"] != "thinking" for block in second.body["messages"][1]["content"])
 
 
-async def test_near_window_fallback_replays_and_removes_bound_thinking(
-    setup_kernel, credential, policy
-):
-    kernel, _, viking, _ = setup_kernel
-    policy.update(context_window=1024, archive_wait_seconds=0, keep_recent_turns=1)
+async def test_large_body_does_not_trigger_placeholder_archive(setup_kernel, credential, policy):
+    kernel, store, viking, _ = setup_kernel
+    policy.update(context_window=1024, archive_wait_seconds=0, keep_recent_turns=1, recall=False)
     viking.summary = ""
     body = {
+        "model": "test",
         "messages": [
             {"role": "user", "content": "Large old history " * 1000},
             {"role": "assistant", "content": "answer"},
             {"role": "user", "content": "Keep going"},
-        ]
+        ],
     }
     first = await prepare(kernel, body, credential, policy)
+    assert first.body == body and "degradation" not in first.metrics
+    await store.commit(
+        first.scope,
+        first.session,
+        {("usage", ""): {"input_tokens": 1000, "model": "test", "upstream_id": "upstream"}},
+    )
     second = await prepare(kernel, body, credential, policy)
-    assert first.metrics["degradation"] == "archive_wait_timeout"
-    assert first.body == second.body
-    assert len(str(first.body)) < len(str(body)) / 2
+    assert second.metrics["degradation"] == "archive_wait_timeout"
+    assert second.body == body
+    assert not await store.read(first.scope, first.session, kinds=["replacement"])
 
 
 def test_tool_input_whitespace_is_significant():

@@ -306,7 +306,7 @@ class DeletionService:
             # the durable message can then resume cleanup after restart.
             gateway_config = getattr(getattr(self._service, "_config", None), "context_gateway", None)
             if gateway_config is not None and gateway_config.enabled:
-                from openviking_context_gateway.deletion import delete_gateway_data
+                from openviking.service.context_gateway_deletion import delete_gateway_data
 
                 await run_to_completion(lambda: delete_gateway_data(gateway_config, account_id, user_id))
             scheduler = self._service.watch_scheduler

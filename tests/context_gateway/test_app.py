@@ -247,7 +247,10 @@ async def test_recorded_client_prefixes(running_gateway, client_name, session_he
         for message in batch["messages"]
         for source_id in message["source_message_ids"]
     ]
-    assert source_ids and len(source_ids) == len(set(source_ids))
+    if session_header:
+        assert source_ids and len(source_ids) == len(set(source_ids))
+    else:
+        assert not source_ids  # Ambiguous chats are replay-only.
     logs = (await client.get("/admin/logs", headers=admin)).json()
     assert logs[0]["replay_hits"] >= 1
 
@@ -501,7 +504,7 @@ async def test_hidden_tools_mixed_replay_and_usage(running_gateway, streaming, m
     assert "openviking_search" not in response.text
     from openviking_context_gateway.storage import digest
 
-    stored = await app.state.store.read(digest("tenant\0alice\0chat"), digest("tool-session"), [])
+    stored = await app.state.store.read(digest("tenant\0alice\0chat"), digest("tool-session"))
     assert [v["input_tokens"] for (kind, _), v in stored.items() if kind == "usage"] == [100]
     assert len(calls) == 1 and len(model_requests) == (1 if mixed else 2)
     if streaming:
@@ -575,7 +578,8 @@ async def test_tool_capability_gate_and_frozen_conflict(running_gateway, extra):
     assert response.status_code == 200
     assert len(orjson.loads(seen[-1][1])["tools"]) == 3
     response = await client.post("/v1/chat/completions", headers=headers, json={**body, **extra})
-    assert response.status_code == 409
+    assert response.status_code == 200
+    assert not orjson.loads(seen[-1][1]).get("tools")
 
 
 async def test_tool_round_limit_disables_without_removing_definitions(running_gateway):
@@ -600,7 +604,7 @@ async def test_tool_round_limit_disables_without_removing_definitions(running_ga
     app.state.test_backend["handler"] = backend
     response = await client.post(
         "/v1/chat/completions",
-        headers={"Authorization": "Bearer " + key["key"]},
+        headers={"Authorization": "Bearer " + key["key"], "X-OpenViking-Session": "tools"},
         json={"model": "model", "messages": [{"role": "user", "content": "find blue"}]},
     )
     assert response.status_code == 502
@@ -741,7 +745,9 @@ async def test_attachment_import_and_signed_upload_proxy(running_gateway, name):
         ],
     }
     response = await client.post(
-        "/v1/chat/completions", headers={"Authorization": "Bearer " + key["key"]}, json=body
+        "/v1/chat/completions",
+        headers={"Authorization": "Bearer " + key["key"], "X-OpenViking-Session": "tools"},
+        json=body,
     )
     assert response.status_code == 200, response.text
     assert len(mcp_requests) == 1 and uploads == [("file", "SKILL.md", b"# Test skill\ncontent")]
@@ -818,7 +824,7 @@ async def test_shell_upload_instructions_use_public_proxy(running_gateway):
     app.state.test_backend["handler"] = backend
     response = await client.post(
         "/v1/chat/completions",
-        headers={"Authorization": "Bearer " + key["key"]},
+        headers={"Authorization": "Bearer " + key["key"], "X-OpenViking-Session": "tools"},
         json={
             "model": "model",
             "messages": [{"role": "user", "content": "import file"}],
@@ -878,3 +884,67 @@ async def test_ark_responses_stream_keeps_native_fields_and_done(running_gateway
     log = (await client.get("/admin/logs", headers=admin)).json()[0]
     assert log["cached_tokens"] == 2048 and log["input_tokens"] == 3000
     assert log["cache_eligible"] is True
+
+
+@pytest.mark.parametrize("max_field", ["max_tokens", "max_completion_tokens"])
+async def test_large_first_tool_request_keeps_client_token_limit(running_gateway, max_field):
+    _, client, admin, key, seen, _ = running_gateway
+    await enable_tools(client, admin, tool_total_tokens=1024)
+    body = {
+        "model": "model",
+        "messages": [{"role": "user", "content": "hello"}],
+        "system": "fixed instructions " * 20000,
+        max_field: 6000,
+    }
+    response = await client.post(
+        "/v1/chat/completions",
+        headers={"Authorization": "Bearer " + key["key"], "X-OpenViking-Session": "large-tool"},
+        json=body,
+    )
+    assert response.status_code == 200
+    forwarded = orjson.loads(seen[-1][1])
+    assert forwarded[max_field] == 6000
+    assert ("max_completion_tokens" if max_field == "max_tokens" else "max_tokens") not in forwarded
+
+
+async def test_ark_burst_is_forwarded_without_local_429(running_gateway):
+    app, client, admin, key, seen, _ = running_gateway
+    upstream = await app.state.management.get("tenant", "upstreams", "chat")
+    await app.state.management.save("tenant", "upstreams", "chat", {**upstream, "vendor": "ark"})
+    headers = {"Authorization": "Bearer " + key["key"], "X-OpenViking-Session": "ark-burst"}
+    for _ in range(20):
+        response = await client.post(
+            "/api/v3/chat/completions",
+            headers=headers,
+            json={"model": "model", "messages": [{"role": "user", "content": "hello"}]},
+        )
+        assert response.status_code == 200
+    forwarded = [orjson.loads(raw) for path, raw, _ in seen if path == "/api/v3/chat/completions"]
+    assert len(forwarded) == 20
+    assert len({body["prompt_cache_key"] for body in forwarded}) == 1
+
+
+async def test_responses_store_false_has_no_routing_mapping(running_gateway):
+    app, client, _, key, _, _ = running_gateway
+    response = await client.post(
+        "/v1/responses",
+        headers={"Authorization": "Bearer " + key["key"]},
+        json={"model": "model", "store": False, "input": "hello"},
+    )
+    assert response.status_code == 200
+    assert await app.state.management.list("tenant", "responses") == []
+
+
+async def test_storage_failure_still_forwards_plain_chat(running_gateway, monkeypatch):
+    app, client, _, key, seen, _ = running_gateway
+
+    async def unavailable(*_args, **_kwargs):
+        raise OSError("unavailable")
+
+    monkeypatch.setattr(app.state.store, "read", unavailable)
+    raw = b'{"model":"model", "messages":[{"role":"user","content":"hello"}]}'
+    response = await client.post(
+        "/v1/chat/completions", headers={"Authorization": "Bearer " + key["key"]}, content=raw
+    )
+    assert response.status_code == 200
+    assert seen[-1][1] == raw

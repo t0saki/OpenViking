@@ -30,7 +30,8 @@ Gateway 不同。客户端修改 base URL 和 API key 后，网关自动召回�
 
 执行 `openviking-context-gateway --config /path/to/ov.conf`。OpenViking Server
 使用同一配置与管理令牌；Studio 请求经服务端的账户管理员鉴权后转发给网关。
-模型流量走 1935 端口。共享部署需要开启 OpenViking API key 鉴权；dev 模式只允许
+安装此分支时使用 `pip install "openviking[context-gateway]"`，网关依赖位于可选组；
+`context-gateway-fast` 可额外安装 uvloop/httptools。模型流量走 1935 端口。共享部署需要开启 OpenViking API key 鉴权；dev 模式只允许
 网关监听本机。
 
 Studio 的「上下文网关」提供概览、上游、上下文配置、分发、请求日志和接入指引。
@@ -65,13 +66,16 @@ env_key = "OPENVIKING_GATEWAY_KEY"
 通用聊天客户端的 base URL 为 `https://ov.example.com/v1`，可用
 `X-OpenViking-Session` 提供会话 ID。Open WebUI 支持模板值 `{{CHAT_ID}}`，
 请求类型头 `X-OpenViking-Task` 使用 `{{TASK}}`，建议开启 `RAG_SYSTEM_CONTEXT`。
-建议明确传入会话 ID；未提供时以首个有效前缀推断，相同开头可能共享会话快照，
-截断历史可能形成新会话。一个共享连接 key 下的所有人都归到同一个 OpenViking 用户。Studio 也提供 pi
+未提供可靠会话 ID 时，只进行召回和前缀重放，停用捕获、归档接管和新增隐藏工具。
+相同开头无法证明是同一会话；编辑已捕获历史或截断历史后，请使用新的会话 ID。一个共享连接 key 下的所有人都归到同一个 OpenViking 用户。Studio 也提供 pi
 和 OpenCode 的配置。
 
 发现 OpenViking 插件标记后，该会话永久停止新增召回与捕获，原有注入继续重放。
+仅检测用户/system/developer 文本及 OpenViking 工具定义，忽略助手回复、工具结果和附件名。
 工具续轮、子 agent、辅助请求和 token 计数只重放。WebSocket 返回 426；带
 `previous_response_id`、`conversation`、`background` 的 Responses 原样透传。
+有状态 Responses 映射按主键查询，默认 30 天过期（`response_ttl_seconds`），
+`store: false` 不保存映射。
 
 ## 部署与验收
 
@@ -90,8 +94,7 @@ Caddy 将 `/v1/*`、方舟原生路径和签名上传代理转发给网关。Hel
 
 ```bash
 pytest tests/context_gateway --confcutdir=tests/context_gateway -o addopts=''
-node scripts/sync-context-gateway-rules.mjs --check
-node examples/memory-plugin-shared/sync.mjs --check
+PYTHONPATH=. python scripts/context_gateway_benchmark.py --concurrency 300
 ```
 
 测试包含合成序列和脱敏后的真实客户端请求样本；模拟上游通过不代表厂商缓存
@@ -117,8 +120,17 @@ python scripts/context_gateway_acceptance.py --protocol anthropic --require-cach
 已测结果与待验项目见[真实接口验收记录](../../testing/context-gateway-live-acceptance.md)。
 
 召回失败会固化为空决策，不在后续补注入。无法无损处理的数值原样透传。
-已知 Anthropic 注入记录缺失时剥离旧 thinking 并记录原因。归档摘要未就绪且即将
-超过窗口时有限等待，超时后固定使用近期历史并记录 `archive_wait_timeout`。
+已知 Anthropic 注入记录缺失时剥离旧 thinking 并记录原因。上游的 `context_windows`
+按真实模型 ID 配置窗口，例如 `{"claude-sonnet-4-5": 200000}`。紧急等待只依据同一
+上游、同一模型最近一次返回的真实 input/output 用量；策略 `context_window` 仅作为
+单模型部署的可选兜底，默认不设置。请求体字节数、工具定义和图片大小不触发等待。
+等待超时后保留完整历史并记录 `archive_wait_timeout`，绝不固化占位摘要。
+
+接管激活按实际同步到 OV 的净化后对话估算 token；后续提交按 OV 的
+`pending_tokens` 判断，摘要未完成时不会重复 commit。捕获游标只入队新增轮次；
+失败轮次阻塞同一会话后续写入，最多退避重试 5 次，耗尽后停用该会话捕获与接管，
+模型继续转发。解决故障后使用新会话。空闲落库后再重新生成的分支也会停用捕获，
+避免混入已经提交的另一条历史。
 OpenViking 写消息接口没有幂等键，在写成功但确认前崩溃仍可能重复一个批次。
 更多参数、运维说明和限制见[英文指南](../../en/guides/15-context-gateway.md)。
 
@@ -132,7 +144,8 @@ OpenViking 写消息接口没有幂等键，在写成功但确认前崩溃仍可
 会话首请求冻结网关工具定义。已有 OpenViking 工具、`n > 1`、结构化输出、强制
 指定工具、非 function 工具、上游禁用工具等情况不注入。DeepSeek 思考模式默认
 不注入，只有显式 `thinking.type: disabled` 才可启用。已冻结工具的会话改用
-不兼容参数时返回 409，需新建会话；辅助请求保留工具定义并设置
+不兼容参数时，该请求停止新增网关工具并继续重放历史；恢复兼容参数后可继续使用
+原冻结定义。辅助请求保留工具定义并设置
 `tool_choice: none`。
 
 文本和推理增量实时输出；网关工具调用被隐藏。客户端工具在名称和参数完整后
@@ -143,12 +156,14 @@ OpenViking 写消息接口没有幂等键，在写成功但确认前崩溃仍可
 缓存统计不混入隐藏续轮。
 
 默认限制：5 次隐藏往返、单工具 30 秒、结果 64 KiB、整个工具请求 120 秒、
-100,000 token 预算。对应参数为 `tool_max_rounds`、`tool_timeout_seconds`、
+隐藏续轮 100,000 token 预算。对应参数为 `tool_max_rounds`、`tool_timeout_seconds`、
 `tool_result_bytes`、`tool_total_seconds`、`tool_total_tokens`。token 限制结合
-上游用量和本地字节估计控制入场及后续输出，不是精确 tokenizer 或计费上限。
+隐藏续轮的上游用量与新增工具结果文本估算；首个请求保留客户端 token 参数，
+不占用此预算。这不是精确计费上限。
 达到轮数上限后保留定义并设置 `tool_choice: none`，继续调用则明确报错。
 工具失败作为有界结果交给模型；循环失败返回 HTTP 错误，已开始流式输出时发送
-SSE 错误。取消或不完整回复不捕获。Chat 重放存储故障返回 503，防止丢失隐藏历史。
+SSE 错误。取消或不完整回复不捕获。准备阶段存储故障降级为普通转发；Anthropic
+无法恢复注入前缀时剥离历史 thinking，并记录降级原因。
 
 写工具 `write`、`add_resource`、`add_skill` 需要同时开启 `allow_write_tools`
 并逐项加入白名单。同会话、同调用 ID 与参数通过持久化记录避免并发重复执行；
@@ -184,8 +199,7 @@ Caddy 与 Helm 已加入原生路径。
 
 `thinking`、`encrypted_content`、`caching`、`expire_at` 等未知字段原样保留，
 Responses 流的 `[DONE]` 保留。增强的 Chat/Responses 会话固定
-`prompt_cache_key`；跨进程滑动窗口将该 key 限为每分钟 15 次，隐藏续轮也计数，
-超限返回 429 与 `Retry-After`。会话内应保持模型、推理、采样、system 和工具参数
+`prompt_cache_key`；网关不施加每分钟 15 次的本地限流，上游返回的限流响应原样传递。会话内应保持模型、推理、采样、system 和工具参数
 稳定；变化记录 `ark_cache_parameters_changed`。按模型设置 `cache_min_tokens`
 （默认 1024），日志根据实际输入用量记录是否达到阈值；缓存命中仍需厂商实测。
 
@@ -198,3 +212,7 @@ Responses 流的 `[DONE]` 保留。增强的 Chat/Responses 会话固定
 对话。方舟真实缓存、Claude Code/Codex/SDK 客户端和真实工具导入的实测结果
 见[验收记录](../../testing/context-gateway-live-acceptance.md)；跨真实模型最大窗口
 与原生 Anthropic 签名绑定仍待验收。
+
+存储层仅提供索引读取、首次写入、条件批量更新与顺序租约队列；预算、捕获对账和
+归档判断留在内核。热路径只读取匹配的重放记录和固定会话状态，usage 覆盖单行，
+sent 标记批量写入，SQLite 连接复用。性能数据及验收边界见[审查修复记录](../../testing/context-gateway-review.md)。

@@ -11,6 +11,7 @@ import async_timeout
 import orjson
 
 from .protocols import SSEDecoder, usage_of
+from .records import RecordKind as K
 from .tool_catalog import PREFIX, hidden_chain
 
 
@@ -51,12 +52,12 @@ def sse(value):
     return b"data: " + orjson.dumps(value) + b"\n\n"
 
 
-def limit_completion(body, remaining):
-    input_estimate = (len(orjson.dumps(body)) + 2) // 3
-    if remaining <= input_estimate:
-        raise ToolLoopError("Hidden tool token budget exhausted", 400)
+def limit_completion(body, remaining, input_tokens):
+    """Only a hidden continuation consumes this budget; never mutate the first request."""
+    if remaining <= input_tokens:
+        raise ToolLoopError("Hidden tool token budget exhausted")
     name = "max_completion_tokens" if "max_completion_tokens" in body else "max_tokens"
-    body[name] = min(body.get(name) or remaining, remaining - input_estimate)
+    body[name] = min(body.get(name) or remaining, remaining - input_tokens)
 
 
 class ChatToolLoop:
@@ -186,11 +187,8 @@ class ChatToolLoop:
                     add_usage(self.usage, usage)
                     normalized = usage_of({"usage": usage})
                     self.capture.context_usage = normalized
-                    estimate = (len(orjson.dumps(self.body)) + len(orjson.dumps(message)) + 2) // 3
-                    self.token_cost += max(
-                        normalized["input_tokens"] + normalized["output_tokens"], estimate
-                    )
                     if self.rounds:
+                        self.token_cost += normalized["input_tokens"] + normalized["output_tokens"]
                         self.prepared.metrics["hidden_upstream_calls"] = (
                             self.prepared.metrics.get("hidden_upstream_calls", 0) + 1
                         )
@@ -256,7 +254,7 @@ class ChatToolLoop:
                             await self.store.put(
                                 self.prepared.scope,
                                 self.prepared.session,
-                                "hidden",
+                                K.HIDDEN,
                                 anchor,
                                 {
                                     "messages": self.transcript,
@@ -302,7 +300,14 @@ class ChatToolLoop:
                             yield b"data: [DONE]\n\n"
                         return
                     remaining = self.policy.get("tool_total_tokens", 100000) - self.token_cost
-                    limit_completion(self.body, remaining)
+                    # Use the last provider usage plus newly added tool results.
+                    # Raw request bytes (especially images) are not token counts.
+                    extra = sum(len(result.get("content", "").encode()) for result in results) // 3
+                    limit_completion(
+                        self.body,
+                        remaining,
+                        normalized["input_tokens"] + normalized["output_tokens"] + extra,
+                    )
                     if self.rounds >= self.policy.get("tool_max_rounds", 5):
                         self.body["tool_choice"] = "none"
                     response = await send(self.body, max(0.01, self.deadline - time.monotonic()))

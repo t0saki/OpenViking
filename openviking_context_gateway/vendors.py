@@ -3,10 +3,11 @@
 """Vendor differences without converting or dropping protocol fields."""
 
 import hashlib
-import math
 from urllib.parse import urlsplit
 
 import orjson
+
+from .records import RecordKind as K
 
 ARK_PATHS = {
     "/api/v3/chat/completions": "/v1/chat/completions",
@@ -51,8 +52,6 @@ def ark_url(upstream, path):
 
 
 async def apply_vendor(body, upstream, prepared, store):
-    if upstream.get("coding_plan") and not upstream.get("allow_coding_plan"):
-        raise ValueError("Coding Plan upstreams are disabled; use a model API key")
     if upstream.get("vendor") != "ark" or prepared is None:
         return body
     body = dict(body)
@@ -60,7 +59,7 @@ async def apply_vendor(body, upstream, prepared, store):
         cache = await store.put(
             prepared.scope,
             prepared.session,
-            "vendor",
+            K.VENDOR,
             "ark",
             {
                 "prompt_cache_key": body.get("prompt_cache_key")
@@ -73,17 +72,3 @@ async def apply_vendor(body, upstream, prepared, store):
         if parameter_fingerprint(body) != cache["parameters"]:
             prepared.metrics["degradation"] = "ark_cache_parameters_changed"
     return body
-
-
-class VendorRateLimit(Exception):
-    def __init__(self, delay):
-        self.retry_after = str(math.ceil(delay))
-        super().__init__("Ark prompt_cache_key exceeds 15 requests per minute")
-
-
-async def reserve_vendor(upstream, body, prepared, store):
-    if upstream.get("vendor") == "ark" and prepared and body.get("prompt_cache_key"):
-        key = hashlib.sha256((upstream["id"] + body["prompt_cache_key"]).encode()).hexdigest()
-        delay = await store.reserve_rate(prepared.scope, prepared.session, key, 15, 60)
-        if delay:
-            raise VendorRateLimit(delay)

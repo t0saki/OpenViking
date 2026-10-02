@@ -2,7 +2,6 @@ agent-hook-runtime.mjs
 async-writer.mjs
 batch-send.mjs
 capture-utils.mjs
-client-rules.mjs
 config-schema.mjs
 credentials.mjs
 debug-log.mjs

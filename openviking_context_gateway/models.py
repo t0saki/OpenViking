@@ -26,7 +26,8 @@ class Policy(BaseModel):
     takeover: bool = True
     takeover_tokens: int = Field(default=30000, ge=1)
     keep_recent_turns: int = Field(default=3, ge=1, le=100)
-    context_window: int = Field(default=128000, ge=1024)
+    # Optional fallback for deployments serving one known model.
+    context_window: int | None = Field(default=None, ge=1024)
     archive_wait_seconds: float = Field(default=30, ge=0, le=60)
     gateway_tools: bool = False
     allow_write_tools: bool = False
@@ -57,6 +58,14 @@ class Upstream(BaseModel):
     coding_plan: bool = False
     allow_coding_plan: bool = False
     cache_min_tokens: int = Field(default=1024, ge=0)
+    context_windows: dict[str, int] = Field(default_factory=dict)
+
+    @field_validator("context_windows")
+    @classmethod
+    def validate_windows(cls, value: dict[str, int]) -> dict[str, int]:
+        if any(size < 1024 for size in value.values()):
+            raise ValueError("model context windows must be at least 1024 tokens")
+        return value
 
     @field_validator("base_url")
     @classmethod

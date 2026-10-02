@@ -43,10 +43,6 @@ def test_write_tools_require_permission_and_client_capability():
     shell = {"tools": [{"type": "function", "function": {"name": "exec_command"}}]}
     assert len(select_tools(shell, "chat", {}, policy)) == 3
     assert select_tools(shell, "responses", {}, policy) == []
-    assert (
-        select_tools({"tools": [{"function": {"name": "openviking_search"}}]}, "chat", {}, policy)
-        == []
-    )
 
 
 def test_file_bytes_and_extracted_text():
@@ -83,7 +79,7 @@ async def test_tool_claim_timeout_and_byte_bound(setup_kernel, credential, polic
     prepared = await kernel.prepare(
         {"messages": [{"role": "user", "content": "Save this"}]},
         "chat",
-        {},
+        {"x-openviking-session": "tools"},
         credential,
         {"id": "upstream"},
         policy,
@@ -152,7 +148,7 @@ async def test_hidden_branch_restart_and_archive_mapping(setup_kernel, credentia
     p = await kernel.prepare(
         {"messages": [*messages, {"role": "user", "content": "follow up"}]},
         "chat",
-        {},
+        {"x-openviking-session": "tools"},
         credential,
         {"id": "u"},
         policy,
@@ -203,20 +199,6 @@ async def test_stream_text_precedes_tool_completion_and_cancel_closes():
     assert b"live text" in event and not waiting.is_set()
     await stream.aclose()
     assert closed and not loop.capture.complete
-
-
-async def test_cross_process_ark_rate_limit(setup_kernel):
-    _, store, _, encryption = setup_kernel
-    another = SQLiteKernelStore(store.path, encryption)
-    results = await asyncio.gather(
-        *(
-            (store if i % 2 else another).reserve_rate("scope", "session", "cache", 15, 60)
-            for i in range(20)
-        )
-    )
-    assert results.count(0) == 15
-    assert all(0 < delay <= 60 for delay in results if delay)
-    assert await store.reserve_rate("other", "session", "cache", 15, 60) == 0
 
 
 @pytest.mark.parametrize(
@@ -279,15 +261,19 @@ async def test_real_stateless_fastmcp_transport(json_response):
         listener.close()
 
 
-async def test_inferred_session_keeps_initial_tool_snapshot(setup_kernel, credential, policy):
+async def test_explicit_session_keeps_initial_tool_snapshot(setup_kernel, credential, policy):
     kernel, _, _, _ = setup_kernel
     policy.update(gateway_tools=True, tool_allowlist=["search"])
     body = {"messages": [{"role": "user", "content": "Find blue"}]}
-    first = await kernel.prepare(body, "chat", {}, credential, {"id": "upstream"}, policy)
+    first = await kernel.prepare(
+        body, "chat", {"x-openviking-session": "tools"}, credential, {"id": "upstream"}, policy
+    )
     policy = {**policy, "tool_allowlist": ["list"]}
     body["messages"].extend(
         [{"role": "assistant", "content": "blue"}, {"role": "user", "content": "Follow up"}]
     )
-    second = await kernel.prepare(body, "chat", {}, credential, {"id": "upstream"}, policy)
+    second = await kernel.prepare(
+        body, "chat", {"x-openviking-session": "tools"}, credential, {"id": "upstream"}, policy
+    )
     assert first.session == second.session
     assert first.body["tools"] == second.body["tools"]

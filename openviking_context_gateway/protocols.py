@@ -5,6 +5,7 @@
 import copy
 import hashlib
 import json
+import math
 import re
 from dataclasses import dataclass
 from decimal import Decimal
@@ -37,11 +38,7 @@ def unwrap_client(text: str) -> str:
 
 
 def parse_body(raw: bytes) -> dict | None:
-    """Use orjson on the hot path, rejecting lossy numeric or duplicate-key input.
-
-    A second numeric audit is necessary: orjson accepts a >64-bit integer as a
-    float. Never forward a rounded tool argument after adding memory.
-    """
+    """Parse once, rejecting numbers or duplicate keys unsafe to reserialize."""
 
     def integer(value):
         number = int(value)
@@ -51,6 +48,8 @@ def parse_body(raw: bytes) -> dict | None:
 
     def floating(value):
         number = float(value)
+        if not math.isfinite(number):
+            raise ValueError("nonfinite")
         if Decimal(orjson.dumps(number).decode()) != Decimal(value):
             raise ValueError("decimal precision")
         return number
@@ -64,8 +63,7 @@ def parse_body(raw: bytes) -> dict | None:
         return value
 
     try:
-        body = orjson.loads(raw)
-        json.loads(
+        body = json.loads(
             raw,
             parse_int=integer,
             parse_float=floating,
@@ -168,21 +166,32 @@ def plugin_present(body: dict, headers: dict) -> bool:
     if headers.get("x-openviking-plugin"):
         return True
 
-    def walk(value):
-        if isinstance(value, str):
-            return any(f"<{tag}" in value.lower() for tag in PLUGIN_TAGS)
-        if isinstance(value, list):
-            return any(walk(item) for item in value)
-        if isinstance(value, dict):
-            for key, item in value.items():
-                if key in {"name", "namespace"} and isinstance(item, str):
-                    if re.search(r"(^|__)(openviking|memory_|ov_|viking_)", item, re.I):
-                        return True
-                if walk(item):
-                    return True
-        return False
+    def marked(text):
+        return any(re.search(rf"<{re.escape(tag)}(?:\s|>)", text, re.I) for tag in PLUGIN_TAGS)
 
-    return walk(body)
+    texts = [text_content({"content": body.get("system", "")}), body.get("instructions", "")]
+    for field in ("messages", "input"):
+        messages = body.get(field, [])
+        if isinstance(messages, str):
+            texts.append(messages)
+        elif isinstance(messages, list):
+            texts.extend(
+                text_content(m)
+                for m in messages
+                if isinstance(m, dict) and m.get("role") in {"user", "system", "developer"}
+            )
+    if any(marked(text) for text in texts if isinstance(text, str)):
+        return True
+    # Only tool definitions identify plugin ownership. File names, tool results
+    # and assistant prose must never permanently disable a session.
+    for tool in [*body.get("tools", []), *body.get("additional_tools", [])]:
+        if not isinstance(tool, dict):
+            continue
+        definition = tool.get("function", tool)
+        name = definition.get("name", definition.get("namespace", ""))
+        if isinstance(name, str) and re.search(r"(^|__)openviking(?:_|__|$)", name, re.I):
+            return True
+    return False
 
 
 def messages_of(body, protocol):
@@ -248,7 +257,7 @@ def classify(body: dict, headers: dict, messages: list[dict], counting=False) ->
     return "user", anchor
 
 
-def session_id(headers: dict, messages: list[dict], chain: list[str]) -> str:
+def session_id(headers: dict, messages: list[dict], chain: list[str]) -> str | None:
     for key in (
         "x-openviking-session",
         "thread-id",
@@ -259,9 +268,9 @@ def session_id(headers: dict, messages: list[dict], chain: list[str]) -> str:
     ):
         if headers.get(key):
             return hashlib.sha256(headers[key].encode()).hexdigest()
-    # The first assistant is absent on the initial request. Using it as the
-    # session key would replace the policy/tool snapshot on the second request.
-    return next((p for p in chain if p), hashlib.sha256(b"empty").hexdigest())
+    # Identical opening text is not proof of session identity. Callers may still
+    # replay immutable prefixes, but must not capture or archive ambiguous chats.
+    return None
 
 
 def append_context(message: dict, text: str, protocol: str) -> None:

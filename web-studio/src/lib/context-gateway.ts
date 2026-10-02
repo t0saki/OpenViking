@@ -55,6 +55,7 @@ export const upstreamFields: GatewayField[] = [
   { name: 'cache_min_tokens', type: 'number', initial: 1024 },
   { name: 'models', type: 'json', initial: [] },
   { name: 'aliases', type: 'json', initial: {} },
+  { name: 'context_windows', type: 'json', initial: {} },
   { name: 'headers', type: 'json', initial: {} },
   { name: 'priority', type: 'number', initial: 0 },
   { name: 'enabled', type: 'boolean', initial: true },
@@ -79,7 +80,7 @@ export const policyFields: GatewayField[] = [
   { name: 'takeover', type: 'boolean', initial: true },
   { name: 'takeover_tokens', type: 'number', initial: 30000 },
   { name: 'keep_recent_turns', type: 'number', initial: 3 },
-  { name: 'context_window', type: 'number', initial: 128000 },
+  { name: 'context_window', type: 'number', initial: null },
   { name: 'archive_wait_seconds', type: 'number', initial: 30 },
   { name: 'gateway_tools', type: 'boolean', initial: false },
   { name: 'allow_write_tools', type: 'boolean', initial: false },
@@ -97,7 +98,9 @@ export function formValues(fields: GatewayField[], value?: GatewayObject) {
       const initial = value?.[field.name] ?? field.initial
       return [
         field.name,
-        field.type === 'json' ? JSON.stringify(initial, null, 2) : initial,
+        field.type === 'json'
+          ? JSON.stringify(initial, null, 2)
+          : (initial ?? ''),
       ]
     }),
   )
@@ -113,7 +116,9 @@ export function formPayload(
       field.type === 'json'
         ? (JSON.parse(String(values[field.name])) as unknown)
         : field.type === 'number'
-          ? Number(values[field.name])
+          ? field.initial === null && values[field.name] === ''
+            ? null
+            : Number(values[field.name])
           : values[field.name],
     ]),
   )

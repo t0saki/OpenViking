@@ -62,6 +62,7 @@ export default {
     auth_mode: 'Credentials (managed or passthrough)',
     vendor: 'Vendor (generic, openai, anthropic, deepseek, ark)',
     models: 'Allowed models (JSON array; empty allows all)',
+    context_windows: 'Model context windows (JSON object)',
     aliases: 'Model aliases (JSON object)',
     headers: 'Additional headers (JSON object)',
     priority: 'Route priority',

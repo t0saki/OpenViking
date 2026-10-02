@@ -58,6 +58,7 @@ export default {
     auth_mode: '凭据方式（managed 或 passthrough）',
     vendor: '厂商（generic、openai、anthropic、deepseek、ark）',
     models: '允许的模型（JSON 数组，空数组允许全部）',
+    context_windows: '各模型上下文窗口（JSON 对象）',
     aliases: '模型别名（JSON 对象）',
     headers: '附加请求头（JSON 对象）',
     priority: '路由优先级',

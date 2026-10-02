@@ -153,12 +153,6 @@ def tool_block_reason(body, protocol, upstream):
 def select_tools(body, protocol, upstream, policy):
     if not policy.get("gateway_tools") or tool_block_reason(body, protocol, upstream):
         return []
-    # Plugin detection lives in the kernel. These names also prevent collisions
-    # with gateway-compatible clients that already install the tools themselves.
-    from .protocols import plugin_present
-
-    if plugin_present(body, {}):
-        return []
     allow_files = has_shell(body) or bool(attachments(body))
     selected = []
     for name in dict.fromkeys(policy.get("tool_allowlist", ["search", "read", "list"])):
@@ -194,10 +188,6 @@ def replay_hidden(messages, chain, records):
         else:
             result.append(message)
     return result
-
-
-class ToolPolicyConflict(ValueError):
-    """The request cannot use the tool contract frozen for this session."""
 
 
 def hidden_chain(messages):
