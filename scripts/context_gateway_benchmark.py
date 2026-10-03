@@ -20,6 +20,7 @@ import aiohttp
 import orjson
 import uvicorn
 from aiohttp import web
+from context_gateway_profile import RuntimeProfile
 from cryptography.fernet import Fernet
 
 from openviking_context_gateway.app import create_app
@@ -118,14 +119,12 @@ async def benchmark(args):
             with store.connect() as c:
                 c.execute("BEGIN IMMEDIATE")
                 c.executemany(
-                    "INSERT OR IGNORE INTO records VALUES (?,?,?,?,?)",
+                    "INSERT OR IGNORE INTO state VALUES (?,?,?,1)",
                     (
                         (
                             digest("bench\0bench\0chat"),
-                            digest(str(turns)),
-                            "written",
-                            str(i),
-                            store.encode({"pending": i}),
+                            f"tool:{turns}:{i}",
+                            store.encode({"content": "old receipt"}),
                         )
                         for i in range(turns * 10)
                     ),
@@ -262,12 +261,29 @@ async def benchmark(args):
                         await response.read()
                     return first, (time.perf_counter() - started) * 1000
 
+                async def settled(count):
+                    # ASGI background bookkeeping is outside response latency.
+                    # Drain warmup too, so it cannot contaminate the next burst.
+                    while True:
+                        with mgmt.connect() as c:
+                            done = c.execute("SELECT COUNT(*) FROM request_logs").fetchone()[0]
+                        if done >= count:
+                            return
+                        await asyncio.sleep(0.01)
+
                 await asyncio.gather(*(measure(gateway_url, i) for i in range(args.concurrency)))
+                await settled(args.concurrency)
                 await asyncio.gather(*(measure(base, i) for i in range(args.concurrency)))
                 for name, url in (("direct_sse", base), ("gateway_sse", gateway_url)):
-                    measured = await asyncio.gather(
-                        *(measure(url, i) for i in range(args.concurrency))
-                    )
+                    with RuntimeProfile(enabled=args.profile and name == "gateway_sse") as profile:
+                        measured = await asyncio.gather(
+                            *(measure(url, i) for i in range(args.concurrency))
+                        )
+                        if name == "gateway_sse":
+                            await settled(args.concurrency * 2)
+                        await profile.drain()
+                    if name == "gateway_sse" and args.profile:
+                        result["profile"] = profile.report()
                     result[name] = {
                         "first_byte": distribution([m[0] for m in measured]),
                         "complete": distribution([m[1] for m in measured]),
@@ -283,6 +299,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--concurrency", type=int, default=300)
     parser.add_argument("--output", type=Path)
+    parser.add_argument(
+        "--profile", action="store_true", help="Profile only the warmed gateway burst"
+    )
     arguments = parser.parse_args()
     report = json.dumps(asyncio.run(benchmark(arguments)), indent=2)
     print(report)

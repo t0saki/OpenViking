@@ -14,8 +14,9 @@ from urllib.parse import parse_qs, quote, urlsplit
 import async_timeout
 import orjson
 
+from .capture_store import Document
 from .client import VikingError
-from .records import RecordKind as K
+from .state_store import get_state
 from .storage import digest
 from .tool_catalog import CATALOG, PREFIX, attachments, has_shell
 
@@ -78,17 +79,22 @@ class ToolExecutor:
         )
         owner = uuid.uuid4().hex
         scope, session = self.request.scope, self.request.session
-        claim = await self.store.put(
-            scope, session, K.TOOL_CLAIM, anchor, {"owner": owner, "time": time.time()}
+        receipt_key = "tool:" + session + ":" + anchor
+        empty = Document()
+        claim = {"owner": owner, "time": time.time()}
+        won = await self.store.state.swap(scope, receipt_key, empty, claim)
+        receipt = (
+            Document(claim, 1) if won else await get_state(self.store.state, scope, receipt_key)
         )
+        claim = receipt.value
         timeout = self.policy.get("tool_timeout_seconds", 30)
         try:
             async with async_timeout.timeout(timeout):
                 if claim["owner"] != owner:
                     while True:
-                        records = await self.store.read(scope, session, [anchor], [K.TOOL_RESULT])
-                        if (K.TOOL_RESULT, anchor) in records:
-                            return {**result, "content": records[K.TOOL_RESULT, anchor]["content"]}
+                        saved = await get_state(self.store.state, scope, receipt_key)
+                        if "content" in saved.value:
+                            return {**result, "content": saved.value["content"]}
                         if time.time() - claim["time"] > timeout:
                             raise asyncio.TimeoutError
                         await asyncio.sleep(0.05)
@@ -108,17 +114,17 @@ class ToolExecutor:
                         text = text[: len(text) * 3 // 4]
                     value = {"truncated": True, "text": text}
                 content = orjson.dumps(value).decode()
-                saved = await self.store.put(
-                    scope, session, K.TOOL_RESULT, anchor, {"content": content}
+                await self.store.state.swap(
+                    scope, receipt_key, receipt, {**claim, "content": content}
                 )
-                return {**result, "content": saved["content"]}
+                return {**result, "content": content}
         except asyncio.TimeoutError:
             content = '{"error":"Tool timed out or a previous attempt has an unknown outcome; inspect state before retrying writes"}'
         except (ValueError, binascii.Error, VikingError, KeyError):
             # Pydantic errors can echo complete arguments and secrets.
             content = '{"error":"Invalid tool arguments or OpenViking operation failed"}'
         if claim["owner"] == owner:
-            await self.store.put(scope, session, K.TOOL_RESULT, anchor, {"content": content})
+            await self.store.state.swap(scope, receipt_key, receipt, {**claim, "content": content})
         return {**result, "content": content}
 
     async def _call(self, name, args):

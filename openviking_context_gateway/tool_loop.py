@@ -258,7 +258,7 @@ class ChatToolLoop:
                         # Persist before publishing the successful terminal event.
                         if self.hidden:
                             anchor = hidden_chain([*self.prepared.messages, self.visible])[-1]
-                            await self.store.put(
+                            await self.store.replay.put(
                                 self.prepared.scope,
                                 self.prepared.session,
                                 K.HIDDEN,

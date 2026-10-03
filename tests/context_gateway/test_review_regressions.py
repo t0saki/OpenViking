@@ -4,8 +4,9 @@ import asyncio
 import time
 
 import pytest
+from conftest import make_due, replay_records
 
-from openviking_context_gateway.capture import CaptureWorker
+from openviking_context_gateway.capture import MAX_ATTEMPTS, CaptureWorker
 from openviking_context_gateway.protocols import ResponseCapture, plugin_present
 from openviking_context_gateway.storage import ManagementStore, SQLiteKernelStore
 
@@ -89,7 +90,7 @@ async def test_emergency_usage_matches_model_and_configured_window(
         {**body, "model": "unknown"}, "chat", headers, credential, upstream, policy
     )
     assert "degradation" not in unknown.metrics
-    assert not await store.read(first.scope, first.session, kinds=["replacement"])
+    assert not await replay_records(store, first, "replacement")
 
 
 async def test_system_tokens_do_not_trigger_commits(setup_kernel, credential, policy):
@@ -145,29 +146,26 @@ async def test_capture_retry_blocks_later_turns_and_recovers(setup_kernel, crede
     viking.write = fail
     assert await worker.once()
     assert not await worker.once()  # second turn may not overtake the delayed retry
-    for _ in range(worker.MAX_ATTEMPTS - 1):
-        with store.connect() as c:
-            c.execute("UPDATE queue SET ready=0 WHERE attempts>0 AND failed=0")
+    for _ in range(MAX_ATTEMPTS - 1):
+        await make_due(store)
         assert await worker.once()
-    assert attempted == ["Question 0"] * worker.MAX_ATTEMPTS
+    assert attempted == ["Question 0"] * MAX_ATTEMPTS
     assert not await worker.once()
     next_request = await prepare(
         kernel, credential, policy, [*history(3), {"role": "user", "content": "more"}]
     )
     assert next_request.metrics["capture_status"] == "paused"
-    assert ("capture_failed", "") in await store.read(request.scope, request.session)
+    assert (await store.capture.get(request.scope, request.session)).value["error"]
 
     async def recovered(key, session, messages):
         attempted.append(messages[0]["parts"][0]["text"])
         return {"pending_tokens": 10}
 
     viking.write = recovered
-    with store.connect() as c:
-        c.execute("UPDATE queue SET ready=0 WHERE attempts>0")
+    await make_due(store)
     assert await worker.once()
-    assert await worker.once()
-    assert attempted[-2:] == ["Question 0", "Question 1"]
-    assert ("capture_failed", "") not in await store.read(request.scope, request.session)
+    assert attempted[-3:] == ["Question 0", "Question 1", "Question 2"]
+    assert not (await store.capture.get(request.scope, request.session)).value["error"]
 
 
 async def test_capture_retry_recovers_in_order(setup_kernel, credential, policy):
@@ -187,9 +185,7 @@ async def test_capture_retry_recovers_in_order(setup_kernel, credential, policy)
 
     viking.write = write
     assert await worker.once()
-    with store.connect() as c:
-        c.execute("UPDATE queue SET ready=0 WHERE attempts>0")
-    assert await worker.once()
+    await make_due(store)
     assert await worker.once()
     assert delivered == ["Question 0", "Question 1"]
 
@@ -199,8 +195,7 @@ async def test_idle_capture_does_not_mix_a_regenerated_branch(setup_kernel, cred
     policy.update(recall=False)
     p = await prepare(kernel, credential, policy, history(1)[:1])
     await kernel.completed(p, credential, ResponseCapture("chat", history(1)[1], complete=True))
-    with store.connect() as c:
-        c.execute("UPDATE queue SET ready=0")
+    await make_due(store)
     worker = await worker_for(store, encryption, credential, viking)
     await worker.once()
     messages = [
@@ -213,41 +208,44 @@ async def test_idle_capture_does_not_mix_a_regenerated_branch(setup_kernel, cred
     assert len(viking.writes) == 2
     assert viking.write_sessions[0] != viking.write_sessions[1]
     assert "Edited answer" in str(viking.writes[1])
-    assert ("capture_failed", "") not in await store.read(p.scope, p.session)
+    assert not (await store.capture.get(p.scope, p.session)).value["error"]
 
 
-async def test_only_new_turns_are_enqueued(setup_kernel, credential, policy, monkeypatch):
-    kernel, store, _, _ = setup_kernel
-    policy.update(recall=False)
-    queued = []
-    original = store.commit
-
-    async def commit(*args, **kwargs):
-        queued.extend(job["anchor"] for job in kwargs.get("jobs", []))
-        return await original(*args, **kwargs)
-
-    monkeypatch.setattr(store, "commit", commit)
-    for turn in range(1, 7):
-        await prepare(
-            kernel, credential, policy, [*history(turn), {"role": "user", "content": "next"}]
-        )
-    assert len(queued) == 6 == len(set(queued))
-
-
-async def test_hot_read_ignores_old_usage_and_write_records(
+async def test_repeated_prepare_has_one_read_and_no_capture_write(
     setup_kernel, credential, policy, monkeypatch
 ):
     kernel, store, _, _ = setup_kernel
+    policy.update(recall=False)
+    messages = [*history(5), {"role": "user", "content": "next"}]
+    request = await prepare(kernel, credential, policy, messages)
+    old = await store.capture.get(request.scope, request.session)
+    calls = []
+    run = store.run
+
+    async def tracked(fn, *args, **kwargs):
+        calls.append((fn.__name__, kwargs.get("write", False)))
+        return await run(fn, *args, **kwargs)
+
+    monkeypatch.setattr(store, "run", tracked)
+    await prepare(kernel, credential, policy, messages)
+    assert calls == [("read_batch", False)]
+    assert len(old.value["pending"]) == 5
+
+
+async def test_hot_read_ignores_unrelated_operational_documents(
+    setup_kernel, credential, policy, monkeypatch
+):
+    kernel, store, _, _ = setup_kernel
+    policy.update(recall=False)
     p = await prepare(kernel, credential, policy, history(1)[:1])
-    await store.put_many(
-        p.scope,
-        p.session,
-        {
-            (kind, str(i)): {"pending": i}
-            for kind in ("usage", "written", "captured")
-            for i in range(500)
-        },
-    )
+    with store.connect() as c:
+        c.executemany(
+            "INSERT INTO state VALUES (?,?,?,1)",
+            [
+                (p.scope, f"tool:unrelated-{i}", store.encode({"content": "old"}))
+                for i in range(1500)
+            ],
+        )
     decoded = []
     original = store.decode
 
@@ -257,7 +255,7 @@ async def test_hot_read_ignores_old_usage_and_write_records(
 
     monkeypatch.setattr(store, "decode", decode)
     await prepare(kernel, credential, policy, history(1)[:1])
-    assert len(decoded) < 12
+    assert len(decoded) <= 3
 
 
 async def test_conditional_budget_is_atomic_across_stores(setup_kernel, credential, policy):
@@ -282,10 +280,13 @@ async def test_conditional_budget_is_atomic_across_stores(setup_kernel, credenti
             for i in range(12)
         )
     )
+    from openviking_context_gateway.protocols import prefix_chain
     from openviking_context_gateway.storage import digest
 
-    records = await store.read(digest("tenant\0alice\0chat"), digest("review"), kinds=["injection"])
-    assert sum(value["tokens"] for value in records.values()) <= 160
+    anchors = [prefix_chain([{"role": "user", "content": f"Question {i}"}])[0] for i in range(12)]
+    records = await store.replay.read(digest("tenant\0alice\0chat"), digest("review"), anchors)
+    assert 0 < sum(value["tokens"] for value in records.values()) <= 160
+    other.store.close()
 
 
 @pytest.mark.parametrize(
@@ -335,7 +336,7 @@ async def test_anonymous_greetings_cannot_share_capture_or_archive(
             ResponseCapture("chat", {"role": "assistant", "content": "OK"}, complete=True),
         )
     assert len(set(sessions)) == 2
-    assert await store.claim() is not None
+    assert await store.capture.claim() is not None
 
 
 async def test_management_get_uses_one_row_and_response_expiry(setup_kernel, monkeypatch):
@@ -354,36 +355,3 @@ async def test_management_get_uses_one_row_and_response_expiry(setup_kernel, mon
     await management.expire_logs(time.time())
     with management.connect() as c:
         assert not c.execute("SELECT 1 FROM objects WHERE id='expired'").fetchone()
-
-
-async def test_legacy_placeholder_never_replaces_history_without_real_overview(
-    setup_kernel, credential, policy
-):
-    kernel, store, viking, _ = setup_kernel
-    policy.update(recall=False, keep_recent_turns=1)
-    messages = [*history(1), {"role": "user", "content": "next"}]
-    request = await prepare(kernel, credential, policy, messages)
-    anchor = request.chain[1]
-    await store.put(
-        request.scope,
-        request.session,
-        "replacement",
-        anchor,
-        {"text": "Earlier context is unavailable", "fallback": True},
-    )
-    await store.put(
-        request.scope, request.session, "archive", anchor, {"archive_id": "archive_001"}
-    )
-    viking.summary = ""
-    result = await prepare(kernel, credential, policy, messages)
-    assert result.body["messages"] == messages
-    viking.summary = "Verified archive of Question 0 and Answer 0"
-    archive = (await store.read(request.scope, request.session, [anchor], ["archive"]))[
-        "archive", anchor
-    ]
-    await store.commit(
-        request.scope, request.session, {("archive", anchor): {**archive, "next_check": 0}}
-    )
-    result = await prepare(kernel, credential, policy, messages)
-    assert viking.summary in result.body["messages"][0]["content"]
-    assert "unavailable" not in str(result.body)

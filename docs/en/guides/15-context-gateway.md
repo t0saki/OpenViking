@@ -198,26 +198,34 @@ Takeover activation counts sanitized conversation content synchronized to OV.
 Further commits use OV's `pending_tokens` against the takeover/commit threshold.
 An outstanding archive blocks another commit while its summary is pending. The
 gateway checks `.done` and `.failed.json`: a terminal archive without a summary
-releases the commit gate without replacing history. Checks are shared across
-requests, at most once per five seconds; unresolved archives are abandoned after
+releases the commit gate without replacing history. The capture worker checks at
+most once per five seconds; unresolved archives are abandoned after
 15 minutes. Emergency waiting requires a matching, confirmed-pending archive that
 can replace history. Paused capture and unknown/terminal archives do not trigger
 emergency waiting.
 
-Capture uses an incremental cursor and a queue isolated by session. A failing head
-blocks later turns. After five fast attempts, it pauses for five minutes between
-recovery probes; writes resume in order when health and delivery recover. Studio
-logs show capture state/reason and offer **Resync capture**, rebuilding capture
-from the next request in a new OV session. This also recovers queues stopped by
-older releases. Existing matching replacements replay during outages and resets.
-Queue schema upgrades preserve queued work and leases; restart all gateway workers
-together when upgrading from a release with the old cross-session queue key.
+Capture uses one document per client session: the OV destination, delivered
+watermark, pending tail, retained boundaries and outstanding archive. Requests
+reconcile that tail; only the lease holder advances delivery. Edits, compaction,
+regeneration and manual resync replace the destination and rebuild from the
+current history. Existing matching replacements remain independent of capture.
 
-OpenViking message writes do not provide an idempotency key. A crash between a
-successful HTTP write and durable acknowledgment can duplicate that batch; the
-gateway preserves source-message IDs for diagnosis. Normal retries and copied
-prefixes are deduplicated. User attribution and last-turn retention are inherently
-less precise than a harness plugin because the gateway sees only API requests.
+A failed head blocks later turns. Five fast attempts are followed by five-minute
+health probes. Studio displays the reason and provides **Resync capture**. The
+worker alone polls archives; request preparation never probes an overview.
+
+`source_message_ids` is provenance, not an atomic server deduplication key. The
+worker reads live server messages before delivery and reconciles these IDs to
+recover a lost response or a partial batch. A commit intent is saved in the same
+document before HTTP submission; the server's Phase 1 receipt resolves interrupted
+commits before later messages are written. Read-before-retry cannot guarantee
+exactly-once writes when a timed-out server request or expired lease holder is
+still running. That requires server-side idempotency.
+
+This feature is unreleased. Development database formats are not migrated: use a
+fresh `storage_path` when upgrading a test installation. Old files are left intact.
+User attribution and final-turn retention remain less precise than a harness
+plugin because the gateway sees only API requests.
 
 ## Hidden tools (phase two)
 
@@ -336,10 +344,19 @@ use simulated providers, the real FastMCP transport, and synthetic conversations
 real-client recordings and conversations crossing a real model's context window
 remain separate operator acceptance checks.
 
-The store boundary consists of indexed reads, first-writer inserts, conditional
-batch updates and an ordered leased queue. Budget checks, branch reconciliation
-and archive decisions live in the kernel/capture pipeline. Request preparation
-loads only matching replay records and constant session state; usage overwrites a
-single row. SQL connections are pooled and sent markers are written in batches.
-See [review regression and benchmark notes](../../testing/context-gateway-review.md)
-for measured overhead and remaining acceptance limits.
+The replay port has exactly five immutable decision types and only indexed reads
+and put-if-absent. Capture uses a separate leased mailbox, with one document and
+single-key CAS for branch/delivery/archive progress. Response observations, recall
+budget reservations, anonymous identity indexes and tool receipts use a separate
+operational KV port. No transaction spans replay records and capture jobs.
+
+Stable sessions need one batched preparation read; anonymous identity resolution
+adds a prefix-index read. Only new decisions write before forwarding. Usage, sent
+markers and logs run after response transmission. SQLite separates reader and
+writer executors and coalesces reads arriving in the same loop turn. Credentials,
+policies and upstream lists have a two-second process-local cache. Local management
+changes invalidate it immediately; other processes can retain revoked credentials
+for at most two seconds.
+
+See [architecture, regression and profile notes](../../testing/context-gateway-review.md)
+for port contracts, measured overhead and remaining acceptance limits.

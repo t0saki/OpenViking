@@ -7,8 +7,6 @@ from urllib.parse import urlsplit
 
 import orjson
 
-from .records import RecordKind as K
-
 ARK_PATHS = {
     "/api/v3/chat/completions": "/v1/chat/completions",
     "/api/v3/responses": "/v1/responses",
@@ -56,19 +54,8 @@ async def apply_vendor(body, upstream, prepared, store):
         return body
     body = dict(body)
     if prepared.protocol in {"chat", "responses"}:
-        cache = await store.put(
-            prepared.scope,
-            prepared.session,
-            K.VENDOR,
-            "ark",
-            {
-                "prompt_cache_key": body.get("prompt_cache_key")
-                or "ovcg-"
-                + hashlib.sha256((prepared.scope + prepared.session).encode()).hexdigest()[:40],
-                "parameters": parameter_fingerprint(body),
-            },
-        )
+        cache = prepared.root["vendor"]
         body["prompt_cache_key"] = cache["prompt_cache_key"]
-        if parameter_fingerprint(body) != cache["parameters"]:
+        if parameter_fingerprint(prepared.original) != cache["parameters"]:
             prepared.metrics["degradation"] = "ark_cache_parameters_changed"
     return body

@@ -4,9 +4,11 @@
 
 import asyncio
 import re
+import time
 from urllib.parse import urlencode
 
 import aiohttp
+import orjson
 from packaging.version import InvalidVersion, Version
 
 
@@ -116,22 +118,59 @@ class VikingClient:
         )
         return result.get("overview", "")
 
-    async def archive_state(self, key, session, archive, uri=""):
-        if not uri:
-            info = await self.request("GET", f"/api/v1/sessions/{session}", key, timeout=5)
-            uri = info["uri"].rstrip("/") + "/history/" + archive
+    async def read_content(self, key, uri):
+        try:
+            return await self.request(
+                "GET", "/api/v1/content/read?" + urlencode({"uri": uri, "raw": "true"}), key
+            )
+        except VikingError as error:
+            if error.status == 404 or error.reason == "openviking_NOT_FOUND":
+                return None
+            raise
+
+    async def capture_status(self, key, session):
+        info = await self.request("GET", f"/api/v1/sessions/{session}", key)
+        uri = info["uri"].rstrip("/")
+        content = await self.read_content(key, uri + "/messages.jsonl")
+        return {
+            "messages": [
+                orjson.loads(line) for line in (content or "").splitlines() if line.strip()
+            ],
+            "pending_tokens": info.get("pending_tokens", 0),
+            "next_archive_uri": uri + f"/history/archive_{info.get('commit_count', 0) + 1:03d}",
+        }
+
+    async def resolve_commit(self, key, session, intent):
+        """An archive's Phase 1 receipt resolves a lost commit response."""
+        uri = intent["archive_uri"]
+        meta = await self.read_content(key, uri + "/.meta.json")
+        committed = False
+        if meta is None:
+            result = await self.commit(key, session, intent["keep"])
+            uri = result.get("archive_uri", "")
+            if not uri:
+                raise VikingError("archive_commit_not_created")
+            committed = True
+        else:
+            committed = orjson.loads(meta).get("phase1", {}).get("status") == "ready"
+        archive_id = uri.rstrip("/").split("/")[-1]
+        if not committed:
+            terminal = await self.archive_state(key, session, archive_id, uri)
+            if terminal == "failed" or time.time() - intent["created"] >= 900:
+                return {**intent, "status": "failed", "committed": False}
+            return {**intent, "next_check": time.time() + 5}
+        return {
+            **intent,
+            "archive_uri": uri,
+            "archive_id": archive_id,
+            "status": "pending",
+            "committed": True,
+        }
+
+    async def archive_state(self, key, session, archive, uri):
         for marker, state in ((".done", "completed"), (".failed.json", "failed")):
-            try:
-                await self.request(
-                    "GET",
-                    "/api/v1/content/read?" + urlencode({"uri": uri.rstrip("/") + "/" + marker}),
-                    key,
-                    timeout=5,
-                )
+            if await self.read_content(key, uri.rstrip("/") + "/" + marker) is not None:
                 return state
-            except VikingError as error:
-                if error.status != 404 and error.reason != "openviking_NOT_FOUND":
-                    raise
         return "pending"
 
     async def mcp(self, name, key, arguments):

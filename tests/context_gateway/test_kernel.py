@@ -3,9 +3,11 @@ import copy
 import time
 
 import pytest
+from conftest import replay_records
 
+from openviking_context_gateway.capture import CaptureWorker, capture_messages
+from openviking_context_gateway.capture_store import Document
 from openviking_context_gateway.client import VikingError
-from openviking_context_gateway.kernel import CaptureWorker, capture_messages
 from openviking_context_gateway.protocols import (
     ResponseCapture,
     classify,
@@ -130,7 +132,7 @@ async def test_capture_confirms_branch_and_isolates_forks(setup_kernel, credenti
         "chat", {"role": "assistant", "content": "Discarded answer"}, complete=True
     )
     await kernel.completed(one, credential, response)
-    assert await store.claim() is None  # idle delay
+    assert await store.capture.claim() is None  # idle delay
     body["messages"] += [
         {"role": "assistant", "content": "Kept answer"},
         {"role": "user", "content": "Next question"},
@@ -148,14 +150,16 @@ async def test_capture_confirms_branch_and_isolates_forks(setup_kernel, credenti
 
 async def test_lease_is_exclusive_and_old_owner_cannot_ack(setup_kernel):
     _, store, _, _ = setup_kernel
-    await store.enqueue("scope", "session", "anchor", {"messages": []}, time.time() - 1)
-    results = await asyncio.gather(*(store.claim() for _ in range(8)))
+    await store.capture.swap("scope", "session", Document(), {"work": "pending"}, 0)
+    results = await asyncio.gather(*(store.capture.claim() for _ in range(8)))
     claimed = [x for x in results if x]
     assert len(claimed) == 1
-    await store.ack({**claimed[0], "owner": "old"}, True)
-    assert await store.claim() is None
-    await store.ack(claimed[0], True)
-    assert await store.claim() is None
+    await store.capture.release({**claimed[0], "owner": "old"})
+    assert await store.capture.claim() is None
+    old = await store.capture.get("scope", "session")
+    await store.capture.swap("scope", "session", old, {"work": "done"}, None)
+    await store.capture.release(claimed[0])
+    assert await store.capture.claim() is None
 
 
 async def test_archive_replacement_is_immutable(setup_kernel, credential, policy):
@@ -169,23 +173,32 @@ async def test_archive_replacement_is_immutable(setup_kernel, credential, policy
         ]
     }
     one = await prepare(kernel, body, credential, policy)
-    await store.put(one.scope, one.session, "usage", one.chain[0], {"input_tokens": 40000})
-    await store.put(one.scope, one.session, "archive", one.chain[1], {"archive_id": "archive_001"})
+    await store.replay.put(
+        one.scope,
+        one.session,
+        "replacement",
+        one.chain[1],
+        {"text": "[OpenViking Session Context]\nverified summary"},
+    )
     two = await prepare(kernel, body, credential, policy)
     assert two.body["messages"][0]["content"].startswith("[OpenViking Session Context]")
-    viking.summary = "Changed summary"
+    await store.replay.put(
+        one.scope, one.session, "replacement", one.chain[1], {"text": "Changed summary"}
+    )
     three = await prepare(kernel, body, credential, policy)
     assert two.body == three.body
 
 
 async def test_encryption_and_whole_session_expiry(setup_kernel):
     _, store, _, _ = setup_kernel
-    await store.put("scope", "session", "injection", "anchor", {"text": "VERY_PRIVATE_MEMORY"})
+    await store.replay.put(
+        "scope", "session", "injection", "anchor", {"text": "VERY_PRIVATE_MEMORY"}
+    )
     assert b"VERY_PRIVATE_MEMORY" not in store.path.read_bytes()
     await store.expire(time.time() - 1)
-    assert ("injection", "anchor") in await store.read("scope", "session")
+    assert ("injection", "anchor") in await store.replay.read("scope", "session", ["anchor"])
     await store.expire(time.time() + 1)
-    assert not await store.read("scope", "session")
+    assert not await store.replay.read("scope", "session", ["anchor"])
 
 
 def test_normalization_client_equivalence():
@@ -303,7 +316,7 @@ async def test_known_missing_record_drops_old_thinking(setup_kernel, credential,
     first = await prepare(kernel, body, credential, policy, "anthropic")
     await kernel.completed(first, credential, ResponseCapture("anthropic"))
     with store.connect() as connection:
-        connection.execute("DELETE FROM records WHERE kind='injection'")
+        connection.execute("DELETE FROM replay WHERE kind='injection'")
     body["messages"] += [
         {
             "role": "assistant",
@@ -333,15 +346,11 @@ async def test_large_body_does_not_trigger_placeholder_archive(setup_kernel, cre
     }
     first = await prepare(kernel, body, credential, policy)
     assert first.body == body and "degradation" not in first.metrics
-    await store.commit(
-        first.scope,
-        first.session,
-        {("usage", ""): {"input_tokens": 1000, "model": "test", "upstream_id": "upstream"}},
-    )
+    await kernel.completed(first, credential, ResponseCapture("chat", usage={"input_tokens": 1000}))
     second = await prepare(kernel, body, credential, policy)
     assert "degradation" not in second.metrics
     assert second.body == body
-    assert not await store.read(first.scope, first.session, kinds=["replacement"])
+    assert not await replay_records(store, first, "replacement")
 
 
 def test_tool_input_whitespace_is_significant():

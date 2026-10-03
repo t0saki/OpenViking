@@ -1,0 +1,235 @@
+"""Exercise the kernel with single-key KV primitives, without any SQL API."""
+
+import asyncio
+import copy
+import time
+import uuid
+
+import pytest
+from conftest import FakeViking
+
+from openviking_context_gateway.capture import CaptureWorker
+from openviking_context_gateway.capture_store import Document, LeaseLost
+from openviking_context_gateway.kernel import MemoryKernel
+from openviking_context_gateway.models import Policy
+from openviking_context_gateway.records import RecordKind as K
+
+
+class KVReplay:
+    def __init__(self):
+        self.values = {}
+
+    async def read(self, scope, session, anchors):
+        return {
+            (k, a): copy.deepcopy(v)
+            for (s, owner, k, a), v in self.values.items()
+            if s == scope and owner in {session, "*"} and a in anchors
+        }
+
+    async def put(self, scope, session, kind, anchor, value):
+        owner = "*" if kind in {K.INJECTION, K.HIDDEN} else session
+        return copy.deepcopy(
+            self.values.setdefault((scope, owner, kind, anchor), copy.deepcopy(value))
+        )
+
+
+class KVState:
+    def __init__(self):
+        self.values = {}
+
+    async def read(self, scope, keys):
+        return {
+            key: copy.deepcopy(self.values[scope, key])
+            for key in keys
+            if (scope, key) in self.values
+        }
+
+    async def swap(self, scope, key, previous, value):
+        current = self.values.get((scope, key), Document())
+        if current.version != previous.version:
+            return False
+        self.values[scope, key] = Document(copy.deepcopy(value), previous.version + 1)
+        return True
+
+
+class KVQueue(KVState):
+    def __init__(self):
+        super().__init__()
+        self.ready, self.leases = {}, {}
+
+    async def get(self, scope, session):
+        return copy.deepcopy(self.values.get((scope, session), Document()))
+
+    async def swap(self, scope, session, previous, value, ready, owner=None):
+        key = scope, session
+        lease = self.leases.get(key, (None, 0))
+        if owner is not None and (lease[0] != owner or lease[1] <= time.time()):
+            raise LeaseLost
+        if not await super().swap(scope, session, previous, value):
+            return False
+        self.ready[key] = ready
+        return True
+
+    async def claim(self, lease_seconds=120):
+        for key, ready in self.ready.items():
+            if (
+                ready is not None
+                and ready <= time.time()
+                and self.leases.get(key, (None, 0))[1] < time.time()
+            ):
+                owner = uuid.uuid4().hex
+                self.leases[key] = owner, time.time() + lease_seconds
+                return {
+                    "scope": key[0],
+                    "session": key[1],
+                    "owner": owner,
+                    "document": await self.get(*key),
+                }
+        return None
+
+    async def release(self, item):
+        key = item["scope"], item["session"]
+        if self.leases[key][0] == item["owner"]:
+            self.leases.pop(key)
+
+
+class KVPorts:
+    def __init__(self):
+        self.replay, self.state, self.capture = KVReplay(), KVState(), KVQueue()
+
+    async def load(self, scope, session, anchors):
+        return (
+            await self.replay.read(scope, session, anchors),
+            await self.state.read(scope, [session]),
+            await self.capture.get(scope, session),
+        )
+
+
+@pytest.mark.parametrize("protocol", ["chat", "anthropic", "responses"])
+async def test_kernel_and_capture_work_with_kv_ports(credential, protocol):
+    ports, viking = KVPorts(), FakeViking()
+    kernel = MemoryKernel(ports, viking)
+
+    class Management:
+        async def get(self, *_):
+            return credential
+
+        async def log(self, *_):
+            pass
+
+    worker = CaptureWorker(ports, Management(), viking)
+    policy = Policy(takeover_tokens=1, keep_recent_turns=1).model_dump()
+    field = "input" if protocol == "responses" else "messages"
+    messages = [
+        {"role": "user", "content": "How do I deploy?"},
+        {"role": "assistant", "content": "Blue cluster"},
+        {"role": "user", "content": "What next?"},
+    ]
+
+    async def prepare(session="client"):
+        return await kernel.prepare(
+            {field: messages},
+            protocol,
+            {"x-openviking-session": session},
+            credential,
+            {"id": "upstream"},
+            policy,
+        )
+
+    p = await prepare()
+    assert await worker.once()  # append and commit
+    assert await worker.once()  # observe and publish summary
+    kernel = MemoryKernel(ports, viking)
+    again = await prepare()
+    assert again.body[field][0]["content"].startswith("[OpenViking Session Context]")
+    fork = await prepare("fork")
+    assert fork.capture_target != p.capture_target
+    await worker.once()
+    assert len(set(viking.write_sessions)) == 2
+    assert set(K) == {K.ROOT, K.INJECTION, K.DISABLED, K.HIDDEN, K.REPLACEMENT}
+
+
+async def test_expired_lease_cannot_write_or_release_new_owner(setup_kernel):
+    _, store, _, _ = setup_kernel
+    await store.capture.swap("scope", "session", Document(), {"work": 1}, 0)
+    expired = await store.capture.claim(lease_seconds=-1)
+    active = await store.capture.claim()
+    with pytest.raises(LeaseLost):
+        await store.capture.swap(
+            "scope", "session", expired["document"], {"work": "stale"}, None, owner=expired["owner"]
+        )
+    await store.capture.release(expired)
+    assert await store.capture.claim() is None
+    assert await store.capture.swap(
+        "scope", "session", active["document"], {"work": "done"}, None, owner=active["owner"]
+    )
+    await store.capture.release(active)
+    assert (await store.capture.get("scope", "session")).value == {"work": "done"}
+
+
+async def test_cache_coalesces_reads_and_reloads_after_invalidation():
+    from openviking_context_gateway.cache import TTLCache
+
+    cache = TTLCache(ttl=2, capacity=16)
+    count = 0
+
+    async def load():
+        nonlocal count
+        count += 1
+        await asyncio.sleep(0)
+        return count
+
+    assert await asyncio.gather(*(cache.get("key", load) for _ in range(50))) == [1] * 50
+    cache.clear()
+    assert await cache.get("key", load) == 2
+
+
+async def test_batched_reads_keep_scope_isolation_and_handle_cancellation(
+    setup_kernel, monkeypatch
+):
+    _, store, _, _ = setup_kernel
+    for account in ("one", "two"):
+        await store.replay.put(account, "session", K.INJECTION, "shared-anchor", {"text": account})
+    batches = []
+    run = store.run
+
+    async def counted(fn, *args, **kwargs):
+        if fn.__name__ == "read_batch":
+            batches.append(1)
+        return await run(fn, *args, **kwargs)
+
+    monkeypatch.setattr(store, "run", counted)
+    scopes = ["one", "two"] * 50
+    tasks = [
+        asyncio.create_task(store.load(scope, "session", ["shared-anchor"])) for scope in scopes
+    ]
+    await asyncio.sleep(0)
+    tasks[0].cancel()
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    assert isinstance(results[0], asyncio.CancelledError)
+    for scope, result in zip(scopes[1:], results[1:], strict=True):
+        assert result[0][K.INJECTION, "shared-anchor"] == {"text": scope}
+    assert len(batches) == 2
+
+
+async def test_corrupt_record_does_not_fail_other_reads_in_batch(setup_kernel):
+    from cryptography.fernet import InvalidToken
+
+    _, store, _, _ = setup_kernel
+    for scope in ("damaged", "healthy"):
+        await store.replay.put(scope, "session", K.ROOT, "", {"scope": scope})
+
+    def corrupt():
+        with store.connect() as connection:
+            connection.execute(
+                "UPDATE replay SET value=? WHERE scope=?", (b"invalid ciphertext", "damaged")
+            )
+
+    await store.run(corrupt, write=True)
+    damaged, healthy = await asyncio.gather(
+        store.load("damaged", "session", [""]),
+        store.load("healthy", "session", [""]),
+        return_exceptions=True,
+    )
+    assert isinstance(damaged, InvalidToken)
+    assert healthy[0][K.ROOT, ""] == {"scope": "healthy"}

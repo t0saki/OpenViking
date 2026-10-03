@@ -13,6 +13,7 @@ import aiohttp
 import orjson
 from fastapi import HTTPException
 from fastapi.responses import Response, StreamingResponse
+from starlette.background import BackgroundTask
 
 from .protocols import ResponseCapture, SSEDecoder, enhanced_supported, parse_body
 from .storage import digest
@@ -313,11 +314,12 @@ class ProxyRequest:
                 if not finished:
                     capture.complete = False
                 self.metrics.update(prepared.metrics)
-                await self.finish()
 
         if self.body.get("stream"):
             headers["content-type"] = "text/event-stream"
-            return StreamingResponse(stream(), headers=headers)
+            return StreamingResponse(
+                stream(), headers=headers, background=BackgroundTask(self.finish)
+            )
         try:
             async for _ in loop.run(response, send):
                 pass
@@ -335,8 +337,12 @@ class ProxyRequest:
                 getattr(error, "status", 502), str(error), headers=getattr(error, "headers", None)
             )
         self.metrics.update(prepared.metrics)
-        await self.finish()
-        return Response(orjson.dumps(loop.final), headers=headers, media_type="application/json")
+        return Response(
+            orjson.dumps(loop.final),
+            headers=headers,
+            media_type="application/json",
+            background=BackgroundTask(self.finish),
+        )
 
     async def observe_response(self):
         response, capture = self.response, self.capture
@@ -365,9 +371,13 @@ class ProxyRequest:
                     response.close()
                     if not finished:
                         capture.complete = False
-                    await self.finish()
 
-            return StreamingResponse(stream(), status_code=response.status, headers=headers)
+            return StreamingResponse(
+                stream(),
+                status_code=response.status,
+                headers=headers,
+                background=BackgroundTask(self.finish),
+            )
         try:
             content = await response.read()
             if response.status < 300 and not response.headers.get("content-encoding"):
@@ -377,5 +387,9 @@ class ProxyRequest:
                     pass
         finally:
             response.close()
-        await self.finish()
-        return Response(content, status_code=response.status, headers=headers)
+        return Response(
+            content,
+            status_code=response.status,
+            headers=headers,
+            background=BackgroundTask(self.finish),
+        )

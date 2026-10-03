@@ -15,8 +15,6 @@ from typing import Any
 import orjson
 
 NORMALIZATION_VERSION = "v1"
-# Kept as a tuple so an upgrade can read the previous version during migration.
-READ_VERSIONS = (NORMALIZATION_VERSION,)
 _RULES = json.loads(files("openviking_context_gateway").joinpath("client-rules.json").read_text())
 PLUGIN_TAGS = tuple(_RULES["plugin_tags"])
 NOISE_TAGS = tuple(_RULES["noise_tags"])
@@ -257,7 +255,7 @@ def classify(body: dict, headers: dict, messages: list[dict], counting=False) ->
     return "user", anchor
 
 
-def session_id(headers: dict, messages: list[dict], chain: list[str]) -> str | None:
+def session_id(headers: dict) -> str | None:
     for key in (
         "x-openviking-session",
         "thread-id",

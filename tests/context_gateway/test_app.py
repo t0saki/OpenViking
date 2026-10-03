@@ -7,6 +7,7 @@ import orjson
 import pytest
 import pytest_asyncio
 from aiohttp import web
+from conftest import FakeViking
 from cryptography.fernet import Fernet
 
 from openviking_context_gateway.app import create_app
@@ -19,6 +20,7 @@ async def running_gateway(tmp_path, monkeypatch):
     captured = []
     writes = []
     override = {}
+    viking = FakeViking()
 
     async def backend(request):
         if override.get("handler"):
@@ -51,11 +53,36 @@ async def running_gateway(tmp_path, monkeypatch):
                     },
                 }
             )
-        if "/messages/batch" in request.path:
-            writes.append(body)
-            return web.json_response({"status": "ok", "result": {"pending_tokens": 10}})
-        if "/commit" in request.path and request.path.startswith("/api/v1/sessions"):
+        if request.path == "/api/v1/sessions":
             return web.json_response({"status": "ok", "result": {}})
+        if request.path.startswith("/api/v1/sessions/"):
+            session = request.path.split("/")[4]
+            if request.path.endswith("/messages/batch"):
+                writes.append(body)
+                result = await viking.write("synthetic", session, body["messages"])
+            elif request.path.endswith("/commit"):
+                result = await viking.commit("synthetic", session, body["keep_recent_count"])
+            elif "/archives/" in request.path:
+                result = {"overview": viking.summary}
+            else:
+                status = await viking.capture_status("synthetic", session)
+                result = {
+                    "uri": status["next_archive_uri"].split("/history/")[0],
+                    "commit_count": sum(1 for uri in viking.archived if f"/{session}/" in uri),
+                    "pending_tokens": status["pending_tokens"],
+                }
+            return web.json_response({"status": "ok", "result": result})
+        if request.path == "/api/v1/content/read":
+            uri = request.query["uri"]
+            if uri.endswith("/messages.jsonl"):
+                session = uri.split("/sessions/")[1].split("/")[0]
+                content = "\n".join(json.dumps(m) for m in viking.live.get(session, []))
+                return web.json_response({"status": "ok", "result": content})
+            if uri.removesuffix("/.meta.json") in viking.archived:
+                return web.json_response(
+                    {"status": "ok", "result": '{"phase1":{"status":"ready"}}'}
+                )
+            return web.json_response({"status": "error"}, status=404)
         captured.append((request.path, raw, dict(request.headers)))
         if body.get("model") == "error":
             return web.Response(
@@ -501,8 +528,9 @@ async def test_hidden_tools_mixed_replay_and_usage(running_gateway, streaming, m
     assert "openviking_search" not in response.text
     from openviking_context_gateway.storage import digest
 
-    stored = await app.state.store.read(digest("tenant\0alice\0chat"), digest("tool-session"))
-    assert [v["input_tokens"] for (kind, _), v in stored.items() if kind == "usage"] == [100]
+    sid = digest("tool-session")
+    stored = await app.state.store.state.read(digest("tenant\0alice\0chat"), [sid])
+    assert stored[sid].value["usage"]["input_tokens"] == 100
     assert len(calls) == 1 and len(model_requests) == (1 if mixed else 2)
     if streaming:
         from openviking_context_gateway.protocols import SSEDecoder
@@ -938,7 +966,7 @@ async def test_storage_failure_still_forwards_plain_chat(running_gateway, monkey
     async def unavailable(*_args, **_kwargs):
         raise OSError("unavailable")
 
-    monkeypatch.setattr(app.state.store, "read", unavailable)
+    monkeypatch.setattr(app.state.store, "load", unavailable)
     raw = b'{"model":"model", "messages":[{"role":"user","content":"hello"}]}'
     response = await client.post(
         "/v1/chat/completions", headers={"Authorization": "Bearer " + key["key"]}, content=raw

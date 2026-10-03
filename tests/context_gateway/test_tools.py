@@ -144,7 +144,9 @@ async def test_hidden_branch_restart_and_archive_mapping(setup_kernel, credentia
         {"role": "assistant", "content": "blue"},
     ]
     p = await kernel.prepare({"messages": messages}, "chat", {}, credential, {"id": "u"}, policy)
-    await store.put(p.scope, p.session, "hidden", hidden_chain(messages)[-1], {"messages": history})
+    await store.replay.put(
+        p.scope, p.session, "hidden", hidden_chain(messages)[-1], {"messages": history}
+    )
     kernel.store = SQLiteKernelStore(store.path, encryption)
     p = await kernel.prepare(
         {"messages": [*messages, {"role": "user", "content": "follow up"}]},
@@ -168,8 +170,12 @@ async def test_hidden_branch_restart_and_archive_mapping(setup_kernel, credentia
     p = await kernel.prepare({"messages": raw}, "chat", {}, credential, {"id": "u"}, policy)
     p.body["messages"] = copy.deepcopy(raw)
     p.body_chain = hidden_chain(raw)
-    kernel._apply_replacement(p, 2, {"text": "summary"})
-    kernel._replay_tools(p)
+    from openviking_context_gateway.models import Policy
+    from openviking_context_gateway.tool_catalog import replay_hidden
+
+    p.records["replacement", p.chain[2]] = {"text": "summary"}
+    assert kernel.replace_archive(p, Policy(keep_recent_turns=1))
+    p.body["messages"] = replay_hidden(p.body["messages"], p.body_chain, p.records)
     assert p.body["messages"] == [raw[0], {"role": "user", "content": "summary"}, *raw[3:]]
 
 
@@ -303,7 +309,7 @@ async def test_incompatible_tools_keep_visible_history(setup_kernel, credential,
         {"role": "tool", "tool_call_id": "owned", "content": "result"},
         messages[1],
     ]
-    await store.put(
+    await store.replay.put(
         first.scope, first.session, "hidden", hidden_chain(messages)[-1], {"messages": transcript}
     )
     body = {

@@ -1,11 +1,6 @@
 # Copyright (c) 2026 Beijing Volcano Engine Technology Co., Ltd.
 # SPDX-License-Identifier: AGPL-3.0
-"""Encrypted records and an ordered, leased queue.
-
-The store only implements indexed reads, first-writer inserts, conditional batch
-updates and queue leases. Recall budgets and capture reconciliation live in the
-kernel. Connections are pooled and used by one thread at a time.
-"""
+"""SQLite adapters and encrypted management data. Writes have a dedicated executor."""
 
 import asyncio
 import hashlib
@@ -13,13 +8,19 @@ import os
 import queue
 import sqlite3
 import time
-import uuid
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
+from functools import partial
 from pathlib import Path
 from typing import Any, Protocol
 
 import orjson
 from cryptography.fernet import Fernet
+
+from .cache import TTLCache
+from .capture_store import CaptureQueue, SQLiteCaptureQueue
+from .replay_store import ReplayStore, SQLiteReplayStore
+from .state_store import SQLiteStateStore, StateStore
 
 
 def digest(value: str) -> str:
@@ -27,18 +28,13 @@ def digest(value: str) -> str:
 
 
 class KernelStore(Protocol):
-    async def read(self, scope, session, anchors=None, kinds=None) -> dict: ...
-    async def lookup(self, scope, anchors, kinds) -> dict: ...
-    async def owners(self, scope, anchors, kind) -> dict: ...
-    async def put(self, scope, session, kind, anchor, value) -> dict: ...
-    async def put_many(self, scope, session, values) -> None: ...
-    async def commit(
-        self, scope, session, values, *, expected=None, shared=(), jobs=(), cancel=()
-    ) -> bool: ...
-    async def enqueue(self, scope, session, anchor, value, ready, position=0) -> None: ...
-    async def claim(self, lease_seconds=60) -> dict | None: ...
-    async def ack(self, item, success, *, retry_at=None, failed=False) -> None: ...
-    async def expire(self, before, scope=None) -> None: ...
+    """Composition port; adapters may pipeline the independent reads."""
+
+    replay: ReplayStore
+    capture: CaptureQueue
+    state: StateStore
+
+    async def load(self, scope, session, anchors) -> tuple: ...
 
 
 class Database:
@@ -50,7 +46,9 @@ class Database:
         os.fchmod(fd, 0o600)
         os.close(fd)
         self.cipher = Fernet(encryption_key.encode())
-        self.pool = queue.LifoQueue(maxsize=8)
+        self.pool = queue.LifoQueue(maxsize=6)
+        self.readers = ThreadPoolExecutor(max_workers=4, thread_name_prefix="gateway-read")
+        self.writer = ThreadPoolExecutor(max_workers=1, thread_name_prefix="gateway-write")
 
     @contextmanager
     def connect(self):
@@ -73,6 +71,8 @@ class Database:
                 connection.close()
 
     def close(self):
+        self.readers.shutdown(wait=True)
+        self.writer.shutdown(wait=True)
         while True:
             try:
                 self.pool.get_nowait().close()
@@ -85,62 +85,51 @@ class Database:
     def decode(self, value: bytes) -> Any:
         return orjson.loads(self.cipher.decrypt(value))
 
-    async def run(self, fn, *args):
-        return await asyncio.to_thread(fn, *args)
+    async def run(self, fn, *args, write=False):
+        return await asyncio.get_running_loop().run_in_executor(
+            self.writer if write else self.readers, partial(fn, *args)
+        )
 
 
 class SQLiteKernelStore(Database):
+    def __init__(self, path, encryption_key):
+        super().__init__(path, encryption_key)
+        self.replay = SQLiteReplayStore(self)
+        self.capture = SQLiteCaptureQueue(self)
+        self.state = SQLiteStateStore(self)
+        self._loads = []
+
     async def initialize(self):
-        await self.run(self._initialize)
-
-    def _initialize(self):
-        with self.connect() as c:
-            c.execute("PRAGMA journal_mode=WAL")
-            c.executescript("""
-                CREATE TABLE IF NOT EXISTS sessions (
-                    scope TEXT, session TEXT, touched REAL NOT NULL,
-                    PRIMARY KEY(scope,session));
-                CREATE TABLE IF NOT EXISTS records (
-                    scope TEXT, session TEXT, kind TEXT, anchor TEXT, value BLOB NOT NULL,
-                    PRIMARY KEY(scope,session,kind,anchor),
-                    FOREIGN KEY(scope,session) REFERENCES sessions ON DELETE CASCADE);
-                CREATE INDEX IF NOT EXISTS prefix_lookup ON records(scope,kind,anchor);
-                CREATE TABLE IF NOT EXISTS queue (
-                    id TEXT PRIMARY KEY, scope TEXT, session TEXT, anchor TEXT,
-                    value BLOB NOT NULL, ready REAL, lease REAL DEFAULT 0, owner TEXT,
-                    UNIQUE(scope,session,anchor),
-                    FOREIGN KEY(scope,session) REFERENCES sessions ON DELETE CASCADE);
-                CREATE INDEX IF NOT EXISTS queue_ready ON queue(ready,lease);
-                CREATE TABLE IF NOT EXISTS deleted_scopes (scope TEXT PRIMARY KEY);
-                DROP TABLE IF EXISTS rate_reservations;
-            """)
-            columns = {r["name"] for r in c.execute("PRAGMA table_info(queue)")}
-            for name in ("position", "attempts", "failed"):
-                if name not in columns:
-                    c.execute(f"ALTER TABLE queue ADD COLUMN {name} INTEGER NOT NULL DEFAULT 0")
-            if c.execute("PRAGMA user_version").fetchone()[0] < 4:
-                # Rebuild the old cross-session unique key without losing leases
-                # or delivery progress. All workers must run the same schema.
+        def initialize():
+            with self.connect() as c:
+                if c.execute("PRAGMA user_version").fetchone()[0] not in (0, 1):
+                    raise ValueError("Unsupported gateway schema; configure a fresh storage_path")
+                c.execute("PRAGMA journal_mode=WAL")
                 c.executescript("""
-                    BEGIN IMMEDIATE;
-                    ALTER TABLE queue RENAME TO queue_old;
-                    CREATE TABLE queue (
-                        id TEXT PRIMARY KEY, scope TEXT, session TEXT, anchor TEXT,
-                        value BLOB NOT NULL, ready REAL, lease REAL DEFAULT 0, owner TEXT,
-                        position INTEGER NOT NULL DEFAULT 0,
-                        attempts INTEGER NOT NULL DEFAULT 0, failed INTEGER NOT NULL DEFAULT 0,
-                        UNIQUE(scope,session,anchor),
+                    CREATE TABLE IF NOT EXISTS sessions (
+                        scope TEXT, session TEXT, touched REAL NOT NULL,
+                        PRIMARY KEY(scope,session));
+                    CREATE TABLE IF NOT EXISTS replay (
+                        scope TEXT, session TEXT, kind TEXT, anchor TEXT, value BLOB NOT NULL,
+                        PRIMARY KEY(scope,session,kind,anchor),
                         FOREIGN KEY(scope,session) REFERENCES sessions ON DELETE CASCADE);
-                    INSERT INTO queue SELECT id,scope,session,anchor,value,ready,lease,owner,
-                        position,attempts,failed FROM queue_old;
-                    DROP TABLE queue_old;
-                    PRAGMA user_version=4;
-                    COMMIT;
+                    CREATE INDEX IF NOT EXISTS replay_anchors ON replay(scope,session,anchor);
+                    CREATE TABLE IF NOT EXISTS state (
+                        scope TEXT, key TEXT, value BLOB NOT NULL, version INTEGER NOT NULL,
+                        PRIMARY KEY(scope,key));
+                    CREATE TABLE IF NOT EXISTS capture (
+                        scope TEXT, session TEXT, value BLOB NOT NULL, version INTEGER NOT NULL,
+                        ready REAL, lease REAL NOT NULL DEFAULT 0, owner TEXT,
+                        PRIMARY KEY(scope,session),
+                        FOREIGN KEY(scope,session) REFERENCES sessions ON DELETE CASCADE);
+                    CREATE INDEX IF NOT EXISTS capture_ready ON capture(ready,lease);
+                    CREATE TABLE IF NOT EXISTS deleted_scopes (scope TEXT PRIMARY KEY);
+                    PRAGMA user_version=1;
                 """)
-            c.execute("CREATE INDEX IF NOT EXISTS queue_ready ON queue(ready,lease)")
-            c.execute("CREATE INDEX IF NOT EXISTS queue_order ON queue(scope,session,position)")
 
-    def _touch(self, c, scope, session):
+        await self.run(initialize, write=True)
+
+    def touch(self, c, scope, session):
         if c.execute("SELECT 1 FROM deleted_scopes WHERE scope=?", (scope,)).fetchone():
             raise RuntimeError("Gateway user data has been deleted")
         now = time.time()
@@ -150,191 +139,50 @@ class SQLiteKernelStore(Database):
             (scope, session, now, now - 60),
         )
 
-    async def read(self, scope, session, anchors=None, kinds=None):
-        return await self.run(self._read, scope, session, anchors, kinds)
+    async def load(self, scope, session, anchors):
+        """Coalesce concurrent reads for one loop turn; do not cache snapshots."""
+        future = asyncio.get_running_loop().create_future()
+        self._loads.append((future, (scope, session, anchors)))
+        if len(self._loads) == 1:
+            asyncio.get_running_loop().call_soon(self._dispatch_loads)
+        return await future
 
-    def _read(self, scope, session, anchors, kinds):
-        sql, args = "SELECT kind,anchor,value FROM records WHERE scope=?", [scope]
-        if session is not None:
-            sql += " AND session=?"
-            args.append(session)
-        for name, items in (("kind", kinds), ("anchor", anchors)):
-            if items is not None:
-                sql += f" AND {name} IN (SELECT value FROM json_each(?))"
-                args.append(orjson.dumps(items).decode())
-        if session is None:
-            sql += " ORDER BY session"
-        with self.connect() as c:
-            result = {}
-            for r in c.execute(sql, args):
-                key = r["kind"], r["anchor"]
-                if key not in result:
-                    result[key] = self.decode(r["value"])
-            return result
+    def _dispatch_loads(self):
+        batch, self._loads = self._loads[:64], self._loads[64:]
+        if self._loads:
+            asyncio.get_running_loop().call_soon(self._dispatch_loads)
 
-    async def lookup(self, scope, anchors, kinds):
-        return await self.read(scope, None, anchors, kinds)
-
-    async def owners(self, scope, anchors, kind):
-        """Find record owners without reading/decrypting their values."""
-
-        def read():
+        def read_batch():
+            results = []
             with self.connect() as c:
-                result = {}
-                for row in c.execute(
-                    "SELECT anchor,session FROM records WHERE scope=? AND kind=? "
-                    "AND anchor IN (SELECT value FROM json_each(?))",
-                    (scope, kind, orjson.dumps(anchors).decode()),
-                ):
-                    owners = result.setdefault(row["anchor"], [])
-                    if len(owners) < 2:
-                        owners.append(row["session"])
-                return result
-
-        return await self.run(read)
-
-    async def put(self, scope, session, kind, anchor, value):
-        def put():
-            with self.connect() as c:
-                c.execute("BEGIN IMMEDIATE")
-                self._touch(c, scope, session)
-                c.execute(
-                    "INSERT OR IGNORE INTO records VALUES (?,?,?,?,?)",
-                    (scope, session, kind, anchor, self.encode(value)),
-                )
-                row = c.execute(
-                    "SELECT value FROM records WHERE scope=? AND session=? AND kind=? AND anchor=?",
-                    (scope, session, kind, anchor),
-                ).fetchone()
-                c.commit()
-                return self.decode(row[0])
-
-        return await self.run(put)
-
-    async def put_many(self, scope, session, values):
-        def put():
-            with self.connect() as c:
-                c.execute("BEGIN IMMEDIATE")
-                self._touch(c, scope, session)
-                c.executemany(
-                    "INSERT OR IGNORE INTO records VALUES (?,?,?,?,?)",
-                    ((scope, session, k, a, self.encode(v)) for (k, a), v in values.items()),
-                )
-                c.commit()
-
-        if values:
-            await self.run(put)
-
-    async def commit(self, scope, session, values, *, expected=None, shared=(), jobs=(), cancel=()):
-        """Atomically compare records, then replace records and pending queue entries.
-
-        A shared key additionally requires an identical value across the scope.
-        This is a generic first-writer constraint, independent of record kind.
-        """
-
-        def commit():
-            with self.connect() as c:
-                c.execute("BEGIN IMMEDIATE")
-                self._touch(c, scope, session)
-                for (kind, anchor), value in (expected or {}).items():
-                    row = c.execute(
-                        "SELECT value FROM records WHERE scope=? AND session=? AND kind=? AND anchor=?",
-                        (scope, session, kind, anchor),
-                    ).fetchone()
-                    if (self.decode(row[0]) if row else None) != value:
-                        return False
-                for kind, anchor in shared:
-                    row = c.execute(
-                        "SELECT value FROM records WHERE scope=? AND kind=? AND anchor=? LIMIT 1",
-                        (scope, kind, anchor),
-                    ).fetchone()
-                    if row and self.decode(row[0]) != values[kind, anchor]:
-                        return False
-                for (kind, anchor), value in values.items():
-                    if value is None:
-                        c.execute(
-                            "DELETE FROM records WHERE scope=? AND session=? AND kind=? AND anchor=?",
-                            (scope, session, kind, anchor),
+                for _, (scope, session, anchors) in batch:
+                    try:
+                        result = (
+                            self.replay.read_in(c, scope, session, anchors),
+                            self.state.read_in(c, scope, [session]),
+                            self.capture.read_in(c, scope, session),
                         )
+                    except Exception as error:
+                        result = error
+                    results.append(result)
+            return results
+
+        def deliver(task):
+            if task.cancelled():
+                for future, _ in batch:
+                    future.cancel()
+                return
+            error = task.exception()
+            for i, (future, _) in enumerate(batch):
+                if not future.done():
+                    result = error if error is not None else task.result()[i]
+                    if isinstance(result, Exception):
+                        future.set_exception(result)
                     else:
-                        c.execute(
-                            "INSERT INTO records VALUES (?,?,?,?,?) ON CONFLICT(scope,session,kind,anchor) "
-                            "DO UPDATE SET value=excluded.value",
-                            (scope, session, kind, anchor, self.encode(value)),
-                        )
-                for anchor in cancel:
-                    c.execute(
-                        "DELETE FROM queue WHERE scope=? AND session=? AND anchor=? AND ready IS NOT NULL AND lease=0 AND failed=0",
-                        (scope, session, anchor),
-                    )
-                for job in jobs:
-                    c.execute(
-                        "INSERT INTO queue(id,scope,session,anchor,value,ready,position) VALUES (?,?,?,?,?,?,?) "
-                        "ON CONFLICT(scope,session,anchor) DO UPDATE SET value=excluded.value,ready=excluded.ready,position=excluded.position "
-                        "WHERE queue.session=excluded.session AND queue.ready IS NOT NULL AND queue.lease=0 AND queue.failed=0",
-                        (
-                            uuid.uuid4().hex,
-                            scope,
-                            session,
-                            job["anchor"],
-                            self.encode(job["value"]),
-                            job["ready"],
-                            job["position"],
-                        ),
-                    )
-                c.commit()
-                return True
+                        future.set_result(result)
 
-        return await self.run(commit)
-
-    async def enqueue(self, scope, session, anchor, value, ready, position=0):
-        await self.commit(
-            scope,
-            session,
-            {},
-            jobs=[{"anchor": anchor, "value": value, "ready": ready, "position": position}],
-        )
-
-    async def claim(self, lease_seconds=60):
-        def claim():
-            now, owner = time.time(), uuid.uuid4().hex
-            with self.connect() as c:
-                c.execute("BEGIN IMMEDIATE")
-                row = c.execute(
-                    "SELECT * FROM queue WHERE ready<=? AND lease<? AND failed=0 "
-                    "AND NOT EXISTS (SELECT 1 FROM queue q WHERE q.scope=queue.scope AND q.session=queue.session "
-                    "AND (q.lease>? OR ((q.ready IS NOT NULL OR q.failed=1) "
-                    "AND (q.position<queue.position OR (q.position=queue.position AND q.rowid<queue.rowid))))) "
-                    "ORDER BY ready,rowid LIMIT 1",
-                    (now, now, now),
-                ).fetchone()
-                if row is None:
-                    c.commit()
-                    return None
-                c.execute(
-                    "UPDATE queue SET lease=?,owner=? WHERE id=?",
-                    (now + lease_seconds, owner, row["id"]),
-                )
-                c.commit()
-                return {**dict(row), "owner": owner, "payload": self.decode(row["value"])}
-
-        return await self.run(claim)
-
-    async def ack(self, item, success, *, retry_at=None, failed=False):
-        def ack():
-            with self.connect() as c:
-                c.execute(
-                    "UPDATE queue SET ready=?,lease=0,owner=NULL,attempts=attempts+?,failed=? WHERE id=? AND owner=?",
-                    (
-                        None if success or failed else retry_at,
-                        int(not success),
-                        int(failed),
-                        item["id"],
-                        item["owner"],
-                    ),
-                )
-
-        await self.run(ack)
+        task = asyncio.create_task(self.run(read_batch))
+        task.add_done_callback(deliver)
 
     async def expire(self, before, scope=None):
         def expire():
@@ -343,21 +191,27 @@ class SQLiteKernelStore(Database):
                 if scope is not None:
                     c.execute("INSERT OR IGNORE INTO deleted_scopes VALUES (?)", (scope,))
                     c.execute("DELETE FROM sessions WHERE scope=?", (scope,))
+                    c.execute("DELETE FROM state WHERE scope=?", (scope,))
                 else:
                     c.execute("DELETE FROM sessions WHERE touched<?", (before,))
+                    c.execute("DELETE FROM state WHERE scope NOT IN (SELECT scope FROM sessions)")
                 c.commit()
 
-        await self.run(expire)
+        await self.run(expire, write=True)
 
     async def allow_scope(self, scope):
         def allow():
             with self.connect() as c:
                 c.execute("DELETE FROM deleted_scopes WHERE scope=?", (scope,))
 
-        await self.run(allow)
+        await self.run(allow, write=True)
 
 
 class ManagementStore(Database):
+    def __init__(self, path, encryption_key):
+        super().__init__(path, encryption_key)
+        self.cache = TTLCache(ttl=2, capacity=2048)
+
     async def initialize(self):
         def initialize():
             with self.connect() as c:
@@ -376,14 +230,8 @@ class ManagementStore(Database):
                     CREATE INDEX IF NOT EXISTS expiry_time ON object_expiry(expires);
                     PRAGMA user_version=2;
                 """)
-                # Preserve pre-TTL response routes for one bounded migration window.
-                c.execute(
-                    "INSERT OR IGNORE INTO object_expiry SELECT account,kind,id,? "
-                    "FROM objects WHERE kind='responses'",
-                    (time.time() + 30 * 86400,),
-                )
 
-        await self.run(initialize)
+        await self.run(initialize, write=True)
 
     async def list(self, account, kind):
         def read():
@@ -396,7 +244,7 @@ class ManagementStore(Database):
                     )
                 ]
 
-        return await self.run(read)
+        return await self.cache.get(("list", account, kind), lambda: self.run(read))
 
     async def get(self, account, kind, identifier):
         def read():
@@ -414,6 +262,8 @@ class ManagementStore(Database):
                     return None
                 return {**value, "id": identifier, "revision": row["revision"]}
 
+        if kind in {"policies", "keys"}:
+            return await self.cache.get(("get", account, kind, identifier), lambda: self.run(read))
         return await self.run(read)
 
     async def save(self, account, kind, identifier, value, ttl=None):
@@ -435,7 +285,8 @@ class ManagementStore(Database):
                     )
                 c.commit()
 
-        await self.run(save)
+        await self.run(save, write=True)
+        self.cache.clear()
         return await self.get(account, kind, identifier)
 
     async def delete(self, account, kind, identifier):
@@ -446,7 +297,8 @@ class ManagementStore(Database):
                     (account, kind, identifier),
                 )
 
-        await self.run(delete)
+        await self.run(delete, write=True)
+        self.cache.clear()
 
     async def authenticate(self, key):
         identifier = digest(key)
@@ -462,7 +314,7 @@ class ManagementStore(Database):
                     else None
                 )
 
-        return await self.run(read)
+        return await self.cache.get(("auth", identifier), lambda: self.run(read))
 
     async def log(self, account, value):
         def log():
@@ -472,7 +324,7 @@ class ManagementStore(Database):
                     (account, time.time(), self.encode(value)),
                 )
 
-        await self.run(log)
+        await self.run(log, write=True)
 
     async def logs(self, account, limit=200):
         def read():
@@ -500,7 +352,8 @@ class ManagementStore(Database):
                 c.execute("DELETE FROM object_expiry WHERE expires<=?", (time.time(),))
                 c.commit()
 
-        await self.run(expire)
+        await self.run(expire, write=True)
+        self.cache.clear()
 
     async def delete_account(self, account):
         def delete():
@@ -511,4 +364,5 @@ class ManagementStore(Database):
                 c.execute("DELETE FROM object_expiry WHERE account=?", (account,))
                 c.commit()
 
-        await self.run(delete)
+        await self.run(delete, write=True)
+        self.cache.clear()

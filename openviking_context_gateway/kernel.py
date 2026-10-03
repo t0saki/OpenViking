@@ -9,11 +9,12 @@ import time
 import uuid
 from dataclasses import dataclass, field
 
-from .archives import POLL_SECONDS, refresh_archive
+from .archives import POLL_SECONDS
+from .capture import CapturePipeline
+from .capture_store import Document
 from .client import VikingError
 from .models import Policy
 from .protocols import (
-    READ_VERSIONS,
     append_context,
     classify,
     clean_text,
@@ -26,8 +27,8 @@ from .protocols import (
     text_content,
     unwrap_client,
 )
-from .records import REPLAY_KINDS, SESSION_KINDS
 from .records import RecordKind as K
+from .state_store import get_state
 from .storage import KernelStore, digest
 from .tool_catalog import (
     TOOL_VERSION,
@@ -36,6 +37,7 @@ from .tool_catalog import (
     select_tools,
     tool_block_reason,
 )
+from .vendors import parameter_fingerprint
 
 logger = logging.getLogger(__name__)
 
@@ -83,10 +85,12 @@ class Prepared:
     disabled: bool = False
     metrics: dict = field(default_factory=dict)
     body_chain: list[str] = field(default_factory=list)
+    capture_chain: list[str] = field(default_factory=list)
     strip_replayed_thinking: bool = False
     anonymous: bool = False
-    capture_session: str = ""
-    capture_ov_session: str = ""
+    capture: Document = field(default_factory=Document)
+    observation: Document = field(default_factory=Document)
+    capture_target: str = ""
     tools_active: bool = False
     upstream: dict = field(default_factory=dict)
 
@@ -94,18 +98,6 @@ class Prepared:
 class MemoryKernel:
     def __init__(self, store: KernelStore, viking):
         self.store, self.viking = store, viking
-
-    async def _records(self, scope, sid, anchors):
-        local, inherited = await asyncio.gather(
-            self.store.read(
-                scope,
-                sid,
-                anchors,
-                [*SESSION_KINDS, *[k for k in REPLAY_KINDS if k not in {K.INJECTION, K.HIDDEN}]],
-            ),
-            self.store.lookup(scope, anchors, [K.INJECTION, K.HIDDEN]),
-        )
-        return {**local, **inherited}
 
     @staticmethod
     def degraded_body(body, protocol):
@@ -121,78 +113,79 @@ class MemoryKernel:
             logger.exception("Context Gateway preparation failed")
             return self.degraded_body(body, protocol), None, {"degradation": "memory_store_failure"}
 
+    async def identity(self, messages, protocol, headers, credential, tools):
+        sid = session_id(headers)
+        needs_hidden = protocol == "chat" and (sid is None or tools)
+
+        def chains():
+            chain = prefix_chain(messages)
+            return chain, hidden_chain(messages) if needs_hidden else chain
+
+        # Small prompts need no executor; large payloads must not block the loop.
+        if len(messages) > 32 or any(len(m.get("content") or "") > 8192 for m in messages):
+            chain, body_chain = await asyncio.to_thread(chains)
+        else:
+            chain, body_chain = chains()
+        scope = digest(credential["account"] + "\0" + credential["user_id"] + "\0" + protocol)
+        anonymous = sid is None
+        if anonymous:
+            endpoints = [
+                a
+                for a, m in zip(body_chain, messages, strict=True)
+                if a and m.get("role") == "assistant"
+            ]
+            owners = (
+                await self.store.state.read(scope, ["prefix:" + a for a in endpoints])
+                if endpoints
+                else {}
+            )
+            for anchor in reversed(endpoints):
+                match = owners.get("prefix:" + anchor)
+                if match:
+                    sid = match.value["owners"][0] if len(match.value["owners"]) == 1 else None
+                    break
+            sid = sid or "anonymous-" + uuid.uuid4().hex
+        return scope, sid, anonymous, chain, body_chain
+
     async def prepare(
         self, body, protocol, headers, credential, upstream, policy, counting=False, upstreams=()
     ):
         messages = messages_of(body, protocol)
         if not isinstance(messages, list) or not all(isinstance(m, dict) for m in messages):
             raise ValueError("invalid message list")
-        chains = [
-            await asyncio.to_thread(prefix_chain, messages, version) for version in READ_VERSIONS
-        ]
-        chain = chains[0]
-        # Identity is from /health at issuance, not caller-supplied tenant headers.
-        scope = digest(credential["account"] + "\0" + credential["user_id"] + "\0" + protocol)
-        sid = session_id(headers, messages, chain)
-        anonymous = sid is None
-        if anonymous:
-            # Only completed assistant endpoints observed by this gateway identify
-            # anonymous continuations. A common greeting alone proves nothing.
-            identity_chain = (
-                await asyncio.to_thread(hidden_chain, messages) if protocol == "chat" else chain
-            )
-            endpoints = [
-                a
-                for a, m in zip(identity_chain, messages, strict=True)
-                if a and m.get("role") == "assistant"
-            ]
-            owners = (
-                await self.store.owners(scope, endpoints, K.SESSION_PREFIX) if endpoints else {}
-            )
-            for anchor in reversed(endpoints):
-                if anchor in owners:
-                    sid = owners[anchor][0] if len(owners[anchor]) == 1 else None
-                    break
-            sid = sid or "anonymous-" + uuid.uuid4().hex
-        body_chain = chain
-        records = await self._records(scope, sid, list(dict.fromkeys(["", *chain])))
+        scope, sid, anonymous, chain, body_chain = await self.identity(
+            messages,
+            protocol,
+            headers,
+            credential,
+            (policy.get("gateway_tools", False) or policy.get("capture", True)),
+        )
+        records, observations, capture = await self.store.load(
+            scope, sid, list(dict.fromkeys(["", *chain, *body_chain]))
+        )
         plugin = plugin_present(body, headers)
-        root = records.get((K.ROOT, ""))
-        if root is None:
-            root = await self.store.put(
-                scope,
-                sid,
-                K.ROOT,
-                "",
-                {
-                    "upstream_id": upstream["id"],
-                    "tool_version": TOOL_VERSION,
-                    "tools": select_tools(body, protocol, upstream, policy) if not plugin else [],
-                    "policy": policy,
-                    "credential_id": credential["id"],
-                    "ov_session": "context-gateway-" + digest(scope + sid)[:40],
-                },
-            )
-        pinned = next((u for u in upstreams if u["id"] == root["upstream_id"]), None)
-        if pinned:
-            upstream = pinned
+        root = await self.session_root(
+            records, scope, sid, body, protocol, upstream, policy, credential, plugin
+        )
+        if (
+            protocol == "chat"
+            and (root["tools"] or root["policy"]["capture"])
+            and body_chain is chain
+        ):
+            body_chain = await asyncio.to_thread(hidden_chain, messages)
+            if body_chain != chain:
+                records.update(await self.store.replay.read(scope, sid, body_chain))
+        upstream = next((u for u in upstreams if u["id"] == root["upstream_id"]), upstream)
         policy = Policy.model_validate(
             {k: v for k, v in root["policy"].items() if k not in {"id", "revision"}}
         )
-        if protocol == "chat" and root.get("tools"):
-            body_chain = await asyncio.to_thread(hidden_chain, messages)
-            if body_chain != chain:
-                records.update(await self.store.lookup(scope, body_chain, [K.HIDDEN]))
         kind, anchor = classify(body, headers, messages, counting)
         disabled = (K.DISABLED, "") in records
-        if plugin:
-            await self.store.put(scope, sid, K.DISABLED, "", {"reason": "plugin_present"})
+        if plugin and not disabled:
+            await self.store.replay.put(scope, sid, K.DISABLED, "", {"reason": "plugin_present"})
             disabled = True
-        result = dict(body)
-        # Changed message fields are replaced, never mutated in place. Nested
-        # tool/image payloads remain shared until an operation needs to change them.
-        result_messages = [dict(message) for message in messages]
-        result["input" if protocol == "responses" else "messages"] = result_messages
+        field = "input" if protocol == "responses" else "messages"
+        result = {**body, field: [dict(m) for m in messages]}
         prepared = Prepared(
             result,
             body,
@@ -205,204 +198,225 @@ class MemoryKernel:
             anchor,
             root,
             records,
-            disabled,
-            {"kind": kind, "replay_hits": 0, "recall_count": 0, "recall_ms": 0},
+            disabled=disabled,
+            anonymous=anonymous,
+            body_chain=body_chain,
+            capture_chain=body_chain,
+            capture=capture,
+            observation=observations.get(sid, Document()),
+            capture_target=capture.value.get("ov_session", ""),
+            upstream=upstream,
+            metrics={
+                "kind": kind,
+                "replay_hits": 0,
+                "recall_count": 0,
+                "recall_ms": 0,
+                "session": sid,
+                "protocol": protocol,
+                "credential_id": credential["id"],
+            },
         )
-        prepared.body_chain = body_chain
-        prepared.anonymous = anonymous
-        route = records.get((K.CAPTURE_ROUTE, ""))
-        prepared.capture_session = route["session"] if route else sid
-        prepared.capture_ov_session = route["ov_session"] if route else root["ov_session"]
-        prepared.upstream = upstream
-        prepared.metrics.update(session=sid, protocol=protocol, credential_id=credential["id"])
-        failures = (
-            records
-            if prepared.capture_session == sid
-            else await self.store.read(scope, prepared.capture_session, [""], [K.CAPTURE_FAILED])
-        )
-        failure = failures.get((K.CAPTURE_FAILED, ""), {})
-        prepared.metrics.update(
-            capture_status=("paused" if failure.get("attempts", 5) >= 5 else "retrying")
-            if failure
-            else ("active" if policy.capture else "disabled"),
-            capture_reason=failure.get("reason", ""),
-            capture_retry_at=failure.get("retry_at"),
-        )
-        if upstream["id"] != root["upstream_id"]:
-            result_messages[:] = strip_thinking(result_messages)
-            prepared.metrics["degradation"] = "upstream_changed"
-        tools = root.get("tools", [])
-        if tools:
-            reason = tool_block_reason(body, protocol, upstream)
-            names = {t["function"]["name"] for t in tools}
-            collision = any(
-                t.get("function", {}).get("name") in names for t in body.get("tools", [])
-            )
-            if reason or collision:
-                prepared.metrics["tool_skip_reason"] = reason or "tool_name_collision"
-            else:
-                result["tools"] = [*body.get("tools", []), *tools]
-                prepared.tools_active = True
-                if disabled or kind not in {"user", "continuation"}:
-                    result["tool_choice"] = "none"
-        elif policy.gateway_tools:
-            prepared.metrics["tool_skip_reason"] = (
-                tool_block_reason(body, protocol, upstream) or "tools_not_selected_at_session_start"
-            )
-        # Always replay, even after plugin detection or on auxiliary requests.
-        missing = False
-        for index, _message in enumerate(messages):
-            decision = next(
-                (
-                    records.get((K.INJECTION, c[index]))
-                    for c in chains
-                    if (K.INJECTION, c[index]) in records
-                ),
-                None,
-            )
-            if decision:
-                if decision["text"]:
-                    append_context(result_messages[index], decision["text"], protocol)
-                prepared.metrics["replay_hits"] += 1
-            elif (K.SENT, chain[index]) in records:
-                missing = True
-        if missing and protocol == "anthropic":
-            result_messages[:] = strip_thinking(result_messages)
-            prepared.metrics["degradation"] = "missing_injection_record"
-        if disabled:
-            prepared.metrics["degradation"] = "plugin_present"
-            if result_messages == messages and isinstance(body.get("input"), str):
-                result["input"] = body["input"]
-            await self._takeover(prepared, credential, policy, allow_new=False)
-            self._replay_tools(prepared)
-            return prepared
-        if kind == "user" and anchor >= 0 and (K.INJECTION, chain[anchor]) not in records:
-            decision = await self._recall(prepared, credential, policy)
-            if decision["text"]:
-                append_context(result_messages[anchor], decision["text"], protocol)
-        if policy.capture and kind == "user":
-            from .capture import CapturePipeline
-
-            await CapturePipeline(self.store).confirm(prepared, credential, policy)
-        await self._takeover(
-            prepared,
-            credential,
-            policy,
-            allow_new=(
-                policy.takeover
-                and policy.capture
-                and prepared.metrics.get("capture_status") == "active"
-                and kind in {"user", "continuation", "count"}
-            ),
-        )
-        if (
-            result_messages == messages
-            and result.get("input") == result_messages
-            and isinstance(body.get("input"), str)
-        ):
+        CapturePipeline.metrics(prepared, policy)
+        self.configure_tools(prepared, policy)
+        self.replay(prepared)
+        if not disabled:
+            if kind == "user" and anchor >= 0 and (K.INJECTION, chain[anchor]) not in records:
+                await self.recall(prepared, credential, policy)
+            if policy.capture and kind == "user" and anchor >= 0:
+                await CapturePipeline(self.store.capture).confirm(prepared, credential, policy)
+        await self.takeover(prepared, policy)
+        if protocol == "chat" and prepared.tools_active:
+            result["messages"] = replay_hidden(result["messages"], prepared.body_chain, records)
+            if prepared.strip_replayed_thinking:
+                result["messages"] = strip_thinking(result["messages"])
+        if isinstance(body.get("input"), str) and result.get("input") == messages:
             result["input"] = body["input"]
-        self._replay_tools(prepared)
         return prepared
 
-    @staticmethod
-    def _replay_tools(request):
-        if request.protocol == "chat" and request.tools_active:
-            request.body["messages"] = replay_hidden(
-                request.body["messages"], request.body_chain, request.records
+    async def session_root(
+        self, records, scope, sid, body, protocol, upstream, policy, credential, plugin
+    ):
+        root = records.get((K.ROOT, ""))
+        if root is None:
+            root = await self.store.replay.put(
+                scope,
+                sid,
+                K.ROOT,
+                "",
+                {
+                    "upstream_id": upstream["id"],
+                    "tool_version": TOOL_VERSION,
+                    "tools": select_tools(body, protocol, upstream, policy) if not plugin else [],
+                    "policy": policy,
+                    "credential_id": credential["id"],
+                    "vendor": {
+                        "prompt_cache_key": body.get("prompt_cache_key")
+                        or "ovcg-" + digest(scope + sid)[:40],
+                        "parameters": parameter_fingerprint(body),
+                    },
+                },
             )
-            if request.strip_replayed_thinking:
-                request.body["messages"] = strip_thinking(request.body["messages"])
+        return root
 
-    async def _recall(self, request, credential, policy):
+    @staticmethod
+    def configure_tools(request, policy):
+        tools = request.root["tools"]
+        if tools:
+            reason = tool_block_reason(request.original, request.protocol, request.upstream)
+            names = {t["function"]["name"] for t in tools}
+            collision = any(
+                t.get("function", {}).get("name") in names
+                for t in request.original.get("tools", [])
+            )
+            if reason or collision:
+                request.metrics["tool_skip_reason"] = reason or "tool_name_collision"
+            else:
+                request.body["tools"] = [*request.original.get("tools", []), *tools]
+                request.tools_active = True
+                if request.disabled or request.kind not in {"user", "continuation"}:
+                    request.body["tool_choice"] = "none"
+        elif policy.gateway_tools:
+            request.metrics["tool_skip_reason"] = (
+                tool_block_reason(request.original, request.protocol, request.upstream)
+                or "tools_not_selected_at_session_start"
+            )
+
+    @staticmethod
+    def replay(request):
+        field = "input" if request.protocol == "responses" else "messages"
+        messages = request.body[field]
+        missing = False
+        sent = set(request.observation.value.get("sent", []))
+        for index, anchor in enumerate(request.chain):
+            decision = request.records.get((K.INJECTION, anchor))
+            if decision is not None:
+                if decision["text"]:
+                    append_context(messages[index], decision["text"], request.protocol)
+                request.metrics["replay_hits"] += 1
+            elif anchor in sent:
+                missing = True
+        reason = ""
+        if request.upstream["id"] != request.root["upstream_id"]:
+            reason = "upstream_changed"
+        elif missing and request.protocol == "anthropic":
+            reason = "missing_injection_record"
+        if reason:
+            request.body[field] = strip_thinking(messages)
+            request.metrics["degradation"] = reason
+        if request.disabled:
+            request.metrics["degradation"] = "plugin_present"
+
+    async def recall(self, request, credential, policy):
         started = time.monotonic()
-        anchor = request.chain[request.anchor]
-        state_key = K.RECALL_STATE, ""
         existing = [v for (kind, _), v in request.records.items() if kind == K.INJECTION]
-        state = request.records.get(state_key)
+        used = sum(v.get("tokens", 0) for v in existing)
+        exclude = list(dict.fromkeys(u for v in existing for u in v.get("uris", [])))
+        budget = min(policy.max_tokens, policy.session_max_tokens - used)
         query = clean_text(unwrap_client(text_content(request.messages[request.anchor])))[
             : policy.query_max_chars
         ]
-        while True:
-            current = state or {
-                "tokens": sum(v.get("tokens", 0) for v in existing),
-                "uris": list(dict.fromkeys(u for v in existing for u in v.get("uris", []))),
-            }
-            budget = min(policy.max_tokens, policy.session_max_tokens - current["tokens"])
-            inherited = await self.store.lookup(request.scope, [anchor], [K.INJECTION])
-            decision = inherited.get((K.INJECTION, anchor))
-            if decision is None:
-                decision = {"text": "", "uris": [], "tokens": 0, "reason": "disabled"}
-                if policy.recall and budget >= 64 and len(query) >= 3:
-                    try:
-                        response = await self.viking.recall(
-                            credential["openviking_key"], query, policy, current["uris"], budget
-                        )
-                        decision = render_entries(response.get("entries", []), budget)
-                    except (VikingError, asyncio.TimeoutError) as error:
-                        decision["reason"] = getattr(error, "reason", "recall_timeout")
-            values = {
-                (K.INJECTION, anchor): decision,
-                state_key: {
-                    "tokens": current["tokens"] + decision["tokens"],
-                    "uris": list(dict.fromkeys([*current["uris"], *decision["uris"]])),
-                },
-            }
-            if await self.store.commit(
-                request.scope,
-                request.session,
-                values,
-                expected={state_key: state, (K.INJECTION, anchor): None},
-                shared=[(K.INJECTION, anchor)],
-            ):
-                break
-            fresh = await self.store.read(
-                request.scope, request.session, ["", anchor], [K.RECALL_STATE, K.INJECTION]
-            )
-            if (K.INJECTION, anchor) in fresh:
-                decision = fresh[K.INJECTION, anchor]
-                break
-            state = fresh.get(state_key)
+        decision = {"text": "", "uris": [], "tokens": 0, "reason": "disabled"}
+        reserved = False
+        if policy.recall and budget >= 64 and len(query) >= 3:
+            budget = await self.reserve_recall(request, policy, used)
+            reserved = budget > 0
+        if reserved:
+            try:
+                response = await self.viking.recall(
+                    credential["openviking_key"], query, policy, exclude, budget
+                )
+                decision = render_entries(response.get("entries", []), budget)
+            except (VikingError, asyncio.TimeoutError) as error:
+                decision["reason"] = getattr(error, "reason", "recall_timeout")
+        anchor = request.chain[request.anchor]
+        decision = await self.store.replay.put(
+            request.scope, request.session, K.INJECTION, anchor, decision
+        )
+        if reserved:
+            await self.settle_recall(request, anchor, decision["tokens"])
         request.records[K.INJECTION, anchor] = decision
+        if decision["text"]:
+            field = "input" if request.protocol == "responses" else "messages"
+            append_context(request.body[field][request.anchor], decision["text"], request.protocol)
         request.metrics.update(
             recall_count=len(decision["uris"]),
             recall_ms=round((time.monotonic() - started) * 1000, 2),
             recall_reason=decision["reason"],
         )
-        return decision
+
+    async def reserve_recall(self, request, policy, used):
+        """Reserve a bounded allowance before recall; only this document uses CAS.
+
+        A crash can leave a conservative reservation, never overspend the cap.
+        Competing requests for the same anchor share its reservation and the
+        immutable decision; settling it twice cannot refund twice.
+        """
+        anchor, old = request.chain[request.anchor], request.observation
+        while True:
+            ledger = old.value.get("recall", {"spent": used, "pending": {}})
+            if anchor in ledger["pending"]:
+                request.observation = old
+                return ledger["pending"][anchor]
+            budget = min(policy.max_tokens, policy.session_max_tokens - ledger["spent"])
+            if budget < 64:
+                return 0
+            value = {
+                **old.value,
+                "recall": {
+                    "spent": ledger["spent"] + budget,
+                    "pending": {**ledger["pending"], anchor: budget},
+                },
+            }
+            if await self.store.state.swap(request.scope, request.session, old, value):
+                request.observation = Document(value, old.version + 1)
+                return budget
+            old = await get_state(self.store.state, request.scope, request.session)
+
+    async def settle_recall(self, request, anchor, tokens):
+        old = request.observation
+        while anchor in old.value.get("recall", {}).get("pending", {}):
+            ledger = old.value["recall"]
+            pending = dict(ledger["pending"])
+            reserved = pending.pop(anchor)
+            value = {
+                **old.value,
+                "recall": {"spent": ledger["spent"] - reserved + tokens, "pending": pending},
+            }
+            if await self.store.state.swap(request.scope, request.session, old, value):
+                request.observation = Document(value, old.version + 1)
+                return
+            old = await get_state(self.store.state, request.scope, request.session)
 
     async def completed(self, request, credential, response):
         chain = set(request.chain)
-        await self.store.put_many(
-            request.scope,
-            request.session,
-            {
-                (K.SENT, anchor): {}
-                for (kind, anchor), decision in request.records.items()
-                if kind == K.INJECTION
-                and decision.get("text")
-                and anchor in chain
-                and (K.SENT, anchor) not in request.records
-            },
-        )
-        if response.usage:
-            model = request.body.get("model", "")
-            await self.store.commit(
-                request.scope,
-                request.session,
-                {
-                    (K.USAGE, ""): {
-                        **(response.context_usage or response.usage),
-                        "model": model,
-                        "upstream_id": request.upstream.get("id"),
-                        "time": time.time(),
-                    }
-                },
-            )
+        sent = [
+            a
+            for (k, a), v in request.records.items()
+            if k == K.INJECTION and v.get("text") and a in chain
+        ]
+        usage = {
+            **(response.context_usage or response.usage or {}),
+            "model": request.body.get("model", ""),
+            "upstream_id": request.upstream.get("id"),
+            "time": time.time(),
+        }
+        old = request.observation
+        while True:
+            value = dict(old.value)
+            if response.usage and usage["time"] >= old.value.get("usage", {}).get("time", 0):
+                value["usage"] = usage
+            if sent:
+                value["sent"] = list(dict.fromkeys([*old.value.get("sent", []), *sent]))
+            if value == old.value:
+                break
+            if await self.store.state.swap(request.scope, request.session, old, value):
+                break
+            old = await get_state(self.store.state, request.scope, request.session)
         if (
             request.anonymous
-            and request.kind in {"user", "continuation"}
             and response.complete
             and response.message
+            and request.kind in {"user", "continuation"}
         ):
             returned = [*request.messages, *(response.output_items or [response.message])]
             endpoint = (
@@ -411,7 +425,17 @@ class MemoryKernel:
                 )
             )[-1]
             if endpoint:
-                await self.store.put(request.scope, request.session, K.SESSION_PREFIX, endpoint, {})
+                key = "prefix:" + endpoint
+                old = await get_state(self.store.state, request.scope, key)
+                while True:
+                    owners = old.value.get("owners", [])
+                    if request.session in owners or len(owners) >= 2:
+                        break
+                    if await self.store.state.swap(
+                        request.scope, key, old, {"owners": [*owners, request.session]}
+                    ):
+                        break
+                    old = await get_state(self.store.state, request.scope, key)
         if (
             request.disabled
             or request.kind not in {"user", "continuation"}
@@ -424,111 +448,70 @@ class MemoryKernel:
             {k: v for k, v in request.root["policy"].items() if k not in {"id", "revision"}}
         )
         if policy.capture:
-            from .capture import CapturePipeline
+            await CapturePipeline(self.store.capture).stage(request, response, policy)
 
-            await CapturePipeline(self.store).stage(request, credential, policy, response)
-
-    async def _takeover(self, request, credential, policy, *, allow_new=True):
-        usage = request.records.get((K.USAGE, ""), {})
+    async def takeover(self, request, policy):
+        if self.replace_archive(request, policy):
+            return
+        usage = request.observation.value.get("usage", {})
         model = request.body.get("model", "")
         resolved = request.upstream.get("aliases", {}).get(model, model)
         window = request.upstream.get("context_windows", {}).get(resolved, policy.context_window)
-        urgent = bool(
-            allow_new
+        archive = request.capture.value.get("archive")
+        if not (
+            policy.takeover
+            and policy.capture
+            and not request.disabled
             and window
+            and archive
+            and archive["status"] == "pending"
+            and not request.capture.value.get("error")
+            and request.capture.value.get("tokens", 0) >= policy.takeover_tokens
+            and self.eligible(request, archive["boundary"], policy)
             and usage.get("model") in {model, resolved}
             and usage.get("upstream_id") == request.upstream.get("id")
             and usage.get("input_tokens", 0) + usage.get("output_tokens", 0) >= window * 0.9
-        )
-        deadline = time.monotonic() + (policy.archive_wait_seconds if urgent else 0)
-        while True:
-            replaced, pending = await self._replace_archive(request, credential, policy, allow_new)
-            if replaced or not (urgent and pending):
-                return
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                request.metrics["degradation"] = "archive_wait_timeout"
-                return
-            await asyncio.sleep(min(POLL_SECONDS, remaining))
-            request.records.update(
-                await self.store.read(
-                    request.scope, request.session, request.chain, [K.ARCHIVE, K.REPLACEMENT]
-                )
+        ):
+            return
+        deadline = time.monotonic() + policy.archive_wait_seconds
+        while time.monotonic() < deadline:
+            await asyncio.sleep(min(POLL_SECONDS, deadline - time.monotonic()))
+            request.records, _, request.capture = await self.store.load(
+                request.scope, request.session, ["", *request.chain, *request.capture_chain]
             )
-
-    async def _replace_archive(self, request, credential, policy, allow_new=True):
-        if not any(k in {K.ARCHIVE, K.REPLACEMENT} for k, _ in request.records):
-            return False, False
-        positions = {anchor: i for i, anchor in enumerate(request.chain) if anchor}
-        candidates = sorted(
-            {a for k, a in request.records if k in {K.ARCHIVE, K.REPLACEMENT} and a in positions},
-            key=positions.get,
-            reverse=True,
-        )
-        pending = False
-        for anchor in candidates:
-            index = positions[anchor]
-            replacement = request.records.get((K.REPLACEMENT, anchor))
-            invalid = replacement if replacement and replacement.get("fallback") else None
-            if replacement is not None and not invalid:
-                self._apply_replacement(request, index, replacement)
-                request.metrics["archive_replayed"] = anchor
-                return True, pending
-            archive = request.records.get((K.ARCHIVE, anchor))
-            if not allow_new or not archive:
-                continue
-            if archive.get("takeover") is False and (K.TAKEOVER, "") not in request.records:
-                continue
-            if sum(is_user(m) for m in request.messages[index + 1 :]) < policy.keep_recent_turns:
-                continue
-            archive = await refresh_archive(
-                self.store,
-                self.viking,
-                request.scope,
-                request.session,
-                anchor,
-                archive,
-                credential["openviking_key"],
-                archive.get("ov_session", request.root["ov_session"]),
-            )
-            request.records[K.ARCHIVE, anchor] = archive
-            if archive.get("status") != "ready":
-                pending |= archive.get("status") == "pending"
-                request.metrics["archive_status"] = archive.get("status", "unknown")
-                continue
-            value = {"text": "[OpenViking Session Context]\n" + archive["summary"]}
-            if invalid:
-                if not await self.store.commit(
-                    request.scope,
-                    request.session,
-                    {(K.REPLACEMENT, anchor): value},
-                    expected={(K.REPLACEMENT, anchor): invalid},
-                ):
-                    continue
-                replacement = value
-            else:
-                replacement = await self.store.put(
-                    request.scope, request.session, K.REPLACEMENT, anchor, value
-                )
-            self._apply_replacement(request, index, replacement)
-            request.metrics["archive_replayed"] = anchor
-            return True, pending
-        return False, pending
+            if self.replace_archive(request, policy):
+                return
+            current = request.capture.value.get("archive")
+            if not current or current["status"] != "pending" or request.capture.value.get("error"):
+                return
+        request.metrics["degradation"] = "archive_wait_timeout"
 
     @staticmethod
-    def _apply_replacement(request, index, replacement):
-        key = "input" if request.protocol == "responses" else "messages"
-        prefix = [
-            m for m in request.body[key][: index + 1] if m.get("role") in {"system", "developer"}
-        ]
-        request.strip_replayed_thinking = True
-        request.body_chain = ["" for _ in prefix] + [""] + request.body_chain[index + 1 :]
-        request.body[key] = [
-            *prefix,
-            {"role": "user", "content": replacement["text"]},
-            *strip_thinking(request.body[key][index + 1 :]),
-        ]
+    def eligible(request, anchor, policy):
+        if anchor not in request.capture_chain:
+            return False
+        index = request.capture_chain.index(anchor)
+        return sum(is_user(m) for m in request.messages[index + 1 :]) >= policy.keep_recent_turns
 
-
-# Compatibility imports for existing integrations.
-from .capture import CaptureWorker, capture_messages  # noqa: E402,F401
+    def replace_archive(self, request, policy):
+        for index in range(len(request.capture_chain) - 1, -1, -1):
+            anchor = request.capture_chain[index]
+            replacement = request.records.get((K.REPLACEMENT, anchor))
+            if replacement is None or not self.eligible(request, anchor, policy):
+                continue
+            field = "input" if request.protocol == "responses" else "messages"
+            prefix = [
+                m
+                for m in request.body[field][: index + 1]
+                if m.get("role") in {"system", "developer"}
+            ]
+            request.strip_replayed_thinking = True
+            request.body_chain = [""] * (len(prefix) + 1) + request.body_chain[index + 1 :]
+            request.body[field] = [
+                *prefix,
+                {"role": "user", "content": replacement["text"]},
+                *strip_thinking(request.body[field][index + 1 :]),
+            ]
+            request.metrics["archive_replayed"] = anchor
+            return True
+        return False
