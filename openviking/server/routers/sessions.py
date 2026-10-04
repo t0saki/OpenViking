@@ -366,8 +366,8 @@ async def get_session(
     result["pending_tokens"] = int(session.meta.pending_tokens or 0)
     result["auto_commit_policy"] = service.sessions.effective_auto_commit_policy(session)
     result.pop("event_search_tags", None)
-    result["memory_extraction_config"] = (
-        service.sessions.effective_memory_extraction_config(session)
+    result["memory_extraction_config"] = service.sessions.effective_memory_extraction_config(
+        session
     )
     return Response(status="ok", result=result)
 
@@ -591,6 +591,7 @@ class CommitRequest(BaseModel):
     behavior.
     """
 
+    idempotency_key: Optional[str] = Field(default=None, min_length=1, max_length=256)
     reset_context: bool = Field(
         default=False,
         strict=True,
@@ -682,6 +683,8 @@ async def commit_session(
     )
     if body.reset_context:
         commit_kwargs["reset_context"] = True
+    if body.idempotency_key is not None:
+        commit_kwargs["idempotency_key"] = body.idempotency_key
     event_tags = _commit_event_tags(body.extraction_metadata)
     if event_tags is not None:
         commit_kwargs["event_tags"] = event_tags
@@ -710,6 +713,17 @@ async def extract_session(
     service = get_service()
     result = await service.sessions.extract(session_id, _ctx)
     return Response(status="ok", result=_to_jsonable(result))
+
+
+@router.get("/{session_id}/commit-status")
+async def get_commit_status(
+    session_id: str = Path(..., description="Session ID"),
+    idempotency_key: str = Query(..., min_length=1, max_length=256),
+    _ctx: RequestContext = Depends(get_session_request_context),
+):
+    """Get a durable keyed commit receipt, archive state and completed overview."""
+    session = await get_service().sessions.get(session_id, _ctx, auto_create=False)
+    return Response(status="ok", result=await session.get_commit_status(idempotency_key))
 
 
 @router.post("/{session_id}/messages")
@@ -752,9 +766,9 @@ async def add_message(
         ]
         add_many_async = getattr(session, "add_messages_async", None)
         if callable(add_many_async):
-            await add_many_async(specs)
+            messages = await add_many_async(specs)
         else:
-            session.add_messages(specs)
+            messages = session.add_messages(specs)
         await service.sessions.maybe_schedule_auto_commit(
             session_id,
             _ctx,
@@ -764,6 +778,8 @@ async def add_message(
         return {
             "session_id": session_id,
             "message_count": len(session.messages),
+            "message_ids": [message.id for message in messages],
+            "added": getattr(messages, "added", len(messages)),
             # Post-write value so a commit policy can decide without a
             # follow-up get_session round trip.
             "pending_tokens": _session_pending_tokens(session),
@@ -820,7 +836,8 @@ async def batch_add_messages(
         return {
             "session_id": session_id,
             "message_count": len(session.messages),
-            "added": len(msgs),
+            "added": getattr(msgs, "added", len(msgs)),
+            "message_ids": [message.id for message in msgs],
             # Post-write value so a commit policy can decide without a
             # follow-up get_session round trip.
             "pending_tokens": _session_pending_tokens(session),
