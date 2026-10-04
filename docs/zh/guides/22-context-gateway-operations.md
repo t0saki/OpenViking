@@ -6,7 +6,7 @@ description: 用 Docker Compose、Helm 或自建反向代理部署上下文网�
 
 本页写给负责运行上下文网关的人，内容包括部署网关，在 Studio 中管理上游、上下文配置和密钥，保护数据，以及排查问题。网关能做什么、客户端怎么接入，见[上下文网关](15-context-gateway.md)。
 
-网关是与 OpenViking Server 并行运行的独立进程，通常监听 1935 端口。客户端把模型请求发给网关。网关在 Studio 中管理，Studio 由 OpenViking Server 提供，管理操作经由 OpenViking Server 转发给网关。
+网关是独立于 OpenViking Server 的进程，默认监听 1935 端口。客户端把模型请求发给网关；管理网关则在 Studio 中进行，Studio 由 OpenViking Server 提供，管理操作经 OpenViking Server 转发给网关。
 
 ```text
                        客户端
@@ -28,9 +28,9 @@ description: 用 Docker Compose、Helm 或自建反向代理部署上下文网�
 
 ## 环境要求
 
-- **OpenViking Server 0.4.16 或更高版本，并运行在 API Key 模式**（`server.auth_mode: "api_key"`，同时配置 `root_api_key`）。网关用每个人自己的 OpenViking 密钥代其操作。dev 模式下任何密钥都以 root 身份运行，网关会拒绝这种密钥，所以签发不了任何网关密钥。
+- **OpenViking Server 0.4.16 或更高版本，并运行在 API Key 模式**（`server.auth_mode: "api_key"`，同时配置 `root_api_key`）。网关用每个人自己的 OpenViking 密钥，以这个人的身份访问 OpenViking。dev 模式下任何密钥都按 root 身份处理，而网关不接受 root 身份，所以一个网关密钥也签发不了。
 - **网关本身**：在 Python 3.10 或更高版本上安装 `openviking[context-gateway]` 可选依赖，或者使用官方 OpenViking Docker 镜像，镜像里已经包含 `openviking-context-gateway` 命令。
-- **用于 Studio 的账号管理员密钥。** 你配置的一切都归属于登录所用密钥的账号。root key 也能用，但它管理的是它解析到的那个账号，所以优先使用账号管理员的密钥。
+- **用于 Studio 的账号管理员密钥。** 你在 Studio 中配置的内容，都属于登录所用密钥所在的账号。root key 也能用，但它管理的是它解析到的那个账号，所以优先使用账号管理员的密钥。
 - **每位领取网关密钥的人都要有 OpenViking 用户密钥**，并且来自同一个账号。管理员密钥也可以，root key 不行。
 - **模型服务商的 API Key。** 订阅登录会被拒绝；Coding Plan 密钥默认也会被拒绝，除非你明确允许。
 - **单台主机上的本地磁盘**，用于网关存储（默认 `~/.openviking/context-gateway`）。不支持网络文件系统，也不支持在多台主机之间共享存储。
@@ -78,7 +78,7 @@ python3 -c 'import secrets; print(secrets.token_urlsafe(48))'
 
 ### 路由
 
-让 OpenViking Server 和网关共用一个公网 HTTPS 源，由反向代理按路径分流：
+让 OpenViking Server 和网关共用同一个公网 HTTPS 地址，由反向代理按路径分流：
 
 | 路径 | 转发到 | 用途 |
 | --- | --- | --- |
@@ -88,7 +88,7 @@ python3 -c 'import secrets; print(secrets.token_urlsafe(48))'
 | `/context-gateway/uploads` | 网关 | OpenViking 工具的一次性文件上传 |
 | 其他所有路径 | OpenViking Server | Studio、REST API、MCP、OAuth、`/health` |
 
-按这种布局，`public_url` 就是公网源，例如 `https://ov.example.com`。Anthropic 客户端直接使用这个地址，OpenAI 风格的客户端在后面加上 `/v1`。
+按这种布局，`public_url` 就填这个公网地址，例如 `https://ov.example.com`。Anthropic 客户端直接使用这个地址，OpenAI 风格的客户端在后面加上 `/v1`。
 
 > **安全**：不要从公网入口转发网关的 `/admin/*` 路径，也不要直接暴露网关端口。网关的管理接口只认管理令牌，持有令牌就能管理任何账号。Studio 经由 OpenViking Server 访问管理接口，OpenViking Server 会确认你是账号管理员，并把每次调用限制在你自己的账号内。只转发上面四组路径，1933 和 1935 端口都留在代理后面，不对外开放。
 
@@ -110,7 +110,7 @@ python3 -c 'import secrets; print(secrets.token_urlsafe(48))'
    OPENVIKING_CONTEXT_GATEWAY_ADMIN_TOKEN=<admin-token>
    ```
 
-   Compose 把管理令牌传给两个容器，加密密钥只传给网关。任一个为空，网关都会退出，Compose 则会不停地重启它。
+   Compose 把管理令牌传给两个容器，加密密钥只传给网关。其中任何一个为空，网关都会退出，Compose 则会不停地重启它。
 
 2. **把以下设置合并进 `~/.openviking/ov.conf`：**
 
@@ -130,7 +130,7 @@ python3 -c 'import secrets; print(secrets.token_urlsafe(48))'
    }
    ```
 
-   客户端还在访问自带 Caddy 的端口时，使用 `http://<your-host>:1934`；配好 HTTPS 源之后改成那个地址。`storage_path` 可以保持默认：在容器内它解析为 `/app/.openviking/context-gateway`，正好位于挂载卷中。
+   客户端还在访问自带 Caddy 的端口时，使用 `http://<your-host>:1934`；配好 HTTPS 地址之后改用它。`storage_path` 可以保持默认：在容器内它解析为 `/app/.openviking/context-gateway`，正好位于挂载卷中。
 
 3. **带上 profile 启动：**
 
@@ -147,11 +147,11 @@ python3 -c 'import secrets; print(secrets.token_urlsafe(48))'
    # {"detail":"Invalid or revoked Context Gateway key"}
    ```
 
-   然后打开 Studio，确认概览页显示 OpenViking 已连接。启动错误可以用 `docker compose logs context-gateway` 查看。
+   然后打开 Studio，确认“概览”标签页显示 OpenViking 已连接。启动错误可以用 `docker compose logs context-gateway` 查看。
 
-如果网关启动时 OpenViking Server 还没有就绪，网关会在不带记忆的状态下运行，直到下一次检查 OpenViking，最多 60 秒（`health_interval_seconds`）。这段时间里发出的消息不带记忆直接发给模型。
+如果网关启动时 OpenViking Server 还没有就绪，网关会先在不带记忆的状态下运行，直到下一次检查 OpenViking，最多等 60 秒（`health_interval_seconds`）。这段时间里发出的消息不带记忆直接发给模型。
 
-**HTTPS。** 按[公网访问与反向代理](12-public-access.md)中的方式 A 设置 `OPENVIKING_PUBLIC_BASE_URL`、开放 80 和 443 端口并添加 Caddy 卷，但 `Caddyfile` 中的域名块改用下面这段，让网关路径转发到网关：
+**HTTPS。** 按[公网访问与反向代理](12-public-access.md#添加-https公网访问)中的方式 A 设置 `OPENVIKING_PUBLIC_BASE_URL`、开放 80 和 443 端口并添加 Caddy 卷，但 `Caddyfile` 中的域名块改用下面这段，让网关路径转发到网关：
 
 ```caddyfile
 {$OPENVIKING_PUBLIC_BASE_URL} {
@@ -167,7 +167,7 @@ python3 -c 'import secrets; print(secrets.token_urlsafe(48))'
 }
 ```
 
-然后把 `context_gateway.public_url` 设为同一个源，并写成字面值（例如 `https://ov.example.com`），再重启。
+然后把 `context_gateway.public_url` 设为同一个地址，并写成字面值（例如 `https://ov.example.com`），再重启。
 
 ### Helm
 
@@ -281,35 +281,36 @@ server {
 - **工作进程。** `workers`（1–64；默认 1，Helm Chart 中为 2）决定主机上运行几个网关进程。它们共用存储文件，每个进程还会在后台保存对话。
 - **单台主机。** 不支持在多台主机上运行网关，也不支持网络文件系统。使用 Helm 时保持一个副本。
 - **变更传播。** 吊销密钥或编辑上游后，其他工作进程大约 2 秒内跟上。
-- **健康状态按进程计算。** 每个工作进程独立检查 OpenViking，所以概览页上的 OpenViking 状态来自恰好响应请求的那个进程。
-- **没有负载均衡和限流。** 每段对话固定在一个上游上，网关不会换一个上游重试，也不限流；服务商返回的 429 原样传给客户端。需要负载均衡、故障转移或配额时，在网关后面接 LiteLLM 或 new-api，并把它作为上游。
+- **健康状态按进程计算。** 每个工作进程独立检查 OpenViking，所以“概览”标签页上的 OpenViking 状态来自恰好响应这次查询的那个进程。
+- **没有负载均衡和限流。** 每段对话固定在一个上游上，网关不会换一个上游重试，也不限流；服务商返回的 429 原样传给客户端。需要负载均衡、故障转移或配额时，在网关后面接 LiteLLM 或 new-api，再把它添加为上游。
 
 ## 在 Studio 中管理网关
 
-在 OpenViking Server 上打开 `/studio`，进入**连接设置**，把账号管理员密钥填入**管理员 API 密钥**。侧边栏的“设置”分组里随即出现**上下文网关**，只有账号管理员和 root 能看到它。这些页面上的所有内容都属于该密钥所在的账号。页面顶部显示客户端应该使用的网关地址，取自 `public_url`。
+在 OpenViking Server 上打开 `/studio`，进入**连接设置**，把账号管理员密钥填入**管理员 API 密钥**。侧边栏的“设置”分组里随即出现**上下文网关**，只有账号管理员和 root 能看到它。这些页面上的所有内容都属于该密钥所在的账号。页面顶部显示客户端应该使用的网关地址，即 `public_url`；`public_url` 为空时显示 `url`，“接入”标签页会提示客户端可能连不上这个地址。
 
 如果网关没有配置好或者无法访问，页面会显示一张设置卡片，指出要修改哪项配置，见 [Studio 显示设置卡片](#studio-显示设置卡片)。否则页面有六个标签页：**概览**、**上游**、**上下文配置**、**密钥**、**请求日志**和**接入**。初次设置就按这个顺序：添加上游，创建上下文配置，签发网关密钥，最后按“接入”标签页的说明接入客户端。
 
 ### 上游
 
-上游是一个模型服务商端点，只使用一种 API：Anthropic Messages、Chat Completions 或 Responses。网关从不在它们之间转换，所以客户端用到几种 API，就要添加几个上游，即使它们来自同一个服务商：Claude Code 用 Anthropic Messages，Codex CLI 用 Responses，大多数聊天应用和 SDK 用 Chat Completions。
+上游是模型服务商的一个接口，只使用一种 API：Anthropic Messages、Chat Completions 或 Responses。网关不在它们之间做转换，所以客户端用到几种 API，就要添加几个上游，即使它们来自同一个服务商：Claude Code 用 Anthropic Messages，Codex CLI 用 Responses，大多数聊天应用和 SDK 用 Chat Completions。
 
 上游编辑页分为四部分。
 
-**端点。**
+**接口。**
 
 - **协议**决定上游能处理哪些客户端请求，也决定网关如何发送密钥：Anthropic Messages 用 `x-api-key`，另外两种用 `Authorization: Bearer`。
 - **服务商**让网关适配各家服务商的差异：
   - *通用*、*Anthropic* 和 *OpenAI* 的行为相同。
   - *DeepSeek*：只有请求关闭了思考模式（`"thinking": {"type": "disabled"}`）时才提供 OpenViking 工具，因为 DeepSeek 的思考模式需要推理历史，而聊天应用不会把推理历史发回来。记忆照常补充。
   - *火山方舟*：请求发往方舟自己的路径。Chat Completions 和 Responses 的每段对话都使用一个固定的 `prompt_cache_key`，方舟的前缀缓存就能跟着对话走。如果请求的模型、思考模式、采样参数、系统提示词或工具与对话的第一个请求不同，就会被标记为**缓存参数有变化**（`ark_cache_parameters_changed`），因为这些参数一变，方舟就会重新建立缓存。
-- **Base URL。** 网关把客户端的请求路径拼接在后面，并去掉重复的 `/v1`，所以 `https://api.openai.com/v1` 和 `https://api.anthropic.com` 都能用。编辑页会显示请求实际发往的地址。方舟请使用源地址 `https://ark.cn-beijing.volces.com`，它适用于全部三种协议；以 `/api/v3` 结尾的地址只适用于 Chat Completions 和 Responses，以 `/api/compatible/v1` 结尾的只适用于 Anthropic Messages。API 路径不以 `/v1` 结尾的服务商（例如 `…/api/paas/v4`）不能直接使用，需要在中间加一个 LiteLLM 之类的兼容代理。
+- **Base URL。** 网关把客户端的请求路径拼接在后面，并去掉重复的 `/v1`，所以 `https://api.openai.com/v1` 和 `https://api.anthropic.com` 都能用。编辑页会显示请求实际发往的地址。方舟请填写不带路径的地址 `https://ark.cn-beijing.volces.com`，它适用于全部三种协议；以 `/api/v3` 结尾的地址只适用于 Chat Completions 和 Responses，以 `/api/compatible/v1` 结尾的只适用于 Anthropic Messages。API 路径不以 `/v1` 结尾的服务商（例如 `…/api/paas/v4`）不能直接使用，需要在中间加一个 LiteLLM 之类的兼容代理。
 
 **凭证。**
 
-- **网关保管密钥**（默认）：网关发送上游的 API Key，客户端只需要网关密钥。
-- **客户端自带密钥**：每个请求除了网关密钥，还要在 `X-OpenViking-Upstream-Key` 请求头里带上客户端自己的服务商密钥。缺少这个请求头的请求返回 401 "Upstream API key is missing"。网关按服务商惯用的请求头把这个密钥传过去，`X-OpenViking-*` 请求头本身从不转发。
-- **API Key** 和**额外请求头**只能写入，不能读回。编辑上游时，API Key 留空表示保留已保存的值。额外请求头只显示名称：值留空表示保留，删除这一行表示删除这个请求头。已保存的 API Key 无法清空；不想再用它时，改为“客户端自带密钥”，或者删除这个上游。
+- **API Key 由谁提供**：
+  - **由网关保管 API Key**（默认）：网关发送上游的 API Key，客户端只需要网关密钥。
+  - **每个客户端自带 API Key**：每个请求除了网关密钥，还要在 `X-OpenViking-Upstream-Key` 请求头里带上客户端自己的服务商 API Key。缺少这个请求头的请求返回 401 "Upstream API key is missing"。网关按服务商惯用的请求头把这个 API Key 传过去，`X-OpenViking-*` 请求头本身从不转发。
+- **API Key** 和**额外请求头**只能写入，不能读回。编辑上游时，API Key 留空表示保留已保存的值。额外请求头只显示名称：值留空表示保留，删除这一行表示删除这个请求头。已保存的 API Key 无法清空；不想再用它时，改为“每个客户端自带 API Key”，或者删除这个上游。
 - **额外请求头**会加到发往这个上游的每个请求上，例如服务商的版本或组织请求头，并覆盖客户端发送的同名请求头。不允许设置 `Host`、`Content-Length`、`Transfer-Encoding` 和 `Connection`。
 - **这是 Coding Plan 或订阅密钥。** 服务商通常只允许 Coding Plan 这类订阅密钥用在自家的编程工具里，通过共享网关使用可能导致订阅被封禁。勾选后，路由到这个上游的每个请求都会被拒绝，返回 403 "Coding Plan upstreams are disabled; configure a model API key"，除非同时勾选**仍然允许**。网关无法从密钥本身分辨它是不是订阅密钥，需要你自己标记。Claude 订阅令牌（`sk-ant-oat…`）始终会被拒绝。
 
@@ -328,7 +329,7 @@ server {
 
 其他上游设置都立即生效，对进行中的对话也一样。网关没有故障转移：选中的上游出错时，客户端会收到这个错误；服务商无法访问时返回 502 "Model upstream is unavailable"。
 
-列表中的**测试**和编辑页的**测试连接**会用上游的凭证和请求头请求服务商的模型列表（`/v1/models`，方舟为 `/api/v3/models`），最多等待 10 秒。测试通过说明主机可达，并且服务商接受这个密钥。测试不检查模型名，也不检查 Coding Plan 设置。没有模型列表接口、或者访问这个接口需要额外请求头的服务商，可能测试失败而实际请求正常。客户端自带密钥的上游无法测试。
+列表中的**测试**和编辑页的**测试连接**会用上游的凭证和请求头请求服务商的模型列表（`/v1/models`，方舟为 `/api/v3/models`），最多等待 10 秒。测试通过说明主机可达，并且服务商接受这个 API Key。测试不检查模型名，也不检查 Coding Plan 设置。没有模型列表接口、或者访问这个接口需要额外请求头的服务商，可能测试失败而实际请求正常。“每个客户端自带 API Key”的上游无法测试。
 
 有密钥在使用的上游不能删除；先吊销这些密钥，或者改为停用这个上游。
 
@@ -336,7 +337,7 @@ server {
 
 上下文配置是一组有名字的记忆设置。每个网关密钥使用一份上下文配置，一份上下文配置可以供多个密钥使用。比如可以准备一份“Coding”配置，召回记忆、资源和技能；再准备一份“Chat”配置，只召回记忆，预算也更小。
 
-“上下文配置”标签页为每份配置显示一张卡片，概括四个部分的设置和使用它的密钥数。**按推荐设置创建**一键创建一份名为“Default”的配置；**自定义**打开编辑页。有密钥在使用的配置不能删除；想做一份变体，用**复制一份**最快。
+“上下文配置”标签页为每份配置显示一张卡片，概括四个部分的设置和使用它的密钥数。标签页还是空的时候，**使用推荐设置创建**一键创建一份名为“默认”的配置，**自定义**打开编辑页；之后用**新建配置**打开编辑页。有密钥在使用的配置不能删除；想做一份变体，用**复制一份**最快。
 
 > **注意**：保存的修改只对之后开始的对话生效。对话在第一个请求时记下密钥当时的上下文配置并一直沿用，因为在对话中途改变模型看到的内容会破坏服务商缓存。每次聊天都新开对话的客户端很快就能用上新设置。Claude Code、Codex 以及发送固定会话请求头的客户端会一直沿用旧设置，直到开始新对话，或者这段对话闲置满 30 天（`session_ttl_days`）。
 
@@ -344,30 +345,30 @@ server {
 
 | 部分 | 作用 | 主要设置和默认值 |
 | --- | --- | --- |
-| 召回记忆 | 用每条新的用户消息搜索 OpenViking，把相关内容附加到这条消息上。 | 来源：记忆、资源、技能 · 单条消息预算：1,600 token · 单段对话预算：6,000 token · 相关度阈值：0.35 · 召回时限：2 秒 |
-| 保存对话 | 把已完成的轮次写入 OpenViking 会话并提交，供 OpenViking 提取记忆。 | 停顿后保存最新回复：600 秒 · 提交阈值：20,000 token · 保留最近消息数：10 |
-| 长对话 | 对话变长后，用 OpenViking 的摘要替换较早的历史。需要开启保存对话。 | 摘要阈值：30,000 token · 保留最近轮数：3 · 等待摘要时长：30 秒 |
-| OpenViking 工具 | 让模型在回答时搜索和读取 OpenViking。仅支持 Chat Completions，默认关闭。 | 读取工具：search、read、list · 写入工具：关闭 |
+| 召回记忆 | 用每条新的用户消息搜索 OpenViking，把相关内容附加到这条消息上。 | 检索范围：记忆、资源、技能 · 单条消息预算：1,600 token · 单段对话预算：6,000 token · 相关度阈值：0.35 · 超时时间：2 秒 |
+| 保存对话 | 把已完成的轮次写入 OpenViking 会话并提交，供 OpenViking 提取记忆。 | 最新回复等待时长：600 秒 · 提交阈值：20,000 token · 保留最近消息：10 |
+| 长对话 | 对话变长后，用 OpenViking 的摘要替换较早的历史。需要开启保存对话。 | 开始摘要的长度：30,000 token · 保留最近轮数：3 · 等待摘要：30 秒 |
+| OpenViking 工具 | 让模型在回答时搜索和读取 OpenViking。仅支持 Chat Completions，默认关闭。 | 工具：检索、读取、列出目录 · 允许写入工具：关闭 |
 
 召回设置的实际效果：
 
-- 搜索查询是去掉客户端噪声后的用户消息，最多截取**查询长度**个字符（8,000）。少于 3 个字符的消息不搜索。
+- 检索文本是去掉客户端噪声后的用户消息，最多截取**检索文本长度**个字符（8,000）。少于 3 个字符的消息不搜索。
 - 每条消息最多补充**单条消息预算**与**单段对话预算**剩余额度中较小的那个；剩余额度不足 64 token 时跳过搜索。单段对话预算设为 0 就关闭了召回。这里的 token 数是偏保守的估算，不是服务商的计费数。
-- OpenViking 在**召回时限**内没有返回时，这条消息不带记忆直接发给模型，之后也不会补上，客户端重试也一样。
-- **按分类限额**（在“高级设置”中）只搜索限额大于 0 的分类，分类包括事件、实体、偏好、经验、资源和技能，每个分类最多取对应的条数。关闭时，所有来源放在一起排序。
+- OpenViking 在**超时时间**内没有返回时，这条消息不带记忆直接发给模型，之后也不会补上，客户端重试也一样。
+- **按分类限量**（在“高级设置”中）可以给事件、实体、偏好、经验、资源和技能六个分类分别设置条数上限，只搜索上限大于 0 的分类。关闭时，所有来源放在一起排序。
 
 保存设置的实际效果：
 
-- 下一条用户消息到达时，上一轮就会保存。**停顿后保存最新回复**决定网关等多久之后把最后一轮也保存下来并提交会话，这样短对话也能被提交。
+- 下一条用户消息到达时，上一轮就会保存。**最新回复等待时长**决定网关等多久之后把最后一轮也保存下来并提交会话，这样短对话也能被提交。
 - **提交阈值**：会话中待提交的内容达到这么多 token 时就提交一次。每次提交后，OpenViking 在后台提取记忆。
-- **保留最近消息数**：提交后，会话中保留最新的若干完整轮次，至少包含这么多条消息。
+- **保留最近消息**：提交后，会话中保留最新的若干完整轮次，至少包含这么多条消息。
 - 召回和保存相互独立：只保存不召回、或者只召回不保存的配置都有效。
 
 [配置参考](#配置参考)列出了每项设置的 API 名称和取值范围。
 
 ### 网关密钥
 
-网关密钥（`ovcg_…`）是客户端用来代替服务商密钥的凭证。每个密钥属于一个 OpenViking 用户，使用一份上下文配置和一组上游。
+网关密钥（`ovcg_…`）是客户端用来代替服务商 API Key 的凭证。每个密钥属于一个 OpenViking 用户，使用一份上下文配置和一组上游。
 
 在“密钥”标签页选择**签发密钥**，然后填写：
 
@@ -382,27 +383,27 @@ server {
 签发成功后，**复制网关密钥**对话框显示完整密钥。这是唯一一次显示：网关只保存密钥的哈希和开头几个字符。对话框里还有 Claude Code、Codex CLI 和聊天客户端的配置，已经填好真实密钥和网关地址，可以直接粘贴。密钥丢了就重新签发一个。
 
 - **密钥不能编辑。** 要更换密钥的上下文配置、上游、允许的模型或 OpenViking 密钥，就签发一个新密钥，再吊销旧的。
-- **对话属于用户，不属于密钥。** 只要客户端发送相同的会话，同一 OpenViking 用户的新密钥就会接着原来的对话，所以换密钥不会打断对话。
+- **对话属于用户，不属于密钥。** 只要客户端发送相同的会话 ID，同一 OpenViking 用户的新密钥就会接着原来的对话，所以换密钥不会打断对话。
 - **吊销**会立即切断客户端的访问（其他工作进程约 2 秒内跟上），正在进行的请求会正常完成。最后使用这个密钥的对话里还没保存的轮次会被丢弃，对话和记忆本身都保留。想换密钥又不丢轮次，就先把客户端切到新密钥，再吊销旧的。
 - **OpenViking 密钥变了怎么办。** 如果用户的 OpenViking 密钥被重新生成或删除，网关密钥仍能通过客户端认证，但记忆搜索会失败，保存也会因 `openviking_http_401` 暂停。用该用户新的 OpenViking 密钥签发新的网关密钥，切换客户端，再吊销旧的网关密钥。
 - **每人一个密钥。** 使用同一个密钥的人共享其 OpenViking 用户的记忆。请给每人签发一个密钥；想让不同客户端使用不同的上下文配置，就按客户端再分开签发。
 
-**删除该用户的网关数据…**（在密钥的“更多操作”菜单中）会吊销该 OpenViking 用户的所有网关密钥，并删除网关为该用户保存的对话状态。OpenViking 中的会话和记忆不受影响，需要在 OpenViking 中删除。在 OpenViking 中删除用户或账号时，网关会自动做同样的清理，见[安全与数据](#安全与数据)。
+**删除该用户的网关数据…**（在密钥的**更多操作**菜单中）会吊销该 OpenViking 用户的所有网关密钥，并删除网关为该用户保存的对话状态。OpenViking 中的会话和记忆不受影响，需要在 OpenViking 中删除。在 OpenViking 中删除用户或账号时，网关会自动做同样的清理，见[安全与数据](#安全与数据)。
 
 ### 请求日志和概览
 
 **概览**标签页汇总日志保留期（默认 30 天）内最新的 10,000 条请求日志：
 
-- 第一个请求到达之前，显示**开始使用**清单。
+- 第一个请求到达之前，显示**快速开始**清单。
 - **请求数**：模型请求的数量、最近一次请求的时间，以及这些请求用掉的输出 token。
 - **首次调用缓存命中率**：每条新用户消息的第一次模型调用中，命中服务商提示词缓存的输入 token 所占的比例。这是判断网关是否健康最重要的指标，应该接近不经过网关时服务商能达到的水平；明显下降通常说明网关发送的历史和上一次请求对不上了，见[首次调用缓存命中率下降](#首次调用缓存命中率下降)。
 - **轮内缓存命中率**：同一轮里后续调用的缓存命中率，例如工具步骤和 OpenViking 工具的往返。这个值通常都很高。
-- **召回的记忆**：补充到消息中的条数，以及做过搜索的消息的平均搜索耗时。
-- **OpenViking**：显示已连接、异常或启动中，附带版本和认证模式，异常时还会给出原因。OpenViking 无法访问期间，请求照常发给模型，只是不带记忆。有对话正在重试或已经暂停保存到 OpenViking 时，这张卡片也会提醒。
-- **降级请求**：每种问题出现的次数和说明，问题类型见[故障排查中的表格](#降级请求的问题)。
+- **召回的记忆条数**：补充到新消息中的记忆条数，以及每次检索 OpenViking 的平均耗时（只统计实际检索了的消息）。
+- **OpenViking**：显示已连接、异常或启动中，附带版本和认证模式，异常时还会给出原因。OpenViking 无法访问期间，请求照常发给模型，只是不带记忆。卡片中的**保存对话**一栏还会统计正在重试或已暂停保存的对话数。
+- **降级请求**：每种异常出现的次数和说明，异常类型见[故障排查中的表格](#降级请求的异常)。
 - **最近请求**，以及前往“请求日志”标签页的链接。
 
-**请求日志**标签页按时间倒序列出最新的 1,000 条记录，页面打开期间每 30 秒刷新一次。可以按**全部**、**新消息**、**工具步骤**或**问题**筛选，也可以按类型筛选，或者按模型、对话或密钥名称搜索。各列显示类型、模型（客户端发送的名称）、服务商返回的 HTTP 状态、token（输入、缓存占比、输出）、**记忆**（`+3` 表示这次搜索补充的条数，附带搜索耗时；`↺ 4` 表示从之前轮次重放的条数）、**保存**状态和问题。展开一行可以看到对话 ID、上游、密钥、耗时、token 明细、记忆搜索结果、保存状态和下次重试时间、OpenViking 工具详情；有问题的请求还会说明这个问题意味着什么、该怎么处理。
+**请求日志**标签页按时间倒序列出最新的 1,000 条记录，停留在第一页时每 30 秒刷新一次。可以按**全部**、**新消息**、**工具步骤**或**异常**筛选，也可以按**请求类型**筛选，或者按模型、对话或密钥搜索。各列显示类型、模型（客户端发送的名称）、服务商返回的 HTTP 状态、token（输入、缓存占比、输出）、**记忆**（`+3` 表示这次搜索补充的条数，附带搜索耗时；`↺ 4` 表示之前 4 条消息补充的记忆被原样重放）、**保存**状态和**异常**。展开一行可以看到对话 ID、上游、密钥、耗时、token 明细、记忆搜索结果、保存状态和下次重试时间、OpenViking 工具详情；有异常的请求还会说明发生了什么、该怎么处理。
 
 只有到达模型服务商的请求才会被记录。网关先行拒绝的请求不会记录，例如密钥无效、模型不在密钥的允许范围内、没有匹配的上游、请求体超过上限，这些情况下客户端会直接收到错误。
 
@@ -418,7 +419,7 @@ server {
 
 **保存**列显示每段对话的保存状态：
 
-- **保存中**：保存正常。
+- **正常**：保存正常进行。
 - **已关闭**：这段对话的上下文配置不保存对话。
 - **重试中**：OpenViking 拒绝了保存，或者无法访问。网关会在 10、20、40、80 秒后依次重试。
 - **已暂停**：连续 5 次失败。网关之后每 5 分钟重试一次，直到成功。未保存的轮次会一直保留，直到保存成功或者对话过期。
@@ -429,11 +430,11 @@ server {
 
 ## OpenViking 工具
 
-开启 OpenViking 工具后，模型可以在回答时搜索和读取 OpenViking。网关把工具加进请求，以密钥用户的身份对 OpenViking 执行模型发起的工具调用，把结果交还给模型，最后只把最终回答流式返回。客户端看到的是一次普通回复：一个 completion ID、一个结束事件，token 用量是所有模型调用的总和。
+开启 OpenViking 工具后，模型可以在回答时搜索和读取 OpenViking。网关把工具加进请求，以密钥所属用户的身份对 OpenViking 执行模型发起的工具调用，把结果交还给模型，最后只把最终回答流式返回。客户端看到的是一次普通回复：一个 completion ID、一个结束事件，token 用量是所有模型调用的总和。
 
-这项功能面向无法连接 OpenViking MCP 服务器的聊天应用和 API 应用。支持 MCP 或有插件的客户端，例如 Claude Code 和 Codex，更适合使用 MCP 或插件，工具调用在那里是可见的。
+这项功能面向无法连接 OpenViking MCP 服务器的聊天应用和 API 应用。支持 MCP 或有插件的客户端，例如 Claude Code 和 Codex，用 MCP 或插件更合适，因为工具调用在那里看得见。
 
-要开启工具，在上下文配置中打开 **OpenViking 工具**部分，勾选读取工具：search、read 和 list。每个上游的**允许 OpenViking 工具**默认开启。保存之后开始的对话会带上这些工具，模型看到的名称是 `openviking_search`、`openviking_read` 和 `openviking_list`。写入工具 `openviking_write`、`openviking_add_resource`（**导入文件**）和 `openviking_add_skill`（**导入技能**）只有在开启**允许写入工具**并勾选对应工具后才会提供。
+要开启工具，在上下文配置中打开 **OpenViking 工具**部分，在**工具**下勾选**检索**、**读取**和**列出目录**。每个上游的**允许 OpenViking 工具**默认开启。保存之后开始的对话会带上这些工具，模型看到的名称是 `openviking_search`、`openviking_read` 和 `openviking_list`。写入工具**写入**（`openviking_write`）、**导入文件**（`openviking_add_resource`）和**导入技能**（`openviking_add_skill`）只有在开启**允许写入工具**并勾选对应工具后才会提供。
 
 > **注意**：工具调用在网关内部执行，从不经过客户端的权限确认。写入工具会在不询问用户的情况下修改用户的 OpenViking 数据。只给清楚这一点的用户开启写入工具。
 
@@ -460,14 +461,14 @@ server {
 
 上传大小受 `max_body_bytes` 限制（默认 32 MiB）。
 
-上下文配置的**高级设置**中有以下上限：
+上下文配置中 **OpenViking 工具**部分的**高级设置**里有以下上限：
 
 | 设置 | API 名称 | 默认值 | 范围 | 达到上限时 |
 | --- | --- | --- | --- | --- |
-| 轮数上限 | `tool_max_rounds` | 5 | 1–20 | 模型必须直接回答，不能再调用工具。 |
+| 每次请求的工具轮数 | `tool_max_rounds` | 5 | 1–20 | 模型必须直接回答，不能再调用工具。 |
 | 单次调用超时 | `tool_timeout_seconds` | 30 秒 | 最多 120 秒 | 这次调用向模型返回错误。 |
 | 结果大小上限 | `tool_result_bytes` | 65,536 字节 | 1,024–1,048,576 | 结果被截断。 |
-| 总时长上限 | `tool_total_seconds` | 120 秒 | 最多 600 秒 | 请求失败，返回 504 "Hidden tool request timed out"。 |
+| 总时长 | `tool_total_seconds` | 120 秒 | 最多 600 秒 | 请求失败，返回 504 "Hidden tool request timed out"。 |
 | Token 预算 | `tool_total_tokens` | 100,000 | 1,024–1,000,000 | 拒绝后续的工具调用，模型用已有的信息回答。这不是计费上限，最终回答可能超出它。 |
 
 失败的工具调用会作为错误结果交还给模型。如果工具循环本身失败，例如服务商拒绝了后续调用，客户端会收到错误（流式客户端收到类型为 `gateway_tool_error` 的错误事件），这个请求被标记为 **OpenViking 工具调用失败**（`hidden_tool_loop_failed`）。如果某个服务商反复这样失败，就在它的上游上关闭**允许 OpenViking 工具**。重试的工具调用会复用第一次调用的结果，中断的写入操作不会自动重做。
@@ -477,17 +478,17 @@ server {
 开启**长对话**后，对话可以超出模型的上下文窗口继续下去：
 
 1. 保存对话会把对话写入 OpenViking 会话。
-2. 已保存的内容达到**摘要阈值**（30,000 token）后，网关提交除最近几轮之外的全部内容，OpenViking 在后台把这部分归档并生成摘要。此后每当又积累了一个**摘要阈值**的待提交内容，就再提交一次。
+2. 已保存的内容达到**开始摘要的长度**（30,000 token）后，网关提交除最近几轮之外的全部内容，OpenViking 在后台把这部分归档并生成摘要。此后每当待提交的内容又达到这个长度，就再提交一次。
 3. 摘要就绪后，之后的每个请求只包含三样东西：system 和 developer 消息；一条以 `[OpenViking Session Context]` 开头、内容是摘要的用户消息；最近几轮的原文，轮数由**保留最近轮数**决定（默认 3 轮，包括当前这一轮）。新消息的记忆照常补充。
 4. 每次新的归档都在上一份摘要的基础上生成，并替换它。
 
-提示词在每个归档点变化一次，服务商缓存在那里会失效一次。保留下来的轮次会去掉思考块，因为这些思考块的签名覆盖的是已被替换的历史；客户端自己压缩对话也有同样的效果。长对话需要开启**保存对话**，并且只作用于主对话：子 Agent 请求和辅助请求，包括客户端自己的压缩请求，都保留各自的历史。
+提示词在每个归档点变化一次，服务商缓存在那里会失效一次。保留下来的轮次会去掉思考块，因为这些思考块的签名覆盖的是已被替换的历史；客户端自己压缩对话也有同样的效果。长对话需要开启**保存对话**。凡是重新发送了这段历史的请求，较早的历史都会被摘要替换，包括客户端自己的压缩请求等辅助请求；子 Agent 通常发送自己单独的历史，不受影响。
 
-**等待摘要。** 摘要就绪之前，网关发送完整历史，不会等待。只有对话快要溢出时才会等：模型的上下文窗口已知，并且上一次发往同一上游、同一模型的请求用掉了窗口的 90% 以上。这时网关最多等待**等待摘要时长**（30 秒，最多 60 秒），每 5 秒检查一次。到时还没有摘要，就照样发送完整历史，这可能因超出上下文长度而失败，请求会被标记为**摘要未就绪**（`archive_wait_timeout`）。
+**等待摘要。** 摘要就绪之前，网关发送完整历史，不会等待。只有对话快要溢出时才会等：模型的上下文窗口已知，并且上一次发往同一上游、同一模型的请求用掉了窗口的 90% 以上。这时网关最多等待**等待摘要**设定的时长（默认 30 秒，最多 60 秒），每 5 秒检查一次。到时还没有摘要，就照样发送完整历史，这可能因超出上下文长度而失败，请求会被标记为**摘要未就绪**（`archive_wait_timeout`）。
 
 - 上下文窗口取自上游**上下文窗口**中该模型的条目（按发给上游的模型名查找），没有时取上下文配置的**默认上下文窗口**。两者都没有，网关就从不等待。
 - 用量数字来自服务商的响应。流式 Chat Completions 只有在客户端通过 `stream_options.include_usage` 请求时才会报告用量。
-- 如果经常出现**摘要未就绪**，可以调大**等待摘要时长**，调小**摘要阈值**让摘要更早就绪，或者检查 OpenViking 的 VLM 生成摘要是否及时。超过 15 分钟仍未生成的摘要，网关会放弃。
+- 如果经常出现**摘要未就绪**，可以调大**等待摘要**，调小**开始摘要的长度**让摘要更早就绪，或者检查 OpenViking 的 VLM 生成摘要是否及时。超过 15 分钟仍未生成的摘要，网关会放弃。
 
 即使摘要生效后网关传回的服务商用量已经变小，客户端仍按自己的历史计算 token，并可能自行压缩。客户端压缩或编辑历史后，网关把新历史保存到新的 OpenViking 会话，并重新开始计数。
 
@@ -500,7 +501,7 @@ server {
 
 存储的值都用加密密钥加密。文件只有运行网关的用户能读取。
 
-**请求日志包含什么。** 只有元数据：请求类型、模型、状态、上游、对话 ID 的哈希、token 数、记忆条数和耗时、保存状态和问题。从不包含消息文本、召回的记忆、工具参数和结果，也不包含任何密钥。网关不写 HTTP 访问日志，错误信息也从不回显提交的值。
+**请求日志包含什么。** 只有元数据：请求类型、模型、状态、上游、对话 ID 的哈希、token 数、记忆条数和耗时、保存状态和异常。从不包含消息文本、召回的记忆、工具参数和结果，也不包含任何密钥。网关不写 HTTP 访问日志，错误信息也从不回显提交的值。
 
 **服务商能看到什么。** 每个上游都会收到完整的模型输入，包括网关补充的记忆和 OpenViking 工具的结果。只添加你放心交出这些数据的服务商。
 
@@ -515,7 +516,7 @@ server {
 
 **删除数据。**
 
-- 在 Studio 中删除某个用户的网关数据（密钥的“更多操作”菜单 → **删除该用户的网关数据…**），或者用账号管理员密钥调用 OpenViking Server 的 `DELETE /api/v1/admin/context-gateway/users/{user_id}/data`。这会吊销该用户的网关密钥，并删除其对话状态。请求日志中的元数据按保留期限自然过期。
+- 在 Studio 中删除某个用户的网关数据（密钥的**更多操作**菜单 → **删除该用户的网关数据…**），或者用账号管理员密钥调用 OpenViking Server 的 `DELETE /api/v1/admin/context-gateway/users/{user_id}/data`。这会吊销该用户的网关密钥，并删除其对话状态。请求日志中的元数据按保留期限自然过期。
 - 在 OpenViking 中删除用户时，网关会自动执行同样的操作。删除账号时，还会从网关中删除这个账号的上游、上下文配置、密钥和请求日志。如果当时网关无法访问，OpenViking 会持续重试。不再使用网关时，把 `context_gateway.enabled` 设为 `false`，删除操作就不会再等待网关。
 - OpenViking 中的会话和记忆要通过 OpenViking 删除，不经过网关。
 
@@ -597,29 +598,29 @@ URL 类设置必须是普通的 `http` 或 `https` 地址，不能包含账号�
 | --- | --- | --- | --- | --- |
 | 名称 | `name` | `Default` | | 显示名称。 |
 | 召回记忆 | `recall` | `true` | | 为每条新的用户消息搜索记忆。 |
-| 来源 | `context_types` | `memory`、`resource`、`skill` | 至少一个 | 搜索范围：记忆、资源、技能。 |
+| 检索范围 | `context_types` | `memory`、`resource`、`skill` | 至少一个 | 搜索范围：记忆、资源、技能。 |
 | 单条消息预算 | `max_tokens` | `1600` | 64–32,000 | 一条消息最多补充的 token 数。 |
 | 单段对话预算 | `session_max_tokens` | `6000` | ≥ 0 | 整段对话最多补充的 token 数；0 表示关闭召回。 |
 | 相关度阈值 | `score_threshold` | `0.35` | 0–1 | 接受的最低相关度分数。 |
-| 召回时限 | `recall_timeout` | `2`（秒） | 最多 30 | 搜索最多等待多久，超时后消息不带记忆继续发送。 |
-| 查询长度 | `query_max_chars` | `8000` | 3–32,000 | 用作搜索查询的消息字符数。 |
-| 按分类限额 | `quotas` | `{}`（关闭） | 键：`events`、`entities`、`preferences`、`experiences`、`resources`、`skills` | 每个分类最多取的条数；只搜索大于 0 的分类。 |
+| 超时时间 | `recall_timeout` | `2`（秒） | 最多 30 | 搜索最多等待多久，超时后消息不带记忆继续发送。 |
+| 检索文本长度 | `query_max_chars` | `8000` | 3–32,000 | 用作检索文本的消息字符数。 |
+| 按分类限量 | `quotas` | `{}`（关闭） | 键：`events`、`entities`、`preferences`、`experiences`、`resources`、`skills` | 每个分类最多取的条数；只搜索大于 0 的分类。 |
 | 保存对话 | `capture` | `true` | | 把已完成的轮次保存到 OpenViking。 |
-| 停顿后保存最新回复 | `idle_seconds` | `600`（秒） | ≥ 1 | 停顿多久之后保存最后一轮并提交会话。 |
+| 最新回复等待时长 | `idle_seconds` | `600`（秒） | ≥ 1 | 停顿多久之后保存最后一轮并提交会话。 |
 | 提交阈值 | `commit_tokens` | `20000` | ≥ 1 | 会话中待提交的 token 数达到这个值时提交。 |
-| 保留最近消息数 | `keep_recent_messages` | `10` | 0–1,000 | 提交后会话中保留的消息数。 |
+| 保留最近消息 | `keep_recent_messages` | `10` | 0–1,000 | 提交后会话中保留的消息数。 |
 | 长对话 | `takeover` | `true` | | 用 OpenViking 的摘要替换较早的历史。 |
-| 摘要阈值 | `takeover_tokens` | `30000` | ≥ 1 | 已保存的内容达到多少 token 后改用摘要。 |
+| 开始摘要的长度 | `takeover_tokens` | `30000` | ≥ 1 | 已保存的内容达到多少 token 后改用摘要。 |
 | 保留最近轮数 | `keep_recent_turns` | `3` | 1–100 | 摘要之后按原文发送的轮数。 |
-| 等待摘要时长 | `archive_wait_seconds` | `30`（秒） | 0–60 | 接近上下文窗口时，等待未就绪摘要的最长时间。 |
+| 等待摘要 | `archive_wait_seconds` | `30`（秒） | 0–60 | 接近上下文窗口时，等待未就绪摘要的最长时间。 |
 | 默认上下文窗口 | `context_window` | 未设置 | ≥ 1,024 | 上游没有列出该模型时使用的窗口。 |
 | OpenViking 工具 | `gateway_tools` | `false` | | 提供 OpenViking 工具（仅 Chat Completions）。 |
 | 允许写入工具 | `allow_write_tools` | `false` | | 提供任何写入工具之前都必须开启。 |
-| 读取和写入工具 | `tool_allowlist` | `search`、`read`、`list` | `search`、`read`、`list`、`write`、`add_resource`、`add_skill` | 提供哪些工具，名称为 `openviking_<name>`。 |
-| 轮数上限 | `tool_max_rounds` | `5` | 1–20 | 见 [OpenViking 工具](#openviking-工具)。 |
+| 工具 | `tool_allowlist` | `search`、`read`、`list` | `search`、`read`、`list`、`write`、`add_resource`、`add_skill` | 提供哪些工具，名称为 `openviking_<name>`。 |
+| 每次请求的工具轮数 | `tool_max_rounds` | `5` | 1–20 | 见 [OpenViking 工具](#openviking-工具)。 |
 | 单次调用超时 | `tool_timeout_seconds` | `30` | 最多 120 | |
 | 结果大小上限 | `tool_result_bytes` | `65536` | 1,024–1,048,576 | |
-| 总时长上限 | `tool_total_seconds` | `120` | 最多 600 | |
+| 总时长 | `tool_total_seconds` | `120` | 最多 600 | |
 | Token 预算 | `tool_total_tokens` | `100000` | 1,024–1,000,000 | |
 
 **上游设置：**
@@ -630,7 +631,7 @@ URL 类设置必须是普通的 `http` 或 `https` 地址，不能包含账号�
 | 协议 | `protocol` | | `anthropic`（Anthropic Messages）、`chat`（Chat Completions）或 `responses`（Responses）。 |
 | 服务商 | `vendor` | `generic` | `generic`、`anthropic`、`openai`、`deepseek` 或 `ark`（火山方舟）。 |
 | Base URL | `base_url` | | 服务商地址；路径规则见[上游](#上游)。 |
-| 凭证 | `auth_mode` | `managed` | `managed`（网关保管密钥）或 `passthrough`（客户端自带密钥）。 |
+| API Key 由谁提供 | `auth_mode` | `managed` | `managed`（由网关保管 API Key）或 `passthrough`（每个客户端自带 API Key）。 |
 | API Key | `api_key` | | 只能写入。编辑时留空表示保留已保存的密钥。 |
 | 额外请求头 | `headers` | `{}` | 值只能写入，名称可见。 |
 | 模型 | `models` | `[]` | 提供的模型名；留空表示接受任何名称。 |
@@ -645,7 +646,7 @@ URL 类设置必须是普通的 `http` 或 `https` 地址，不能包含账号�
 
 **网关密钥字段：** 名称（`name`）、OpenViking 密钥（`openviking_key`）、上下文配置（`policy_id`）、上游（`upstream_ids`，至少一个）和允许的模型（`models`）。
 
-Studio 通过 OpenViking Server 上 `/api/v1/admin/context-gateway/` 下的管理 API 操作网关，资源包括 `overview`、`logs`、`upstreams`、`policies`、`keys` 和 `users/{user_id}/data`。脚本也可以用账号管理员密钥调用这些路径。
+Studio 通过 OpenViking Server 上 `/api/v1/admin/context-gateway/` 下的管理 API 操作网关，资源包括 `overview`、`logs`、`guides`、`upstreams`、`policies`、`keys` 和 `users/{user_id}/data`。脚本也可以用账号管理员密钥调用这些路径。
 
 ## 故障排查
 
@@ -668,19 +669,24 @@ OpenViking Server 无法使用网关时，上下文网关页面会显示一张�
 
 - **上下文网关未开启**：OpenViking Server 的 `ov.conf` 中没有 `context_gateway.enabled: true`。加上之后重启 OpenViking Server。
 - **缺少管理令牌**：OpenViking Server 的环境里没有管理令牌，或者它短于 32 个字符。设置好之后重启 OpenViking Server；Docker Compose 通过 `.env` 设置，Helm 通过 `contextGateway.existingSecret` 设置。
-- **OpenViking 连不上网关**：OpenViking Server 访问不到 `context_gateway.url`。检查网关是否在运行，以及 `url` 是否是 OpenViking Server 能访问的地址，在 Docker Compose 中应为 `http://context-gateway:1935`（Helm 由 Chart 自动设置）。如果两个进程都在运行，但每个操作都返回 401 "Invalid gateway management credential"，说明两者的管理令牌不一致。
+- **OpenViking 连不上网关**：OpenViking Server 访问不到 `context_gateway.url`。检查网关是否在运行，以及 `url` 是否是 OpenViking Server 能访问的地址，在 Docker Compose 中应为 `http://context-gateway:1935`（Helm 由 Chart 自动设置）。
 
-如果侧边栏里没有**上下文网关**，说明 Studio 没有管理员权限：在连接设置中把账号管理员或 root 的密钥填入**管理员 API 密钥**。OpenViking 运行在 dev 模式时，Studio 的管理页面无法使用。
+如果两个进程都在运行，页面却提示“密钥被拒绝，请检查连接设置”，而同一个管理员密钥在**用户与权限**页面能正常使用，就说明两个进程的管理令牌不一致，网关返回的是 401 "Invalid gateway management credential"。给两者设置相同的令牌，然后都重启。
+
+如果侧边栏里没有**上下文网关**，说明 Studio 没有管理员权限：在**连接设置**中把账号管理员或 root 的密钥填入**管理员 API 密钥**。OpenViking 运行在 dev 模式时，Studio 会隐藏管理页面。
 
 ### 签发密钥失败
 
-| 错误 | 原因和处理 |
+**签发网关密钥**对话框会显示 OpenViking 拒绝这个密钥的原因。括号里的代码是管理 API 返回的原因值。
+
+| Studio 中的提示 | 原因和处理 |
 | --- | --- |
-| `root_key_not_allowed` | OpenViking 密钥是 root key，或者 OpenViking 运行在 dev 模式，此时任何密钥都以 root 身份运行。请使用用户自己的密钥，并启用 API Key 模式。 |
-| “这个 OpenViking 密钥属于其他账号” | 密钥所属的账号不是你在 Studio 中管理的账号。 |
-| `openviking_http_401`、`openviking_identity_missing` | 密钥无效，或者它的用户已被删除。 |
-| `openviking_unavailable` | 网关访问不到 `openviking_url`。 |
-| `openviking_version_mismatch` | OpenViking Server 的版本低于 `min_server_version`（0.4.16），请升级。从源码仓库安装、没有版本标签的服务可能报告 `0.1.dev123` 这样的开发版本号；请安装正式版本，或者把 `min_server_version` 改成与之匹配的值。 |
+| 这是 Root 密钥。（`root_key_not_allowed`） | OpenViking 密钥是 root key，或者 OpenViking 运行在 dev 模式，此时任何密钥都按 root 身份处理。请使用用户自己的密钥，并启用 API Key 模式。 |
+| 这个 OpenViking 密钥属于其他账号。 | 密钥所属的账号不是你在 Studio 中管理的账号。 |
+| OpenViking 拒绝了这个密钥。（`openviking_http_401`） | 密钥不完整、已被重新生成，或者它的用户已被删除。请使用该用户当前的密钥。 |
+| OpenViking 无法识别这个密钥所属的用户（`openviking_identity_missing`） | OpenViking 没有返回这个密钥对应的用户。请使用本账号中某个用户的密钥。 |
+| 网关连不上 OpenViking，无法校验这个密钥。（`openviking_unavailable`） | 网关访问不到 `openviking_url`。 |
+| OpenViking 版本低于网关的要求。（`openviking_version_mismatch`） | OpenViking Server 的版本低于 `min_server_version`（0.4.16），请升级。从源码仓库安装、没有版本标签的服务可能报告 `0.1.dev123` 这样的开发版本号；请安装正式版本，或者把 `min_server_version` 改成与之匹配的值。 |
 
 ### 客户端收到网关返回的错误
 
@@ -688,18 +694,18 @@ OpenViking Server 无法使用网关时，上下文网关页面会显示一张�
 
 | 状态码和提示 | 原因和处理 |
 | --- | --- |
-| 401 "Invalid or revoked Context Gateway key" | 客户端没有发送网关密钥、发送了已吊销的密钥，或者发送的是服务商的密钥。检查客户端实际发送的是哪个密钥。 |
+| 401 "Invalid or revoked Context Gateway key" | 客户端没有发送网关密钥、发送了已吊销的密钥，或者发送的是服务商的 API Key。检查客户端实际发送的是哪个密钥。 |
 | 403 "Claude subscription OAuth credentials are not supported" | 客户端发送了 Claude 订阅令牌，例如 Claude Code 用订阅账号登录且没有设置 `ANTHROPIC_AUTH_TOKEN`；或者上游保存的就是订阅令牌。请使用 API Key。 |
 | 403 "Model is not allowed by this key" | 模型不在密钥允许的范围内。签发一个允许这个模型的密钥。 |
 | 404 "No allowed upstream matches this protocol and model" | 密钥绑定的已启用上游中，没有一个使用客户端调用的 API 并提供所请求的模型。检查上游的协议、模型和别名、是否启用，以及密钥绑定了哪些上游。 |
-| 401 "Upstream API key is missing" | 上游要求每个客户端在 `X-OpenViking-Upstream-Key` 中自带密钥，或者由网关保管密钥的上游没有填写 API Key。 |
+| 401 "Upstream API key is missing" | 上游要求每个客户端在 `X-OpenViking-Upstream-Key` 中自带 API Key，或者由网关保管 API Key 的上游没有填写。 |
 | 403 "Coding Plan upstreams are disabled; configure a model API key" | 上游被标记为 Coding Plan 密钥。请改用模型 API Key，或者有意勾选**仍然允许**。 |
 | 404 "Unknown response for this key"、403 "Response upstream is no longer allowed" | 查询的 Responses 响应不是这个密钥创建的，或者它的上游已被停用、不再绑定到这个密钥。 |
 | 413 | 请求体超过了 `max_body_bytes`，或者超过了代理自己的上限。 |
 | 426 | 对 Responses API 发起了 WebSocket 连接。这是预期行为，Codex 会改用 HTTP。 |
 | 502 "Model upstream is unavailable" | 网关连不上服务商，或者调用超过了 `upstream_timeout_seconds`。在上游上运行**测试连接**。 |
 | 503 "Dev authentication requires a loopback gateway" | OpenViking 运行在 dev 模式。把它切换到 API Key 模式。 |
-| 504 "Hidden tool request timed out" | OpenViking 工具的往返超过了上下文配置的总时长上限。 |
+| 504 "Hidden tool request timed out" | OpenViking 工具的往返超过了上下文配置中工具的**总时长**。 |
 
 ### 没有补充记忆
 
@@ -707,7 +713,7 @@ OpenViking Server 无法使用网关时，上下文网关页面会显示一张�
 
 - **没有找到相关内容**（`empty`）：新用户通常如此。只有对话被提交、OpenViking 提取之后才会有记忆。
 - **召回已关闭或预算已用完**（`disabled`）：上下文配置关闭了召回，这段对话的预算已经用完，或者消息短于 3 个字符。
-- **OpenViking 无法访问或响应超时**（`openviking_unavailable`）：查看概览页上的 OpenViking 卡片。如果 OpenViking 在运行但响应慢，可以考虑调长**召回时限**。
+- **OpenViking 无法访问或响应超时**（`openviking_unavailable`）：查看“概览”标签页上的 OpenViking 卡片。如果 OpenViking 在运行但响应慢，可以考虑调长**超时时间**。
 - **OpenViking 拒绝了这个密钥**（`openviking_http_401`）：用户的 OpenViking 密钥已失效。用当前的 OpenViking 密钥签发新的网关密钥。
 - **OpenViking 版本低于网关的要求**（`openviking_version_mismatch`）：见[签发密钥失败](#签发密钥失败)。
 - **检测到 OpenViking 插件**（`plugin_present`）：网关发现了 OpenViking 插件，并让出了这段对话。
@@ -717,21 +723,21 @@ OpenViking Server 无法使用网关时，上下文网关页面会显示一张�
 
 ### OpenViking 中看不到对话
 
-- **保存晚一轮。** 下一条消息到达时，上一轮才会出现；最后一轮要等**停顿后保存最新回复**设定的时间过去（默认 10 分钟）。
+- **保存晚一轮。** 下一条消息到达时，上一轮才会出现；最后一轮要等**最新回复等待时长**过去（默认 10 分钟）。
 - **上下文配置不保存对话。** 这时**保存**列显示“已关闭”。
 - **保存正在重试或已暂停。** 展开的行会显示原因。修复原因（例如 OpenViking 密钥失效）后，网关会在 5 分钟内重试。如果对话一直暂停，使用**重新同步对话…**。
 - **检测到 OpenViking 插件**（`plugin_present`）：网关不会为这段对话保存任何内容。
-- **你查看时用的是其他用户。** 会话属于网关密钥背后的 OpenViking 用户，名称为 `context-gateway-…`。
+- **你用其他用户的身份查看。** 会话属于网关密钥背后的 OpenViking 用户，名称为 `context-gateway-…`。
 - **记忆比会话出现得晚。** OpenViking 只在提交之后才在后台提取记忆。
 
 ### 首次调用缓存命中率下降
 
-先和不经过网关时服务商能达到的命中率比较，再查看最近请求上标出的问题：
+先和不经过网关时服务商能达到的命中率比较，再查看最近请求上标出的异常：
 
 - **记忆记录缺失**（`missing_injection_record`）：网关存储丢失、从旧备份恢复，或者记录已过期，之前补充的记忆无法重放。进行中的对话在一次未命中之后就会恢复。
-- **上游已切换**（`upstream_changed`）：对话原来的上游被停用、不再绑定到密钥，或者不再提供这个模型，于是对话转到了另一个上游。
+- **上游已切换**（`upstream_changed`）：对话原来的上游被停用、没有绑定到客户端当前使用的密钥，或者不再提供这个模型，于是对话转到了另一个上游。
 - **缓存参数有变化**（`ark_cache_parameters_changed`）：在方舟上，客户端在同一段对话里改变了模型、思考模式、采样参数、系统提示词或工具。
-- 没有标出问题：客户端本身可能每轮都在改动之前的消息或系统提示词，例如插入当前时间，网关无法修正这种情况。长对话的每次摘要也会造成一次未命中，这是预期内的。
+- 没有标出异常：客户端本身可能每轮都在改动之前的消息或系统提示词，例如插入当前时间，网关无法修正这种情况。长对话的每次摘要也会造成一次未命中，这是预期内的。
 
 ### 文件导入失败
 
@@ -741,17 +747,17 @@ OpenViking Server 无法使用网关时，上下文网关页面会显示一张�
 - 502 "OpenViking upload is unavailable"：网关连不上 OpenViking Server。
 - 根本没有提供导入工具：对话的第一个请求既没有 shell 工具也没有附件，或者上下文配置没有允许写入工具。
 
-### 降级请求的问题
+### 降级请求的异常
 
-请求日志和概览页会标出网关没能完整处理的请求。Studio 显示问题名称，括号里的代码是管理 API 中对应的值：
+“请求日志”和“概览”标签页会标出网关没能完整处理的请求。Studio 显示异常名称，括号里的代码是管理 API 中对应的值：
 
-| 问题 | 发生了什么 | 怎么处理 |
+| 异常 | 发生了什么 | 怎么处理 |
 | --- | --- | --- |
-| 记忆不可用（`memory_store_failure`） | 网关无法读写自己的存储，或者该用户的网关数据刚被删除。请求不带记忆发给了模型；对 Claude 来说，之前的思考内容被去掉了。 | 检查磁盘空间、权限和网关日志。刚删除过用户数据时出现属于正常。 |
+| 记忆不可用（`memory_store_failure`） | 网关无法读写自己的存储，或者该用户的网关数据刚被删除。请求不带记忆发给了模型；对 Claude 来说，之前的思考内容被去掉了。 | 检查磁盘空间、权限和网关日志。刚删除过该用户的网关数据时出现这一项是正常的。 |
 | 原样转发（`unsafe_json`） | 请求中有无法精确重新编码的数字或重复的键，所以网关逐字节原样转发，没有补充记忆。 | 通常只与某个客户端有关，网关这边无需调整。 |
-| 上游已切换（`upstream_changed`） | 对话原来的上游无法再服务，转到了另一个上游，造成一次缓存未命中，之前的 Claude 思考内容也被去掉。 | 重新启用上游或把它重新绑定到密钥，或者接受这次切换。 |
-| 记忆记录缺失（`missing_injection_record`） | Claude 对话中，之前补充的记忆已经没有记录，所以之前的思考内容被去掉了一次。 | 存储丢失后或很久以前的对话中出现属于预期。反复出现时，开始一段新对话。 |
-| 检测到 OpenViking 插件（`plugin_present`） | 检测到了 OpenViking 插件，这段对话不再使用网关记忆。 | 使用插件时属于预期。同一个客户端在插件和网关之间二选一。 |
+| 上游已切换（`upstream_changed`） | 对话原来的上游无法再服务，转到了另一个上游，造成一次缓存未命中，之前的 Claude 思考内容也被去掉。 | 重新启用这个上游，或者让客户端改用包含它的密钥；也可以接受这次切换。 |
+| 记忆记录缺失（`missing_injection_record`） | Claude 对话中，之前补充的记忆已经没有记录，所以之前的思考内容被去掉了一次。 | 存储丢失后，或者在很久以前的对话里出现，都在预期之内。反复出现时，开始一段新对话。 |
+| 检测到 OpenViking 插件（`plugin_present`） | 检测到了 OpenViking 插件，这段对话不再使用网关记忆。 | 使用插件时出现这一项是正常的。同一个客户端在插件和网关之间二选一。 |
 | 缓存参数有变化（`ark_cache_parameters_changed`） | 在方舟上，影响缓存的参数与对话的第一个请求不同，方舟的缓存很可能没有命中。 | 在同一段对话里保持模型、思考模式、采样参数、系统提示词和工具不变。 |
 | 摘要未就绪（`archive_wait_timeout`） | 对话已经接近上下文窗口，但摘要没有及时就绪，于是发送了完整历史。 | 见[长对话](#长对话)。 |
 | OpenViking 工具调用失败（`hidden_tool_loop_failed`） | OpenViking 工具循环失败，客户端收到了错误。 | 见 [OpenViking 工具](#openviking-工具)。 |

@@ -182,7 +182,9 @@ config:
 - Keep `replicaCount: 1`. The gateway's storage must be used from a single host; scale with
   `contextGateway.workers` instead.
 
-For ingress annotations, Studio setup and troubleshooting, see
+The chart does not set ingress annotations. Model requests stream and can be large, so turn off
+proxy buffering and allow 32 MiB request bodies and 600-second read timeouts. For the NGINX
+annotations, Studio setup and troubleshooting, see
 [Context Gateway deployment and operations](https://docs.openviking.ai/en/guides/22-context-gateway-operations#helm).
 
 ## Configuration

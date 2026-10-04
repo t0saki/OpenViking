@@ -35,7 +35,7 @@ Keep the plugin for Claude Code, Codex or pi when you want per-project memory an
 - a client tool whose name contains an `openviking` segment, such as `openviking_search` or `mcp__openviking__find`, so a client that has the OpenViking MCP server configured under the name `openviking` counts too;
 - an `X-OpenViking-Plugin` request header, which plugin and app authors can send to opt out explicitly.
 
-The decision is permanent for that conversation; start a new conversation without the plugin to use gateway memory again. Other conversations are not affected. Studio's Requests tab flags these requests as **OpenViking plugin in use**.
+The decision is permanent for that conversation; start a new conversation without the plugin to use gateway memory again. Other conversations are not affected. On Studio's **Requests** tab these requests are flagged **OpenViking plugin in use**.
 
 ## How it works
 
@@ -181,9 +181,9 @@ Right after startup `openviking` may still read `{"status":"starting"}`. If it s
 
 ### 7. Set up the gateway in Studio
 
-Open <http://127.0.0.1:1933/studio>, open **Connection Settings**, and paste alice's key as both the **User API key** and the **Admin API key**. Then choose **Context Gateway** in the sidebar's Settings group. Until the first request arrives, the Overview tab shows a **Get started** checklist with the same four steps:
+Open <http://127.0.0.1:1933/studio>, open **Connection Settings**, and paste alice's key as both the **User API key** and the **Admin API key**. Then choose **Context Gateway** in the sidebar's **Settings** group. Until the first request arrives, the **Overview** tab shows a **Get started** checklist with the same four steps:
 
-1. **Add an upstream.** On the Upstreams tab, choose **Add upstream**. Give it a name, pick the protocol your client speaks (Chat Completions for this walkthrough), choose the provider, enter its base URL (for example `https://api.openai.com/v1`) and its API key under **The gateway holds the API key**. Save, then use **Test** to check that the gateway can reach the provider.
+1. **Add an upstream.** On the Upstreams tab, choose **Add upstream**. Give it a name, pick the protocol your client speaks (Chat Completions for this walkthrough), choose the provider, enter its base URL (for example `https://api.openai.com/v1`), keep **The gateway holds the API key** selected and paste the provider's API key. Save, then use **Test** in the upstream list to check that the gateway can reach the provider.
 2. **Create a context profile.** On the Profiles tab, choose **Create with recommended settings**. This creates a profile named "Default".
 3. **Issue a gateway key.** On the Keys tab, choose **Issue key**. Enter a name, paste alice's key as the **OpenViking key**, pick the "Default" profile and your upstream, then issue it. The **Copy your gateway key** dialog shows the full `ovcg_…` key once; copy it before you close the dialog.
 4. **Connect a client.** The Connect tab shows the setup for each client with your gateway address filled in. The same setups are listed in [Connect clients](#connect-clients) below.
@@ -220,7 +220,7 @@ Every client needs two things: the gateway address and a gateway key. The exampl
 | Client | Upstream protocol | Base URL | How its conversations are recognized |
 | --- | --- | --- | --- |
 | [Claude Code](#claude-code) | Anthropic Messages | `https://ov.example.com` | Claude Code's session header |
-| [Codex CLI](#codex-cli) | Responses | `https://ov.example.com/v1` | Codex's thread header |
+| [Codex CLI](#codex-cli) | Responses | `https://ov.example.com/v1` | Codex's session header |
 | [Chat clients and SDKs](#chat-clients-and-sdks) | Chat Completions (or the API your SDK speaks) | `https://ov.example.com/v1` | `X-OpenViking-Session`, if you send it |
 | [Open WebUI](#open-webui) | Chat Completions | `https://ov.example.com/v1` | `X-OpenViking-Session` connection header |
 | [OpenCode](#opencode) | Chat Completions | `https://ov.example.com/v1` | OpenCode's session header |
@@ -269,7 +269,7 @@ export OPENVIKING_GATEWAY_KEY='<gateway-key>'
 
 - The upstream bound to the key must speak Responses and serve `<model>`.
 - Codex first tries a WebSocket connection. The gateway declines it and Codex falls back to HTTP automatically.
-- Codex sends its own thread ID, so conversations are recognized automatically, including after `codex resume`.
+- Codex sends its own session ID, so conversations are recognized automatically, including after `codex resume`.
 - Codex may warn that it has no metadata for an unfamiliar model name. The warning does not affect requests.
 - A ChatGPT login does not work through the gateway; use a provider API key on the upstream.
 
@@ -392,11 +392,11 @@ The paths only decide which API the client speaks. Requests still go to whicheve
 The gateway needs to know which conversation a request belongs to. A conversation is the unit that keeps its context profile and upstream, and that is saved to one OpenViking session. The gateway takes the first of these request headers that is present:
 
 1. `X-OpenViking-Session`
-2. `thread-id` (Codex CLI)
+2. `thread-id`
 3. `x-claude-code-session-id` (Claude Code)
 4. `x-opencode-session-id` (OpenCode)
 5. `x-session-id`
-6. `session-id`
+6. `session-id` (Codex CLI)
 
 Without any of them, the gateway looks at the latest assistant reply in the history. If exactly one earlier conversation produced that reply, the request joins it; otherwise it starts a new conversation. A shared opening message alone never merges two conversations. This works for ordinary back-and-forth chat, but retries, regenerated answers and identical chats are ambiguous, so they may start a new conversation. Send `X-OpenViking-Session` whenever your client lets you set headers.
 
@@ -406,7 +406,7 @@ When a request is not recognized, memory still works: new messages are searched,
 
 ## What to expect
 
-- **Memory is added per message.** The first model call of each new message waits for the OpenViking search, at most the profile's time limit (2 seconds by default). If OpenViking does not answer in time, or is unavailable, the message goes to the model without memory and does not get it later. Model requests keep working while OpenViking is down.
+- **Memory is added per message.** The first model call of each new message waits for the OpenViking search, at most the profile's **Time limit** (2 seconds by default). If OpenViking does not answer in time, or is unavailable, the message goes to the model without memory and does not get it later. Model requests keep working while OpenViking is down.
 - **Settings apply to new conversations.** A conversation keeps the context profile and upstream it started with. Long-lived clients such as Claude Code and Codex keep a conversation across many days, so a profile change reaches them when they start a new conversation. A conversation's state is removed after 30 days without use.
 - **Saving is one turn behind.** The last turn of a conversation is saved after 10 quiet minutes, and memories appear only after OpenViking has processed the commit.
 - **Edited history starts over.** If the client edits or deletes earlier messages, regenerates an answer after it was saved, or compacts the conversation, the gateway saves the history as it now stands to a new OpenViking session. Turns already saved stay in the old session.

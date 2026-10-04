@@ -286,7 +286,7 @@ If you raise `max_body_bytes` or `upstream_timeout_seconds`, raise `client_max_b
 
 ## Manage the gateway in Studio
 
-Open Studio at `/studio` on OpenViking Server, open **Connection Settings** and enter an account admin key as the **Admin API key**. **Context Gateway** then appears in the sidebar's Settings group; only account admins and root see it. Everything on these pages belongs to the account of that key. The page header shows the gateway address clients should use, taken from `public_url`.
+Open Studio at `/studio` on OpenViking Server, open **Connection Settings** and enter an account admin key as the **Admin API key**. **Context Gateway** then appears in the sidebar's **Settings** group; only account admins and root see it. Everything on these pages belongs to the account of that key. The page header shows the gateway address clients should use: `public_url`, or `url` while `public_url` is empty, in which case the **Connect** tab warns that clients may not reach it.
 
 If the gateway is not set up or cannot be reached, the page shows a setup card naming the setting to fix; see [Studio shows a setup card](#studio-shows-a-setup-card). Otherwise it has six tabs: **Overview**, **Upstreams**, **Profiles**, **Keys**, **Requests** and **Connect**. A new setup goes in that order: add an upstream, create a context profile, issue a gateway key, then connect a client using the Connect tab.
 
@@ -307,8 +307,9 @@ The upstream editor has four sections.
 
 **Credentials.**
 
-- **The gateway holds the API key** (the default): the gateway sends the upstream's key, and clients need only a gateway key.
-- **Each client sends its own key**: every request must also carry the client's own provider key in an `X-OpenViking-Upstream-Key` header, next to its gateway key. Requests without it fail with 401 "Upstream API key is missing". The gateway passes the key to the provider in the provider's usual header and never forwards `X-OpenViking-*` headers.
+- **Who provides the API key**:
+  - **The gateway holds the API key** (the default): the gateway sends the upstream's key, and clients need only a gateway key.
+  - **Each client sends its own key**: every request must also carry the client's own provider key in an `X-OpenViking-Upstream-Key` header, next to its gateway key. Requests without it fail with 401 "Upstream API key is missing". The gateway passes the key to the provider in the provider's usual header and never forwards `X-OpenViking-*` headers.
 - **API key** and **Extra headers** are write-only. When you edit an upstream, leave the API key blank to keep the stored one. Extra headers show their names only: leave a value blank to keep it, or remove the row to delete the header. A stored API key cannot be cleared; to stop using it, switch to "Each client sends its own key" or delete the upstream.
 - **Extra headers** are added to every request to this upstream, such as a provider's version or organization header, and replace a client header of the same name. `Host`, `Content-Length`, `Transfer-Encoding` and `Connection` are not allowed.
 - **This key is a Coding Plan or subscription key.** Providers restrict Coding Plan and similar subscription keys to their own coding tools, and using one through a shared gateway can get the subscription suspended. When you check this box, every request routed to the upstream is rejected with 403 "Coding Plan upstreams are disabled; configure a model API key", unless you also check **Allow it anyway**. The gateway cannot tell such keys apart from ordinary ones, so mark them yourself. Claude subscription tokens (`sk-ant-oat…`) are always rejected.
@@ -336,7 +337,7 @@ An upstream that a key uses cannot be deleted; revoke those keys first, or disab
 
 A context profile is a named set of memory settings. Each gateway key uses one profile, and one profile can serve many keys. You might keep a "Coding" profile that recalls memories, resources and skills, and a "Chat" profile that recalls only memories with a smaller budget.
 
-The Profiles tab shows one card per profile with a summary of its four sections and the number of keys using it. **Create with recommended settings** creates a profile named "Default" in one click; **Customize** opens the editor. A profile that a key uses cannot be deleted; **Duplicate** is a quick way to start a variant.
+The **Profiles** tab shows one card per profile with a summary of its four sections and the number of keys using it. While the tab is empty, **Create with recommended settings** creates a profile named "Default" in one click and **Customize** opens the editor; after that, **New profile** opens the editor. A profile that a key uses cannot be deleted; **Duplicate** is a quick way to start a variant.
 
 > **Note**: Saved changes apply to conversations that start afterwards. A conversation takes a snapshot of its key's profile at its first request and keeps it, because changing what the model sees in the middle of a conversation would break the provider cache. Clients that open a new conversation for every chat pick up changes quickly. Claude Code, Codex and clients that send a stable session header keep the old settings until they start a new conversation, or until the conversation has gone unused for 30 days (`session_ttl_days`).
 
@@ -347,14 +348,14 @@ Each section has its own switch:
 | Recall memory | Searches OpenViking with each new user message and appends what is relevant to that message. | Sources: memories, resources, skills · Budget per message: 1,600 tokens · Budget per conversation: 6,000 tokens · Relevance threshold: 0.35 · Time limit: 2 s |
 | Save conversations | Writes finished turns to an OpenViking session and commits it, so OpenViking can extract memories. | Save the latest reply after: 600 s · Commit after: 20,000 tokens · Keep recent messages: 10 |
 | Long conversations | Replaces older history with OpenViking's summary once a conversation is long. Needs Save conversations. | Start after: 30,000 tokens · Keep recent turns: 3 · Wait for summary: 30 s |
-| OpenViking tools | Lets the model search and read OpenViking while it answers. Chat Completions only. Off by default. | Read tools: search, read, list · Write tools: off |
+| OpenViking tools | Lets the model search and read OpenViking while it answers. Chat Completions only. Off by default. | Tools: Search, Read, List · Allow write tools: off |
 
 How the recall settings play out:
 
 - The search query is the user message with client noise removed, cut to **Query length** characters (8,000). Messages shorter than 3 characters are not searched.
 - Each message gets at most the smaller of **Budget per message** and what is left of **Budget per conversation**; with less than 64 tokens left, the gateway skips the search. A budget per conversation of 0 turns recall off. Token counts are a conservative estimate, not the provider's billing count.
 - If OpenViking does not answer within the **Time limit**, the message goes to the model without memory and never gets it later, even when the client retries.
-- **Limit by category** (under Advanced) searches only the categories with a limit above 0, among events, entities, preferences, experiences, resources and skills, and takes at most that many entries from each. When it is off, all sources are ranked together.
+- **Limit by category** (under **Advanced settings**) searches only the categories with a limit above 0, among events, entities, preferences, experiences, resources and skills, and takes at most that many entries from each. When it is off, all sources are ranked together.
 
 How the saving settings play out:
 
@@ -369,7 +370,7 @@ The [Configuration reference](#configuration-reference) lists every setting with
 
 A gateway key (`ovcg_…`) is what a client uses in place of a provider key. Each key belongs to one OpenViking user and uses one context profile and a set of upstreams.
 
-To issue one, choose **Issue key** on the Keys tab and fill in:
+To issue one, choose **Issue key** on the **Keys** tab and fill in:
 
 - **Name**, to recognize the key later, for example "alice · Claude Code".
 - **OpenViking key**: a key of an OpenViking user in this account. The gateway searches and saves memory as this user. Root keys are not accepted. It is stored encrypted and never shown again.
@@ -382,12 +383,12 @@ Before issuing, the gateway checks the OpenViking key with OpenViking. A root ke
 The **Copy your gateway key** dialog then shows the full key. This is the only time it is shown: the gateway keeps only a hash and the first characters. The dialog also has ready-to-paste setups for Claude Code, Codex CLI and chat clients with the real key and gateway address filled in. If a key is lost, issue a new one.
 
 - **Keys cannot be edited.** To change a key's profile, upstreams, allowed models or OpenViking key, issue a new key and revoke the old one.
-- **Conversations belong to the user, not the key.** A new key for the same OpenViking user continues the same conversations when the client sends the same session, so replacing a key is seamless.
+- **Conversations belong to the user, not the key.** A new key for the same OpenViking user continues the same conversations when the client sends the same session ID, so replacing a key is seamless.
 - **Revoking** cuts off clients at once (other worker processes follow within about 2 seconds); requests already in flight finish. Turns not yet saved for conversations last used with that key are dropped. Conversations and memories stay. To replace a key without losing turns, switch the client to the new key first, then revoke the old one.
 - **When an OpenViking key changes.** If the user's OpenViking key is regenerated or removed, the gateway key keeps authenticating clients, but memory search fails and saving pauses with `openviking_http_401`. Issue a new gateway key with the user's new OpenViking key, switch the client, and revoke the old gateway key.
 - **One key per person.** Everyone using a key shares the memory of its OpenViking user. Issue one key per person, and per client when you want different profiles.
 
-**Delete this user's gateway data…** (in a key's More menu) revokes every gateway key of that OpenViking user and deletes the gateway's conversation state for them. Sessions and memories in OpenViking are not affected; delete those in OpenViking. Removing a user or account in OpenViking does this automatically; see [Security and data](#security-and-data).
+**Delete this user's gateway data…** (in a key's **More actions** menu) revokes every gateway key of that OpenViking user and deletes the gateway's conversation state for them. Sessions and memories in OpenViking are not affected; delete those in OpenViking. Removing a user or account in OpenViking does this automatically; see [Security and data](#security-and-data).
 
 ### Requests and overview
 
@@ -397,12 +398,12 @@ The **Overview** tab summarizes the latest 10,000 request-log records within the
 - **Requests**: the number of model requests, when the last one arrived and how many output tokens they used.
 - **First-call cache hit rate**: the share of input tokens served from the provider's prompt cache on the first model call of each new user message. This is the gateway's most important health signal. It should stay close to what the provider reaches without the gateway; a drop usually means the history the gateway sends no longer matches the previous request. See [The first-call cache hit rate dropped](#the-first-call-cache-hit-rate-dropped).
 - **Within-turn cache hit rate**: the same for later calls within a turn, such as tool steps and OpenViking tool rounds. It is usually high either way.
-- **Memory recalled**: entries added to messages, and the average search time over the messages that were searched.
-- **OpenViking**: Connected, Degraded or Starting, with the version, authentication mode and, when degraded, the reason. While OpenViking is unreachable, requests still reach the model without memory. This card also warns when conversations are retrying or have paused saving to OpenViking.
+- **Memory entries recalled**: entries added to new messages, and how long a search in OpenViking took on average, counting only messages that searched.
+- **OpenViking**: Connected, Degraded or Starting, with the version, authentication mode and, when degraded, the reason. While OpenViking is unreachable, requests still reach the model without memory. Under **Saving conversations**, the card also counts conversations that are retrying or have paused saving to OpenViking.
 - **Degraded requests**: how often each issue occurred, with an explanation; the issues are listed in the [troubleshooting table](#issues-on-degraded-requests).
 - **Recent requests**, with a link to the Requests tab.
 
-The **Requests** tab lists the latest 1,000 records, newest first, and refreshes every 30 seconds while it is open. Filter by **All**, **New messages**, **Tool steps** or **Issues**, by type, or search by model, conversation or key name. Columns show the type, model (the name the client sent), the provider's HTTP status, tokens (input, cached share, output), **Memory** (`+3`: entries added by this request's search, with the search time; `↺ 4`: entries replayed from earlier turns), **Saving** status and any issue. Expand a row for the conversation ID, upstream, key, duration, the token breakdown, the memory search result, saving status with the next retry time, OpenViking tool details and, for an issue, what it means and what to do.
+The **Requests** tab lists the latest 1,000 records, newest first, and refreshes its first page every 30 seconds while you view it. Filter by **All**, **New messages**, **Tool steps** or **Issues**, by **Request type**, or search by model, conversation or key. Columns show the type, model (the name the client sent), the provider's HTTP status, tokens (input, cached share, output), **Memory** (`+3`: entries this request's search added, with the search time; `↺ 4`: memory added to 4 earlier messages, sent again unchanged), **Saving** status and **Issue**. Expand a row for the conversation ID, upstream, key, duration, the token breakdown, the memory search result, saving status with the next retry time, OpenViking tool details and, for an issue, what it means and what to do.
 
 Only requests that reached a model provider are logged. Requests the gateway rejects first, such as an invalid key, a model the key does not allow, no matching upstream or a body over the size limit, are not; the client receives the error instead.
 
@@ -418,7 +419,7 @@ Only requests that reached a model provider are logged. Requests the gateway rej
 
 The **Saving** column shows where each conversation stands:
 
-- **Saving**: saving works normally.
+- **On**: saving works normally.
 - **Off**: the conversation's profile does not save.
 - **Retrying**: OpenViking rejected a save or could not be reached. The gateway retries after 10, 20, 40 and 80 seconds.
 - **Paused**: five attempts failed. The gateway keeps retrying every 5 minutes until it succeeds. Unsaved turns are kept until they are saved or the conversation expires.
@@ -433,7 +434,7 @@ With OpenViking tools on, the model can search and read OpenViking while it answ
 
 This is meant for chat apps and API apps that cannot connect to OpenViking's MCP server. Clients that support MCP or have a plugin, such as Claude Code and Codex, are better served by those, where tool calls are visible.
 
-To turn the tools on, enable the **OpenViking tools** section in a context profile and pick the read tools: search, read and list. **Allow OpenViking tools** is on by default on every upstream. Conversations that start after you save get the tools. The model sees them as `openviking_search`, `openviking_read` and `openviking_list`. The write tools, `openviking_write`, `openviking_add_resource` (**Import files**) and `openviking_add_skill` (**Import skills**), are offered only when **Allow write tools** is on and the tool is checked.
+To turn the tools on, enable the **OpenViking tools** section in a context profile and check the tools under **Tools**: **Search**, **Read** and **List**. **Allow OpenViking tools** is on by default on every upstream. Conversations that start after you save get the tools. The model sees them as `openviking_search`, `openviking_read` and `openviking_list`. The write tools, **Write** (`openviking_write`), **Import files** (`openviking_add_resource`) and **Import skills** (`openviking_add_skill`), are offered only when **Allow write tools** is on and the tool is checked.
 
 > **Note**: Tool calls run inside the gateway, so they never go through the client's permission prompts. A write tool changes the user's OpenViking data without asking. Allow write tools only for users who expect that.
 
@@ -460,12 +461,12 @@ Housekeeping and sub-agent requests keep the tool definitions but cannot call th
 
 Uploads are limited to `max_body_bytes` (32 MiB by default).
 
-The limits sit under **Advanced** in the profile:
+The limits sit under **Advanced settings** in the profile's **OpenViking tools** section:
 
 | Setting | API name | Default | Range | At the limit |
 | --- | --- | --- | --- | --- |
-| Rounds | `tool_max_rounds` | 5 | 1–20 | The model must answer without further tool calls. |
-| Per-call timeout | `tool_timeout_seconds` | 30 s | up to 120 s | The call returns an error to the model. |
+| Rounds per request | `tool_max_rounds` | 5 | 1–20 | The model must answer without further tool calls. |
+| Time limit per call | `tool_timeout_seconds` | 30 s | up to 120 s | The call returns an error to the model. |
 | Result size | `tool_result_bytes` | 65,536 bytes | 1,024–1,048,576 | The result is truncated. |
 | Total time | `tool_total_seconds` | 120 s | up to 600 s | The request fails with 504 "Hidden tool request timed out". |
 | Token budget | `tool_total_tokens` | 100,000 | 1,024–1,000,000 | Further tool calls are refused and the model answers with what it has. This is not a billing cap; the final answer can exceed it. |
@@ -481,7 +482,7 @@ With **Long conversations** on, a conversation can keep going beyond the model's
 3. When the summary is ready, every later request carries the system and developer messages, one user message that starts with `[OpenViking Session Context]` and holds the summary, and the latest **Keep recent turns** turns (3) word for word, counting the current one. Memory for the new message is still added.
 4. Each new archive builds on the previous summary and replaces it.
 
-The prompt changes once at each archive point, which costs one provider cache miss there. Thinking blocks are removed from the kept turns, because their signatures covered the history that was replaced; a client's own compaction has the same effect. Long conversations need **Save conversations**, and apply only to the main conversation: sub-agent and housekeeping requests, including a client's own compaction requests, keep their history.
+The prompt changes once at each archive point, which costs one provider cache miss there. Thinking blocks are removed from the kept turns, because their signatures covered the history that was replaced; a client's own compaction has the same effect. Long conversations need **Save conversations**. The summary replaces the older history in every request of the conversation that resends it, including housekeeping requests such as a client's own compaction; sub-agents usually send their own, separate history, which stays untouched.
 
 **Waiting for a summary.** Until a summary is ready, the gateway sends the full history and does not wait. It waits only when the conversation is about to overflow: the model's context window is known, and the last request to the same upstream and model used at least 90% of it. Then it waits up to **Wait for summary** (30 seconds, at most 60), checking every 5 seconds. If no summary arrives in time, it sends the full history anyway, which may fail with a context-length error, and flags the request **Summary not ready** (`archive_wait_timeout`).
 
@@ -515,7 +516,7 @@ Stored values are encrypted with the encryption key. The files are readable only
 
 **Deleting data.**
 
-- Delete one user's gateway data from Studio (a key's More menu → **Delete this user's gateway data…**) or with `DELETE /api/v1/admin/context-gateway/users/{user_id}/data` on OpenViking Server, using an account admin key. This revokes the user's gateway keys and deletes their conversation state. Request-log metadata ages out with retention.
+- Delete one user's gateway data from Studio (a key's **More actions** menu → **Delete this user's gateway data…**) or with `DELETE /api/v1/admin/context-gateway/users/{user_id}/data` on OpenViking Server, using an account admin key. This revokes the user's gateway keys and deletes their conversation state. Request-log metadata ages out with retention.
 - Removing a user in OpenViking does the same automatically. Removing an account also deletes the account's upstreams, profiles, keys and request logs from the gateway. If the gateway is unreachable at that moment, OpenViking keeps retrying. If you stop using the gateway, set `context_gateway.enabled` to `false` so deletions no longer wait for it.
 - Sessions and memories in OpenViking are deleted through OpenViking, not the gateway.
 
@@ -615,9 +616,9 @@ URL settings must be plain `http` or `https` addresses without credentials, quer
 | Default context window | `context_window` | unset | ≥ 1,024 | Window used when the upstream does not list the model. |
 | OpenViking tools | `gateway_tools` | `false` | | Offer OpenViking tools (Chat Completions only). |
 | Allow write tools | `allow_write_tools` | `false` | | Required before any write tool is offered. |
-| Read and write tools | `tool_allowlist` | `search`, `read`, `list` | `search`, `read`, `list`, `write`, `add_resource`, `add_skill` | The tools offered, as `openviking_<name>`. |
-| Rounds | `tool_max_rounds` | `5` | 1–20 | See [OpenViking tools](#openviking-tools). |
-| Per-call timeout | `tool_timeout_seconds` | `30` | up to 120 | |
+| Tools | `tool_allowlist` | `search`, `read`, `list` | `search`, `read`, `list`, `write`, `add_resource`, `add_skill` | The tools offered, as `openviking_<name>`. |
+| Rounds per request | `tool_max_rounds` | `5` | 1–20 | See [OpenViking tools](#openviking-tools). |
+| Time limit per call | `tool_timeout_seconds` | `30` | up to 120 | |
 | Result size | `tool_result_bytes` | `65536` | 1,024–1,048,576 | |
 | Total time | `tool_total_seconds` | `120` | up to 600 | |
 | Token budget | `tool_total_tokens` | `100000` | 1,024–1,000,000 | |
@@ -630,7 +631,7 @@ URL settings must be plain `http` or `https` addresses without credentials, quer
 | Protocol | `protocol` | | `anthropic` (Anthropic Messages), `chat` (Chat Completions) or `responses` (Responses). |
 | Provider | `vendor` | `generic` | `generic`, `anthropic`, `openai`, `deepseek` or `ark` (Volcano Engine Ark). |
 | Base URL | `base_url` | | Provider address; see [Upstreams](#upstreams) for path rules. |
-| Credentials | `auth_mode` | `managed` | `managed` (the gateway holds the API key) or `passthrough` (each client sends its own key). |
+| Who provides the API key | `auth_mode` | `managed` | `managed` (The gateway holds the API key) or `passthrough` (Each client sends its own key). |
 | API key | `api_key` | | Write-only. Blank on edit keeps the stored key. |
 | Extra headers | `headers` | `{}` | Write-only values; names are visible. |
 | Models | `models` | `[]` | Model names served; empty accepts any. |
@@ -645,7 +646,7 @@ URL settings must be plain `http` or `https` addresses without credentials, quer
 
 **Gateway key fields:** Name (`name`), OpenViking key (`openviking_key`), Context profile (`policy_id`), Upstreams (`upstream_ids`, at least one) and Allowed models (`models`).
 
-Studio calls the management API on OpenViking Server under `/api/v1/admin/context-gateway/`, with the resources `overview`, `logs`, `upstreams`, `policies`, `keys` and `users/{user_id}/data`. Scripts can call the same paths with an account admin key.
+Studio calls the management API on OpenViking Server under `/api/v1/admin/context-gateway/`, with the resources `overview`, `logs`, `guides`, `upstreams`, `policies`, `keys` and `users/{user_id}/data`. Scripts can call the same paths with an account admin key.
 
 ## Troubleshooting
 
@@ -666,21 +667,26 @@ In Docker Compose, a gateway that keeps restarting usually has empty secrets in 
 
 The Context Gateway page shows a setup card instead of its tabs when OpenViking Server cannot use the gateway:
 
-- **"Context Gateway is not enabled"**: OpenViking Server's `ov.conf` lacks `context_gateway.enabled: true`. Add it and restart OpenViking Server.
-- **"Context Gateway management token is not configured"**: OpenViking Server's environment lacks the admin token, or it is shorter than 32 characters. Set it (in Docker Compose through `.env`, in Helm through `contextGateway.existingSecret`) and restart OpenViking Server.
-- **"Context Gateway management service is unavailable"**: OpenViking Server cannot reach `context_gateway.url`. Check that the gateway is running and that `url` is the address OpenViking Server can use: `http://context-gateway:1935` in Docker Compose (the chart sets it for Helm). If both processes are running but every action fails with 401 "Invalid gateway management credential", they have different admin tokens.
+- **The Context Gateway is turned off**: OpenViking Server's `ov.conf` lacks `context_gateway.enabled: true`. Add it and restart OpenViking Server.
+- **The management token is missing**: OpenViking Server's environment lacks the admin token, or it is shorter than 32 characters. Set it (in Docker Compose through `.env`, in Helm through `contextGateway.existingSecret`) and restart OpenViking Server.
+- **OpenViking can't reach the gateway**: OpenViking Server cannot reach `context_gateway.url`. Check that the gateway is running and that `url` is the address OpenViking Server can use: `http://context-gateway:1935` in Docker Compose (the chart sets it for Helm).
 
-If **Context Gateway** is missing from the sidebar, Studio has no admin access: enter an account admin or root key as the **Admin API key** in Connection Settings. Studio's management pages do not work while OpenViking runs in dev mode.
+If both processes are running but the page says "Your key was rejected. Check Connection settings." although the same admin key works on **Users & Permissions**, the two processes have different admin tokens, and the gateway answers 401 "Invalid gateway management credential". Set the same token for both and restart them.
+
+If **Context Gateway** is missing from the sidebar, Studio has no admin access: enter an account admin or root key as the **Admin API key** in **Connection Settings**. While OpenViking runs in dev mode, Studio hides its management pages.
 
 ### Issuing a key fails
 
-| Error | Cause and fix |
+The **Issue a gateway key** dialog shows why OpenViking refused the key. The code in parentheses is the reason the management API returns.
+
+| Message in Studio | Cause and fix |
 | --- | --- |
-| `root_key_not_allowed` | The OpenViking key is a root key, or OpenViking runs in dev mode, where every key acts as root. Use the user's own key, and API key mode. |
-| "OpenViking key belongs to another account" | The key belongs to a different account than the one you manage in Studio. |
-| `openviking_http_401`, `openviking_identity_missing` | The key is invalid, or its user was removed. |
-| `openviking_unavailable` | The gateway cannot reach `openviking_url`. |
-| `openviking_version_mismatch` | OpenViking Server is older than `min_server_version` (0.4.16). Upgrade it. A server installed from a source checkout without version tags may report a development version such as `0.1.dev123`; install a release, or set `min_server_version` to match. |
+| This is a root key. (`root_key_not_allowed`) | The OpenViking key is a root key, or OpenViking runs in dev mode, where every key acts as root. Use the user's own key, and API key mode. |
+| This OpenViking key belongs to another account. | The key belongs to a different account than the one you manage in Studio. |
+| OpenViking rejected this key. (`openviking_http_401`) | The key is incomplete, was regenerated, or its user was removed. Use the user's current key. |
+| OpenViking couldn't tell which user this key belongs to (`openviking_identity_missing`) | OpenViking returned no user for this key. Use the key of a user in this account. |
+| The gateway couldn't reach OpenViking to check this key. (`openviking_unavailable`) | The gateway cannot reach `openviking_url`. |
+| OpenViking is older than the gateway requires. (`openviking_version_mismatch`) | OpenViking Server is older than `min_server_version` (0.4.16). Upgrade it. A server installed from a source checkout without version tags may report a development version such as `0.1.dev123`; install a release, or set `min_server_version` to match. |
 
 ### Clients get an error from the gateway
 
@@ -699,7 +705,7 @@ These rejections happen before a request reaches a provider, so they do not appe
 | 426 | A WebSocket connection to the Responses API. Expected: Codex falls back to HTTP. |
 | 502 "Model upstream is unavailable" | The gateway could not reach the provider, or the call exceeded `upstream_timeout_seconds`. Use **Test connection** on the upstream. |
 | 503 "Dev authentication requires a loopback gateway" | OpenViking runs in dev mode. Switch it to API key mode. |
-| 504 "Hidden tool request timed out" | OpenViking tool rounds exceeded the profile's total time. |
+| 504 "Hidden tool request timed out" | OpenViking tool rounds exceeded the profile's **Total time** for tools. |
 
 ### No memory is added
 
@@ -729,7 +735,7 @@ A message whose search failed never gets memory later; the next message searches
 Compare it with what the provider reaches without the gateway, then look at the issues on recent requests:
 
 - **Memory record missing** (`missing_injection_record`): the gateway's storage was lost, restored from an old backup or expired, so memory added earlier could not be replayed. Ongoing conversations recover after one miss.
-- **Upstream switched** (`upstream_changed`): conversations moved to another upstream because theirs was disabled, unbound from the key or stopped serving the model.
+- **Upstream switched** (`upstream_changed`): conversations moved to another upstream because theirs was disabled, is not bound to the key the client now uses, or stopped serving the model.
 - **Cache parameters changed** (`ark_cache_parameters_changed`): on Ark, the client changes the model, thinking, sampling, system prompt or tools within a conversation.
 - No issue: the client itself may change earlier messages or its system prompt every turn, for example by inserting the current time. The gateway cannot fix that. Each summary in a long conversation also costs one miss, which is expected.
 
@@ -743,13 +749,13 @@ Compare it with what the provider reaches without the gateway, then look at the 
 
 ### Issues on degraded requests
 
-The Requests tab and the Overview tab flag requests the gateway could not fully handle. Studio shows the label; the code in parentheses is the same issue in the management API:
+The **Requests** and **Overview** tabs flag requests the gateway could not fully handle. Studio shows the label; the code in parentheses is the same issue in the management API:
 
 | Issue | What happened | What to do |
 | --- | --- | --- |
 | Memory unavailable (`memory_store_failure`) | The gateway could not read or write its storage, or the user's gateway data was just deleted. The request went to the model without memory; for Claude, earlier thinking was dropped. | Check disk space, permissions and the gateway's log. Expected right after deleting a user's data. |
 | Forwarded unchanged (`unsafe_json`) | The request contained numbers or duplicate keys that cannot be re-encoded exactly, so it was forwarded byte for byte without memory. | Usually specific to one client; nothing to change in the gateway. |
-| Upstream switched (`upstream_changed`) | The conversation's upstream could no longer serve it, so it moved to another one, with one cache miss and earlier Claude thinking dropped. | Re-enable or re-bind the upstream, or accept the move. |
+| Upstream switched (`upstream_changed`) | The conversation's upstream could no longer serve it, so it moved to another one, with one cache miss and earlier Claude thinking dropped. | Re-enable the upstream, or have the client use a key that includes it; otherwise accept the move. |
 | Memory record missing (`missing_injection_record`) | Claude conversation: memory added earlier is no longer on record, so earlier thinking was dropped once. | Expected after storage loss or for very old conversations. Start a new conversation if it repeats. |
 | OpenViking plugin in use (`plugin_present`) | An OpenViking plugin was detected; gateway memory is off for this conversation. | Expected when a plugin is in use. Use either the plugin or the gateway for that client. |
 | Cache parameters changed (`ark_cache_parameters_changed`) | On Ark, cache-relevant parameters differ from the conversation's first request; Ark's cache probably missed. | Keep model, thinking, sampling, system prompt and tools stable within a conversation. |
