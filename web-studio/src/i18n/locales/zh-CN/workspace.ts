@@ -3,6 +3,7 @@ const workspace = {
     footer: {
       agentIntegrations: 'Agent 接入',
       connection: '连接设置',
+      contextGateway: '上下文网关',
       docs: '文档站',
       github: 'GitHub',
       sdkApi: 'SDK 与 API',

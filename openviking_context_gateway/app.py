@@ -38,6 +38,81 @@ def public_object(kind, value):
     return value
 
 
+def keep_upstream_secrets(payload, previous):
+    """Fill write-only upstream secrets the admin left blank from the stored upstream.
+
+    A blank ``api_key`` keeps the stored key. ``headers`` omitted keeps every stored header;
+    otherwise the submitted names are the new header set, and a blank value keeps the stored
+    value for that name (or drops the name when nothing is stored).
+    """
+    if not isinstance(payload, dict):
+        raise ValueError("expected an upstream object")
+    if not payload.get("api_key"):
+        payload["api_key"] = previous.get("api_key", "")
+    stored = previous.get("headers", {})
+    headers = payload.get("headers")
+    if headers is None:
+        payload["headers"] = stored
+    elif isinstance(headers, dict):
+        payload["headers"] = {
+            name: value or stored[name]
+            for name, value in headers.items()
+            if value or name in stored
+        }
+    return payload
+
+
+def overview_summary(logs):
+    """Aggregate newest-first request-log records into the management overview."""
+    requests = [log for log in logs if log.get("kind") != "capture"]
+    groups = {}
+    for label, kinds in (("first_call", {"user"}), ("continuation", {"continuation"})):
+        subset = [log for log in requests if log.get("kind") in kinds]
+        total = sum(
+            log.get("first_upstream_input_tokens", log.get("input_tokens", 0)) for log in subset
+        )
+        cached = sum(
+            log.get("first_upstream_cached_tokens", log.get("cached_tokens", 0)) for log in subset
+        )
+        hidden_calls = 0
+        if label == "continuation":
+            total += sum(log.get("hidden_upstream_input_tokens", 0) for log in requests)
+            cached += sum(log.get("hidden_upstream_cached_tokens", 0) for log in requests)
+            hidden_calls = sum(log.get("hidden_upstream_calls", 0) for log in requests)
+        groups[label] = {
+            "requests": len(subset) + hidden_calls,
+            "input_tokens": total,
+            "cached_tokens": cached,
+            "cache_hit_ratio": cached / total if total else 0,
+        }
+    degradations = {}
+    for log in logs:
+        if reason := log.get("degradation"):
+            degradations[reason] = degradations.get(reason, 0) + 1
+    recalls = [log for log in requests if "recall_reason" in log]
+    capture = {}
+    for log in logs:
+        if log.get("session") and log.get("capture_status"):
+            capture.setdefault((log["session"], log.get("protocol")), log["capture_status"])
+    return {
+        "requests": len(requests),
+        "last_request_at": requests[0].get("time") if requests else None,
+        "output_tokens": sum(log.get("output_tokens", 0) for log in requests),
+        "cache": groups,
+        "degradations": degradations,
+        "recall_count": sum(log.get("recall_count", 0) for log in requests),
+        "recall_requests": len(recalls),
+        "recall_ms": sum(log.get("recall_ms", 0) for log in recalls) / len(recalls)
+        if recalls
+        else 0,
+        "capture_issues": {
+            status: sum(1 for value in capture.values() if value == status)
+            for status in ("retrying", "paused")
+        },
+        "sample_limit": 10000,
+    }
+
+
 def create_app(config: ContextGatewayConfig | None = None):
     if config is None:
         from .cli import load_config
@@ -153,44 +228,8 @@ def create_app(config: ContextGatewayConfig | None = None):
 
     @app.get("/admin/overview")
     async def overview(request: Request):
-        account = admin_account(request)
-        logs = await management.logs(account, 10000)
-        groups = {}
-        for label, kinds in (("first_call", {"user"}), ("continuation", {"continuation"})):
-            subset = [log for log in logs if log.get("kind") in kinds]
-            total = sum(
-                log.get("first_upstream_input_tokens", log.get("input_tokens", 0)) for log in subset
-            )
-            cached = sum(
-                log.get("first_upstream_cached_tokens", log.get("cached_tokens", 0))
-                for log in subset
-            )
-            hidden_calls = 0
-            if label == "continuation":
-                total += sum(log.get("hidden_upstream_input_tokens", 0) for log in logs)
-                cached += sum(log.get("hidden_upstream_cached_tokens", 0) for log in logs)
-                hidden_calls = sum(log.get("hidden_upstream_calls", 0) for log in logs)
-            groups[label] = {
-                "requests": len(subset) + hidden_calls,
-                "input_tokens": total,
-                "cached_tokens": cached,
-                "cache_hit_ratio": cached / total if total else 0,
-            }
-        reasons = {}
-        for log in logs:
-            reason = log.get("degradation")
-            if reason:
-                reasons[reason] = reasons.get(reason, 0) + 1
-        return {
-            "requests": len(logs),
-            "output_tokens": sum(log.get("output_tokens", 0) for log in logs),
-            "cache": groups,
-            "degradations": reasons,
-            "openviking": app.state.health,
-            "recall_count": sum(log.get("recall_count", 0) for log in logs),
-            "recall_ms": sum(log.get("recall_ms", 0) for log in logs) / max(1, len(logs)),
-            "sample_limit": 10000,
-        }
+        logs = await management.logs(admin_account(request), 10000)
+        return {**overview_summary(logs), "openviking": app.state.health}
 
     @app.get("/admin/logs")
     async def logs(request: Request, limit: int = 200):
@@ -212,9 +251,31 @@ def create_app(config: ContextGatewayConfig | None = None):
     @app.get("/admin/guides")
     async def guides(request: Request):
         admin_account(request)
-        from .guides import connection_guides
+        return {
+            "base_url": config.public_url or config.url,
+            "public_url_configured": bool(config.public_url),
+        }
 
-        return connection_guides(config.public_url or config.url)
+    # Registered before /admin/{kind}/{identifier}, which would otherwise shadow account/data.
+    @app.delete("/admin/users/{user_id}/data")
+    async def delete_user_data(user_id: str, request: Request):
+        account = admin_account(request)
+        for key in await management.list(account, "keys"):
+            if key["user_id"] == user_id:
+                await management.delete(account, "keys", key["id"])
+        for protocol in ("anthropic", "chat", "responses"):
+            await store.expire(0, digest(account + "\0" + user_id + "\0" + protocol))
+        await management.delete(account, "users", user_id)
+        return {"deleted": True}
+
+    @app.delete("/admin/account/data")
+    async def delete_account_data(request: Request):
+        account = admin_account(request)
+        users = {user["user_id"] for user in await management.list(account, "users")}
+        for user in users:
+            await delete_user_data(user, request)
+        await management.delete_account(account)
+        return {"deleted": True}
 
     @app.get("/admin/{kind}")
     async def list_objects(kind: str, request: Request):
@@ -247,10 +308,7 @@ def create_app(config: ContextGatewayConfig | None = None):
             payload = await request.json()
             previous = await management.get(account, kind, identifier)
             if kind == "upstreams":
-                if previous:
-                    for field in ("api_key", "headers"):
-                        if not payload.get(field):
-                            payload[field] = previous.get(field, "" if field == "api_key" else {})
+                payload = keep_upstream_secrets(payload, previous or {})
                 value = Upstream.model_validate(payload).model_dump()
             else:
                 value = Policy.model_validate(payload).model_dump()
@@ -306,26 +364,6 @@ def create_app(config: ContextGatewayConfig | None = None):
                 return {"ok": response.status < 400, "status": response.status}
         except (aiohttp.ClientError, asyncio.TimeoutError):
             return {"ok": False, "reason": "upstream_unavailable"}
-
-    @app.delete("/admin/users/{user_id}/data")
-    async def delete_user_data(user_id: str, request: Request):
-        account = admin_account(request)
-        for key in await management.list(account, "keys"):
-            if key["user_id"] == user_id:
-                await management.delete(account, "keys", key["id"])
-        for protocol in ("anthropic", "chat", "responses"):
-            await store.expire(0, digest(account + "\0" + user_id + "\0" + protocol))
-        await management.delete(account, "users", user_id)
-        return {"deleted": True}
-
-    @app.delete("/admin/account/data")
-    async def delete_account_data(request: Request):
-        account = admin_account(request)
-        users = {user["user_id"] for user in await management.list(account, "users")}
-        for user in users:
-            await delete_user_data(user, request)
-        await management.delete_account(account)
-        return {"deleted": True}
 
     @app.get("/api/v3/models")
     @app.get("/v1/models")

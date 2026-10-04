@@ -3,6 +3,7 @@ const workspace = {
     footer: {
       agentIntegrations: 'Agent Integrations',
       connection: 'Connection Settings',
+      contextGateway: 'Context Gateway',
       docs: 'Documentation',
       github: 'GitHub',
       sdkApi: 'SDK & API',

@@ -21,6 +21,7 @@ import {
   SparklesIcon,
   SunIcon,
   UsersRoundIcon,
+  WaypointsIcon,
   WorkflowIcon,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
@@ -315,6 +316,8 @@ function AppShellInner({ children }: { children: React.ReactNode }) {
     useAppConnection()
   const settingsActive = pathname === '/settings'
   const usersActive = pathname === '/users' || pathname.startsWith('/users/')
+  const contextGatewayActive =
+    pathname === '/context-gateway' || pathname.startsWith('/context-gateway/')
   const { canManageUsers } = resolveStudioManagementCapabilities({
     hasControlCredential: Boolean(connection.adminApiKey.trim()),
     isRoleLoading: isConnectionRoleLoading,
@@ -430,9 +433,16 @@ function AppShellInner({ children }: { children: React.ReactNode }) {
                 </SidebarMenuItem>
                 {canManageUsers ? (
                   <SidebarMenuItem>
-                    <SidebarMenuButton render={<Link to="/context-gateway" />} isActive={pathname === '/context-gateway'} className="h-9">
-                      <CableIcon />
-                      <span>{t('title', { ns: 'contextGateway' })}</span>
+                    <SidebarMenuButton
+                      render={<Link to="/context-gateway" />}
+                      isActive={contextGatewayActive}
+                      tooltip={t('footer.contextGateway', { ns: 'appShell' })}
+                      className="h-9"
+                    >
+                      <WaypointsIcon />
+                      <span>
+                        {t('footer.contextGateway', { ns: 'appShell' })}
+                      </span>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                 ) : null}

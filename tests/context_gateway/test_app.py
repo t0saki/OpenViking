@@ -1104,3 +1104,79 @@ async def test_capture_reset_is_scoped_to_the_key_account(running_gateway):
     assert (
         await client.post(path, headers=admin, json={**body, "session": "unknown"})
     ).status_code == 404
+
+
+async def test_guides_report_the_client_facing_address(running_gateway):
+    app, client, admin, _, _, _ = running_gateway
+    response = await client.get("/admin/guides", headers=admin)
+    assert response.json() == {"base_url": "http://127.0.0.1:1935", "public_url_configured": False}
+    app.state.config.public_url = "https://ov.example.com"
+    response = await client.get("/admin/guides", headers=admin)
+    assert response.json() == {"base_url": "https://ov.example.com", "public_url_configured": True}
+
+
+async def test_upstream_save_keeps_blank_secrets_per_header(running_gateway):
+    app, client, admin, _, _, _ = running_gateway
+    upstream = {"name": "chat", "protocol": "chat", "base_url": "https://api.example.com/v1"}
+
+    async def save(**fields):
+        response = await client.put(
+            "/admin/upstreams/headers", headers=admin, json={**upstream, **fields}
+        )
+        assert response.status_code == 200, response.text
+        stored = await app.state.management.get("tenant", "upstreams", "headers")
+        return response.json(), stored
+
+    await save(api_key="secret", headers={"A": "1", "B": "2"})
+    public, stored = await save(api_key="", headers={"A": "", "C": "3", "D": ""})
+    assert stored["headers"] == {"A": "1", "C": "3"} and stored["api_key"] == "secret"
+    assert public["header_names"] == ["A", "C"] and public["has_api_key"]
+    _, stored = await save()
+    assert stored["headers"] == {"A": "1", "C": "3"}
+    _, stored = await save(headers={"A": "new"})
+    assert stored["headers"] == {"A": "new"}
+    _, stored = await save(headers={})
+    assert stored["headers"] == {} and stored["api_key"] == "secret"
+
+
+async def test_overview_counts_model_requests_recalls_and_capture_issues(running_gateway):
+    app, client, admin, _, _, _ = running_gateway
+    # Oldest first: the store returns the newest record first.
+    for record in [
+        {"kind": "user", "session": "a", "protocol": "chat", "capture_status": "retrying"},
+        {"kind": "capture", "session": "b", "protocol": "chat", "capture_status": "paused"},
+        {"kind": "capture", "session": "a", "protocol": "chat", "capture_status": "active"},
+        {"kind": "user", "recall_reason": "recalled", "recall_ms": 30, "recall_count": 2},
+        {"kind": "user", "recall_reason": "empty", "recall_ms": 10},
+        {"kind": "continuation", "session": "c", "protocol": "chat", "capture_status": "retrying"},
+        {"kind": "capture", "session": "c", "protocol": "anthropic", "capture_status": "paused"},
+    ]:
+        await app.state.management.log("tenant", record)
+    overview = (await client.get("/admin/overview", headers=admin)).json()
+    logs = (await client.get("/admin/logs", headers=admin)).json()
+    newest_request = next(log for log in logs if log["kind"] != "capture")
+    assert overview["requests"] == 4
+    assert overview["last_request_at"] == newest_request["time"]
+    assert overview["recall_requests"] == 2 and overview["recall_ms"] == 20
+    assert overview["recall_count"] == 2
+    assert overview["capture_issues"] == {"retrying": 1, "paused": 2}
+
+
+async def test_overview_without_model_requests(running_gateway):
+    _, client, admin, _, _, _ = running_gateway
+    overview = (await client.get("/admin/overview", headers=admin)).json()
+    assert overview["requests"] == 0 and overview["last_request_at"] is None
+    assert overview["recall_ms"] == 0 and overview["recall_requests"] == 0
+    assert overview["capture_issues"] == {"retrying": 0, "paused": 0}
+
+
+async def test_user_and_account_data_deletion_routes(running_gateway):
+    _, client, admin, key, _, _ = running_gateway
+    response = await client.delete("/admin/users/bob/data", headers=admin)
+    assert response.json() == {"deleted": True}
+    assert (await client.get("/admin/keys", headers=admin)).json()
+    response = await client.delete("/admin/account/data", headers=admin)
+    assert response.status_code == 200 and response.json() == {"deleted": True}
+    assert (await client.get("/admin/keys", headers=admin)).json() == []
+    response = await client.get("/v1/models", headers={"Authorization": "Bearer " + key["key"]})
+    assert response.status_code == 401

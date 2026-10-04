@@ -1,0 +1,207 @@
+import type { Protocol, Upstream, UpstreamInput, Vendor } from './api'
+import { checkNumber, checkRequired, collect } from './validation'
+import type { NumberRule, ValidationErrors } from './validation'
+
+/** A new upstream; identical to the gateway's own defaults. */
+export const UPSTREAM_DEFAULTS: UpstreamInput = {
+  name: '',
+  protocol: 'chat',
+  base_url: '',
+  api_key: '',
+  auth_mode: 'managed',
+  headers: {},
+  models: [],
+  aliases: {},
+  priority: 0,
+  enabled: true,
+  vendor: 'generic',
+  allow_gateway_tools: true,
+  coding_plan: false,
+  allow_coding_plan: false,
+  cache_min_tokens: 1024,
+  context_windows: {},
+}
+
+export const PROTOCOLS: Protocol[] = ['anthropic', 'chat', 'responses']
+export const VENDORS: Vendor[] = [
+  'generic',
+  'anthropic',
+  'openai',
+  'deepseek',
+  'ark',
+]
+
+/** Client endpoint each protocol serves on the gateway. */
+export const PROTOCOL_PATHS: Record<Protocol, string> = {
+  anthropic: '/v1/messages',
+  chat: '/v1/chat/completions',
+  responses: '/v1/responses',
+}
+
+/** Header names the gateway refuses to forward from an upstream. */
+export const RESERVED_HEADERS = [
+  'host',
+  'content-length',
+  'transfer-encoding',
+  'connection',
+]
+
+/** Header clients send their own provider key in, for passthrough upstreams. */
+export const UPSTREAM_KEY_HEADER = 'X-OpenViking-Upstream-Key'
+
+export const UPSTREAM_LIMITS = {
+  priority: { integer: true },
+  cache_min_tokens: { min: 0, integer: true, unit: 'tokens' },
+  context_window: { min: 1024, integer: true, unit: 'tokens' },
+} satisfies Record<string, NumberRule>
+
+/**
+ * Save body for an existing upstream: every field as stored, a blank API key
+ * and blank header values, which the gateway reads as "keep what is stored".
+ */
+export function toUpstreamInput(upstream: Upstream): UpstreamInput {
+  const input: Record<string, unknown> = {
+    ...UPSTREAM_DEFAULTS,
+    ...upstream,
+    api_key: '',
+    headers: Object.fromEntries(
+      upstream.header_names.map((name) => [name, '']),
+    ),
+  }
+  for (const field of ['id', 'revision', 'has_api_key', 'header_names']) {
+    delete input[field]
+  }
+  return input as UpstreamInput
+}
+
+/** Model names clients can request through this upstream: models plus alias names. */
+export function servedModels(
+  upstream: Pick<UpstreamInput, 'models' | 'aliases'>,
+): string[] {
+  return [...new Set([...upstream.models, ...Object.keys(upstream.aliases)])]
+}
+
+/** True for an absolute http(s) URL without credentials, query or fragment. */
+export function isValidBaseUrl(value: string): boolean {
+  let url: URL
+  try {
+    url = new URL(value.trim())
+  } catch {
+    return false
+  }
+  return (
+    (url.protocol === 'http:' || url.protocol === 'https:') &&
+    Boolean(url.hostname) &&
+    !url.username &&
+    !url.password &&
+    !url.search &&
+    !url.hash &&
+    !/[?#]/.test(value)
+  )
+}
+
+/**
+ * Where the gateway sends a request for `path` (a `/v1/…` client path),
+ * following its rules: a base ending in `/v1` does not get a second `/v1`;
+ * Ark maps Messages to `/api/compatible/v1` and everything else to `/api/v3`.
+ */
+export function upstreamUrl(
+  baseUrl: string,
+  vendor: Vendor,
+  path: string,
+): string {
+  const base = baseUrl.trim().replace(/\/+$/, '')
+  const basePath = new URL(base).pathname.replace(/\/+$/, '')
+  if (vendor === 'ark') {
+    const suffix = path.replace(/^\/v1/, '')
+    const prefix = path.startsWith('/v1/messages')
+      ? '/api/compatible/v1'
+      : '/api/v3'
+    return basePath.endsWith(prefix) ? base + suffix : base + prefix + suffix
+  }
+  if (basePath.endsWith('/v1') && path.startsWith('/v1/')) {
+    return base + path.slice(3)
+  }
+  return base + path
+}
+
+/**
+ * The full URL requests for `protocol` go to, for the "Requests go to …" hint;
+ * empty while the base URL is not valid yet.
+ */
+export function endpointPreview(
+  upstream: Pick<UpstreamInput, 'base_url' | 'vendor' | 'protocol'>,
+  protocol: Protocol = upstream.protocol,
+): string {
+  if (!isValidBaseUrl(upstream.base_url)) return ''
+  return upstreamUrl(
+    upstream.base_url,
+    upstream.vendor,
+    PROTOCOL_PATHS[protocol],
+  )
+}
+
+/**
+ * Checks an upstream before saving. Pass the stored upstream when editing so
+ * blank secrets that will be kept are accepted. Keys are field names.
+ */
+export function validateUpstream(
+  input: UpstreamInput,
+  stored?: Upstream,
+): ValidationErrors {
+  const errors: ValidationErrors = {}
+  collect(errors, 'name', checkRequired(input.name))
+  collect(
+    errors,
+    'base_url',
+    checkRequired(input.base_url) ??
+      (isValidBaseUrl(input.base_url)
+        ? undefined
+        : { key: 'validation.baseUrl' }),
+  )
+  const apiKey = input.api_key.trim()
+  if (apiKey.startsWith('sk-ant-oat')) {
+    collect(errors, 'api_key', { key: 'validation.subscriptionKey' })
+  }
+  if (input.auth_mode === 'managed' && !apiKey && !stored?.has_api_key) {
+    collect(errors, 'api_key', { key: 'validation.apiKeyRequired' })
+  }
+  const storedHeaders = stored?.header_names ?? []
+  for (const [name, value] of Object.entries(input.headers)) {
+    const values = { name }
+    if (!name.trim() || /[\r\n]/.test(name + value)) {
+      collect(errors, 'headers', { key: 'validation.headerInvalid', values })
+    } else if (RESERVED_HEADERS.includes(name.trim().toLowerCase())) {
+      collect(errors, 'headers', { key: 'validation.headerReserved', values })
+    } else if (!value && !storedHeaders.includes(name)) {
+      collect(errors, 'headers', { key: 'validation.headerValue', values })
+    }
+  }
+  for (const [name, target] of Object.entries(input.aliases)) {
+    if (!target.trim()) {
+      collect(errors, 'aliases', {
+        key: 'validation.aliasTarget',
+        values: { name },
+      })
+    }
+  }
+  for (const [name, tokens] of Object.entries(input.context_windows)) {
+    if (checkNumber(tokens, UPSTREAM_LIMITS.context_window)) {
+      collect(errors, 'context_windows', {
+        key: 'validation.contextWindow',
+        values: { name, min: UPSTREAM_LIMITS.context_window.min },
+      })
+    }
+  }
+  collect(
+    errors,
+    'priority',
+    checkNumber(input.priority, UPSTREAM_LIMITS.priority),
+  )
+  collect(
+    errors,
+    'cache_min_tokens',
+    checkNumber(input.cache_min_tokens, UPSTREAM_LIMITS.cache_min_tokens),
+  )
+  return errors
+}
