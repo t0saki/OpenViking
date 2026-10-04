@@ -25,7 +25,10 @@ export function RecommendedProfileButton({
   const { connection, invalidate } = useGateway()
   const create = useMutation({
     mutationFn: () =>
-      saveProfile(connection, newObjectId(), { ...PROFILE_DEFAULTS }),
+      saveProfile(connection, newObjectId(), {
+        ...PROFILE_DEFAULTS,
+        name: t('profiles.defaultName'),
+      }),
     onSuccess: async (profile) => {
       toast.success(t('profiles.toast.created', { name: profile.name }))
       await invalidate('profiles')

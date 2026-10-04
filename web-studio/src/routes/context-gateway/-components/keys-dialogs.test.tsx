@@ -286,7 +286,7 @@ describe('KeysSecretDialog', () => {
     key: 'ovcg_theSecret',
   }
 
-  function renderSecret() {
+  function renderSecret(upstreams = [deepseek]) {
     const onDone = vi.fn()
     render(
       <KeysSecretDialog
@@ -294,7 +294,7 @@ describe('KeysSecretDialog', () => {
         issued={issued}
         baseUrl="https://gw.example.com"
         profileName="Coding"
-        upstreams={[deepseek]}
+        upstreams={upstreams}
         onDone={onDone}
       />,
     )
@@ -334,5 +334,11 @@ describe('KeysSecretDialog', () => {
       }),
     )
     expect(await screen.findByText('keys.secret.noProtocol')).toBeTruthy()
+  })
+
+  it('treats a disabled upstream as missing, like the Connect page', () => {
+    renderSecret([{ ...deepseek, enabled: false }])
+    expect(screen.getByText('keys.secret.noProtocol')).toBeTruthy()
+    expect(screen.queryByText(/deepseek-chat/)).toBeNull()
   })
 })

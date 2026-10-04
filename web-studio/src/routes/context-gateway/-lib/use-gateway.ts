@@ -101,6 +101,8 @@ export function useGateway() {
   )
   return {
     allowed: canManageUsers,
+    /** OpenViking runs in development mode, where Studio can't manage the gateway. */
+    devMode: serverMode === 'dev',
     isRoleLoading: isConnectionRoleLoading,
     connection: admin,
     scope,

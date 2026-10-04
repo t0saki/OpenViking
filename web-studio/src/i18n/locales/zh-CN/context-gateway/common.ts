@@ -58,6 +58,21 @@ const common = {
       description:
         'OpenViking 需要和网关使用同一个管理令牌才能管理网关。请为 OpenViking 和网关设置下面的环境变量（至少 32 个字符），然后重启两者。',
     },
+    tokenMismatch: {
+      title: '管理令牌不一致',
+      description:
+        'OpenViking 和网关启动时用的管理令牌不同，所以网关拒绝了 OpenViking 的请求。请把下面的环境变量设成同一个值，然后重启两者。',
+    },
+    unsupported: {
+      title: '这台 OpenViking 服务器无法管理上下文网关',
+      description:
+        'Studio 连接的 OpenViking 服务器不支持上下文网关。请升级 OpenViking Server 并重启，然后重试。',
+    },
+    devMode: {
+      title: 'OpenViking 运行在开发模式',
+      description:
+        '开发模式下每个密钥都以 Root 身份操作，而网关不接受 Root 密钥，所以签发不了网关密钥。请把 OpenViking 切换到 API 密钥模式并重启，再到连接设置中填写账号管理员密钥。',
+    },
     unreachable: {
       title: 'OpenViking 连不上网关',
       description:
@@ -75,7 +90,10 @@ const common = {
     reasons: {
       not_enabled: '这台服务器没有开启上下文网关。',
       token_missing: '没有设置管理令牌，OpenViking 无法管理网关。',
+      token_mismatch:
+        '网关拒绝了 OpenViking 的管理令牌，两者必须使用同一个令牌。',
       unreachable: 'OpenViking 连不上上下文网关。',
+      unsupported: '这台 OpenViking 服务器不支持上下文网关。',
       conflict: '这项修改与现有配置冲突。',
       invalid: '网关拒绝了这些设置，请检查填写的值后重试。',
       forbidden: '没有执行此操作的权限。',
@@ -91,7 +109,7 @@ const common = {
     keyNotFound: '这段对话使用的网关密钥已被吊销，无法再重新同步。',
     sessionNotFound: '网关中已没有这段对话的记录。',
     upstreamKeyMissing:
-      '没有可用于测试的已保存 API Key：这个上游由客户端自带密钥，或者还没有填写密钥。',
+      '没有可用于测试的已保存 API Key：这个上游由客户端自带 API Key，或者还没有填写 API Key。',
     subscriptionKey: '不支持 Claude 订阅登录，请使用模型 API Key。',
   },
   validation: {
@@ -111,7 +129,7 @@ const common = {
       '请输入 http:// 或 https:// 地址，不能包含账号密码、查询参数或片段',
     subscriptionKey:
       '不支持 Claude 订阅令牌（sk-ant-oat…），请使用模型 API Key。',
-    apiKeyRequired: '请填写 API Key，或改为由每个客户端自带密钥',
+    apiKeyRequired: '请填写 API Key，或改为由每个客户端自带 API Key',
     headerInvalid: '请求头“{{name}}”的名称或取值无效',
     headerReserved: '“{{name}}”由网关设置，不能修改',
     headerValue: '请填写“{{name}}”的取值',
@@ -132,6 +150,7 @@ const common = {
     default: '默认值：{{value}}',
     notSet: '未设置',
     advanced: '高级设置',
+    sectionInvalid: '这一部分有设置需要修改，改好后才能保存。',
     storedSecret: '已保存，留空则保持不变',
   },
   keyValue: {

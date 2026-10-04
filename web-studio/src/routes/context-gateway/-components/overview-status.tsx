@@ -13,19 +13,20 @@ import {
 } from '#/components/ui/card'
 
 import type { OpenVikingHealth, Overview } from '../-lib/api'
-import { EMPTY_VALUE, formatNumber } from '../-lib/format'
+import { formatNumber } from '../-lib/format'
 import { degradationInfo, healthReasonLabel } from '../-lib/localize'
 import { EmptyState } from './empty-state'
 import { Notice } from './notice'
-import { HealthBadge, ToneBadge } from './status-badges'
+import { EmptyValue, HealthBadge, ToneBadge } from './status-badges'
 
 /** Link to the request log filtered to problems. */
-function IssuesLink() {
+function IssuesLink({ className }: { className?: string }) {
   const { t } = useTranslation('contextGateway')
   return (
     <Button
       size="sm"
       variant="ghost"
+      className={className}
       nativeButton={false}
       render={
         <Link to="/context-gateway/requests" search={{ filter: 'issues' }} />
@@ -55,7 +56,8 @@ function SavingStatus({ issues }: { issues: Overview['capture_issues'] }) {
             ) : null}
           </Notice>
           <div>
-            <IssuesLink />
+            {/* Cancels the button padding so the label lines up with the text. */}
+            <IssuesLink className="-ml-2.5" />
           </div>
         </>
       ) : (
@@ -96,24 +98,21 @@ export function OpenVikingCard({
               {t('overview.openviking.version')}
             </dt>
             <dd className="truncate font-mono text-xs leading-5">
-              {version ?? EMPTY_VALUE}
+              {version || <EmptyValue />}
             </dd>
             <dt className="text-muted-foreground">
               {t('overview.openviking.authMode')}
             </dt>
             <dd>
-              {authMode
-                ? t(`overview.openviking.authModes.${authMode}`, {
-                    defaultValue: authMode,
-                  })
-                : EMPTY_VALUE}
+              {authMode ? (
+                t(`overview.openviking.authModes.${authMode}`, {
+                  defaultValue: authMode,
+                })
+              ) : (
+                <EmptyValue />
+              )}
             </dd>
           </dl>
-        ) : null}
-        {status === 'ok' && authMode === 'dev' ? (
-          <Notice tone="warning">
-            <p>{t('overview.openviking.devMode')}</p>
-          </Notice>
         ) : null}
         {status === 'degraded' ? (
           <Notice

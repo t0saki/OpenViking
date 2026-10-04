@@ -25,6 +25,7 @@ import {
   MODEL_PLACEHOLDER,
   SESSION_PLACEHOLDER,
   clientSnippets,
+  servingUpstreams,
 } from '../-lib/client-guides'
 import type { ClientId } from '../-lib/client-guides'
 import { kindLabel, protocolLabel } from '../-lib/localize'
@@ -68,17 +69,6 @@ const PLACEHOLDERS = [
 
 const MAX_LISTED_UPSTREAMS = 3
 
-/** Enabled upstreams that can serve a client; undefined while unknown. */
-function servingUpstreams(
-  client: ClientId,
-  upstreams?: Upstream[],
-): Upstream[] | undefined {
-  const protocols = CLIENT_PROTOCOLS[client]
-  return upstreams?.filter(
-    (upstream) => upstream.enabled && protocols.includes(upstream.protocol),
-  )
-}
-
 type ClientGuideProps = {
   client: ClientId
   /** Gateway address the snippets point at. */
@@ -105,7 +95,9 @@ export function ClientGuide({ client, baseUrl, upstreams }: ClientGuideProps) {
         >
           {CLIENT_IDS.map((id) => {
             const active = id === client
-            const missing = servingUpstreams(id, upstreams)?.length === 0
+            const missing =
+              upstreams !== undefined &&
+              servingUpstreams(id, upstreams).length === 0
             return (
               <Link
                 key={id}
@@ -247,7 +239,7 @@ function ProtocolRequirement({
 }: Pick<ClientGuideProps, 'client' | 'upstreams'>) {
   const { t } = useTranslation('contextGateway')
   const protocols = CLIENT_PROTOCOLS[client]
-  const serving = servingUpstreams(client, upstreams)
+  const serving = upstreams && servingUpstreams(client, upstreams)
   const names = serving?.map((upstream) => upstream.name) ?? []
   const listed = names
     .slice(0, MAX_LISTED_UPSTREAMS)

@@ -1,11 +1,12 @@
-import * as React from 'react'
 import { useMutation } from '@tanstack/react-query'
 import { LoaderCircleIcon, PlugZapIcon, Trash2Icon } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
+import { cn } from '#/lib/utils'
+
 import { deleteUpstream, testUpstream, toGatewayError } from '../-lib/api'
-import type { GatewayKey, Upstream, UpstreamTestResult } from '../-lib/api'
+import type { Upstream, UpstreamTestResult } from '../-lib/api'
 import { gatewayErrorMessage } from '../-lib/localize'
 import type { Translate } from '../-lib/localize'
 import { useGateway } from '../-lib/use-gateway'
@@ -13,14 +14,6 @@ import { ConfirmDialog } from './confirm-dialog'
 import { ExplainedButton } from './explained-button'
 import { ToneBadge } from './status-badges'
 import type { Tone } from './status-badges'
-
-/** Number of gateway keys that may route to the upstream; undefined while unknown. */
-export function keysUsing(
-  keys: GatewayKey[] | undefined,
-  upstreamId: string,
-): number | undefined {
-  return keys?.filter((key) => key.upstream_ids.includes(upstreamId)).length
-}
 
 /** Why the stored upstream cannot be tested, or undefined when it can. */
 function testBlockedReason(
@@ -109,6 +102,9 @@ export function UpstreamTest({
   const label = t(
     variant === 'row' ? 'upstreams.test.action' : 'upstreams.test.connection',
   )
+  // In the list, below `md`, the button shows only its icon and the result
+  // only its dot; the text stays for screen readers.
+  const compact = variant === 'row' ? 'max-md:sr-only' : undefined
 
   return (
     <div className="flex items-center gap-2">
@@ -120,7 +116,9 @@ export function UpstreamTest({
             title={summary.explanation}
             className="max-w-48"
           >
-            <span className="min-w-0 truncate">{summary.label}</span>
+            <span className={cn('min-w-0 truncate', compact)}>
+              {summary.label}
+            </span>
           </ToneBadge>
         ) : null}
       </span>
@@ -138,7 +136,9 @@ export function UpstreamTest({
         ) : (
           <PlugZapIcon />
         )}
-        {test.isPending ? t('upstreams.test.running') : label}
+        <span className={compact}>
+          {test.isPending ? t('upstreams.test.running') : label}
+        </span>
       </ExplainedButton>
     </div>
   )
@@ -189,9 +189,6 @@ export function DeleteUpstreamDialog({
 }: DeleteUpstreamDialogProps) {
   const { t } = useTranslation('contextGateway')
   const { connection, invalidate } = useGateway()
-  // Keep the last name so the title doesn't go blank while the dialog closes.
-  const [shown, setShown] = React.useState(upstream)
-  if (upstream && upstream !== shown) setShown(upstream)
   const remove = useMutation({
     mutationFn: (target: Upstream) => deleteUpstream(connection, target.id),
     onSuccess: async (_result, target) => {
@@ -208,9 +205,7 @@ export function DeleteUpstreamDialog({
     <ConfirmDialog
       open={upstream !== null}
       onOpenChange={onOpenChange}
-      title={t('upstreams.delete.title', {
-        name: (upstream ?? shown)?.name ?? '',
-      })}
+      title={t('upstreams.delete.title', { name: upstream?.name ?? '' })}
       description={t('upstreams.delete.description')}
       confirmLabel={t('upstreams.delete.confirm')}
       icon={<Trash2Icon />}

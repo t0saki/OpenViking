@@ -1,4 +1,4 @@
-import type { Protocol } from './api'
+import type { Protocol, Upstream } from './api'
 
 /** Clients with a setup guide, in display order. */
 export type ClientId =
@@ -29,6 +29,17 @@ export const CLIENT_PROTOCOLS: Record<ClientId, Protocol[]> = {
   opencode: ['chat'],
   pi: ['chat'],
   ark: ['chat', 'responses', 'anthropic'],
+}
+
+/** Enabled upstreams that speak a protocol the client calls. */
+export function servingUpstreams(
+  client: ClientId,
+  upstreams: Upstream[],
+): Upstream[] {
+  const protocols = CLIENT_PROTOCOLS[client]
+  return upstreams.filter(
+    (upstream) => upstream.enabled && protocols.includes(upstream.protocol),
+  )
 }
 
 export type SnippetLanguage = 'bash' | 'toml' | 'json' | 'python' | 'text'

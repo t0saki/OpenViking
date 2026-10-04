@@ -1,7 +1,6 @@
 const upstreams = {
-  title: '上游',
   description:
-    '网关把请求转发给这些模型服务商。每个上游只支持一种协议，网关不会在协议之间做转换。',
+    '网关把请求转发给这些模型服务商。每个上游只支持一种协议，网关不做协议转换。',
   add: '添加上游',
   loadFailed: '无法加载上游',
   empty: {
@@ -47,7 +46,7 @@ const upstreams = {
     running: '测试中…',
     hint: '用已保存的密钥和请求头向服务商请求模型列表。它只验证地址和密钥是否可用，不检查模型配置，也不发送对话请求。',
     savedOnly: '测试的是已保存的设置。要测试改动后的设置，请先保存。',
-    passthrough: '这个上游由客户端自带密钥，网关没有可用于测试的密钥。',
+    passthrough: '这个上游由客户端自带 API Key，网关没有可用于测试的 API Key。',
     noKey: '请先填写 API Key。',
     result: {
       ok: '可连通 · {{status}}',
@@ -149,9 +148,9 @@ const upstreams = {
         description: '客户端只需要网关密钥。',
       },
       passthrough: {
-        title: '每个客户端自带密钥',
+        title: '每个客户端自带 API Key',
         description:
-          '客户端除了网关密钥，还要在 {{header}} 请求头里带上自己的服务商密钥。',
+          '客户端除了网关密钥，还要在 {{header}} 请求头里带上自己的服务商 API Key。',
       },
     },
     apiKey: {

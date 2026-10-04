@@ -1,5 +1,5 @@
-import type * as React from 'react'
-import { ChevronRightIcon } from 'lucide-react'
+import * as React from 'react'
+import { ChevronRightIcon, CircleAlertIcon } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import {
@@ -31,13 +31,21 @@ type SettingSectionProps = {
   note?: React.ReactNode
   /** Settings inside a collapsed "Advanced settings" disclosure. */
   advanced?: React.ReactNode
+  /**
+   * A setting in this section is invalid: the header says so, and the
+   * settings stay visible even while the switch is off.
+   */
+  invalid?: boolean
+  /** An advanced setting is invalid, so "Advanced settings" stays open. */
+  advancedInvalid?: boolean
   /** Settings shown while the section is on. */
   children?: React.ReactNode
 }
 
 /**
  * Card for one group of settings. With a header switch, the settings are
- * hidden while it is off; rarely changed settings go in `advanced`.
+ * hidden while it is off, unless one of them needs fixing; rarely changed
+ * settings go in `advanced`.
  */
 export function SettingSection({
   id,
@@ -49,10 +57,14 @@ export function SettingSection({
   switchDisabled,
   note,
   advanced,
+  invalid = false,
+  advancedInvalid = false,
   children,
 }: SettingSectionProps) {
   const { t } = useTranslation('contextGateway')
-  const open = checked !== false
+  const [advancedOpen, setAdvancedOpen] = React.useState(false)
+  // Save checks every setting, so one that needs fixing must stay visible.
+  const open = checked !== false || invalid
   const hasBody = open && Boolean(children || advanced)
   return (
     <Card id={id} className="scroll-mt-20 gap-0 py-0">
@@ -77,12 +89,22 @@ export function SettingSection({
           </CardAction>
         ) : null}
         {note ? <div className="col-span-full pt-2 text-sm">{note}</div> : null}
+        {invalid ? (
+          <p className="col-span-full flex items-start gap-2 pt-2 text-sm text-destructive">
+            <CircleAlertIcon className="mt-0.5 size-4 shrink-0" />
+            {t('field.sectionInvalid')}
+          </p>
+        ) : null}
       </CardHeader>
       {hasBody ? (
         <CardContent className="grid gap-5 border-t py-5">
           {children}
           {advanced ? (
-            <Collapsible className="grid gap-5">
+            <Collapsible
+              className="grid gap-5"
+              open={advancedOpen || advancedInvalid}
+              onOpenChange={setAdvancedOpen}
+            >
               <CollapsibleTrigger className="group/advanced flex w-fit items-center gap-1.5 rounded-sm text-sm font-medium text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none">
                 <ChevronRightIcon className="size-4 transition-transform group-data-[panel-open]/advanced:rotate-90" />
                 {t('field.advanced')}

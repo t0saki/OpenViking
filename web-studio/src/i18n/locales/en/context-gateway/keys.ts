@@ -1,5 +1,4 @@
 const keys = {
-  title: 'Gateway keys',
   description:
     "Each gateway key belongs to one OpenViking user and uses one context profile and a set of upstreams. Keys can't be edited — issue a new key and revoke the old one.",
   issue: 'Issue key',
@@ -38,7 +37,7 @@ const keys = {
   revoke: {
     title: 'Revoke “{{name}}”?',
     description:
-      'Clients using this key lose access immediately. Conversations and memory stay; a new key for the same user continues them.',
+      'Clients using this key lose access immediately. Conversations and memory stay; a new key for the same user continues them. Turns not yet saved to OpenViking, such as the latest reply, are saved only if the conversation continues with a new key.',
     confirm: 'Revoke key',
     done: 'Revoked “{{name}}”',
   },
@@ -128,7 +127,7 @@ const keys = {
       },
     },
     noProtocol:
-      "This key has no {{protocol}} upstream, so {{client}} can't use it.",
+      "This key has no enabled {{protocol}} upstream, so {{client}} can't use it.",
     moreClients: 'Other clients and setup details',
     done: "I've copied it",
   },

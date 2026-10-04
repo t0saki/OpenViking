@@ -1,6 +1,6 @@
 import * as React from 'react'
 import { useMutation } from '@tanstack/react-query'
-import { Link, useNavigate } from '@tanstack/react-router'
+import { Link, getRouteApi, useNavigate } from '@tanstack/react-router'
 import {
   ArrowLeftIcon,
   CircleAlertIcon,
@@ -23,7 +23,7 @@ import {
 import { Input } from '#/components/ui/input'
 import { cn } from '#/lib/utils'
 
-import { newObjectId, saveProfile } from '../-lib/api'
+import { keysUsing, newObjectId, saveProfile } from '../-lib/api'
 import type { Profile, ProfileSettings } from '../-lib/api'
 import { gatewayErrorMessage } from '../-lib/localize'
 import {
@@ -395,11 +395,16 @@ export function ProfileEditor({ profileId, from }: ProfileEditorProps) {
       profileId={profileId}
       source={source}
       sourceMissing={isNew && Boolean(from) && !source}
-      usedBy={
-        isNew || !keys.data
-          ? undefined
-          : keys.data.filter((key) => key.policy_id === profileId).length
-      }
+      usedBy={isNew ? undefined : keysUsing(keys.data, { profileId })}
     />
   )
+}
+
+const route = getRouteApi('/context-gateway/profiles/$profileId')
+
+/** Create (`$profileId` = `new`, `?from=<id>` duplicates) or edit a context profile. */
+export function ProfileEditorPage() {
+  const { profileId } = route.useParams()
+  const { from } = route.useSearch()
+  return <ProfileEditor profileId={profileId} from={from} />
 }

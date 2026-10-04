@@ -1,7 +1,6 @@
 const keys = {
-  title: '网关密钥',
   description:
-    '每个网关密钥属于一个 OpenViking 用户，并使用一个上下文配置和一组上游。密钥签发后不能修改；需要调整时，请签发新密钥并吊销旧密钥。',
+    '每个密钥属于一个 OpenViking 用户，使用一份上下文配置和一组上游。密钥不能修改，需要调整时请签发新密钥并吊销旧密钥。',
   issue: '签发密钥',
   loadFailed: '无法加载网关密钥',
   prerequisites: {
@@ -38,7 +37,7 @@ const keys = {
   revoke: {
     title: '吊销“{{name}}”？',
     description:
-      '使用这个密钥的客户端会立即失去访问权限。对话和记忆都会保留，为同一用户签发新密钥后可以接着使用。',
+      '使用这个密钥的客户端会立即失去访问权限。对话和记忆都会保留，为同一用户签发新密钥后可以接着使用。尚未保存到 OpenViking 的内容（例如最新一条回复）只有在用新密钥继续这段对话时才会保存。',
     confirm: '吊销密钥',
     done: '已吊销“{{name}}”',
   },
@@ -118,7 +117,7 @@ const keys = {
           '在任意兼容 OpenAI 的客户端或 SDK 中使用这些设置。同一段对话的每条消息都带上相同的 X-OpenViking-Session。',
       },
     },
-    noProtocol: '这个密钥没有 {{protocol}} 上游，{{client}} 无法使用。',
+    noProtocol: '这个密钥没有已启用的 {{protocol}} 上游，{{client}} 无法使用。',
     moreClients: '其他客户端和详细说明',
     done: '我已复制',
   },

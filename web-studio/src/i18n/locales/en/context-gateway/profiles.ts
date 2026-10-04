@@ -1,7 +1,7 @@
 const profiles = {
-  title: 'Context profiles',
   description:
-    'A context profile decides how each conversation uses OpenViking: recalling memory, saving the conversation, summarizing long conversations and offering OpenViking tools. Every gateway key uses one. Changes apply to conversations that start after you save; ongoing conversations keep the settings they started with.',
+    'How conversations use OpenViking memory and tools. Saved changes apply only to conversations that start afterwards.',
+  defaultName: 'Default',
   loadFailed: "Couldn't load context profiles",
   actions: {
     new: 'New profile',
@@ -21,7 +21,7 @@ const profiles = {
   },
   summary: {
     recallOn: 'On · {{tokens}} tokens per message',
-    takeoverOn: 'Summarize after {{tokens}} tokens',
+    takeoverOn: 'After {{tokens}} tokens',
     toolsRead: 'Read',
     toolsReadWrite: 'Read & write',
   },

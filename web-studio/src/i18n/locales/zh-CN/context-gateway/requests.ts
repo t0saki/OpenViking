@@ -1,5 +1,4 @@
 const requests = {
-  title: '请求日志',
   description:
     '经过网关的模型请求，以及每次请求中记忆的处理情况。这里只记录元数据，不保存提示词、回复或记忆内容。',
   filters: {
@@ -10,7 +9,7 @@ const requests = {
     issues: '异常',
     kind: '请求类型',
     allKinds: '全部类型',
-    search: '搜索模型、对话、密钥或上游',
+    search: '搜索模型、对话或密钥',
     clear: '清除筛选',
   },
   scope: '筛选和搜索只覆盖最近 {{count}} 条记录。',

@@ -5,7 +5,8 @@ import { ArrowLeftIcon } from 'lucide-react'
 import { Button } from '#/components/ui/button'
 
 type SectionHeaderProps = {
-  title: React.ReactNode
+  /** `h2` title; tab pages leave it out because the active tab names them. */
+  title?: React.ReactNode
   description?: React.ReactNode
   /** Buttons on the right (Refresh, primary action…). */
   actions?: React.ReactNode
@@ -13,13 +14,33 @@ type SectionHeaderProps = {
   back?: React.ReactNode
 }
 
-/** Page header inside the gateway layout: `h2` title, one-line description, actions. */
+/**
+ * Page header inside the gateway layout. Editors show an `h2` title with a
+ * description beneath; tab pages show a one-line description beside the actions.
+ */
 export function SectionHeader({
   title,
   description,
   actions,
   back,
 }: SectionHeaderProps) {
+  const actionSlot = actions ? (
+    <div className="flex flex-wrap items-center gap-2">{actions}</div>
+  ) : null
+
+  if (!title) {
+    return (
+      <header className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
+        {description ? (
+          <p className="min-w-0 flex-1 basis-80 text-sm leading-6 text-muted-foreground">
+            {description}
+          </p>
+        ) : null}
+        {actionSlot}
+      </header>
+    )
+  }
+
   return (
     <header className="flex flex-col gap-2">
       {back}
@@ -32,9 +53,7 @@ export function SectionHeader({
             </p>
           ) : null}
         </div>
-        {actions ? (
-          <div className="flex flex-wrap items-center gap-2">{actions}</div>
-        ) : null}
+        {actionSlot}
       </div>
     </header>
   )

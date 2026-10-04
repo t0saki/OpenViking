@@ -35,7 +35,7 @@ import {
   gatewayDocsUrl,
 } from '../-lib/client-guides'
 import { parseConnectSearch } from '../-lib/search'
-import { ConnectPage } from '../connect'
+import { ConnectPage } from './connect-page'
 import { CLIENT_STEPS } from './connect-client-guide'
 import { CodeText } from './connect-text'
 

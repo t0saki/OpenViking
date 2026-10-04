@@ -10,6 +10,7 @@ import {
 } from '@tanstack/react-router'
 import {
   cleanup,
+  configure,
   fireEvent,
   render,
   screen,
@@ -29,11 +30,11 @@ import {
 
 import i18n from '#/i18n'
 
-import { OverviewPage } from '../index'
 import { GatewayError } from '../-lib/api'
 import type * as Api from '../-lib/api'
 import type { LogRecord, Overview, Profile } from '../-lib/api'
 import { PROFILE_DEFAULTS } from '../-lib/profile-schema'
+import { OverviewPage } from './overview-page'
 
 const api = vi.hoisted(() => ({
   getOverview: vi.fn(),
@@ -117,6 +118,7 @@ const BUSY_OVERVIEW: Overview = {
   recall_ms: 820,
   capture_issues: { retrying: 1, paused: 2 },
   sample_limit: 10000,
+  log_retention_days: 7,
 }
 
 const LOGS: LogRecord[] = [
@@ -191,6 +193,9 @@ function renderOverview() {
 
 beforeAll(async () => {
   await i18n.changeLanguage('en')
+  // jsdom applies no CSS, so queries would also find the copies that tables
+  // show only below `md`; leave those out and test the desktop layout.
+  configure({ defaultIgnore: 'script, style, .md\\:hidden, .md\\:hidden *' })
 })
 afterAll(async () => {
   await i18n.changeLanguage('en')
@@ -228,6 +233,12 @@ describe('OverviewPage', () => {
       screen.getByText('No requests yet', { selector: 'p.font-medium' }),
     ).toBeTruthy()
     expect(screen.getByText('No degraded requests')).toBeTruthy()
+    // Older gateways don't report retention; the note uses the default.
+    expect(
+      screen.getByText(
+        'Figures cover the latest 10,000 entries of the request log. Entries are kept for 30 days.',
+      ),
+    ).toBeTruthy()
 
     api.listProfiles.mockResolvedValue([created])
     fireEvent.click(
@@ -277,7 +288,7 @@ describe('OverviewPage', () => {
     expect(await screen.findByText('92%')).toBeTruthy()
     expect(screen.queryByText('Get started')).toBeNull()
     expect(api.listUpstreams).not.toHaveBeenCalled()
-    expect(api.listLogs.mock.calls[0][1]).toBe(8)
+    expect(api.listLogs.mock.calls[0][1]).toBe(50)
 
     expect(screen.getByText('1,234')).toBeTruthy()
     expect(screen.getByText('1,234 new messages')).toBeTruthy()
@@ -285,7 +296,7 @@ describe('OverviewPage', () => {
     expect(screen.getByText('56K output tokens')).toBeTruthy()
     expect(screen.getByText('50%')).toBeTruthy()
     expect(screen.getByText('3 tool steps')).toBeTruthy()
-    expect(screen.getByText('Avg 820 ms over 40 recalls')).toBeTruthy()
+    expect(screen.getByText('Avg 820 ms over 40 searches')).toBeTruthy()
 
     expect(screen.getByText('Degraded')).toBeTruthy()
     expect(
@@ -321,9 +332,16 @@ describe('OverviewPage', () => {
         'Memory added to 4 earlier messages stayed in the history',
       ),
     ).toBeTruthy()
-    expect(screen.getByText('Paused')).toBeTruthy()
+    // Memory sync events stay out of the recent model requests.
+    expect(screen.queryByText('Memory sync')).toBeNull()
+    expect(screen.queryByText('Paused')).toBeNull()
     expect(screen.getByText('502')).toBeTruthy()
     expect(hrefOf('View all')).toBe('/context-gateway/requests')
+    expect(
+      screen.getByText(
+        'Figures cover the latest 10,000 entries of the request log. Entries are kept for 7 days.',
+      ),
+    ).toBeTruthy()
   })
 
   it('shows the error with a retry when the overview fails', async () => {
@@ -345,6 +363,16 @@ describe('OverviewPage', () => {
     expect(empty.container.textContent).not.toMatch(
       /overview\.|enums\.|states\.|actions\./,
     )
+    // The one-click profile gets a Chinese name.
+    api.saveProfile.mockResolvedValue({
+      ...PROFILE_DEFAULTS,
+      name: '默认',
+      id: 'p1',
+      revision: 1,
+    })
+    fireEvent.click(screen.getByRole('button', { name: '使用推荐设置创建' }))
+    await waitFor(() => expect(api.saveProfile).toHaveBeenCalledTimes(1))
+    expect(api.saveProfile.mock.calls[0][2].name).toBe('默认')
     cleanup()
 
     api.getOverview.mockResolvedValue(BUSY_OVERVIEW)

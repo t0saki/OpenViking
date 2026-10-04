@@ -1,5 +1,4 @@
 const connect = {
-  title: '接入客户端',
   description:
     '把模型客户端的请求地址换成网关，再用网关密钥认证。选择你使用的客户端，查看它的具体配置。',
   fullGuide: '完整指南',
@@ -190,7 +189,7 @@ const connect = {
       '对话归属于密钥背后的 OpenViking 用户，并且按 API 分开。同一用户的两个网关密钥如果发送相同的 ID，会共享同一段对话。',
   },
   passthrough: {
-    title: '客户端自带服务商密钥',
+    title: '客户端自带服务商 API Key',
     description:
       '如果上游的凭证方式是“{{mode}}”，每个请求还要在这个请求头里带上客户端自己的服务商 API Key。网关密钥仍然填在客户端原本填写 API Key 的位置。',
     note: '网关把这个密钥转交给服务商，不会记录它。',

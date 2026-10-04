@@ -1,5 +1,4 @@
 const connect = {
-  title: 'Connect a client',
   description:
     'Point a model client at the gateway and authenticate with a gateway key. Pick the client you use to see its exact settings.',
   fullGuide: 'Full guide',

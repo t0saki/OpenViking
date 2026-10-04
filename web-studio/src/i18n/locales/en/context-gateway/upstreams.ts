@@ -1,7 +1,6 @@
 const upstreams = {
-  title: 'Upstreams',
   description:
-    'Model providers the gateway forwards requests to. Each upstream speaks one protocol; the gateway never converts between protocols.',
+    'Model providers the gateway forwards requests to. Each upstream speaks one protocol; requests are never converted.',
   add: 'Add upstream',
   loadFailed: "Couldn't load upstreams",
   empty: {

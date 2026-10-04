@@ -58,6 +58,21 @@ const common = {
       description:
         'OpenViking needs the same management token as the gateway to manage it. Set this environment variable (at least 32 characters) for both OpenViking and the gateway, then restart them.',
     },
+    tokenMismatch: {
+      title: "The management tokens don't match",
+      description:
+        'OpenViking and the gateway were started with different management tokens, so the gateway turns OpenViking away. Set this environment variable to the same value for both, then restart them.',
+    },
+    unsupported: {
+      title: "This OpenViking server can't manage a Context Gateway",
+      description:
+        'Studio is connected to an OpenViking server without Context Gateway support. Upgrade OpenViking Server, restart it, then retry.',
+    },
+    devMode: {
+      title: 'OpenViking runs in development mode',
+      description:
+        'In development mode every key acts as root, and the gateway refuses root keys, so no gateway key can be issued. Switch OpenViking to API key mode, restart it, then add an account admin key in Connection settings.',
+    },
     unreachable: {
       title: "OpenViking can't reach the gateway",
       description:
@@ -76,7 +91,11 @@ const common = {
       not_enabled: 'The Context Gateway is turned off on this server.',
       token_missing:
         "OpenViking can't manage the gateway because the management token isn't set.",
+      token_mismatch:
+        "The gateway rejected OpenViking's management token. Both must use the same token.",
       unreachable: "OpenViking can't reach the Context Gateway.",
+      unsupported:
+        "This OpenViking server doesn't support the Context Gateway.",
       conflict: 'This change conflicts with existing settings.',
       invalid:
         'The gateway rejected these settings. Check the values and try again.',
@@ -139,6 +158,7 @@ const common = {
     default: 'Default: {{value}}',
     notSet: 'Not set',
     advanced: 'Advanced settings',
+    sectionInvalid: 'Fix the highlighted settings in this section to save.',
     storedSecret: 'Stored — leave blank to keep',
   },
   keyValue: {

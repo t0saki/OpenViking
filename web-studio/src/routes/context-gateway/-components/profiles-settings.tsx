@@ -15,6 +15,7 @@ import { Checkbox } from '#/components/ui/checkbox'
 import { FieldError } from '#/components/ui/field'
 import { Label } from '#/components/ui/label'
 
+import { CONTEXT_TYPES, QUOTA_BUCKETS } from '../-lib/api'
 import type {
   ContextType,
   GatewayTool,
@@ -23,10 +24,8 @@ import type {
 } from '../-lib/api'
 import { formatBytes, formatNumber, humanizeSeconds } from '../-lib/format'
 import {
-  CONTEXT_TYPES,
   PROFILE_DEFAULTS,
   PROFILE_LIMITS,
-  QUOTA_BUCKETS,
   QUOTA_LIMIT,
   READ_TOOLS,
   WRITE_TOOLS,
@@ -98,6 +97,24 @@ const LIST_FIELD_SECTIONS: Partial<Record<string, ProfileSection>> = {
   tool_allowlist: 'tools',
 }
 
+/** Fields under each section's "Advanced settings". */
+const ADVANCED_FIELDS: Partial<Record<ProfileSection, string[]>> = {
+  recall: ['query_max_chars', 'quotas'],
+  takeover: ['archive_wait_seconds', 'context_window'],
+  tools: [
+    'tool_max_rounds',
+    'tool_timeout_seconds',
+    'tool_result_bytes',
+    'tool_total_seconds',
+    'tool_total_tokens',
+  ],
+}
+
+/** Whether an error key (`field` or `quotas.<category>`) is an advanced setting of `section`. */
+function isAdvancedError(key: string, section: ProfileSection): boolean {
+  return ADVANCED_FIELDS[section]?.includes(key.split('.')[0]) ?? false
+}
+
 /** Sections holding at least one validation problem (`name` belongs to none). */
 export function sectionsWithErrors(
   errors: ValidationErrors,
@@ -129,7 +146,7 @@ const QUOTA_SOURCE: Record<QuotaBucket, ContextType> = {
 
 /** Starting limits: a few entries from every category whose source is searched. */
 function presetQuotas(
-  sources: ContextType[],
+  sources: readonly ContextType[],
 ): Partial<Record<QuotaBucket, number>> {
   return Object.fromEntries(
     QUOTA_BUCKETS.map((bucket) => [
@@ -144,7 +161,7 @@ function toggleItem<T extends string>(
   list: T[],
   item: T,
   on: boolean,
-  order: T[],
+  order: readonly T[],
 ): T[] {
   const others = list.filter((x) => x !== item)
   const next = on ? [...others, item] : others
@@ -258,6 +275,14 @@ export function ProfileSettingsForm({
     const issue = errors[key]
     return issue ? t(issue.key, issue.values) : undefined
   }
+  const invalidSections = sectionsWithErrors(errors)
+  // Error markers and visibility for one section card.
+  const validity = (section: ProfileSection) => ({
+    invalid: invalidSections.has(section),
+    advancedInvalid: Object.keys(errors).some((key) =>
+      isAdvancedError(key, section),
+    ),
+  })
 
   const numberField = (field: NumericField) => {
     const rule = PROFILE_LIMITS[field]
@@ -395,6 +420,7 @@ export function ProfileSettingsForm({
     <>
       <SettingSection
         id={sectionAnchor('recall')}
+        {...validity('recall')}
         icon={<BrainIcon />}
         title={t('profiles.recall.title')}
         description={t('profiles.recall.description')}
@@ -445,6 +471,7 @@ export function ProfileSettingsForm({
 
       <SettingSection
         id={sectionAnchor('capture')}
+        {...validity('capture')}
         icon={<SaveIcon />}
         title={t('profiles.capture.title')}
         description={t('profiles.capture.description')}
@@ -460,6 +487,7 @@ export function ProfileSettingsForm({
 
       <SettingSection
         id={sectionAnchor('takeover')}
+        {...validity('takeover')}
         icon={<ScrollTextIcon />}
         title={t('profiles.takeover.title')}
         description={t('profiles.takeover.description')}
@@ -489,6 +517,7 @@ export function ProfileSettingsForm({
 
       <SettingSection
         id={sectionAnchor('tools')}
+        {...validity('tools')}
         icon={<WrenchIcon />}
         title={t('profiles.tools.title')}
         description={t('profiles.tools.description')}

@@ -1,10 +1,5 @@
-import type {
-  ContextType,
-  GatewayTool,
-  Profile,
-  ProfileSettings,
-  QuotaBucket,
-} from './api'
+import { QUOTA_BUCKETS } from './api'
+import type { GatewayTool, Profile, ProfileSettings, QuotaBucket } from './api'
 import { checkNumber, checkRequired, collect } from './validation'
 import type { NumberRule, ValidationErrors } from './validation'
 
@@ -37,18 +32,6 @@ export const PROFILE_DEFAULTS: ProfileSettings = {
   tool_total_seconds: 120,
   tool_total_tokens: 100000,
 }
-
-export const CONTEXT_TYPES: ContextType[] = ['memory', 'resource', 'skill']
-
-/** Categories for "Limit by category", in display order. */
-export const QUOTA_BUCKETS: QuotaBucket[] = [
-  'events',
-  'entities',
-  'preferences',
-  'experiences',
-  'resources',
-  'skills',
-]
 
 export const READ_TOOLS: GatewayTool[] = ['search', 'read', 'list']
 /** Offered only when `allow_write_tools` is on. */

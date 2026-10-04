@@ -24,8 +24,8 @@ import type * as Api from '../-lib/api'
 import type { GatewayKey, Upstream, UpstreamInput } from '../-lib/api'
 import type { Translate } from '../-lib/localize'
 import { UPSTREAM_DEFAULTS } from '../-lib/upstream-schema'
-import { UpstreamEditor } from '../upstreams/$upstreamId'
-import { UpstreamsPage } from '../upstreams/index'
+import { UpstreamEditor } from './upstreams-editor'
+import { UpstreamsPage } from './upstreams-page'
 import { describeTest } from './upstreams-actions'
 
 const api = vi.hoisted(() => ({
@@ -252,6 +252,35 @@ describe('UpstreamsPage', () => {
     await waitFor(() =>
       expect(toggle.getAttribute('aria-checked')).toBe('true'),
     )
+  })
+
+  it('rolls back only the row whose save failed', async () => {
+    const saves: Array<(error: unknown) => void> = []
+    api.saveUpstream.mockImplementation(
+      () =>
+        new Promise((_resolve, fail) => {
+          saves.push(fail)
+        }),
+    )
+    renderAt('/context-gateway/upstreams')
+    const first = await screen.findByRole('switch', {
+      name: 'upstreams.toggle.disable OpenAI',
+    })
+    const second = screen.getByRole('switch', {
+      name: 'upstreams.toggle.disable Claude',
+    })
+    fireEvent.click(first)
+    fireEvent.click(second)
+    await waitFor(() => expect(api.saveUpstream).toHaveBeenCalledTimes(2))
+    // Both saves are running, so neither switch can be flipped again.
+    expect(first.hasAttribute('data-disabled')).toBe(true)
+    expect(second.hasAttribute('data-disabled')).toBe(true)
+
+    saves[0](new GatewayError('Upstream save failed', 500))
+    await waitFor(() => expect(first.getAttribute('aria-checked')).toBe('true'))
+    expect(first.hasAttribute('data-disabled')).toBe(false)
+    expect(second.getAttribute('aria-checked')).toBe('false')
+    expect(second.hasAttribute('data-disabled')).toBe(true)
   })
 
   it('shows the test result in the row and blocks tests without a stored key', async () => {

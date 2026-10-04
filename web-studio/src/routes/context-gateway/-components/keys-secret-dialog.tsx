@@ -14,7 +14,11 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '#/components/ui/tabs'
 
 import type { IssuedKey, Upstream } from '../-lib/api'
-import { CLIENT_PROTOCOLS, clientSnippets } from '../-lib/client-guides'
+import {
+  CLIENT_PROTOCOLS,
+  clientSnippets,
+  servingUpstreams,
+} from '../-lib/client-guides'
 import type { ClientId } from '../-lib/client-guides'
 import { protocolLabel } from '../-lib/localize'
 import { servedModels } from '../-lib/upstream-schema'
@@ -28,15 +32,6 @@ const SECRET_CLIENTS = [
   'codex',
   'chat',
 ] as const satisfies readonly ClientId[]
-
-type SecretClient = (typeof SECRET_CLIENTS)[number]
-
-/** The key's upstreams that a client can call. */
-function upstreamsFor(client: SecretClient, upstreams: Upstream[]) {
-  return upstreams.filter((upstream) =>
-    CLIENT_PROTOCOLS[client].includes(upstream.protocol),
-  )
-}
 
 /** A model to fill into snippets: an allowed model this client can reach, else any it can. */
 export function snippetModel(
@@ -90,7 +85,7 @@ export function KeysSecretDialog({
     : []
   const firstUsable =
     SECRET_CLIENTS.find(
-      (client) => upstreamsFor(client, keyUpstreams).length > 0,
+      (client) => servingUpstreams(client, keyUpstreams).length > 0,
     ) ?? SECRET_CLIENTS[0]
 
   return (
@@ -159,7 +154,7 @@ export function KeysSecretDialog({
                   ))}
                 </TabsList>
                 {SECRET_CLIENTS.map((client) => {
-                  const reachable = upstreamsFor(client, keyUpstreams)
+                  const reachable = servingUpstreams(client, keyUpstreams)
                   const snippets = clientSnippets(client, {
                     baseUrl,
                     key: issued.key,

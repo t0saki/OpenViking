@@ -16,7 +16,7 @@ import type * as Api from '../-lib/api'
 import type { GatewayKey, IssuedKey, Profile, Upstream } from '../-lib/api'
 import { PROFILE_DEFAULTS } from '../-lib/profile-schema'
 import { UPSTREAM_DEFAULTS } from '../-lib/upstream-schema'
-import { KeysPage } from '../keys'
+import { KeysPage } from './keys-page'
 
 const api = vi.hoisted(() => ({
   getConnectionInfo: vi.fn(),

@@ -444,7 +444,7 @@ export function UpstreamForm({
             value={draft.priority}
             step={1}
             aria-invalid={Boolean(error('priority'))}
-            className="w-32"
+            className="sm:max-w-xs"
             onChange={(priority) => onChange('priority', priority)}
             onBlur={() => onBlur('priority')}
           />

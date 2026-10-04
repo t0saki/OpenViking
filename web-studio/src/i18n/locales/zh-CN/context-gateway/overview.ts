@@ -1,11 +1,12 @@
 const overview = {
-  title: '概览',
   description:
-    '查看客户端如何使用网关：请求量、提示词缓存和记忆召回，以及网关背后 OpenViking 服务器的状态。',
+    '客户端如何使用网关：请求量、提示词缓存和记忆召回，以及 OpenViking 的运行状态。',
   loadFailed: '无法加载概览',
   showIssues: '在请求日志中查看',
-  sampleNote:
-    '以上数据统计自请求日志中最新的 {{limit}} 条记录。日志默认保留 30 天。',
+  sampleNote_one:
+    '以上数据统计自请求日志中最新的 {{limit}} 条记录。日志保留 {{count}} 天。',
+  sampleNote_other:
+    '以上数据统计自请求日志中最新的 {{limit}} 条记录。日志保留 {{count}} 天。',
   setup: {
     title: '快速开始',
     description:
@@ -66,9 +67,9 @@ const overview = {
     },
     recall: {
       label: '召回的记忆条数',
-      hint: '网关为新消息补充的记忆条数，以及调用模型前等待 OpenViking 检索的时间。',
-      footnote_one: '{{number}} 次召回，平均 {{duration}}',
-      footnote_other: '{{number}} 次召回，平均 {{duration}}',
+      hint: '网关为新消息补充的记忆条数。平均耗时只统计实际检索了 OpenViking 的消息。',
+      footnote_one: '检索 {{number}} 次，平均 {{duration}}',
+      footnote_other: '检索 {{number}} 次，平均 {{duration}}',
       none: '还没有召回',
     },
   },
@@ -84,8 +85,6 @@ const overview = {
       oidc: 'OIDC 模式',
       ldap: 'LDAP 模式',
     },
-    devMode:
-      'OpenViking 运行在开发模式下，所有密钥都按 Root 处理，因此无法签发网关密钥。请把 OpenViking 切换到 API 密钥模式。',
     unreachable:
       '连不上 OpenViking 期间，请求照常发给模型，只是不带记忆；保存对话会一直重试，直到 OpenViking 恢复。',
     starting: '网关还没完成对 OpenViking 的首次检查，请稍后刷新。',

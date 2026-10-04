@@ -6,14 +6,22 @@ import { getOvResult, isOvClientError } from '#/lib/ov-client'
 export type Protocol = 'anthropic' | 'chat' | 'responses'
 export type Vendor = 'generic' | 'anthropic' | 'openai' | 'deepseek' | 'ark'
 export type AuthMode = 'managed' | 'passthrough'
-export type ContextType = 'memory' | 'resource' | 'skill'
-export type QuotaBucket =
-  | 'events'
-  | 'entities'
-  | 'preferences'
-  | 'experiences'
-  | 'resources'
-  | 'skills'
+
+/** Sources recall searches, in display order. */
+export const CONTEXT_TYPES = ['memory', 'resource', 'skill'] as const
+export type ContextType = (typeof CONTEXT_TYPES)[number]
+
+/** Categories for "Limit by category", in display order. */
+export const QUOTA_BUCKETS = [
+  'events',
+  'entities',
+  'preferences',
+  'experiences',
+  'resources',
+  'skills',
+] as const
+export type QuotaBucket = (typeof QUOTA_BUCKETS)[number]
+
 export type GatewayTool =
   | 'search'
   | 'read'
@@ -21,14 +29,19 @@ export type GatewayTool =
   | 'write'
   | 'add_resource'
   | 'add_skill'
-export type LogKind =
-  | 'user'
-  | 'continuation'
-  | 'auxiliary'
-  | 'subagent'
-  | 'count'
-  | 'passthrough'
-  | 'capture'
+
+/** Request types in the log, in the order the type filter lists them. */
+export const LOG_KINDS = [
+  'user',
+  'continuation',
+  'auxiliary',
+  'subagent',
+  'count',
+  'passthrough',
+  'capture',
+] as const
+export type LogKind = (typeof LOG_KINDS)[number]
+
 export type CaptureStatus = 'active' | 'disabled' | 'retrying' | 'paused'
 
 type UpstreamSettings = {
@@ -116,6 +129,18 @@ export type GatewayKey = {
 
 export type IssuedKey = GatewayKey & { key: string }
 
+/** Gateway keys that use an upstream or a context profile; undefined while keys are unknown. */
+export function keysUsing(
+  keys: GatewayKey[] | undefined,
+  target: { upstreamId: string } | { profileId: string },
+): number | undefined {
+  return keys?.filter((key) =>
+    'upstreamId' in target
+      ? key.upstream_ids.includes(target.upstreamId)
+      : key.policy_id === target.profileId,
+  ).length
+}
+
 export type KeyRequest = {
   name: string
   openviking_key: string
@@ -157,6 +182,8 @@ export type Overview = {
   /** Conversations whose latest saving status is retrying or paused. */
   capture_issues: { retrying: number; paused: number }
   sample_limit: number
+  /** Days the request log keeps records; older gateways leave it out. */
+  log_retention_days?: number
 }
 
 /** One request-log record (metadata only); every field but `time` is optional. */
@@ -221,7 +248,9 @@ export type ResyncTarget = { session: string; protocol: Protocol }
 export type GatewayErrorReason =
   | 'not_enabled'
   | 'token_missing'
+  | 'token_mismatch'
   | 'unreachable'
+  | 'unsupported'
   | 'conflict'
   | 'invalid'
   | 'forbidden'
@@ -229,29 +258,45 @@ export type GatewayErrorReason =
   | 'unauthorized'
   | 'other'
 
+/** Reasons the layout answers with a setup card instead of the gateway pages. */
+const UNAVAILABLE: GatewayErrorReason[] = [
+  'not_enabled',
+  'token_missing',
+  'token_mismatch',
+  'unreachable',
+  'unsupported',
+]
+
 /** A failed gateway call: HTTP status, the server's own message, and a category. */
 export class GatewayError extends Error {
   readonly status?: number
   readonly detail: string
   readonly reason: GatewayErrorReason
 
-  constructor(detail: string, status?: number, cause?: unknown) {
+  constructor(
+    detail: string,
+    status?: number,
+    cause?: unknown,
+    reason?: GatewayErrorReason,
+  ) {
     super(detail, cause ? { cause } : undefined)
     this.name = 'GatewayError'
     this.detail = detail
     this.status = status
-    this.reason = classify(detail, status)
+    this.reason = reason ?? classify(detail, status)
   }
 
-  /** True when the gateway itself is off, misconfigured or down. */
+  /** True when the gateway itself is off, misconfigured, down or missing. */
   get unavailable(): boolean {
-    return ['not_enabled', 'token_missing', 'unreachable'].includes(this.reason)
+    return UNAVAILABLE.includes(this.reason)
   }
 }
 
 const AVAILABILITY: Array<[RegExp, GatewayErrorReason]> = [
   [/context gateway is not enabled/i, 'not_enabled'],
   [/management token is not configured/i, 'token_missing'],
+  // The gateway's answer when OpenViking sends a different management token.
+  [/invalid gateway management credential/i, 'token_mismatch'],
   [/management service is unavailable/i, 'unreachable'],
 ]
 
@@ -340,9 +385,21 @@ async function send<T>(
   }
 }
 
-/** Gateway address for clients; also the layout's availability probe. */
-export const getConnectionInfo = (connection: AdminConnection) =>
-  send<ConnectionInfo>(connection, 'GET', ['guides'])
+/**
+ * Gateway address for clients; also the layout's availability probe. A 404
+ * means the OpenViking server has no Context Gateway management at all.
+ */
+export async function getConnectionInfo(
+  connection: AdminConnection,
+): Promise<ConnectionInfo> {
+  try {
+    return await send<ConnectionInfo>(connection, 'GET', ['guides'])
+  } catch (error) {
+    const failure = toGatewayError(error)
+    if (failure.status !== 404) throw failure
+    throw new GatewayError(failure.detail, 404, failure, 'unsupported')
+  }
+}
 
 export const getOverview = (connection: AdminConnection) =>
   send<Overview>(connection, 'GET', ['overview'])

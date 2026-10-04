@@ -15,6 +15,18 @@ import {
   protocolLabel,
 } from '../-lib/localize'
 
+/**
+ * Muted dash for a missing value. It always uses the body font and size, so it
+ * matches across columns, including monospace ones such as Model.
+ */
+export function EmptyValue() {
+  return (
+    <span className="font-sans text-sm text-muted-foreground">
+      {EMPTY_VALUE}
+    </span>
+  )
+}
+
 export type Tone = 'success' | 'warning' | 'danger' | 'info' | 'neutral'
 
 const TONES: Record<Tone, string> = {
@@ -85,9 +97,7 @@ export function HealthBadge({ status }: { status: string }) {
 
 /** Upstream HTTP status; green below 400, red otherwise, a dash when missing. */
 export function HttpStatusBadge({ status }: { status?: number }) {
-  if (status === undefined) {
-    return <span className="text-muted-foreground">{EMPTY_VALUE}</span>
-  }
+  if (status === undefined) return <EmptyValue />
   return (
     <ToneBadge tone={status < 400 ? 'success' : 'danger'} className="font-mono">
       {status}
@@ -111,8 +121,7 @@ export function CaptureStatusBadge({
   reason?: string
 }) {
   const { t } = useTranslation('contextGateway')
-  if (!status)
-    return <span className="text-muted-foreground">{EMPTY_VALUE}</span>
+  if (!status) return <EmptyValue />
   return (
     <ToneBadge
       tone={CAPTURE_TONES[status] ?? 'neutral'}
@@ -132,7 +141,7 @@ const KIND_TONES: Record<string, Tone> = {
 /** Request type: new message, tool step, housekeeping, memory sync… */
 export function KindBadge({ kind }: { kind?: string }) {
   const { t } = useTranslation('contextGateway')
-  if (!kind) return <span className="text-muted-foreground">{EMPTY_VALUE}</span>
+  if (!kind) return <EmptyValue />
   return (
     <ToneBadge tone={KIND_TONES[kind] ?? 'neutral'}>
       {kindLabel(t, kind)}
@@ -172,14 +181,46 @@ export function ProtocolBadge({
   )
 }
 
-/** Degradation of a request, in amber; the explanation shows on hover. */
-export function IssueBadge({ degradation }: { degradation: string }) {
+/**
+ * Degradation of a request, in amber; the explanation shows on hover.
+ * `iconOnly` keeps the label for screen readers only.
+ */
+export function IssueBadge({
+  degradation,
+  iconOnly = false,
+}: {
+  degradation: string
+  iconOnly?: boolean
+}) {
   const { t } = useTranslation('contextGateway')
   const info = degradationInfo(t, degradation)
   return (
     <ToneBadge tone="warning" title={info.explanation}>
       <TriangleAlertIcon />
-      {info.label}
+      <span className={iconOnly ? 'sr-only' : undefined}>{info.label}</span>
     </ToneBadge>
+  )
+}
+
+/**
+ * HTTP status of a request. Below `md`, where request tables hide the column
+ * with the full issue badge, an issue icon also shows under the status.
+ */
+export function RequestStatus({
+  status,
+  degradation,
+}: {
+  status?: number
+  degradation?: string
+}) {
+  return (
+    <div className="flex flex-col items-start gap-1">
+      <HttpStatusBadge status={status} />
+      {degradation ? (
+        <span className="md:hidden">
+          <IssueBadge degradation={degradation} iconOnly />
+        </span>
+      ) : null}
+    </div>
   )
 }

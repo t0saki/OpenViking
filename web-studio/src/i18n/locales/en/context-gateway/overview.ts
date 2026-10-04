@@ -1,11 +1,12 @@
 const overview = {
-  title: 'Overview',
   description:
-    'How clients use the gateway: requests, prompt caching and memory, and the health of the OpenViking server behind it.',
+    'How clients use the gateway: requests, prompt caching and memory, and the health of OpenViking.',
   loadFailed: "Couldn't load the overview",
   showIssues: 'Show in Requests',
-  sampleNote:
-    'Figures cover the latest {{limit}} entries of the request log. Entries are kept for 30 days by default.',
+  sampleNote_one:
+    'Figures cover the latest {{limit}} entries of the request log. Entries are kept for {{count}} day.',
+  sampleNote_other:
+    'Figures cover the latest {{limit}} entries of the request log. Entries are kept for {{count}} days.',
   setup: {
     title: 'Get started',
     description:
@@ -66,9 +67,9 @@ const overview = {
     },
     recall: {
       label: 'Memory entries recalled',
-      hint: 'Memory entries the gateway added to new messages, and how long it waited for OpenViking to find them before calling the model.',
-      footnote_one: 'Avg {{duration}} over {{number}} recall',
-      footnote_other: 'Avg {{duration}} over {{number}} recalls',
+      hint: 'Memory entries the gateway added to new messages. The average is how long a search in OpenViking took, counting only messages that searched.',
+      footnote_one: 'Avg {{duration}} over {{number}} search',
+      footnote_other: 'Avg {{duration}} over {{number}} searches',
       none: 'No recalls yet',
     },
   },
@@ -85,8 +86,6 @@ const overview = {
       oidc: 'OIDC mode',
       ldap: 'LDAP mode',
     },
-    devMode:
-      "OpenViking runs in development mode, where every key acts as root, so gateway keys can't be issued. Switch OpenViking to API key mode.",
     unreachable:
       "While OpenViking can't be reached, requests still go to the model without memory, and saving conversations is retried until it's back.",
     starting:

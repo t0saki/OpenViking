@@ -1,7 +1,7 @@
 const profiles = {
-  title: '上下文配置',
   description:
-    '上下文配置决定每段对话如何使用 OpenViking：召回记忆、保存对话、为长对话生成摘要，以及向模型提供 OpenViking 工具。每个网关密钥使用一份配置。保存后的修改只对之后开始的对话生效，进行中的对话沿用开始时的设置。',
+    '决定对话如何使用 OpenViking 的记忆和工具。保存后的修改只对之后开始的对话生效。',
+  defaultName: '默认',
   loadFailed: '无法加载上下文配置',
   actions: {
     new: '新建配置',
@@ -21,7 +21,7 @@ const profiles = {
   },
   summary: {
     recallOn: '开启 · 每条消息 {{tokens}} Token',
-    takeoverOn: '超过 {{tokens}} Token 后生成摘要',
+    takeoverOn: '超过 {{tokens}} Token 后',
     toolsRead: '只读',
     toolsReadWrite: '读写',
   },

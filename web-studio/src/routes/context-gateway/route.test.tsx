@@ -16,9 +16,16 @@ import { routeTree } from '#/routeTree.gen'
 
 import { GatewayError } from './-lib/api'
 import type * as Api from './-lib/api'
-import { ContextGatewayLayout, gatewayTabFor } from './route'
+import {
+  ContextGatewayLayout,
+  gatewayTabFor,
+} from './-components/gateway-layout'
 
-const state = vi.hoisted(() => ({ role: 'admin', roleLoading: false }))
+const state = vi.hoisted(() => ({
+  role: 'admin',
+  roleLoading: false,
+  serverMode: 'api_key',
+}))
 const api = vi.hoisted(() => ({ getConnectionInfo: vi.fn() }))
 
 vi.mock('#/hooks/use-app-connection', () => ({
@@ -32,7 +39,7 @@ vi.mock('#/hooks/use-app-connection', () => ({
     },
     connectionRole: state.role,
     isConnectionRoleLoading: state.roleLoading,
-    serverMode: 'api_key',
+    serverMode: state.serverMode,
   }),
 }))
 vi.mock('react-i18next', async (importOriginal) => ({
@@ -85,6 +92,7 @@ describe('layout gates', () => {
     vi.spyOn(window, 'scrollTo').mockImplementation(() => {})
     state.role = 'admin'
     state.roleLoading = false
+    state.serverMode = 'api_key'
     api.getConnectionInfo.mockReset()
   })
   afterEach(cleanup)
@@ -129,6 +137,32 @@ describe('layout gates', () => {
     expect(screen.getByText(/"enabled": true/)).toBeTruthy()
     expect(screen.getByText('unavailable.docs')).toBeTruthy()
     expect(screen.queryByText('tabs.overview')).toBeNull()
+  })
+
+  it('explains development mode instead of asking for a key', async () => {
+    state.serverMode = 'dev'
+    state.role = 'root'
+    renderLayout()
+    expect(await screen.findByText('unavailable.devMode.title')).toBeTruthy()
+    expect(screen.getByText(/"auth_mode": "api_key"/)).toBeTruthy()
+    expect(screen.queryByText('access.title')).toBeNull()
+    expect(api.getConnectionInfo).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    [
+      new GatewayError('Invalid gateway management credential', 401),
+      'unavailable.tokenMismatch.title',
+    ],
+    [
+      new GatewayError('Not Found', 404, undefined, 'unsupported'),
+      'unavailable.unsupported.title',
+    ],
+  ])('shows a setup card for %s', async (error, title) => {
+    api.getConnectionInfo.mockRejectedValue(error)
+    renderLayout()
+    expect(await screen.findByText(title)).toBeTruthy()
+    expect(screen.getByText('actions.retry')).toBeTruthy()
   })
 
   it('shows other failures as an error with retry', async () => {

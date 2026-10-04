@@ -25,7 +25,7 @@ import type * as Api from '../-lib/api'
 import type { GatewayKey, Profile, ProfileSettings } from '../-lib/api'
 import { PROFILE_DEFAULTS } from '../-lib/profile-schema'
 import { parseProfileEditorSearch } from '../-lib/search'
-import { ProfilesPage } from '../profiles/index'
+import { ProfilesPage } from './profiles-page'
 import { ProfileEditor } from './profiles-editor'
 
 const api = vi.hoisted(() => ({
@@ -231,8 +231,11 @@ describe('profile list', () => {
     await waitFor(() => expect(api.saveProfile).toHaveBeenCalledTimes(1))
     const [, id, settings] = api.saveProfile.mock.calls[0]
     expect(id).toMatch(/^[0-9a-f]{16}$/)
-    expect(settings).toEqual(PROFILE_DEFAULTS)
-    expect(settings.name).toBe('Default')
+    // Recommended settings under a name in the UI language.
+    expect(settings).toEqual({
+      ...PROFILE_DEFAULTS,
+      name: 'profiles.defaultName',
+    })
     expect(screen.getByText('profiles.actions.customize')).toBeTruthy()
   })
 
@@ -315,6 +318,33 @@ describe('profile editor', () => {
       screen.getByText('validation.range {"min":64,"max":32000}'),
     ).toBeTruthy()
     expect(screen.getByText('profiles.editor.invalid')).toBeTruthy()
+    expect(saveButton().disabled).toBe(true)
+  })
+
+  it('keeps invalid settings in view when their section is off or advanced', async () => {
+    renderAt('/context-gateway/profiles/p1')
+    await screen.findByDisplayValue('Coding')
+    expect(screen.queryByText('field.sectionInvalid')).toBeNull()
+    fireEvent.change(screen.getByLabelText('profiles.recall.maxTokens.label'), {
+      target: { value: '10' },
+    })
+    fireEvent.click(sectionSwitch('recall'))
+    expect(
+      screen.getByLabelText('profiles.recall.maxTokens.label'),
+    ).toBeTruthy()
+    expect(screen.getByText('field.sectionInvalid')).toBeTruthy()
+  })
+
+  it('opens advanced settings that hold an error', async () => {
+    api.listProfiles.mockResolvedValue([
+      { ...chat, recall: true, quotas: { legacy: 2 } } as Profile,
+    ])
+    renderAt('/context-gateway/profiles/p2')
+    await screen.findByDisplayValue('Chat')
+    expect(
+      screen.getByText('validation.unknownCategory {"name":"legacy"}'),
+    ).toBeTruthy()
+    expect(screen.getByText('field.sectionInvalid')).toBeTruthy()
     expect(saveButton().disabled).toBe(true)
   })
 

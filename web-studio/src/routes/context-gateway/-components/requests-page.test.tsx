@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { createHash } from 'node:crypto'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import {
   Outlet,
@@ -10,6 +11,7 @@ import {
 } from '@tanstack/react-router'
 import {
   cleanup,
+  configure,
   fireEvent,
   render,
   screen,
@@ -31,7 +33,7 @@ import i18n from '#/i18n'
 import type * as Api from '../-lib/api'
 import type { GatewayKey, LogRecord, Upstream } from '../-lib/api'
 import { parseRequestsSearch } from '../-lib/search'
-import { RequestsPage } from '../requests'
+import { RequestsPage } from './requests-page'
 
 const api = vi.hoisted(() => ({
   listLogs: vi.fn(),
@@ -175,6 +177,9 @@ function expand(text: string) {
 
 beforeAll(async () => {
   await i18n.changeLanguage('en')
+  // jsdom applies no CSS, so queries would also find the copies that tables
+  // show only below `md`; leave those out and test the desktop layout.
+  configure({ defaultIgnore: 'script, style, .md\\:hidden, .md\\:hidden *' })
 })
 
 beforeEach(() => {
@@ -218,6 +223,26 @@ describe('RequestsPage', () => {
     ).toBeTruthy()
   })
 
+  it('shows a dash for requests that report no token usage', async () => {
+    api.listLogs.mockResolvedValue([
+      {
+        time: NOW - 30,
+        request_id: 'req-count',
+        kind: 'count',
+        model: 'claude-count',
+        status: 200,
+        input_tokens: 0,
+        output_tokens: 0,
+      },
+    ])
+    renderPage()
+    await screen.findByText('claude-count')
+    const row = rowOf('claude-count')
+    expect(within(row).queryByText('0 in · 0 out')).toBeNull()
+    // Tokens, memory and saving are all empty.
+    expect(within(row).getAllByText('—')).toHaveLength(3)
+  })
+
   it('opens the issues view from the URL and switches views', async () => {
     const router = renderPage('/context-gateway/requests?filter=issues')
     expect(await screen.findByText('deepseek-chat')).toBeTruthy()
@@ -259,7 +284,7 @@ describe('RequestsPage', () => {
     renderPage()
     await screen.findByText('gpt-5')
     const search = screen.getByRole('searchbox', {
-      name: 'Search model, conversation, key or upstream',
+      name: 'Search model, conversation or key',
     })
 
     fireEvent.change(search, { target: { value: 'laptop' } })
@@ -271,6 +296,30 @@ describe('RequestsPage', () => {
     expect(await screen.findByText('No matching requests')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }))
     expect(await screen.findByText('claude-sonnet')).toBeTruthy()
+  })
+
+  it('finds a conversation by the id the client sent', async () => {
+    const clientId = 'open-webui-chat-42'
+    api.listLogs.mockResolvedValue([
+      ...RECORDS,
+      {
+        time: NOW - 200,
+        request_id: 'req-webui',
+        kind: 'user',
+        model: 'webui-model',
+        session: createHash('sha256').update(clientId).digest('hex'),
+      },
+    ])
+    renderPage()
+    await screen.findByText('webui-model')
+    fireEvent.change(
+      screen.getByRole('searchbox', {
+        name: 'Search model, conversation or key',
+      }),
+      { target: { value: clientId } },
+    )
+    await waitFor(() => expect(screen.queryByText('gpt-5')).toBeNull())
+    expect(screen.getByText('webui-model')).toBeTruthy()
   })
 
   it('explains an issue and names the upstream and key in the details', async () => {

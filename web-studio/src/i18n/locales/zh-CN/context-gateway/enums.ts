@@ -12,8 +12,8 @@ const enums = {
     ark: '火山方舟',
   },
   authMode: {
-    managed: '网关保管密钥',
-    passthrough: '客户端自带密钥',
+    managed: '网关保管 API Key',
+    passthrough: '客户端自带 API Key',
   },
   kind: {
     user: '新消息',
@@ -30,7 +30,7 @@ const enums = {
     starting: '启动中',
   },
   captureStatus: {
-    active: '保存中',
+    active: '正常',
     disabled: '已关闭',
     retrying: '重试中',
     paused: '已暂停',
@@ -95,7 +95,8 @@ const enums = {
       label: '上游已切换',
       explanation:
         '这段对话最初使用的上游已不可用，改由其他上游回答，模型服务商的缓存也随之重新开始。',
-      action: '重新启用原来的上游，或把它加回密钥；也可以接受这次切换。',
+      action:
+        '重新启用原来的上游，或让客户端改用包含该上游的密钥；新开的对话会固定使用当前的上游。',
     },
     missing_injection_record: {
       label: '记忆记录缺失',

@@ -6,25 +6,25 @@ type CodeBlockProps = {
   code: string
   /** Caption above the code, e.g. a filename or "Terminal". */
   label?: string
-  /** Wrap long lines instead of scrolling horizontally. */
+  /** Wrap long lines (at spaces where possible) instead of scrolling. */
   wrap?: boolean
-  /** Accessible name of the copy button. */
-  copyLabel?: string
   className?: string
 }
 
-/** Monospace block with a copy button and an optional caption. */
+/**
+ * Monospace block with a copy button and an optional caption. Without a
+ * caption the button sits in its own column, so it never covers the code.
+ */
 export function CodeBlock({
   code,
   label,
   wrap = false,
-  copyLabel,
   className,
 }: CodeBlockProps) {
   return (
     <div
       className={cn(
-        'relative min-w-0 overflow-hidden rounded-lg border bg-muted/30',
+        'min-w-0 overflow-hidden rounded-lg border bg-muted/30',
         className,
       )}
     >
@@ -33,24 +33,25 @@ export function CodeBlock({
           <span className="truncate font-mono text-xs text-muted-foreground">
             {label}
           </span>
-          <CopyButton value={code} label={copyLabel} />
+          <CopyButton value={code} />
         </div>
-      ) : (
-        <CopyButton
-          value={code}
-          label={copyLabel}
-          className="absolute top-1.5 right-1.5 bg-muted/60 backdrop-blur-sm"
-        />
-      )}
-      <pre
-        className={cn(
-          'overflow-x-auto p-3 font-mono text-xs leading-5',
-          wrap ? 'break-all whitespace-pre-wrap' : 'whitespace-pre',
-          !label && 'pr-10',
+      ) : null}
+      <div className="flex items-start">
+        <pre
+          className={cn(
+            'min-w-0 flex-1 overflow-x-auto p-3 font-mono text-xs leading-5',
+            wrap
+              ? 'whitespace-pre-wrap [overflow-wrap:anywhere]'
+              : 'whitespace-pre',
+            !label && 'pr-2',
+          )}
+        >
+          <code>{code}</code>
+        </pre>
+        {label ? null : (
+          <CopyButton value={code} className="mt-2.5 mr-2 shrink-0" />
         )}
-      >
-        <code>{code}</code>
-      </pre>
+      </div>
     </div>
   )
 }

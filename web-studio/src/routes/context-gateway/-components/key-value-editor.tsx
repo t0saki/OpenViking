@@ -18,7 +18,6 @@ type CommonProps = {
   /** Render values as password fields (header secrets). */
   maskValues?: boolean
   'aria-invalid'?: boolean
-  disabled?: boolean
 }
 
 type TextProps = CommonProps & {
@@ -57,7 +56,7 @@ function sameRecord(a: object, b: object): boolean {
  */
 export function KeyValueEditor(props: KeyValueEditorProps) {
   const { t } = useTranslation('contextGateway')
-  const { storedKeys = [], maskValues, disabled } = props
+  const { storedKeys = [], maskValues } = props
   const [rows, setRows] = React.useState(() => toRows(props.value))
   const [synced, setSynced] = React.useState<object>(props.value)
   if (props.value !== synced) {
@@ -108,7 +107,6 @@ export function KeyValueEditor(props: KeyValueEditorProps) {
               <Input
                 {...PLAIN_INPUT_PROPS}
                 value={row.key}
-                disabled={disabled}
                 placeholder={props.keyPlaceholder}
                 aria-label={props.keyPlaceholder}
                 aria-invalid={duplicate || props['aria-invalid']}
@@ -125,7 +123,6 @@ export function KeyValueEditor(props: KeyValueEditorProps) {
                 autoComplete={maskValues ? 'new-password' : 'off'}
                 inputMode={props.numeric ? 'numeric' : undefined}
                 value={row.value}
-                disabled={disabled}
                 placeholder={
                   stored ? t('field.storedSecret') : props.valuePlaceholder
                 }
@@ -140,7 +137,6 @@ export function KeyValueEditor(props: KeyValueEditorProps) {
                 type="button"
                 variant="ghost"
                 size="icon-sm"
-                disabled={disabled}
                 aria-label={t('keyValue.remove')}
                 className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
                 onClick={() =>
@@ -163,7 +159,6 @@ export function KeyValueEditor(props: KeyValueEditorProps) {
           type="button"
           variant="outline"
           size="sm"
-          disabled={disabled}
           onClick={() =>
             setRows([...rows, { id: nextRowId++, key: '', value: '' }])
           }

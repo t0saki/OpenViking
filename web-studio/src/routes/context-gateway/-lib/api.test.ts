@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   GatewayError,
   deleteUserData,
+  getConnectionInfo,
   issueKey,
   listLogs,
   newObjectId,
@@ -144,6 +145,13 @@ describe('toGatewayError', () => {
       'Context Gateway management service is unavailable',
     ],
     [
+      'a management token that differs from the gateway',
+      401,
+      { detail: 'Invalid gateway management credential' },
+      'token_mismatch',
+      'Invalid gateway management credential',
+    ],
+    [
       'an OpenViking reason from key issuance',
       403,
       { error: { message: 'root_key_not_allowed' } },
@@ -167,8 +175,28 @@ describe('toGatewayError', () => {
       detail,
     ])
     expect(thrown.unavailable).toBe(
-      ['not_enabled', 'token_missing', 'unreachable'].includes(reason),
+      [
+        'not_enabled',
+        'token_missing',
+        'token_mismatch',
+        'unreachable',
+      ].includes(reason),
     )
+  })
+
+  it('reads a missing gateway route as a server without gateway support', async () => {
+    request.mockRejectedValue(
+      failure(404, { status: 'error', error: { message: 'Not Found' } }),
+    )
+    const thrown = await getConnectionInfo(connection).catch((caught) => caught)
+    expect([thrown.status, thrown.reason, thrown.unavailable]).toEqual([
+      404,
+      'unsupported',
+      true,
+    ])
+    // Elsewhere a 404 still means the item is gone.
+    const elsewhere = await listLogs(connection).catch((caught) => caught)
+    expect(elsewhere.reason).toBe('not_found')
   })
 
   it('falls back to the message for network failures and plain errors', () => {

@@ -30,7 +30,7 @@ const enums = {
     starting: 'Starting',
   },
   captureStatus: {
-    active: 'Saving',
+    active: 'On',
     disabled: 'Off',
     retrying: 'Retrying',
     paused: 'Paused',
@@ -100,7 +100,7 @@ const enums = {
       explanation:
         'The upstream this conversation started on is no longer usable, so another one answered and the provider cache started over.',
       action:
-        'Re-enable the original upstream or add it back to the key, or accept the switch.',
+        'Re-enable the original upstream, or give the client a key that includes it. A new conversation settles on the current upstream.',
     },
     missing_injection_record: {
       label: 'Memory record missing',

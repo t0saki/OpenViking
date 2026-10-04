@@ -19,7 +19,7 @@ type ConfirmDialogProps = {
   /** A question, e.g. "Revoke “Laptop”?". */
   title: string
   /** What happens and what is kept. */
-  description: React.ReactNode
+  description: string
   confirmLabel: string
   /** Icon of the confirm button while idle. */
   icon?: React.ReactNode
@@ -32,7 +32,11 @@ type ConfirmDialogProps = {
   onConfirm: () => Promise<unknown> | void
 }
 
-/** Controlled confirmation for destructive actions. */
+/**
+ * Controlled confirmation for destructive actions. Callers keep the target
+ * in state and pass `open={target !== null}`; the dialog keeps showing the
+ * last title and description while it animates closed after they clear it.
+ */
 export function ConfirmDialog({
   open,
   onOpenChange,
@@ -45,6 +49,10 @@ export function ConfirmDialog({
 }: ConfirmDialogProps) {
   const { t } = useTranslation('contextGateway')
   const [pending, setPending] = React.useState(false)
+  const [shown, setShown] = React.useState({ title, description })
+  if (open && (shown.title !== title || shown.description !== description)) {
+    setShown({ title, description })
+  }
 
   async function confirm() {
     setPending(true)
@@ -67,8 +75,10 @@ export function ConfirmDialog({
     >
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>{title}</AlertDialogTitle>
-          <AlertDialogDescription>{description}</AlertDialogDescription>
+          <AlertDialogTitle>{open ? title : shown.title}</AlertDialogTitle>
+          <AlertDialogDescription>
+            {open ? description : shown.description}
+          </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel disabled={pending}>

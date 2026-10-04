@@ -1,5 +1,4 @@
 const requests = {
-  title: 'Requests',
   description:
     'Model requests that went through the gateway and what happened to memory in each. Only metadata is kept: no prompts, replies or memory text.',
   filters: {
@@ -10,7 +9,7 @@ const requests = {
     issues: 'Issues',
     kind: 'Request type',
     allKinds: 'All types',
-    search: 'Search model, conversation, key or upstream',
+    search: 'Search model, conversation or key',
     clear: 'Clear filters',
   },
   scope: 'Filters and search cover the latest {{count}} records.',
