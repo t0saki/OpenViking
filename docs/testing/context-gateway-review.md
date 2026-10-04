@@ -85,9 +85,12 @@ that final bookkeeping; the next supplied history reconciles capture again.
 SQLite has separate reader and writer executors. Reads arriving in the same event
 loop turn are coalesced in batches of at most 64, without caching snapshots or
 adding a timer delay. Cancellation and errors are isolated per waiting request.
-Credentials, policies and upstream lists use a bounded two-second cache with one
-loader per key. Local management mutations invalidate it immediately; another
-process may retain a revoked credential for up to two seconds.
+Credentials and upstream lists use a bounded two-second cache with one loader per
+key. Local credential/upstream mutations invalidate it immediately; another
+process may retain a revoked credential for up to two seconds. Policies bypass
+the cache because they become immutable session snapshots. Existing sessions
+keep their policy snapshot; Responses mapping writes and log cleanup do not
+invalidate configuration caches.
 
 ## Verification
 
@@ -97,6 +100,26 @@ batches, concurrent edits and resets, expired-lease fencing, scope-isolated batc
 reads, corrupt-record isolation and the alternate KV adapter. Development-format
 compatibility tests were removed with the compatibility paths. Ruff and whitespace
 checks pass. Remote CI is not claimed as executed.
+
+The follow-up to `3dde0b96` adds four regressions, all reproduced as failures
+before the fix: consecutive Responses tool calls retain the capture destination
+and delivered watermark; a worker merging with a concurrent request keeps its
+rotated credential and request metadata; a new session sees policy changes made
+by another process; Responses bookkeeping preserves the credential/upstream
+cache. The complete suite now passes **135 tests**. An unconfirmed tool tail is
+replaced in place. Only a turn already delivered after idle needs a new capture
+destination when extended. Worker CAS merges copy only delivery/archive/retry
+progress into the latest document, leaving request-owned fields intact.
+
+Anthropic signature preservation is implemented: normal forwarding keeps opaque
+thinking/signature blocks, immutable replay restores earlier injections, and
+missing-replay or archive replacement paths discard incompatible old thinking.
+Tests use synthetic signatures; they do not verify provider cryptography. The
+acceptance script's `--binding-check` requires nonempty thinking signatures,
+`input_transformations` metadata and no transformed blocks with binding errors
+enabled. No native Claude API is available for this check, so native signature
+acceptance remains unverified. An Anthropic-compatible Ark response without
+signatures does not satisfy it.
 
 Using the model configuration in `~/.openviking/ov.conf`, a live check exercised
 Ark `deepseek-v4-1-flash-260910` through the gateway:
@@ -156,3 +179,23 @@ from about **1.19 s to 0.80 s**. Direct-route timings vary, and grouping alone g
 only a modest additional gain. The design's millisecond-overhead target remains
 unmet; neither these numbers nor the parse-only results establish 8 MiB end-to-end
 or 300 continuously active stream acceptance.
+
+The follow-up also isolates the SQLite grouping choice: three runs per variant,
+interleaved, on the corrected code and a fresh Python 3.10.20 environment
+(aiohttp 3.14.3, orjson 3.12.0). The alternative replaces only `SQLiteKernelStore.load`
+with one `db.run` per request, reading the same three ports on one connection.
+Reader/writer pools, policies, warmup and workload are unchanged. No profiler is
+enabled. The table reports the median of each variant's three run-level values:
+
+| 300-request burst | Grouped reads | Individual reads |
+| --- | ---: | ---: |
+| Gateway first-byte p50 | 960.73 ms | 1063.93 ms |
+| Gateway first-byte p95 | 1069.80 ms | 1161.58 ms |
+| First-byte p50 difference from each run's direct route | 840.42 ms | 1001.10 ms |
+
+Grouping remains in the SQLite adapter: it saves about 103 ms at gateway p50 in
+this workload. Direct-route variance affects the differences, and the newer
+dependency environment makes this a separate A/B check rather than a new before/
+after comparison with the earlier table. It still does not meet the millisecond
+overhead target. Policy reads intentionally bypass TTL caching even though this
+adds one management read per enhanced request.

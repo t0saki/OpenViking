@@ -353,10 +353,12 @@ operational KV port. No transaction spans replay records and capture jobs.
 Stable sessions need one batched preparation read; anonymous identity resolution
 adds a prefix-index read. Only new decisions write before forwarding. Usage, sent
 markers and logs run after response transmission. SQLite separates reader and
-writer executors and coalesces reads arriving in the same loop turn. Credentials,
-policies and upstream lists have a two-second process-local cache. Local management
+writer executors and coalesces reads arriving in the same loop turn. Credentials
+and upstream lists have a two-second process-local cache. Local credential/upstream
 changes invalidate it immediately; other processes can retain revoked credentials
-for at most two seconds.
+for at most two seconds. Policy reads bypass the cache so new sessions freeze the
+current policy. Existing sessions retain their original policy snapshot. Response
+mapping writes and log cleanup do not invalidate configuration caches.
 
 See [architecture, regression and profile notes](../../testing/context-gateway-review.md)
 for port contracts, measured overhead and remaining acceptance limits.

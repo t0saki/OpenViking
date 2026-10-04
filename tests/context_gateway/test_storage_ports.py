@@ -13,6 +13,7 @@ from openviking_context_gateway.capture_store import Document, LeaseLost
 from openviking_context_gateway.kernel import MemoryKernel
 from openviking_context_gateway.models import Policy
 from openviking_context_gateway.records import RecordKind as K
+from openviking_context_gateway.storage import ManagementStore, digest
 
 
 class KVReplay:
@@ -233,3 +234,59 @@ async def test_corrupt_record_does_not_fail_other_reads_in_batch(setup_kernel):
     )
     assert isinstance(damaged, InvalidToken)
     assert healthy[0][K.ROOT, ""] == {"scope": "healthy"}
+
+
+async def test_new_session_does_not_freeze_other_process_stale_policy(setup_kernel, credential):
+    kernel, store, _, encryption = setup_kernel
+    writer = ManagementStore(store.path.parent / "management.sqlite3", encryption)
+    reader = ManagementStore(writer.path, encryption)
+    await writer.initialize()
+    await reader.initialize()
+    try:
+        original = Policy(recall=False).model_dump()
+        await writer.save("tenant", "policies", "default", original)
+        assert (await reader.get("tenant", "policies", "default"))["capture"]
+        await writer.save("tenant", "policies", "default", {**original, "capture": False})
+        policy = await reader.get("tenant", "policies", "default")
+        request = await kernel.prepare(
+            {"messages": [{"role": "user", "content": "new conversation"}]},
+            "chat",
+            {"x-openviking-session": "fresh"},
+            credential,
+            {"id": "upstream"},
+            policy,
+        )
+        assert request.root["policy"]["capture"] is False
+        assert not (await store.capture.get(request.scope, request.session)).value
+    finally:
+        writer.close()
+        reader.close()
+
+
+async def test_response_bookkeeping_preserves_configuration_cache(setup_kernel, monkeypatch):
+    _, store, _, encryption = setup_kernel
+    management = ManagementStore(store.path.parent / "management.sqlite3", encryption)
+    await management.initialize()
+    try:
+        await management.save("tenant", "keys", digest("downstream"), {"name": "key"})
+        await management.save("tenant", "upstreams", "model", {"name": "model"})
+        await management.authenticate("downstream")
+        await management.list("tenant", "upstreams")
+        await management.save("tenant", "responses", "response", {"upstream_id": "model"}, ttl=1)
+        await management.expire_logs(0)
+        read = management.run
+        reads = []
+
+        async def counted(fn, *args, **kwargs):
+            if not kwargs.get("write"):
+                reads.append(fn)
+            return await read(fn, *args, **kwargs)
+
+        monkeypatch.setattr(management, "run", counted)
+        assert (await management.authenticate("downstream"))["name"] == "key"
+        assert (await management.list("tenant", "upstreams"))[0]["name"] == "model"
+        assert not reads
+        await management.delete("tenant", "keys", digest("downstream"))
+        assert await management.authenticate("downstream") is None
+    finally:
+        management.close()

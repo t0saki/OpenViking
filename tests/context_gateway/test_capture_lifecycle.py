@@ -403,3 +403,109 @@ async def test_concurrent_request_reconciles_inflight_delivery(
         m["content"] for m in messages
     ]
     assert (revised.capture_target != p.capture_target) is edit
+
+
+async def test_tool_continuations_replace_pending_tail_without_reset(
+    setup_kernel, credential, policy
+):
+    kernel, store, viking, encryption = setup_kernel
+    policy.update(recall=False, takeover=False, commit_tokens=1000000)
+    messages = [*history(1), {"role": "user", "content": "Read both files"}]
+
+    async def prepare_response():
+        return await kernel.prepare(
+            {"input": messages, "store": False},
+            "responses",
+            {"x-openviking-session": "tool-loop"},
+            credential,
+            {"id": "upstream"},
+            policy,
+        )
+
+    first = await prepare_response()
+    worker = await worker_for(store, encryption, credential, viking)
+    await worker.once()
+    initial = (await store.capture.get(first.scope, first.session)).value
+    assert initial["tokens"] > 0
+    for index in range(2):
+        request = await prepare_response()
+        response = ResponseCapture("responses")
+        response.nonstream(
+            {
+                "status": "completed",
+                "output": [
+                    {
+                        "type": "function_call",
+                        "call_id": f"call-{index}",
+                        "name": "read_file",
+                        "arguments": '{"path":"README.md"}',
+                    }
+                ],
+            }
+        )
+        await kernel.completed(request, credential, response)
+        messages.extend(response.output_items)
+        messages.append(
+            {"type": "function_call_output", "call_id": f"call-{index}", "output": "contents"}
+        )
+    request = await prepare_response()
+    answer = {"role": "assistant", "content": "Both files checked"}
+    await kernel.completed(request, credential, ResponseCapture("responses", answer, complete=True))
+    staged = (await store.capture.get(first.scope, first.session)).value
+    assert staged["ov_session"] == first.capture_target
+    assert staged["delivered"] == initial["delivered"]
+    assert staged["tokens"] == initial["tokens"]
+    assert len(staged["pending"]) == 1 and not staged["pending"][0]["confirmed"]
+    messages.extend([answer, {"role": "user", "content": "Continue"}])
+    await prepare_response()
+    await worker.once()
+    assert set(viking.write_sessions) == {first.capture_target}
+    parts = [part for batch in viking.writes for message in batch for part in message["parts"]]
+    assert [part["tool_id"] for part in parts if part["type"] == "tool"] == ["call-0", "call-1"]
+    assert sum(part.get("text") == "Question 0" for part in parts) == 1
+
+
+async def test_worker_merge_preserves_rotated_credential_and_request_fields(
+    setup_kernel, credential, policy
+):
+    kernel, store, viking, encryption = setup_kernel
+    policy.update(recall=False, takeover=False, commit_tokens=1000000)
+    messages = [*history(1), {"role": "user", "content": "Next"}]
+    first = await prepare(kernel, credential, policy, messages)
+    worker = await worker_for(store, encryption, credential, viking)
+    entered, released = asyncio.Event(), asyncio.Event()
+    write = viking.write
+    keys = []
+
+    async def slow(key, *args):
+        keys.append(key)
+        entered.set()
+        await released.wait()
+        return await write(key, *args)
+
+    viking.write = slow
+    task = asyncio.create_task(worker.once())
+    await asyncio.wait_for(entered.wait(), 2)
+    rotated = {**credential, "id": "replacement-key", "openviking_key": "replacement-secret"}
+    try:
+        await worker.management.save("tenant", "keys", rotated["id"], rotated)
+        current = await prepare(kernel, rotated, policy, messages)
+        await kernel.completed(
+            current,
+            rotated,
+            ResponseCapture("chat", {"role": "assistant", "content": "Last"}, complete=True),
+        )
+        await worker.management.delete("tenant", "keys", credential["id"])
+        # Concurrent request metadata belongs to the request, including future fields.
+        await update_capture(store, current, request_metadata="new")
+    finally:
+        released.set()
+        await task
+    merged = (await store.capture.get(first.scope, first.session)).value
+    assert merged["credential_id"] == rotated["id"]
+    assert merged["request_metadata"] == "new"
+    await make_due(store)
+    await worker.once()
+    assert keys == [credential["openviking_key"], rotated["openviking_key"]]
+    assert any(m["parts"][0].get("text") == "Last" for batch in viking.writes for m in batch)
+    worker.management.close()

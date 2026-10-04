@@ -148,13 +148,9 @@ class CapturePipeline:
             ):
                 return  # A newer request or explicit reset superseded this response.
             delivered = old.value.get("delivered", "")
-            changed_reply = any(
-                not turn["confirmed"] and turn["anchor"] != turns[-1]["anchor"]
-                for turn in old.value["pending"]
-            )
-            if changed_reply or (
-                delivered and delivered in chain and chain.index(delivered) >= request.anchor
-            ):
+            # Tool continuations replace the unconfirmed tail in place. Only
+            # extending a turn already delivered after idle needs a new target.
+            if delivered and delivered in chain and chain.index(delivered) >= request.anchor:
                 value = {
                     **old.value,
                     **new_capture("continued_after_idle"),
@@ -215,9 +211,13 @@ class CaptureWorker:
                     raise BranchChanged
                 pending = pending[index + 1 :]
             value = {
-                **value,
+                **fresh.value,
+                **{
+                    key: value[key]
+                    for key in ("delivered", "retained", "tokens", "archive", "error", "idle")
+                    if key in value
+                },
                 "pending": pending,
-                "request_anchor": fresh.value.get("request_anchor", ""),
             }
             previous = fresh
 

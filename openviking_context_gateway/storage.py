@@ -244,7 +244,9 @@ class ManagementStore(Database):
                     )
                 ]
 
-        return await self.cache.get(("list", account, kind), lambda: self.run(read))
+        if kind in {"keys", "upstreams"}:
+            return await self.cache.get(("list", account, kind), lambda: self.run(read))
+        return await self.run(read)
 
     async def get(self, account, kind, identifier):
         def read():
@@ -262,7 +264,8 @@ class ManagementStore(Database):
                     return None
                 return {**value, "id": identifier, "revision": row["revision"]}
 
-        if kind in {"policies", "keys"}:
+        # Policies become immutable session snapshots: never freeze a TTL-stale value.
+        if kind == "keys":
             return await self.cache.get(("get", account, kind, identifier), lambda: self.run(read))
         return await self.run(read)
 
@@ -286,7 +289,8 @@ class ManagementStore(Database):
                 c.commit()
 
         await self.run(save, write=True)
-        self.cache.clear()
+        if kind in {"keys", "upstreams"}:
+            self.cache.clear()
         return await self.get(account, kind, identifier)
 
     async def delete(self, account, kind, identifier):
@@ -298,7 +302,8 @@ class ManagementStore(Database):
                 )
 
         await self.run(delete, write=True)
-        self.cache.clear()
+        if kind in {"keys", "upstreams"}:
+            self.cache.clear()
 
     async def authenticate(self, key):
         identifier = digest(key)
@@ -353,7 +358,6 @@ class ManagementStore(Database):
                 c.commit()
 
         await self.run(expire, write=True)
-        self.cache.clear()
 
     async def delete_account(self, account):
         def delete():
