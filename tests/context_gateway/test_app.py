@@ -1148,6 +1148,7 @@ async def test_overview_counts_model_requests_recalls_and_capture_issues(running
         {"kind": "capture", "session": "a", "protocol": "chat", "capture_status": "active"},
         {"kind": "user", "recall_reason": "recalled", "recall_ms": 30, "recall_count": 2},
         {"kind": "user", "recall_reason": "empty", "recall_ms": 10},
+        {"kind": "user", "recall_reason": "disabled", "recall_ms": 0},
         {"kind": "continuation", "session": "c", "protocol": "chat", "capture_status": "retrying"},
         {"kind": "capture", "session": "c", "protocol": "anthropic", "capture_status": "paused"},
     ]:
@@ -1155,11 +1156,12 @@ async def test_overview_counts_model_requests_recalls_and_capture_issues(running
     overview = (await client.get("/admin/overview", headers=admin)).json()
     logs = (await client.get("/admin/logs", headers=admin)).json()
     newest_request = next(log for log in logs if log["kind"] != "capture")
-    assert overview["requests"] == 4
+    assert overview["requests"] == 5
     assert overview["last_request_at"] == newest_request["time"]
     assert overview["recall_requests"] == 2 and overview["recall_ms"] == 20
     assert overview["recall_count"] == 2
     assert overview["capture_issues"] == {"retrying": 1, "paused": 2}
+    assert overview["log_retention_days"] == 30
 
 
 async def test_overview_without_model_requests(running_gateway):

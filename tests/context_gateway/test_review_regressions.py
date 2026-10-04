@@ -7,6 +7,7 @@ import pytest
 from conftest import make_due, replay_records
 
 from openviking_context_gateway.capture import MAX_ATTEMPTS, CaptureWorker
+from openviking_context_gateway.client import VikingError
 from openviking_context_gateway.protocols import ResponseCapture, plugin_present
 from openviking_context_gateway.storage import ManagementStore, SQLiteKernelStore
 
@@ -166,6 +167,46 @@ async def test_capture_retry_blocks_later_turns_and_recovers(setup_kernel, crede
     assert await worker.once()
     assert attempted[-3:] == ["Question 0", "Question 1", "Question 2"]
     assert not (await store.capture.get(request.scope, request.session)).value["error"]
+
+
+async def test_capture_log_records_only_status_changes(setup_kernel, credential, policy):
+    kernel, store, viking, encryption = setup_kernel
+    policy.update(recall=False)
+    await prepare(kernel, credential, policy, [*history(1), {"role": "user", "content": "next"}])
+    worker = await worker_for(store, encryption, credential, viking)
+    failure = [RuntimeError("temporary outage")]
+
+    async def fail(key, session, messages):
+        raise failure[0]
+
+    async def changes():
+        logs = await worker.management.logs("tenant")
+        return [
+            (log["capture_status"], log["capture_reason"])
+            for log in reversed(logs)
+            if log["kind"] == "capture"
+        ]
+
+    viking.write = fail
+    for _ in range(MAX_ATTEMPTS + 3):  # Paused retries every RECOVERY_SECONDS.
+        assert await worker.once()
+        await make_due(store)
+    assert await changes() == [("retrying", "delivery_failed"), ("paused", "delivery_failed")]
+    failure[0] = VikingError("connection_lost")
+    for _ in range(2):
+        assert await worker.once()
+        await make_due(store)
+    assert (await changes())[2:] == [("paused", "connection_lost")]
+
+    async def recovered(key, session, messages):
+        return {"pending_tokens": 10}
+
+    viking.write = recovered
+    assert await worker.once()
+    assert (await changes())[2:] == [
+        ("paused", "connection_lost"),
+        ("active", "delivery_recovered"),
+    ]
 
 
 async def test_capture_retry_recovers_in_order(setup_kernel, credential, policy):

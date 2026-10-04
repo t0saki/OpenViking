@@ -233,7 +233,8 @@ class CaptureWorker:
         except Exception as error:
             old = await self.queue.get(item["scope"], item["session"])
             if old.value.get("ov_session") == item["document"].value.get("ov_session"):
-                attempts = old.value.get("error", {}).get("attempts", 0) + 1
+                previous = old.value.get("error", {})
+                attempts = previous.get("attempts", 0) + 1
                 reason = getattr(error, "reason", "delivery_failed")
                 failure = {
                     "attempts": attempts,
@@ -242,9 +243,10 @@ class CaptureWorker:
                     + (RECOVERY_SECONDS if attempts >= MAX_ATTEMPTS else 10 * 2 ** (attempts - 1)),
                 }
                 await self.save(item, old, {**old.value, "error": failure})
-                await self.log(
-                    item, old.value, "paused" if attempts >= MAX_ATTEMPTS else "retrying", reason
-                )
+                # Record status changes only: a paused capture retries forever.
+                if attempts in (1, MAX_ATTEMPTS) or reason != previous.get("reason"):
+                    status = "paused" if attempts >= MAX_ATTEMPTS else "retrying"
+                    await self.log(item, old.value, status, reason)
                 logger.warning("Capture %s: %s (attempt %s)", item["session"], reason, attempts)
         finally:
             await self.queue.release(item)

@@ -89,7 +89,8 @@ def overview_summary(logs):
     for log in logs:
         if reason := log.get("degradation"):
             degradations[reason] = degradations.get(reason, 0) + 1
-    recalls = [log for log in requests if "recall_reason" in log]
+    # "disabled" means recall was skipped (off, budget spent or query too short).
+    recalls = [log for log in requests if log.get("recall_reason", "disabled") != "disabled"]
     capture = {}
     for log in logs:
         if log.get("session") and log.get("capture_status"):
@@ -229,7 +230,11 @@ def create_app(config: ContextGatewayConfig | None = None):
     @app.get("/admin/overview")
     async def overview(request: Request):
         logs = await management.logs(admin_account(request), 10000)
-        return {**overview_summary(logs), "openviking": app.state.health}
+        return {
+            **overview_summary(logs),
+            "openviking": app.state.health,
+            "log_retention_days": config.log_retention_days,
+        }
 
     @app.get("/admin/logs")
     async def logs(request: Request, limit: int = 200):
