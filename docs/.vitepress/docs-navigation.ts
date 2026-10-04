@@ -372,6 +372,8 @@ const guidesSidebar = {
         text: 'Integration & Extension',
         items: [
           ['06-mcp-integration.md', 'MCP Integration'],
+          ['15-context-gateway.md', 'Context Gateway'],
+          ['22-context-gateway-operations.md', 'Context Gateway Operations'],
           ['09-ovpack.md', 'OVPack'],
           ['18-openviking-assets.md', 'OpenViking Assets'],
           ['10-prompt-guide.md', 'Prompt Customization'],
@@ -416,6 +418,8 @@ const guidesSidebar = {
         text: '集成与扩展',
         items: [
           ['06-mcp-integration.md', 'MCP 集成'],
+          ['15-context-gateway.md', '上下文网关'],
+          ['22-context-gateway-operations.md', '上下文网关运维'],
           ['09-ovpack.md', 'OVPack'],
           ['18-openviking-assets.md', 'OpenViking Assets'],
           ['10-prompt-guide.md', 'Prompt 自定义'],
