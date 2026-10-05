@@ -62,6 +62,16 @@ const profiles = {
     title: '召回记忆',
     description:
       '每收到一条新的用户消息，就用它检索 OpenViking，并把相关内容附加到这条消息上。',
+    profile: {
+      label: '会话开头提供用户画像',
+      description:
+        '新对话开始时，向模型提供你的 OpenViking 用户画像。此设置独立于记忆召回。',
+    },
+    profileMaxTokens: {
+      label: '开头内容预算',
+      description:
+        '限制开头的画像、记忆目录和技能目录总量。目录需要启用读取工具。这份预算独立于召回，设为 0 时三项都不提供。',
+    },
     sources: {
       label: '检索范围',
       description: '召回时检索哪些内容。',

@@ -191,7 +191,11 @@ async def test_hidden_branch_restart_and_archive_mapping(setup_kernel, credentia
     assert kernel.replace_archive(p, Policy(keep_recent_turns=1))
     p.body["messages"] = replay_hidden(p.body["messages"], p.body_chain, p.records, "chat")
     note = gateway_note(Policy(keep_recent_turns=1), p.root["tools"])
-    summary = "summary\n\n<openviking-context>\n" + note + "\n</openviking-context>"
+    summary = (
+        'summary\n\n<openviking-context source="gateway-session-start">\n'
+        + note
+        + "\n</openviking-context>"
+    )
     assert p.body["messages"] == [raw[0], {"role": "user", "content": summary}, *raw[3:]]
 
 
@@ -542,6 +546,8 @@ async def test_incompatible_tools_keep_visible_history(setup_kernel, credential,
     assert not prepared.tools_active
     # Only the opening note joins the new user turn; the visible history is untouched.
     assert prepared.body["messages"][:-1] == messages
-    assert prepared.body["messages"][-1]["content"].startswith("continue\n\n<openviking-context>")
+    assert prepared.body["messages"][-1]["content"].startswith(
+        'continue\n\n<openviking-context source="gateway-session-start">'
+    )
     assert prepared.body["response_format"] == body["response_format"]
     assert all(not message.get("tool_calls") for message in prepared.body["messages"])

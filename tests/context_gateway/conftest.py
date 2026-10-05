@@ -2,6 +2,7 @@
 
 import copy
 import json
+from urllib.parse import parse_qs, urlsplit
 
 import httpx
 import orjson
@@ -33,13 +34,37 @@ class FakeViking:
             }
         ]
         self.failure = None
+        self.rendered = None
+        self.profile_requests = []
+        self.profile = ""
+        self.preferences = []
+        self.entities = []
+        self.skills = []
         self.summary = "Previously deployed to the blue cluster."
 
     async def recall(self, key, query, policy, exclude, budget):
         self.recalls.append((key, query, copy.deepcopy(exclude), budget))
         if self.failure:
             raise self.failure
-        return {"entries": [x for x in self.entries if x["uri"] not in exclude]}
+        entries = [x for x in self.entries if x["uri"] not in exclude]
+        rendered = self.rendered
+        if rendered is None:
+            rendered = "\n\n".join(x["uri"] + "\n" + x.get("text", "") for x in entries)
+        return {"entries": entries, "rendered": rendered}
+
+    async def request(self, method, path, key, body=None, timeout=30):
+        self.profile_requests.append((method, path, key, timeout))
+        parsed = urlsplit(path)
+        uri = parse_qs(parsed.query).get("uri", [""])[0]
+        if parsed.path == "/api/v1/system/status":
+            return {"user": "alice"}
+        if parsed.path == "/api/v1/skills":
+            return {"skills": self.skills}
+        if parsed.path == "/api/v1/content/read":
+            return self.profile
+        if uri == "viking://user":
+            return [{"name": "alice", "isDir": True}]
+        return self.preferences if uri.endswith("/preferences") else self.entities
 
     async def health(self, key="", require_identity=True):
         return {"version": "0.4.16", "role": "user", "account_id": "tenant", "user_id": "alice"}
@@ -185,10 +210,14 @@ async def running_gateway(tmp_path, monkeypatch):
                     "result": {
                         "entries": [
                             {"uri": "viking://user/alice/memories/x", "text": "Memory data"}
-                        ]
+                        ],
+                        "rendered": "viking://user/alice/memories/x\nMemory data",
                     },
                 }
             )
+        if request.path in {"/api/v1/system/status", "/api/v1/fs/ls", "/api/v1/skills"}:
+            result = await viking.request("GET", str(request.rel_url), "synthetic")
+            return web.json_response({"status": "ok", "result": result})
         if request.path == "/api/v1/sessions":
             return web.json_response({"status": "ok", "result": {}})
         if request.path.startswith("/api/v1/sessions/"):

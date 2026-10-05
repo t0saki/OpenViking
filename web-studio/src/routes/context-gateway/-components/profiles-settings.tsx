@@ -72,6 +72,7 @@ type NumericField = keyof typeof PROFILE_LIMITS
 
 /** Copy of each numeric setting under `profiles.*`; the prefix is its section. */
 const FIELD_COPY: Record<NumericField, `${ProfileSection}.${string}`> = {
+  profile_max_tokens: 'recall.profileMaxTokens',
   max_tokens: 'recall.maxTokens',
   session_max_tokens: 'recall.sessionMaxTokens',
   score_threshold: 'recall.scoreThreshold',
@@ -426,6 +427,18 @@ export function ProfileSettingsForm({
         description={t('profiles.recall.description')}
         checked={value.recall}
         onCheckedChange={(recall) => onChange({ recall })}
+        note={
+          <div className="grid gap-4">
+            <ToggleRow
+              id="profile-profile"
+              label={t('profiles.recall.profile.label')}
+              description={t('profiles.recall.profile.description')}
+              checked={value.profile}
+              onCheckedChange={(profile) => onChange({ profile })}
+            />
+            {numberField('profile_max_tokens')}
+          </div>
+        }
         advanced={
           <>
             <div className="grid gap-5 md:grid-cols-2">

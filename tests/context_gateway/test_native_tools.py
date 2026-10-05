@@ -712,7 +712,8 @@ async def test_native_text_streams_before_round_finishes_and_cancel_closes(proto
 async def test_native_replay_survives_restart_edits_and_archive_boundary(
     setup_kernel, credential, policy, protocol
 ):
-    from openviking_context_gateway.kernel import gateway_note
+    from openviking_context_gateway.blocks import block as context_block
+    from openviking_context_gateway.blocks import gateway_note
     from openviking_context_gateway.models import Policy
     from openviking_context_gateway.storage import SQLiteKernelStore
     from openviking_context_gateway.tool_protocols import hidden_chain, replay_hidden
@@ -763,7 +764,7 @@ async def test_native_replay_survives_restart_edits_and_archive_boundary(
             restored.body[field], restored.body_chain, restored.records, protocol
         )
         note = gateway_note(archive_policy, restored.root["tools"])
-        summary = "Archived context\n\n<openviking-context>\n" + note + "\n</openviking-context>"
+        summary = "Archived context\n\n" + context_block("gateway-session-start", note)
         assert replay == [{"role": "user", "content": summary}, body[field][-1]]
     finally:
         reopened.close()
@@ -796,6 +797,63 @@ def test_custom_responses_tools_are_captured_as_complete_pairs():
             "tool_output": "/work/project",
         }
     ]
+
+
+@pytest.mark.parametrize("archive", [False, True])
+async def test_responses_notice_removal_follows_injection_replay_and_archive_cut(
+    setup_kernel, credential, policy, archive
+):
+    from openviking_context_gateway.protocols import text_content
+    from openviking_context_gateway.tool_protocols import hidden_chain
+
+    kernel, store, viking, _ = setup_kernel
+    policy.update(gateway_tools=True, capture=False, keep_recent_turns=1)
+    header = {"x-openviking-session": "notice-order"}
+    upstream = {"id": "u"}
+    body = {"store": False, "input": [{"role": "user", "content": "Deploy to blue?"}]}
+    first = await kernel.prepare(body, "responses", header, credential, upstream, policy)
+    body["input"] += [
+        {
+            "type": "message",
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "output_text",
+                    "text": "> OpenViking read: viking://user/alice/memories/x — done\n",
+                }
+            ],
+        },
+        {
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": "Use blue."}],
+        },
+        {"role": "user", "content": "What next?"},
+    ]
+    anchor = hidden_chain(body["input"], "responses")[2]
+    await store.replay.put(
+        first.scope, first.session, "hidden", anchor, {"messages": [], "visible_count": 2}
+    )
+    if archive:
+        await store.replay.put(
+            first.scope, first.session, "replacement", anchor, {"text": "Archived deployment."}
+        )
+    viking.entries.append({"uri": "viking://user/alice/memories/next.md", "text": "Then verify."})
+    upstream["allow_gateway_tools"] = False
+    second = await kernel.prepare(body, "responses", header, credential, upstream, policy)
+    replay = await kernel.prepare(body, "responses", header, credential, upstream, policy)
+    assert replay.body == second.body
+    assert not replay.tools_active and "> OpenViking" not in str(replay.body)
+    assert text_content(replay.body["input"][-1]).startswith("What next?\n<openviking-context")
+    assert "Then verify." in text_content(replay.body["input"][-1])
+    if archive:
+        assert len(replay.body["input"]) == 2
+        assert text_content(replay.body["input"][0]).startswith("Archived deployment.")
+    else:
+        assert replay.body["input"][0] == first.body["input"][0]
+        assert len(replay.body["input"]) == 3
+        assert text_content(replay.body["input"][1]) == "Use blue."
+        assert replay.metrics["degradation"] == "hidden_tool_history_unavailable"
 
 
 @pytest.mark.parametrize("protocol", ["responses", "anthropic"])

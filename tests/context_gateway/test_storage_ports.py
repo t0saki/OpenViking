@@ -144,7 +144,9 @@ async def test_kernel_and_capture_work_with_kv_ports(credential, protocol):
     again = await prepare()
     assert again.body[field][0]["content"].startswith(
         "[OpenViking Session Context]\nThe OpenViking Context Gateway replaced the earlier part "
-        "of this conversation with this summary.\n\n" + viking.summary + "\n\n<openviking-context>"
+        "of this conversation with this summary.\n\n"
+        + viking.summary
+        + '\n\n<openviking-context source="gateway-session-start">'
     )
     fork = await prepare("fork")
     assert fork.capture_target != p.capture_target

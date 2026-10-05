@@ -365,6 +365,9 @@ Each section has its own switch:
 
 How the recall settings play out:
 
+- **User profile at conversation start** provides your OpenViking profile independently of recall. With the Read tool enabled, memory and skill catalogs are also provided. **Opening context budget** caps these at 4,000 tokens by default, with at most a quarter for skills; 0 omits them all. This does not consume the recall budget.
+- Recall uses the content OpenViking selects and formats within the requested budget, including entries that provide a URI for the model to read later.
+
 - The search query is the user message with client noise removed, cut to **Query length** characters (8,000). Messages shorter than 3 characters are not searched.
 - Each message gets at most the smaller of **Budget per message** and what is left of **Budget per conversation**; with less than 64 tokens left, the gateway skips the search. A budget per conversation of 0 turns recall off. Token counts are a conservative estimate, not the provider's billing count.
 - If OpenViking does not answer within the **Time limit**, the message goes to the model without memory and never gets it later, even when the client retries.
@@ -633,6 +636,8 @@ URL settings must be plain `http` or `https` addresses without credentials, quer
 | --- | --- | --- | --- | --- |
 | Name | `name` | `Default` | | Display name. |
 | Recall memory | `recall` | `true` | | Search memory for each new user message. |
+| User profile at conversation start | `profile` | `true` | | Provide the user profile when a conversation starts, independently of recall. |
+| Opening context budget | `profile_max_tokens` | `4000` | 0–32,000 | Separate budget for the profile and catalogs; 0 omits them. Catalogs require the Read tool. |
 | Sources | `context_types` | `memory`, `resource`, `skill` | at least one | What to search: memories, resources, skills. |
 | Budget per message | `max_tokens` | `1600` | 64–32,000 | Most tokens added to one message. |
 | Budget per conversation | `session_max_tokens` | `6000` | ≥ 0 | Most tokens added over a whole conversation; 0 turns recall off. |

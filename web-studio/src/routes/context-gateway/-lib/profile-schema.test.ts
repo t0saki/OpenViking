@@ -61,6 +61,24 @@ describe('toProfileSettings', () => {
       duplicateProfile({ ...profile(), id: 'p', revision: 1 }, 'Copy'),
     ).toEqual({ ...PROFILE_DEFAULTS, name: 'Copy' })
   })
+
+  it('defaults opening context for older profiles and preserves disabling it', () => {
+    const {
+      profile: _profile,
+      profile_max_tokens: _budget,
+      ...legacy
+    } = profile()
+    expect(toProfileSettings(legacy as ProfileSettings)).toMatchObject({
+      profile: true,
+      profile_max_tokens: 4000,
+    })
+    expect(
+      toProfileSettings(profile({ profile: false, profile_max_tokens: 0 })),
+    ).toMatchObject({
+      profile: false,
+      profile_max_tokens: 0,
+    })
+  })
 })
 
 describe('validateProfile', () => {

@@ -309,7 +309,10 @@ async def test_conditional_budget_is_atomic_across_stores(setup_kernel, credenti
     policy.update(session_max_tokens=160, capture=False)
 
     async def recall(key, query, policy, exclude, budget):
-        return {"entries": [{"uri": "viking://test/" + query, "text": "memory " * 8}]}
+        return {
+            "entries": [{"uri": "viking://test/" + query, "text": "memory " * 8}],
+            "rendered": "memory " * 8,
+        }
 
     viking.recall = recall
     await asyncio.gather(

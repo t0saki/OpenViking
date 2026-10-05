@@ -90,6 +90,8 @@ export type UpstreamInput = UpstreamSettings & {
 export type ProfileSettings = {
   name: string
   recall: boolean
+  profile: boolean
+  profile_max_tokens: number
   capture: boolean
   context_types: ContextType[]
   quotas: Partial<Record<QuotaBucket, number>>

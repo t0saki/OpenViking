@@ -7,6 +7,8 @@ import type { NumberRule, ValidationErrors } from './validation'
 export const PROFILE_DEFAULTS: ProfileSettings = {
   name: 'Default',
   recall: true,
+  profile: true,
+  profile_max_tokens: 4000,
   capture: true,
   context_types: ['memory', 'resource', 'skill'],
   quotas: {},
@@ -46,6 +48,7 @@ type NumericField = {
 
 /** Limits and units of every numeric profile field (mirrors `models.py`). */
 export const PROFILE_LIMITS: Record<NumericField, NumberRule> = {
+  profile_max_tokens: { min: 0, max: 32000, integer: true, unit: 'tokens' },
   max_tokens: { min: 64, max: 32000, integer: true, unit: 'tokens' },
   session_max_tokens: { min: 0, integer: true, unit: 'tokens' },
   score_threshold: { min: 0, max: 1, step: 0.05 },

@@ -66,6 +66,16 @@ const profiles = {
     title: 'Recall memory',
     description:
       "Search OpenViking with each new user message and add what's relevant to that message.",
+    profile: {
+      label: 'User profile at conversation start',
+      description:
+        'Give the model your OpenViking profile when a conversation starts. This works independently of memory recall.',
+    },
+    profileMaxTokens: {
+      label: 'Opening context budget',
+      description:
+        'Limit the profile and memory and skill catalogs provided at the start. Catalogs require the Read tool. This budget is separate from recall; 0 omits all three.',
+    },
     sources: {
       label: 'Sources',
       description: 'What recall searches.',

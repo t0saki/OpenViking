@@ -17,6 +17,8 @@ class Policy(BaseModel):
     model_config = ConfigDict(extra="forbid")
     name: str = "Default"
     recall: bool = True
+    profile: bool = True
+    profile_max_tokens: int = Field(default=4000, ge=0, le=32000)
     capture: bool = True
     context_types: list[str] = Field(default_factory=lambda: ["memory", "resource", "skill"])
     quotas: dict[str, int] = Field(default_factory=dict)

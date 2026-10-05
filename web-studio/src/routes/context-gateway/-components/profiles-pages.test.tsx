@@ -321,6 +321,27 @@ describe('profile editor', () => {
     expect(saveButton().disabled).toBe(true)
   })
 
+  it('configures opening context independently while recall is off', async () => {
+    renderAt('/context-gateway/profiles/p2')
+    await screen.findByDisplayValue('Chat')
+    fireEvent.click(
+      screen.getByRole('switch', { name: 'profiles.recall.profile.label' }),
+    )
+    fireEvent.change(
+      screen.getByLabelText('profiles.recall.profileMaxTokens.label'),
+      {
+        target: { value: '0' },
+      },
+    )
+    fireEvent.click(saveButton())
+    await waitFor(() => expect(api.saveProfile).toHaveBeenCalledTimes(1))
+    expect(api.saveProfile.mock.calls[0][2]).toMatchObject({
+      recall: false,
+      profile: false,
+      profile_max_tokens: 0,
+    })
+  })
+
   it('keeps invalid settings in view when their section is off or advanced', async () => {
     renderAt('/context-gateway/profiles/p1')
     await screen.findByDisplayValue('Coding')

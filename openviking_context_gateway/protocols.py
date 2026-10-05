@@ -165,6 +165,20 @@ def plugin_present(body: dict, headers: dict) -> bool:
         return True
 
     def marked(text):
+        # An echoed or summarized gateway envelope is not a plugin installation.
+        text = re.sub(
+            r"<openviking-context\b[^>]*>",
+            lambda match: (
+                ""
+                if any(
+                    name.lower() == "source" and value.lower().startswith("gateway-")
+                    for name, _, value in re.findall(r"([\w-]+)\s*=\s*(['\"])(.*?)\2", match[0])
+                )
+                else match[0]
+            ),
+            text,
+            flags=re.I,
+        )
         return any(re.search(rf"<{re.escape(tag)}(?:\s|>)", text, re.I) for tag in PLUGIN_TAGS)
 
     texts = [text_content({"content": body.get("system", "")}), body.get("instructions", "")]
