@@ -245,7 +245,9 @@ class CaptureWorker:
                 if attempts in (1, MAX_ATTEMPTS) or reason != previous.get("reason"):
                     status = "paused" if attempts >= MAX_ATTEMPTS else "retrying"
                     await self.log(item, old.value, status, reason)
-                logger.warning("Capture %s: %s (attempt %s)", item["session"], reason, attempts)
+                    logger.warning("Capture %s: %s (attempt %s)", item["session"], reason, attempts)
+                else:
+                    logger.debug("Capture %s: %s (attempt %s)", item["session"], reason, attempts)
         finally:
             await self.queue.release(item)
         return True

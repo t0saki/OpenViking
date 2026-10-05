@@ -169,7 +169,7 @@ async def test_capture_retry_blocks_later_turns_and_recovers(setup_kernel, crede
     assert not (await store.capture.get(request.scope, request.session)).value["error"]
 
 
-async def test_capture_log_records_only_status_changes(setup_kernel, credential, policy):
+async def test_capture_log_records_only_status_changes(setup_kernel, credential, policy, caplog):
     kernel, store, viking, encryption = setup_kernel
     policy.update(recall=False)
     await prepare(kernel, credential, policy, [*history(1), {"role": "user", "content": "next"}])
@@ -192,6 +192,8 @@ async def test_capture_log_records_only_status_changes(setup_kernel, credential,
         assert await worker.once()
         await make_due(store)
     assert await changes() == [("retrying", "delivery_failed"), ("paused", "delivery_failed")]
+    warnings = [r for r in caplog.records if r.levelname == "WARNING" and "Capture" in r.message]
+    assert len(warnings) == 2
     failure[0] = VikingError("connection_lost")
     for _ in range(2):
         assert await worker.once()
