@@ -185,7 +185,7 @@ curl -s http://127.0.0.1:1935/health
 
 打开 <http://127.0.0.1:1933/studio>，进入**连接设置**，把 alice 的密钥同时填入**用户 API 密钥**和**管理员 API 密钥**。然后在侧边栏的“设置”分组里选择**上下文网关**。第一个请求到达之前，“概览”标签页会显示**快速开始**清单，步骤与下面相同：
 
-1. **添加上游。** 在“上游”标签页选择**添加上游**。填写名称，选择服务商，再选择客户端使用的协议（本流程用 Chat Completions），填写 Base URL（例如 `https://api.openai.com/v1`），保持选中**由网关保管 API Key**，再粘贴服务商的 API Key。保存后在上游列表里点**测试**，确认网关能连上服务商。
+1. **添加上游。** 在“上游”标签页选择**添加上游**。填写名称，选择服务商，再选择客户端使用的协议（本流程用 Chat Completions）。Studio 会填入服务商的 Base URL，例如 OpenAI 为 `https://api.openai.com/v1`；选*通用*时需要自己填写。保持选中**由网关保管 API Key**，再粘贴服务商的 API Key。保存后在上游列表里点**测试**，确认网关能连上服务商。
 2. **创建上下文配置。** 在“上下文配置”标签页选择**使用推荐设置创建**，会创建一份名为“默认”的配置。
 3. **签发网关密钥。** 在“密钥”标签页选择**签发密钥**。填写名称，在 **OpenViking 用户**中选择 alice（账号里只有她一个用户时已经自动选好），再选择“默认”配置和刚添加的上游，然后签发。**复制网关密钥**对话框只显示一次完整的 `ovcg_…` 密钥，关闭之前先复制好。
 4. **接入客户端。** “接入”标签页列出了每种客户端的配置，并已填好你的网关地址。下文[接入客户端](#接入客户端)也列出了同样的配置。
@@ -227,7 +227,7 @@ curl -s http://127.0.0.1:1935/v1/chat/completions \
 | [Open WebUI](#open-webui) | Chat Completions | `https://ov.example.com/v1` | 连接上配置的 `X-OpenViking-Session` 请求头 |
 | [OpenCode](#opencode) | Chat Completions | `https://ov.example.com/v1` | OpenCode 的会话请求头 |
 | [pi](#pi) | Chat Completions | `https://ov.example.com/v1` | 通常根据对话历史匹配 |
-| [火山方舟 SDK](#火山方舟-sdk) | 三种均可 | `https://ov.example.com/api/v3` 或 `https://ov.example.com/api/compatible` | 取决于客户端发送的请求头 |
+| [火山方舟与 BytePlus 方舟 SDK](#火山方舟与-byteplus-方舟-sdk) | 三种均可 | `https://ov.example.com/api/v3` 或 `https://ov.example.com/api/compatible` | 取决于客户端发送的请求头 |
 
 Open WebUI、OpenCode 和 pi 的配置依据各自文档中的服务商设置编写，请把它们当作起点，配好后检查一下效果：在同一段对话里发两条消息，然后在“请求日志”中展开这两个请求。它们应该属于同一段对话，而且第二条消息到达后，第一轮已经保存。
 
@@ -370,16 +370,17 @@ print(reply.choices[0].message.content)
 
 `apiKey` 填的是保存网关密钥的环境变量名，启动 pi 前先导出它。上游必须使用 Chat Completions。除非 pi 发送了[网关如何识别对话](#网关如何识别对话)中列出的某个请求头，否则网关会根据历史匹配它的对话。如果 pi 自己的 OpenViking 扩展处于启用状态，网关会让出这些对话，两者选一个使用即可。
 
-### 火山方舟 SDK
+### 火山方舟与 BytePlus 方舟 SDK
 
-已经配置好火山方舟的客户端和 SDK，只需替换域名。网关既接受方舟自己的路径（`/api/v3/chat/completions`、`/api/v3/responses`、`/api/v3/models` 和 `/api/compatible/v1/messages`），也接受标准的 `/v1` 路径：
+已经配置好火山方舟或其海外站 BytePlus 方舟的客户端和 SDK，只需替换域名。网关既接受方舟自己的路径（`/api/v3/chat/completions`、`/api/v3/responses`、`/api/v3/models` 和 `/api/compatible/v1/messages`），也接受标准的 `/v1` 路径：
 
-| 原方舟地址 | 网关地址 |
+| 原地址 | 网关地址 |
 | --- | --- |
 | `https://ark.cn-beijing.volces.com/api/v3` | `https://ov.example.com/api/v3` |
+| `https://ark.ap-southeast.bytepluses.com/api/v3` | `https://ov.example.com/api/v3` |
 | `https://ark.cn-beijing.volces.com/api/compatible`（Anthropic 兼容） | `https://ov.example.com/api/compatible` |
 
-用网关密钥代替方舟 API Key。使用方舟 Python SDK：
+用网关密钥代替方舟的 API Key。使用火山方舟 Python SDK：
 
 ```python
 from volcenginesdkarkruntime import Ark
@@ -387,7 +388,7 @@ from volcenginesdkarkruntime import Ark
 client = Ark(base_url="https://ov.example.com/api/v3", api_key="<gateway-key>")
 ```
 
-路径只决定客户端使用哪种 API。请求仍然发往密钥绑定的、使用这种 API 并提供该模型的上游，通常是服务商选为“火山方舟”的上游（见[上游](22-context-gateway-operations.md#上游)）。
+路径只决定客户端使用哪种 API。请求仍然发往密钥绑定的、使用这种 API 并提供该模型的上游，通常是服务商选为“火山方舟”或“BytePlus 方舟（海外站）”的上游（见[上游](22-context-gateway-operations.md#上游)）。
 
 ## 网关如何识别对话
 

@@ -185,7 +185,7 @@ Right after startup `openviking` may still read `{"status":"starting"}`. If it s
 
 Open <http://127.0.0.1:1933/studio>, open **Connection Settings**, and paste alice's key as both the **User API key** and the **Admin API key**. Then choose **Context Gateway** in the sidebar's **Settings** group. Until the first request arrives, the **Overview** tab shows a **Get started** checklist with the same four steps:
 
-1. **Add an upstream.** On the Upstreams tab, choose **Add upstream**. Give it a name, choose the provider, pick the protocol your client speaks (Chat Completions for this walkthrough), enter its base URL (for example `https://api.openai.com/v1`), keep **The gateway holds the API key** selected and paste the provider's API key. Save, then use **Test** in the upstream list to check that the gateway can reach the provider.
+1. **Add an upstream.** On the Upstreams tab, choose **Add upstream**. Give it a name, choose the provider and pick the protocol your client speaks (Chat Completions for this walkthrough). Studio fills in the provider's base URL, for example `https://api.openai.com/v1` for OpenAI; with *Generic*, enter it yourself. Keep **The gateway holds the API key** selected and paste the provider's API key. Save, then use **Test** in the upstream list to check that the gateway can reach the provider.
 2. **Create a context profile.** On the Profiles tab, choose **Create with recommended settings**. This creates a profile named "Default".
 3. **Issue a gateway key.** On the Keys tab, choose **Issue key**. Enter a name, choose alice as the **OpenViking user** (she is already selected when she is the account's only user), pick the "Default" profile and your upstream, then issue it. The **Copy your gateway key** dialog shows the full `ovcg_…` key once; copy it before you close the dialog.
 4. **Connect a client.** The Connect tab shows the setup for each client with your gateway address filled in. The same setups are listed in [Connect clients](#connect-clients) below.
@@ -227,7 +227,7 @@ Every client needs two things: the gateway address and a gateway key. The exampl
 | [Open WebUI](#open-webui) | Chat Completions | `https://ov.example.com/v1` | `X-OpenViking-Session` connection header |
 | [OpenCode](#opencode) | Chat Completions | `https://ov.example.com/v1` | OpenCode's session header |
 | [pi](#pi) | Chat Completions | `https://ov.example.com/v1` | Usually matched from the conversation history |
-| [Volcano Engine Ark SDKs](#volcano-engine-ark-sdks) | Any of the three | `https://ov.example.com/api/v3` or `https://ov.example.com/api/compatible` | As the client sends it |
+| [Volcano Engine Ark and BytePlus ModelArk SDKs](#volcano-engine-ark-and-byteplus-modelark-sdks) | Any of the three | `https://ov.example.com/api/v3` or `https://ov.example.com/api/compatible` | As the client sends it |
 
 The Open WebUI, OpenCode and pi setups follow each client's documented provider settings. Treat them as a starting point and check the result: send two messages in one conversation, then expand both requests on the Requests tab. They should show the same conversation, and the first turn should be saved once the second message arrives.
 
@@ -370,16 +370,17 @@ Add a provider to pi's model configuration, `~/.pi/agent/models.json`:
 
 `apiKey` names the environment variable that holds your gateway key; export it before starting pi. The upstream must speak Chat Completions. Unless pi sends one of the headers listed in [How conversations are recognized](#how-conversations-are-recognized), the gateway matches its conversations from their history. If pi's own OpenViking extension is active, the gateway steps aside for those conversations; use one or the other.
 
-### Volcano Engine Ark SDKs
+### Volcano Engine Ark and BytePlus ModelArk SDKs
 
-Clients and SDKs already configured for Volcano Engine Ark only need the domain replaced. The gateway accepts Ark's own paths (`/api/v3/chat/completions`, `/api/v3/responses`, `/api/v3/models` and `/api/compatible/v1/messages`) as well as the standard `/v1` paths:
+Clients and SDKs already configured for Volcano Engine Ark or BytePlus ModelArk, its international edition, only need the domain replaced. The gateway accepts Ark's own paths (`/api/v3/chat/completions`, `/api/v3/responses`, `/api/v3/models` and `/api/compatible/v1/messages`) as well as the standard `/v1` paths:
 
-| Configured Ark address | Gateway address |
+| Configured address | Gateway address |
 | --- | --- |
 | `https://ark.cn-beijing.volces.com/api/v3` | `https://ov.example.com/api/v3` |
+| `https://ark.ap-southeast.bytepluses.com/api/v3` | `https://ov.example.com/api/v3` |
 | `https://ark.cn-beijing.volces.com/api/compatible` (Anthropic-compatible) | `https://ov.example.com/api/compatible` |
 
-Use the gateway key in place of the Ark API key. With the Ark Python SDK:
+Use the gateway key in place of the Ark or ModelArk API key. With the Volcano Engine Ark Python SDK:
 
 ```python
 from volcenginesdkarkruntime import Ark
@@ -387,7 +388,7 @@ from volcenginesdkarkruntime import Ark
 client = Ark(base_url="https://ov.example.com/api/v3", api_key="<gateway-key>")
 ```
 
-The paths only decide which API the client speaks. Requests still go to whichever upstream bound to the key speaks that API and serves the model; usually that is an upstream with the Volcano Engine Ark provider (see [Upstreams](22-context-gateway-operations.md#upstreams)).
+The paths only decide which API the client speaks. Requests still go to whichever upstream bound to the key speaks that API and serves the model; usually that is an upstream with the Volcano Engine Ark or BytePlus ModelArk provider (see [Upstreams](22-context-gateway-operations.md#upstreams)).
 
 ## How conversations are recognized
 

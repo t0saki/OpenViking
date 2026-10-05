@@ -6,6 +6,8 @@ import {
   UPSTREAM_DEFAULTS,
   VENDORS,
   VENDOR_PROTOCOLS,
+  baseUrlAfterSwitch,
+  defaultBaseUrl,
   endpointPreview,
   isValidBaseUrl,
   protocolFor,
@@ -13,6 +15,7 @@ import {
   supportsProtocol,
   toUpstreamInput,
   upstreamUrl,
+  usesDefaultBaseUrl,
   validateUpstream,
 } from './upstream-schema'
 
@@ -64,9 +67,10 @@ it('lists models and alias names once', () => {
 })
 
 describe('protocols per provider', () => {
-  it('offers every protocol for Generic and Ark, and at least one everywhere', () => {
-    expect(VENDOR_PROTOCOLS.generic).toEqual(PROTOCOLS)
-    expect(VENDOR_PROTOCOLS.ark).toEqual(PROTOCOLS)
+  it('offers every protocol for Generic, DeepSeek and both Arks, and at least one everywhere', () => {
+    for (const vendor of ['generic', 'deepseek', 'ark', 'byteplus'] as const) {
+      expect(VENDOR_PROTOCOLS[vendor], vendor).toEqual(PROTOCOLS)
+    }
     for (const vendor of VENDORS) {
       expect(VENDOR_PROTOCOLS[vendor].length, vendor).toBeGreaterThan(0)
     }
@@ -78,7 +82,7 @@ describe('protocols per provider', () => {
     ['openai', 'anthropic', false],
     ['openai', 'responses', true],
     ['deepseek', 'anthropic', true],
-    ['deepseek', 'responses', false],
+    ['deepseek', 'responses', true],
   ] as const)('%s offers %s: %s', (vendor, protocol, offered) => {
     expect(supportsProtocol(vendor, protocol)).toBe(offered)
   })
@@ -88,7 +92,7 @@ describe('protocols per provider', () => {
     ['openai', 'anthropic', 'chat'],
     ['anthropic', 'chat', 'anthropic'],
     ['anthropic', 'responses', 'anthropic'],
-    ['deepseek', 'responses', 'chat'],
+    ['deepseek', 'responses', 'responses'],
     ['generic', 'anthropic', 'anthropic'],
   ] as const)('switching to %s from %s picks %s', (vendor, current, next) => {
     expect(protocolFor(vendor, current)).toBe(next)
@@ -100,6 +104,55 @@ describe('protocols per provider', () => {
       expect(supportsProtocol(vendor, protocol), protocol).toBe(true)
       expect(protocolFor(vendor, protocol)).toBe(protocol)
     }
+  })
+})
+
+describe('default base URLs', () => {
+  it.each([
+    ['generic', 'chat', ''],
+    ['anthropic', 'anthropic', 'https://api.anthropic.com'],
+    ['openai', 'responses', 'https://api.openai.com/v1'],
+    ['deepseek', 'chat', 'https://api.deepseek.com'],
+    ['deepseek', 'responses', 'https://api.deepseek.com'],
+    ['deepseek', 'anthropic', 'https://api.deepseek.com/anthropic'],
+    ['ark', 'anthropic', 'https://ark.cn-beijing.volces.com'],
+    ['byteplus', 'responses', 'https://ark.ap-southeast.bytepluses.com'],
+    ['newcomer', 'chat', ''],
+  ] as const)('%s + %s → %s', (vendor, protocol, url) => {
+    expect(defaultBaseUrl(vendor as Vendor, protocol)).toBe(url)
+  })
+
+  it('recognizes the default with or without a trailing slash', () => {
+    const openai = { vendor: 'openai', protocol: 'chat' } as const
+    expect(
+      usesDefaultBaseUrl({ ...openai, base_url: 'https://api.openai.com/v1/' }),
+    ).toBe(true)
+    expect(
+      usesDefaultBaseUrl({ ...openai, base_url: 'https://llm.example.com' }),
+    ).toBe(false)
+    expect(
+      usesDefaultBaseUrl({ ...openai, base_url: '', vendor: 'generic' }),
+    ).toBe(true)
+  })
+
+  it('fills the new default only over an empty or default URL', () => {
+    const generic = { vendor: 'generic', protocol: 'chat' } as const
+    expect(
+      baseUrlAfterSwitch({ ...generic, base_url: '' }, 'openai', 'chat'),
+    ).toBe('https://api.openai.com/v1')
+    const deepseek = {
+      vendor: 'deepseek',
+      protocol: 'chat',
+      base_url: 'https://api.deepseek.com',
+    } as const
+    expect(baseUrlAfterSwitch(deepseek, 'deepseek', 'anthropic')).toBe(
+      'https://api.deepseek.com/anthropic',
+    )
+    expect(baseUrlAfterSwitch(deepseek, 'generic', 'chat')).toBe('')
+    const custom = { ...deepseek, base_url: 'https://proxy.example.com' }
+    expect(baseUrlAfterSwitch(custom, 'byteplus', 'chat')).toBe(
+      'https://proxy.example.com',
+    )
   })
 })
 
@@ -159,6 +212,18 @@ describe('base URLs', () => {
       'ark',
       '/v1/messages',
       'https://ark.cn-beijing.volces.com/api/v3/api/compatible/v1/messages',
+    ],
+    [
+      'https://ark.ap-southeast.bytepluses.com',
+      'byteplus',
+      '/v1/messages',
+      'https://ark.ap-southeast.bytepluses.com/api/compatible/v1/messages',
+    ],
+    [
+      'https://ark.ap-southeast.bytepluses.com/api/v3',
+      'byteplus',
+      '/v1/responses',
+      'https://ark.ap-southeast.bytepluses.com/api/v3/responses',
     ],
   ] as const)('%s (%s) + %s', (base, vendor, path, expected) => {
     expect(upstreamUrl(base, vendor, path)).toBe(expected)

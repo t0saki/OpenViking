@@ -8,6 +8,7 @@ import pytest
 
 from openviking_context_gateway.models import Policy, Upstream
 from openviking_context_gateway.protocols import ResponseCapture
+from openviking_context_gateway.proxy import upstream_url
 from openviking_context_gateway.storage import SQLiteKernelStore
 from openviking_context_gateway.tool_catalog import attachments, select_tools
 from openviking_context_gateway.tool_executor import ToolExecutor, attachment_bytes
@@ -224,6 +225,27 @@ async def test_stream_text_precedes_tool_completion_and_cancel_closes():
 )
 def test_ark_base_paths(base, path, expected):
     assert ark_url({"base_url": base}, path) == expected
+
+
+@pytest.mark.parametrize("vendor", ["ark", "byteplus"])
+@pytest.mark.parametrize(
+    "base,path,expected",
+    [
+        ("https://ark", "/v1/chat/completions", "https://ark/api/v3/chat/completions"),
+        ("https://ark", "/v1/responses", "https://ark/api/v3/responses"),
+        ("https://ark", "/v1/messages", "https://ark/api/compatible/v1/messages"),
+        (
+            "https://ark",
+            "/v1/messages/count_tokens",
+            "https://ark/api/compatible/v1/messages/count_tokens",
+        ),
+        ("https://ark", "/v1/models", "https://ark/api/v3/models"),
+        ("https://ark/api/v3", "/v1/responses", "https://ark/api/v3/responses"),
+        ("https://ark/api/compatible/v1", "/v1/messages", "https://ark/api/compatible/v1/messages"),
+    ],
+)
+def test_ark_vendors_share_upstream_paths(vendor, base, path, expected):
+    assert upstream_url({"base_url": base, "vendor": vendor}, path) == expected
 
 
 @pytest.mark.parametrize("json_response", [False, True])

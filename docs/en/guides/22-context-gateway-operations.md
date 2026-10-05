@@ -85,7 +85,7 @@ Serve OpenViking Server and the gateway from one public HTTPS origin and let the
 | Path | Goes to | Used for |
 | --- | --- | --- |
 | `/v1/*` | Gateway | Anthropic Messages, Chat Completions, Responses and the model list |
-| `/api/v3/*` | Gateway | Volcano Engine Ark paths for Chat Completions, Responses and the model list |
+| `/api/v3/*` | Gateway | Ark paths (Volcano Engine Ark and BytePlus ModelArk) for Chat Completions, Responses and the model list |
 | `/api/compatible/v1/*` | Gateway | Ark's Anthropic-compatible path |
 | `/context-gateway/uploads` | Gateway | One-time file uploads from OpenViking tools |
 | Everything else | OpenViking Server | Studio, REST API, MCP, OAuth, `/health` |
@@ -296,16 +296,27 @@ If the gateway is not set up or cannot be reached, the page shows a setup card n
 
 An upstream is one model provider endpoint that speaks one API: Anthropic Messages, Chat Completions or Responses. The gateway never converts between them, so add one upstream for each API your clients use, even when they share a provider: Anthropic Messages for Claude Code, Responses for Codex CLI, Chat Completions for most chat apps and SDKs.
 
+Each provider offers these protocols, and the editor fills in the provider's default Base URL when you choose it:
+
+| Provider | Protocols | Default Base URL |
+| --- | --- | --- |
+| Generic | All three | None; enter the address yourself |
+| Anthropic | Anthropic Messages | `https://api.anthropic.com` |
+| OpenAI | Chat Completions, Responses | `https://api.openai.com/v1` |
+| DeepSeek | All three | `https://api.deepseek.com`; `https://api.deepseek.com/anthropic` for Anthropic Messages |
+| Volcano Engine Ark | All three | `https://ark.cn-beijing.volces.com` |
+| BytePlus ModelArk | All three | `https://ark.ap-southeast.bytepluses.com` |
+
 The upstream editor has four sections.
 
 **Endpoint.**
 
-- **Provider** decides which protocols you can pick and adjusts the gateway to the provider's quirks. The editor offers only the protocols the provider supports: Anthropic Messages for *Anthropic*; Chat Completions and Responses for *OpenAI*; Chat Completions and Anthropic Messages for *DeepSeek*; all three for *Volcano Engine Ark* and *Generic*. Choose *Generic* for a provider not listed here, or for a compatible proxy such as LiteLLM or new-api.
+- **Provider** decides which protocols you can pick and adjusts the gateway to the provider's quirks. The editor offers only the protocols the provider supports, as listed in the table above. Choose *Generic* for a provider not listed here, or for a compatible proxy such as LiteLLM or new-api.
   - *Generic*, *Anthropic* and *OpenAI* forward requests the same way.
-  - *DeepSeek*: OpenViking tools are offered only when a request turns thinking off (`"thinking": {"type": "disabled"}`), because DeepSeek's thinking mode needs reasoning history that chat apps do not send back. Memory is added as usual.
-  - *Volcano Engine Ark*: requests go to Ark's own paths. Each conversation gets a stable `prompt_cache_key` for Chat Completions and Responses, so Ark's prefix cache follows the conversation. Requests whose model, thinking, sampling, system prompt or tools differ from the conversation's first request are flagged **Cache parameters changed** (`ark_cache_parameters_changed`), because Ark resets its cache when these change.
+  - *DeepSeek*: OpenViking tools are offered only when a request turns thinking off (`"thinking": {"type": "disabled"}`), because DeepSeek's thinking mode needs reasoning history that chat apps do not send back. Standard Responses requests have no `thinking` field, so they do not get OpenViking tools. Memory is added as usual.
+  - *Volcano Engine Ark* and *BytePlus ModelArk*, Ark's international edition, work the same way: requests go to Ark's own paths. Each conversation gets a stable `prompt_cache_key` for Chat Completions and Responses, so Ark's prefix cache follows the conversation. Requests whose model, thinking, sampling, system prompt or tools differ from the conversation's first request are flagged **Cache parameters changed** (`ark_cache_parameters_changed`), because Ark resets its cache when these change.
 - **Protocol** decides which client requests the upstream can serve, and how the gateway sends the key: `x-api-key` for Anthropic Messages, `Authorization: Bearer` for the others.
-- **Base URL.** The gateway appends the client's request path and drops a duplicate `/v1`, so `https://api.openai.com/v1` and `https://api.anthropic.com` both work. The editor shows where requests will go. For DeepSeek's Anthropic Messages API, use `https://api.deepseek.com/anthropic`. For Ark, use the origin `https://ark.cn-beijing.volces.com`, which works for every protocol; a base ending in `/api/v3` works only for Chat Completions and Responses, and one ending in `/api/compatible/v1` only for Anthropic Messages. A provider whose API path does not end in `/v1`, such as `…/api/paas/v4`, cannot be used directly; put a compatible proxy such as LiteLLM in between.
+- **Base URL.** Choosing a provider fills in its default address from the table above. Switching the provider or protocol replaces the address only while it is empty or still the previous default, so an address you entered is kept; when it differs from the default, **Use default** under the field puts the default back. The gateway appends the client's request path and drops a duplicate `/v1`, so `https://api.openai.com/v1` and `https://api.anthropic.com` both work. The editor shows where requests will go. For Ark and ModelArk, use the origin without a path, such as `https://ark.cn-beijing.volces.com`, which works for every protocol; a base ending in `/api/v3` works only for Chat Completions and Responses, and one ending in `/api/compatible/v1` only for Anthropic Messages. A provider whose API path does not end in `/v1`, such as `…/api/paas/v4`, cannot be used directly; put a compatible proxy such as LiteLLM in between.
 
 **Credentials.**
 
@@ -327,11 +338,11 @@ The upstream editor has four sections.
 - **Priority.** For each request, the gateway considers the enabled upstreams bound to the key that speak the request's API and serve its model, and picks the highest priority. A conversation stays on the upstream it started with as long as that upstream can still serve it, so priority changes affect new conversations.
 - **Enabled.** A disabled upstream receives no requests and disappears from the model list. Conversations that were using it move to the next candidate, which costs one provider cache miss and drops earlier Claude thinking blocks; these requests are flagged **Upstream switched** (`upstream_changed`). Disabling is the reversible alternative to deleting.
 - **Allow OpenViking tools** controls whether OpenViking tools may be offered through this upstream. Turning it off takes effect at once, also in conversations that already have the tools.
-- **Minimum cacheable prompt** (Ark only) is the shortest prompt the model caches. It only affects how the request log reports cache eligibility.
+- **Minimum cacheable prompt** (Ark and ModelArk only) is the shortest prompt the model caches. It only affects how the request log reports cache eligibility.
 
 Every other upstream setting takes effect at once, in existing conversations too. There is no failover: when the chosen upstream fails, the client receives the error, and an unreachable provider returns 502 "Model upstream is unavailable".
 
-**Test** on the list and **Test connection** in the editor request the provider's model list (`/v1/models`, or `/api/v3/models` on Ark) with the upstream's credentials and headers, waiting up to 10 seconds. A pass means the host is reachable and the key is accepted there. The test does not check model names or the Coding Plan setting. A provider without a model-list endpoint, or one that needs extra headers on it, can fail the test while real requests work. Upstreams where each client sends its own key cannot be tested.
+**Test** on the list and **Test connection** in the editor request the provider's model list (`/v1/models`, or `/api/v3/models` on Ark and ModelArk) with the upstream's credentials and headers, waiting up to 10 seconds. A pass means the host is reachable and the key is accepted there. The test does not check model names or the Coding Plan setting. A provider without a model-list endpoint, or one that needs extra headers on it, can fail the test while real requests work. Upstreams where each client sends its own key cannot be tested.
 
 An upstream that a key uses cannot be deleted; revoke those keys first, or disable the upstream.
 
@@ -460,7 +471,7 @@ Whether a conversation gets tools is decided at its first request and kept, so p
 | `tools_structured_output` | The request asks for structured output (`response_format`, `text.format` or `output_config.format`). |
 | `tools_non_function` | The Chat Completions client sent a tool of a type other than function. |
 | `tools_forced_choice` | `tool_choice` is `required` or names a specific tool. |
-| `deepseek_reasoning_history_required` | The upstream's provider is DeepSeek and the request does not turn thinking off. |
+| `deepseek_reasoning_history_required` | The upstream's provider is DeepSeek and the request does not turn thinking off (`"thinking": {"type": "disabled"}`). This includes standard Responses requests, which have no `thinking` field. |
 | `tool_name_collision` | The client defines a tool with one of the `openviking_*` names. |
 | `tools_not_selected_at_session_start` | The profile has tools on, but the conversation's first request could not use them (for one of the reasons above), so the conversation has none. |
 
@@ -645,8 +656,8 @@ URL settings must be plain `http` or `https` addresses without credentials, quer
 | --- | --- | --- | --- |
 | Name | `name` | | Display name. |
 | Protocol | `protocol` | | `anthropic` (Anthropic Messages), `chat` (Chat Completions) or `responses` (Responses). |
-| Provider | `vendor` | `generic` | `generic`, `anthropic`, `openai`, `deepseek` or `ark` (Volcano Engine Ark). Studio offers only the protocols the provider supports; the API accepts any pair. |
-| Base URL | `base_url` | | Provider address; see [Upstreams](#upstreams) for path rules. |
+| Provider | `vendor` | `generic` | `generic`, `anthropic`, `openai`, `deepseek`, `ark` (Volcano Engine Ark) or `byteplus` (BytePlus ModelArk). Studio offers only the protocols the provider supports; the API accepts any pair. |
+| Base URL | `base_url` | | Provider address; see [Upstreams](#upstreams) for each provider's default and the path rules. |
 | Who provides the API key | `auth_mode` | `managed` | `managed` (The gateway holds the API key) or `passthrough` (Each client sends its own key). |
 | API key | `api_key` | | Write-only. Blank on edit keeps the stored key. |
 | Extra headers | `headers` | `{}` | Write-only values; names are visible. |
@@ -658,7 +669,7 @@ URL settings must be plain `http` or `https` addresses without credentials, quer
 | Allow OpenViking tools | `allow_gateway_tools` | `true` | Whether OpenViking tools may be offered through this upstream. |
 | This key is a Coding Plan or subscription key | `coding_plan` | `false` | Rejects requests to this upstream unless allowed. |
 | Allow it anyway | `allow_coding_plan` | `false` | Allows a key marked as Coding Plan. |
-| Minimum cacheable prompt | `cache_min_tokens` | `1024` | Ark only; affects cache-eligibility reporting. |
+| Minimum cacheable prompt | `cache_min_tokens` | `1024` | Ark and ModelArk only; affects cache-eligibility reporting. |
 
 **Gateway key fields:** Name (`name`), OpenViking key (`openviking_key`), Context profile (`policy_id`), Upstreams (`upstream_ids`, at least one) and Allowed models (`models`). When you issue through OpenViking Server, you can send the `user_id` of a user in this account instead of `openviking_key`, and OpenViking Server reads that user's key; send only one of the two.
 
@@ -753,7 +764,7 @@ Compare it with what the provider reaches without the gateway, then look at the 
 
 - **Memory record missing** (`missing_injection_record`): the gateway's storage was lost, restored from an old backup or expired, so memory added earlier could not be replayed. Ongoing conversations recover after one miss.
 - **Upstream switched** (`upstream_changed`): conversations moved to another upstream because theirs was disabled, is not bound to the key the client now uses, or stopped serving the model.
-- **Cache parameters changed** (`ark_cache_parameters_changed`): on Ark, the client changes the model, thinking, sampling, system prompt or tools within a conversation.
+- **Cache parameters changed** (`ark_cache_parameters_changed`): on Ark or ModelArk, the client changes the model, thinking, sampling, system prompt or tools within a conversation.
 - No issue: the client itself may change earlier messages or its system prompt every turn, for example by inserting the current time. The gateway cannot fix that. Each summary in a long conversation also costs one miss, which is expected.
 
 ### File imports fail
@@ -775,7 +786,7 @@ The **Requests** and **Overview** tabs flag requests the gateway could not fully
 | Upstream switched (`upstream_changed`) | The conversation's upstream could no longer serve it, so it moved to another one, with one cache miss and earlier Claude thinking dropped. | Re-enable the upstream, or have the client use a key that includes it; otherwise accept the move. |
 | Memory record missing (`missing_injection_record`) | Claude conversation: memory added earlier is no longer on record, so earlier thinking was dropped once. | Expected after storage loss or for very old conversations. Start a new conversation if it repeats. |
 | OpenViking plugin in use (`plugin_present`) | An OpenViking plugin was detected; gateway memory is off for this conversation. | Expected when a plugin is in use. Use either the plugin or the gateway for that client. |
-| Cache parameters changed (`ark_cache_parameters_changed`) | On Ark, cache-relevant parameters differ from the conversation's first request; Ark's cache probably missed. | Keep model, thinking, sampling, system prompt and tools stable within a conversation. |
+| Cache parameters changed (`ark_cache_parameters_changed`) | On Ark or ModelArk, cache-relevant parameters differ from the conversation's first request; the prompt cache probably missed. | Keep model, thinking, sampling, system prompt and tools stable within a conversation. |
 | Summary not ready (`archive_wait_timeout`) | The conversation was near the context window and its summary was not ready in time; the full history was sent. | See [Long conversations](#long-conversations). |
 | Tool history unavailable (`hidden_tool_history_unavailable`) | A Claude conversation previously used OpenViking tools, but this request cannot use them, so earlier thinking has been removed. | Check the tool skip reason in the request detail, restore the original settings or start a new conversation. |
 | OpenViking tools failed (`hidden_tool_loop_failed`) | The model could not finish answering while using OpenViking tools, and the client received an error. | See [OpenViking tools](#openviking-tools). |

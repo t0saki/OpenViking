@@ -31,14 +31,18 @@ import type {
 import { formatNumber } from '../-lib/format'
 import { protocolLabel, vendorLabel } from '../-lib/localize'
 import {
+  ARK_VENDORS,
   PROTOCOLS,
   PROTOCOL_PATHS,
   UPSTREAM_DEFAULTS,
   UPSTREAM_KEY_HEADER,
   VENDORS,
+  baseUrlAfterSwitch,
+  defaultBaseUrl,
   endpointPreview,
   protocolFor,
   supportsProtocol,
+  usesDefaultBaseUrl,
 } from '../-lib/upstream-schema'
 import { KeyValueEditor } from './key-value-editor'
 import { Notice } from './notice'
@@ -51,22 +55,11 @@ import { ToggleRow } from './toggle-row'
 
 export type UpstreamField = keyof UpstreamInput
 
-/** Typical base URL per provider, shown as the field placeholder. */
-const BASE_URL_EXAMPLES: Record<Vendor, string> = {
-  generic: 'https://api.example.com/v1',
-  anthropic: 'https://api.anthropic.com',
-  openai: 'https://api.openai.com/v1',
-  deepseek: 'https://api.deepseek.com',
-  ark: 'https://ark.cn-beijing.volces.com',
-}
+/** Base URL placeholder for providers without a default, such as Generic. */
+const BASE_URL_EXAMPLE = 'https://api.example.com/v1'
 
-function baseUrlExample(vendor: Vendor, protocol: Protocol): string {
-  // DeepSeek serves Anthropic Messages under a path of its own.
-  if (vendor === 'deepseek' && protocol === 'anthropic') {
-    return 'https://api.deepseek.com/anthropic'
-  }
-  return BASE_URL_EXAMPLES[vendor]
-}
+/** Providers with a hint of their own under `upstreams.form.vendor.hints`. */
+const VENDOR_HINTS: Vendor[] = ['deepseek', 'ark', 'byteplus']
 
 const AUTH_MODES: AuthMode[] = ['managed', 'passthrough']
 
@@ -88,6 +81,14 @@ export type UpstreamFormProps = {
   /** The saved upstream when editing; its secrets count as kept when left blank. */
   stored?: Upstream
   onChange: <TField extends UpstreamField>(
+    field: TField,
+    value: UpstreamInput[TField],
+  ) => void
+  /**
+   * Sets a value the form fills in itself, such as a provider's default base
+   * URL, without marking the field as visited.
+   */
+  onFill: <TField extends UpstreamField>(
     field: TField,
     value: UpstreamInput[TField],
   ) => void
@@ -185,16 +186,30 @@ export function UpstreamForm({
   draft,
   stored,
   onChange,
+  onFill,
   onBlur,
   error,
 }: UpstreamFormProps) {
   const { t, i18n } = useTranslation('contextGateway')
   const preview = endpointPreview(draft)
+  const defaultUrl = defaultBaseUrl(draft.vendor, draft.protocol)
   const keyStored = Boolean(stored?.has_api_key)
-  const vendorHint =
-    draft.vendor === 'deepseek' || draft.vendor === 'ark'
-      ? t(`upstreams.form.vendor.hints.${draft.vendor}`)
-      : t('upstreams.form.vendor.description')
+  const vendorHint = VENDOR_HINTS.includes(draft.vendor)
+    ? t(`upstreams.form.vendor.hints.${draft.vendor}`)
+    : t('upstreams.form.vendor.description')
+
+  /**
+   * Applies a provider or protocol choice. The calls are batched into one
+   * render, so no render pairs a provider with a protocol it doesn't offer or
+   * with the previous provider's default URL. The URL is filled in, not
+   * entered, so clearing it for Generic shows no error until the admin edits it.
+   */
+  function switchEndpoint(vendor: Vendor, protocol: Protocol) {
+    if (vendor !== draft.vendor) onChange('vendor', vendor)
+    if (protocol !== draft.protocol) onChange('protocol', protocol)
+    const baseUrl = baseUrlAfterSwitch(draft, vendor, protocol)
+    if (baseUrl !== draft.base_url) onFill('base_url', baseUrl)
+  }
 
   return (
     <div className="grid gap-5">
@@ -229,11 +244,7 @@ export function UpstreamForm({
             onValueChange={(value) => {
               const vendor = VENDORS.find((item) => item === value)
               if (!vendor) return
-              onChange('vendor', vendor)
-              // Batched with the vendor, so no render pairs it with a
-              // protocol it doesn't offer.
-              const protocol = protocolFor(vendor, draft.protocol)
-              if (protocol !== draft.protocol) onChange('protocol', protocol)
+              switchEndpoint(vendor, protocolFor(vendor, draft.protocol))
             }}
           >
             <SelectTrigger id="upstream-vendor" className="w-full sm:w-72">
@@ -263,7 +274,7 @@ export function UpstreamForm({
             className="grid gap-2 md:grid-cols-3"
             onValueChange={(value) => {
               const protocol = PROTOCOLS.find((item) => item === value)
-              if (protocol) onChange('protocol', protocol)
+              if (protocol) switchEndpoint(draft.vendor, protocol)
             }}
           >
             {PROTOCOLS.map((protocol) => (
@@ -297,7 +308,7 @@ export function UpstreamForm({
               type="url"
               inputMode="url"
               value={draft.base_url}
-              placeholder={baseUrlExample(draft.vendor, draft.protocol)}
+              placeholder={defaultUrl || BASE_URL_EXAMPLE}
               aria-invalid={Boolean(error('base_url'))}
               className="font-mono"
               onChange={(event) => onChange('base_url', event.target.value)}
@@ -319,6 +330,16 @@ export function UpstreamForm({
                   {preview}
                 </code>
               </p>
+            ) : null}
+            {defaultUrl && !usesDefaultBaseUrl(draft) ? (
+              <button
+                type="button"
+                className="flex max-w-full min-w-0 gap-1 justify-self-start text-xs font-medium whitespace-nowrap text-foreground underline underline-offset-4"
+                onClick={() => onChange('base_url', defaultUrl)}
+              >
+                {t('upstreams.form.baseUrl.useDefault')}{' '}
+                <code className="min-w-0 truncate font-mono">{defaultUrl}</code>
+              </button>
             ) : null}
           </div>
         </SettingField>
@@ -523,7 +544,7 @@ export function UpstreamForm({
             onChange('allow_gateway_tools', allowed)
           }
         />
-        {draft.vendor === 'ark' ? (
+        {ARK_VENDORS.includes(draft.vendor) ? (
           <SettingField
             label={t('upstreams.form.cacheMinTokens.label')}
             htmlFor="upstream-cache-min-tokens"

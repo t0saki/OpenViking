@@ -459,6 +459,7 @@ async def test_tool_round_limit_disables_without_removing_definitions(running_ga
     assert requests[0]["tools"] == requests[1]["tools"]
 
 
+@pytest.mark.parametrize("vendor", ["ark", "byteplus"])
 @pytest.mark.parametrize(
     "path,protocol,target",
     [
@@ -467,7 +468,9 @@ async def test_tool_round_limit_disables_without_removing_definitions(running_ga
         ("/api/compatible/v1/messages", "anthropic", "/api/compatible/v1/messages"),
     ],
 )
-async def test_ark_paths_unknown_fields_and_cache_key(running_gateway, path, protocol, target):
+async def test_ark_paths_unknown_fields_and_cache_key(
+    running_gateway, vendor, path, protocol, target
+):
     _, client, admin, key, seen, _ = running_gateway
     upstream = (await client.get("/admin/upstreams", headers=admin)).json()
     configured = next(u for u in upstream if u["id"] == protocol)
@@ -476,7 +479,7 @@ async def test_ark_paths_unknown_fields_and_cache_key(running_gateway, path, pro
         for k, v in configured.items()
         if k not in {"id", "revision", "has_api_key", "header_names", "account"}
     }
-    payload["vendor"] = "ark"
+    payload["vendor"] = vendor
     response = await client.put("/admin/upstreams/" + protocol, headers=admin, json=payload)
     assert response.status_code == 200, response.text
     field = "input" if protocol == "responses" else "messages"
@@ -681,13 +684,14 @@ async def test_shell_upload_instructions_use_public_proxy(running_gateway):
     assert response.json()["choices"][0]["message"]["tool_calls"][0]["function"]["name"] == "bash"
 
 
-async def test_ark_responses_stream_keeps_native_fields_and_done(running_gateway):
+@pytest.mark.parametrize("vendor", ["ark", "byteplus"])
+async def test_ark_responses_stream_keeps_native_fields_and_done(running_gateway, vendor):
     app, client, admin, key, _, _ = running_gateway
     upstreams = (await client.get("/admin/upstreams", headers=admin)).json()
     upstream = next(u for u in upstreams if u["id"] == "responses")
     allowed = {"name", "protocol", "base_url", "models", "aliases", "vendor"}
     payload = {k: v for k, v in upstream.items() if k in allowed}
-    payload["vendor"] = "ark"
+    payload["vendor"] = vendor
     assert (
         await client.put("/admin/upstreams/responses", headers=admin, json=payload)
     ).status_code == 200
@@ -751,6 +755,16 @@ async def test_large_first_tool_request_keeps_client_token_limit(running_gateway
     forwarded = orjson.loads(seen[-1][1])
     assert forwarded[max_field] == 6000
     assert ("max_completion_tokens" if max_field == "max_tokens" else "max_tokens") not in forwarded
+
+
+@pytest.mark.parametrize("vendor", ["ark", "byteplus"])
+async def test_ark_connection_test_lists_models_under_api_v3(running_gateway, vendor):
+    app, client, admin, _, seen, _ = running_gateway
+    upstream = await app.state.management.get("tenant", "upstreams", "chat")
+    await app.state.management.save("tenant", "upstreams", "chat", {**upstream, "vendor": vendor})
+    response = await client.post("/admin/upstreams/chat/test", headers=admin)
+    assert response.json() == {"ok": True, "status": 200}
+    assert seen[-1][0] == "/api/v3/models"
 
 
 async def test_ark_burst_is_forwarded_without_local_429(running_gateway):

@@ -4,7 +4,13 @@ import { getOvResult, isOvClientError } from '#/lib/ov-client'
 
 /** Wire protocol an upstream speaks; the gateway never converts between them. */
 export type Protocol = 'anthropic' | 'chat' | 'responses'
-export type Vendor = 'generic' | 'anthropic' | 'openai' | 'deepseek' | 'ark'
+export type Vendor =
+  | 'generic'
+  | 'anthropic'
+  | 'openai'
+  | 'deepseek'
+  | 'ark'
+  | 'byteplus'
 export type AuthMode = 'managed' | 'passthrough'
 
 /** Sources recall searches, in display order. */

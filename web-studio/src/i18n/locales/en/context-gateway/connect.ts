@@ -172,19 +172,19 @@ const connect = {
       },
     },
     ark: {
-      name: 'Volcano Engine Ark SDKs',
+      name: 'Volcano Engine Ark and BytePlus ModelArk SDKs',
       intro:
-        "Clients and SDKs already set up for Volcano Engine Ark only need a new address and key. The gateway accepts Ark's own paths as well as the standard `/v1` paths.",
+        "Clients and SDKs already set up for Volcano Engine Ark or BytePlus ModelArk only need a new address and key. The gateway accepts Ark's own paths as well as the standard `/v1` paths.",
       steps: {
         endpoints:
-          'Replace the Ark address with the matching gateway address, and the Ark API key with the gateway key.',
-        python: 'With the Ark Python SDK:',
+          'Replace the Ark or ModelArk address with the matching gateway address, and its API key with the gateway key.',
+        python: 'With the Volcano Engine Ark Python SDK:',
       },
       identity:
         'Send `X-OpenViking-Session` with an id per conversation, as with other chat clients.',
       notes: {
         routing:
-          'The paths only decide which API the client speaks. Requests go to whichever upstream bound to the key speaks that API and serves the model, usually one with Volcano Engine Ark as its provider.',
+          'The paths only decide which API the client speaks. Requests go to whichever upstream bound to the key speaks that API and serves the model, usually one with Volcano Engine Ark or BytePlus ModelArk as its provider.',
       },
     },
   },

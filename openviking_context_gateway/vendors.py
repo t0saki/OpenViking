@@ -7,6 +7,9 @@ from urllib.parse import urlsplit
 
 import orjson
 
+# Volcano Engine Ark and BytePlus ModelArk, its international edition, share
+# paths and caching behavior.
+ARK_VENDORS = {"ark", "byteplus"}
 ARK_PATHS = {
     "/api/v3/chat/completions": "/v1/chat/completions",
     "/api/v3/responses": "/v1/responses",
@@ -50,7 +53,7 @@ def ark_url(upstream, path):
 
 
 async def apply_vendor(body, upstream, prepared, store):
-    if upstream.get("vendor") != "ark" or prepared is None:
+    if upstream.get("vendor") not in ARK_VENDORS or prepared is None:
         return body
     body = dict(body)
     if prepared.protocol in {"chat", "responses"}:

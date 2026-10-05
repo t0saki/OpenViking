@@ -10,6 +10,7 @@ const enums = {
     openai: 'OpenAI',
     deepseek: 'DeepSeek',
     ark: '火山方舟',
+    byteplus: 'BytePlus 方舟（海外站）',
   },
   authMode: {
     managed: '网关保管 API Key',

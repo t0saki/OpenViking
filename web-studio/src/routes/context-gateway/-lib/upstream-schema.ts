@@ -29,7 +29,14 @@ export const VENDORS: Vendor[] = [
   'openai',
   'deepseek',
   'ark',
+  'byteplus',
 ]
+
+/**
+ * Volcano Engine Ark and BytePlus ModelArk, its international edition, which
+ * share Ark's paths and prompt caching.
+ */
+export const ARK_VENDORS: Vendor[] = ['ark', 'byteplus']
 
 /**
  * Protocols each provider offers, the only ones the editor lets you pick. The
@@ -40,8 +47,18 @@ export const VENDOR_PROTOCOLS: Record<Vendor, Protocol[]> = {
   generic: PROTOCOLS,
   anthropic: ['anthropic'],
   openai: ['chat', 'responses'],
-  deepseek: ['anthropic', 'chat'],
+  deepseek: PROTOCOLS,
   ark: PROTOCOLS,
+  byteplus: PROTOCOLS,
+}
+
+/** Each provider's own API address; Generic has none. */
+const DEFAULT_BASE_URLS: Partial<Record<Vendor, string>> = {
+  anthropic: 'https://api.anthropic.com',
+  openai: 'https://api.openai.com/v1',
+  deepseek: 'https://api.deepseek.com',
+  ark: 'https://ark.cn-beijing.volces.com',
+  byteplus: 'https://ark.ap-southeast.bytepluses.com',
 }
 
 /**
@@ -65,6 +82,44 @@ export function protocolFor(vendor: Vendor, current: Protocol): Protocol {
   if (supportsProtocol(vendor, current)) return current
   if (supportsProtocol(vendor, 'chat')) return 'chat'
   return vendorProtocols(vendor)[0]
+}
+
+/**
+ * The base URL the editor fills in for `vendor` and `protocol`; empty for
+ * Generic and for a provider id this Studio doesn't know.
+ */
+export function defaultBaseUrl(vendor: Vendor, protocol: Protocol): string {
+  // DeepSeek serves Anthropic Messages under a path of its own.
+  if (vendor === 'deepseek' && protocol === 'anthropic') {
+    return 'https://api.deepseek.com/anthropic'
+  }
+  const known: Partial<Record<string, string>> = DEFAULT_BASE_URLS
+  return known[vendor] ?? ''
+}
+
+/** True when the base URL is the default for the upstream's provider and protocol. */
+export function usesDefaultBaseUrl(
+  upstream: Pick<UpstreamInput, 'base_url' | 'vendor' | 'protocol'>,
+): boolean {
+  return (
+    upstream.base_url.trim().replace(/\/+$/, '') ===
+    defaultBaseUrl(upstream.vendor, upstream.protocol)
+  )
+}
+
+/**
+ * The base URL after switching the upstream to `vendor` and `protocol`: the
+ * new default while the URL is empty or still the previous default, so a URL
+ * the admin typed is never replaced.
+ */
+export function baseUrlAfterSwitch(
+  upstream: Pick<UpstreamInput, 'base_url' | 'vendor' | 'protocol'>,
+  vendor: Vendor,
+  protocol: Protocol,
+): string {
+  return !upstream.base_url.trim() || usesDefaultBaseUrl(upstream)
+    ? defaultBaseUrl(vendor, protocol)
+    : upstream.base_url
 }
 
 /** Client endpoint each protocol serves on the gateway. */
@@ -139,7 +194,8 @@ export function isValidBaseUrl(value: string): boolean {
 /**
  * Where the gateway sends a request for `path` (a `/v1/…` client path),
  * following its rules: a base ending in `/v1` does not get a second `/v1`;
- * Ark maps Messages to `/api/compatible/v1` and everything else to `/api/v3`.
+ * Ark and ModelArk map Messages to `/api/compatible/v1` and everything else
+ * to `/api/v3`.
  */
 export function upstreamUrl(
   baseUrl: string,
@@ -148,7 +204,7 @@ export function upstreamUrl(
 ): string {
   const base = baseUrl.trim().replace(/\/+$/, '')
   const basePath = new URL(base).pathname.replace(/\/+$/, '')
-  if (vendor === 'ark') {
+  if (ARK_VENDORS.includes(vendor)) {
     const suffix = path.replace(/^\/v1/, '')
     const prefix = path.startsWith('/v1/messages')
       ? '/api/compatible/v1'

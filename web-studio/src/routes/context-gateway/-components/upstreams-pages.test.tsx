@@ -174,6 +174,12 @@ const protocolRadio = (protocol: string) => {
   return radio
 }
 
+const baseUrlInput = () =>
+  screen.getByLabelText<HTMLInputElement>('upstreams.form.baseUrl.label')
+
+const useDefaultButton = () =>
+  screen.queryByRole('button', { name: /upstreams\.form\.baseUrl\.useDefault/ })
+
 async function chooseVendor(vendor: string) {
   fireEvent.click(
     screen.getByRole('combobox', { name: 'upstreams.form.vendor.label' }),
@@ -496,11 +502,7 @@ describe('UpstreamEditor', () => {
     expect(
       screen.getAllByText('upstreams.form.protocol.unsupported'),
     ).toHaveLength(2)
-    expect(
-      screen
-        .getByLabelText('upstreams.form.baseUrl.label')
-        .getAttribute('placeholder'),
-    ).toBe('https://api.anthropic.com')
+    expect(baseUrlInput().value).toBe('https://api.anthropic.com')
   })
 
   it('keeps a supported protocol and replaces an unsupported one', async () => {
@@ -515,16 +517,10 @@ describe('UpstreamEditor', () => {
 
     await chooseVendor('deepseek')
     await waitFor(() =>
-      expect(
-        screen
-          .getByLabelText('upstreams.form.baseUrl.label')
-          .getAttribute('placeholder'),
-      ).toBe('https://api.deepseek.com/anthropic'),
+      expect(baseUrlInput().value).toBe('https://api.deepseek.com/anthropic'),
     )
     expect(protocolRadio('anthropic').getAttribute('aria-checked')).toBe('true')
-    expect(protocolRadio('responses').getAttribute('aria-disabled')).toBe(
-      'true',
-    )
+    expect(screen.queryByText('upstreams.form.protocol.unsupported')).toBeNull()
 
     await chooseVendor('openai')
     await waitFor(() =>
@@ -533,6 +529,82 @@ describe('UpstreamEditor', () => {
     expect(protocolRadio('anthropic').getAttribute('aria-disabled')).toBe(
       'true',
     )
+    expect(baseUrlInput().value).toBe('https://api.openai.com/v1')
+  })
+
+  it("fills in the provider's default base URL for each protocol", async () => {
+    renderAt('/context-gateway/upstreams/new')
+    await screen.findByText('upstreams.editor.newTitle')
+    expect(baseUrlInput().value).toBe('')
+
+    await chooseVendor('openai')
+    await waitFor(() =>
+      expect(baseUrlInput().value).toBe('https://api.openai.com/v1'),
+    )
+    expect(useDefaultButton()).toBeNull()
+
+    await chooseVendor('deepseek')
+    await waitFor(() =>
+      expect(baseUrlInput().value).toBe('https://api.deepseek.com'),
+    )
+    fireEvent.click(screen.getByText('enums.protocol.anthropic'))
+    await waitFor(() =>
+      expect(baseUrlInput().value).toBe('https://api.deepseek.com/anthropic'),
+    )
+    fireEvent.click(screen.getByText('enums.protocol.chat'))
+    await waitFor(() =>
+      expect(baseUrlInput().value).toBe('https://api.deepseek.com'),
+    )
+
+    await chooseVendor('generic')
+    await waitFor(() => expect(baseUrlInput().value).toBe(''))
+  })
+
+  it('flags a base URL cleared by a provider switch only once visited', async () => {
+    renderAt('/context-gateway/upstreams/new')
+    await screen.findByText('upstreams.editor.newTitle')
+
+    await chooseVendor('openai')
+    await waitFor(() =>
+      expect(baseUrlInput().value).toBe('https://api.openai.com/v1'),
+    )
+    await chooseVendor('generic')
+    await waitFor(() => expect(baseUrlInput().value).toBe(''))
+    expect(baseUrlInput().getAttribute('aria-invalid')).toBe('false')
+    expect(screen.queryByText('validation.required')).toBeNull()
+
+    fireEvent.blur(baseUrlInput())
+    expect(screen.getByText('validation.required')).toBeTruthy()
+  })
+
+  it('keeps a base URL the admin entered and offers the default', async () => {
+    api.listUpstreams.mockResolvedValue([
+      { ...openai, base_url: 'https://proxy.example.com/v1' },
+    ])
+    renderAt('/context-gateway/upstreams/u1')
+    await screen.findByLabelText('upstreams.form.name.label')
+    expect(baseUrlInput().value).toBe('https://proxy.example.com/v1')
+
+    await chooseVendor('byteplus')
+    await waitFor(() =>
+      expect(
+        screen.getByText('upstreams.form.cacheMinTokens.label'),
+      ).toBeTruthy(),
+    )
+    expect(baseUrlInput().value).toBe('https://proxy.example.com/v1')
+
+    fireEvent.click(useDefaultButton() as HTMLElement)
+    await waitFor(() =>
+      expect(baseUrlInput().value).toBe(
+        'https://ark.ap-southeast.bytepluses.com',
+      ),
+    )
+    expect(useDefaultButton()).toBeNull()
+    expect(
+      screen.getByText(
+        'https://ark.ap-southeast.bytepluses.com/api/v3/chat/completions',
+      ),
+    ).toBeTruthy()
   })
 
   it('flags a stored protocol the provider does not offer and blocks saving', async () => {

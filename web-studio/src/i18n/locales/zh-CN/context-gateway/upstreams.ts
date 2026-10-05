@@ -132,14 +132,18 @@ const upstreams = {
         '选定服务商后，下方只能选它提供的协议。列表里没有的服务商，以及 LiteLLM 这类兼容代理，请选“通用”。',
       hints: {
         deepseek:
-          '使用 Anthropic Messages 时，Base URL 填 https://api.deepseek.com/anthropic。只有请求关闭了思考模式，网关才会提供 OpenViking 工具。召回记忆不受影响。',
+          '只有请求关闭了思考模式，网关才会提供 OpenViking 工具。标准的 Responses 请求没有 thinking 字段，所以不会得到这些工具。召回记忆不受影响。',
         ark: '填写不带路径的方舟地址，例如 https://ark.cn-beijing.volces.com。网关会按协议补上 /api/v3 或 /api/compatible/v1，并让每段对话的 prompt_cache_key 保持不变，缓存才能持续命中。',
+        byteplus:
+          '填写不带路径的 BytePlus 方舟地址，例如 https://ark.ap-southeast.bytepluses.com。网关会按协议补上 /api/v3 或 /api/compatible/v1，并让每段对话的 prompt_cache_key 保持不变，缓存才能持续命中。',
       },
     },
     baseUrl: {
       label: 'Base URL',
-      description: '服务商的 API 地址，末尾带不带 /v1 都可以。',
+      description:
+        '服务商的 API 地址，选择服务商时会自动填入。末尾带不带 /v1 都可以。',
       preview: '请求将发往',
+      useDefault: '使用默认地址',
     },
     authMode: {
       label: 'API Key 由谁提供',

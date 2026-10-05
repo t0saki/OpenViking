@@ -144,15 +144,26 @@ function UpstreamEditorForm({ stored, usedBy }: UpstreamEditorFormProps) {
     )
   }, [])
 
-  const change = React.useCallback(
+  /** Sets a field without visiting it, for values the form fills in itself. */
+  const fill = React.useCallback(
     <TField extends UpstreamField>(
       field: TField,
       value: UpstreamInput[TField],
     ) => {
       setDraft((current) => ({ ...current, [field]: value }))
+    },
+    [],
+  )
+
+  const change = React.useCallback(
+    <TField extends UpstreamField>(
+      field: TField,
+      value: UpstreamInput[TField],
+    ) => {
+      fill(field, value)
       visit(field)
     },
-    [visit],
+    [fill, visit],
   )
 
   const errorFor = (field: UpstreamField) => {
@@ -230,6 +241,7 @@ function UpstreamEditorForm({ stored, usedBy }: UpstreamEditorFormProps) {
           draft={draft}
           stored={stored}
           onChange={change}
+          onFill={fill}
           onBlur={visit}
           error={errorFor}
         />

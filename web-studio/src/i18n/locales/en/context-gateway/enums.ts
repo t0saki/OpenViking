@@ -10,6 +10,7 @@ const enums = {
     openai: 'OpenAI',
     deepseek: 'DeepSeek',
     ark: 'Volcano Engine Ark',
+    byteplus: 'BytePlus ModelArk',
   },
   authMode: {
     managed: 'Managed key',

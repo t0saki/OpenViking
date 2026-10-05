@@ -137,15 +137,18 @@ const upstreams = {
         'Limits the protocols below to the ones this provider offers. For a provider not listed here, or a compatible proxy such as LiteLLM, choose Generic.',
       hints: {
         deepseek:
-          'For Anthropic Messages, use the base URL https://api.deepseek.com/anthropic. OpenViking tools are only offered when a request turns thinking off. Recalling memory works as usual.',
+          "OpenViking tools are only offered when a request turns thinking off. Standard Responses requests have no thinking field, so they don't get the tools. Recalling memory works as usual.",
         ark: "Enter the Ark address without a path, such as https://ark.cn-beijing.volces.com. The gateway adds /api/v3 or /api/compatible/v1 for each protocol and keeps each conversation's prompt_cache_key stable so the cache keeps hitting.",
+        byteplus:
+          "Enter the ModelArk address without a path, such as https://ark.ap-southeast.bytepluses.com. The gateway adds /api/v3 or /api/compatible/v1 for each protocol and keeps each conversation's prompt_cache_key stable so the cache keeps hitting.",
       },
     },
     baseUrl: {
       label: 'Base URL',
       description:
-        "The provider's API address. It works with or without a trailing /v1.",
+        "The provider's API address, filled in when you choose a provider. It works with or without a trailing /v1.",
       preview: 'Requests go to',
+      useDefault: 'Use default',
     },
     authMode: {
       label: 'Who provides the API key',

@@ -19,7 +19,7 @@ from .protocols import ResponseCapture, SSEDecoder, enhanced_supported, parse_bo
 from .storage import digest
 from .tool_executor import ToolExecutor
 from .tool_loop import HiddenToolLoop, ToolLoopError
-from .vendors import ARK_PATHS, apply_vendor, ark_url
+from .vendors import ARK_PATHS, ARK_VENDORS, apply_vendor, ark_url
 
 logger = logging.getLogger(__name__)
 HOP_HEADERS = {
@@ -61,7 +61,7 @@ def filtered_headers(headers, request=False):
 
 
 def upstream_url(upstream, path):
-    if upstream.get("vendor") == "ark":
+    if upstream.get("vendor") in ARK_VENDORS:
         return ark_url(upstream, path)
     base = upstream["base_url"].rstrip("/")
     # Accept both https://host and https://host/v1 as a configured base URL.
@@ -247,7 +247,7 @@ class ProxyRequest:
 
     async def finish(self):
         self.metrics.update(self.capture.usage or {})
-        if self.upstream.get("vendor") == "ark":
+        if self.upstream.get("vendor") in ARK_VENDORS:
             self.metrics["cache_min_tokens"] = self.upstream.get("cache_min_tokens", 1024)
             self.metrics["cache_eligible"] = (
                 self.metrics.get("input_tokens", 0) >= self.metrics["cache_min_tokens"]

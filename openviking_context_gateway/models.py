@@ -58,7 +58,7 @@ class Upstream(BaseModel):
     aliases: dict[str, str] = Field(default_factory=dict)
     priority: int = 0
     enabled: bool = True
-    vendor: Literal["generic", "anthropic", "openai", "deepseek", "ark"] = "generic"
+    vendor: Literal["generic", "anthropic", "openai", "deepseek", "ark", "byteplus"] = "generic"
     allow_gateway_tools: bool = True
     coding_plan: bool = False
     allow_coding_plan: bool = False

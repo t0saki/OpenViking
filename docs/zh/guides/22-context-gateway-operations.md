@@ -85,7 +85,7 @@ python3 -c 'import secrets; print(secrets.token_urlsafe(48))'
 | 路径 | 转发到 | 用途 |
 | --- | --- | --- |
 | `/v1/*` | 网关 | Anthropic Messages、Chat Completions、Responses 和模型列表 |
-| `/api/v3/*` | 网关 | 火山方舟路径下的 Chat Completions、Responses 和模型列表 |
+| `/api/v3/*` | 网关 | 方舟路径（火山方舟和 BytePlus 方舟）下的 Chat Completions、Responses 和模型列表 |
 | `/api/compatible/v1/*` | 网关 | 方舟的 Anthropic 兼容路径 |
 | `/context-gateway/uploads` | 网关 | OpenViking 工具的一次性文件上传 |
 | 其他所有路径 | OpenViking Server | Studio、REST API、MCP、OAuth、`/health` |
@@ -296,16 +296,27 @@ server {
 
 上游是模型服务商的一个接口，只使用一种 API：Anthropic Messages、Chat Completions 或 Responses。网关不在它们之间做转换，所以客户端用到几种 API，就要添加几个上游，即使它们来自同一个服务商：Claude Code 用 Anthropic Messages，Codex CLI 用 Responses，大多数聊天应用和 SDK 用 Chat Completions。
 
+各服务商提供的协议如下。在编辑页选择服务商后，会自动填入它的默认 Base URL：
+
+| 服务商 | 协议 | 默认 Base URL |
+| --- | --- | --- |
+| 通用 | 三种都有 | 无，需要自己填写 |
+| Anthropic | Anthropic Messages | `https://api.anthropic.com` |
+| OpenAI | Chat Completions、Responses | `https://api.openai.com/v1` |
+| DeepSeek | 三种都有 | `https://api.deepseek.com`；Anthropic Messages 为 `https://api.deepseek.com/anthropic` |
+| 火山方舟 | 三种都有 | `https://ark.cn-beijing.volces.com` |
+| BytePlus 方舟（海外站） | 三种都有 | `https://ark.ap-southeast.bytepluses.com` |
+
 上游编辑页分为四部分。
 
 **接口。**
 
-- **服务商**决定可以选哪些协议，并让网关适配各家服务商的差异。编辑页只提供服务商支持的协议：*Anthropic* 只有 Anthropic Messages；*OpenAI* 有 Chat Completions 和 Responses；*DeepSeek* 有 Chat Completions 和 Anthropic Messages；*火山方舟*和*通用*三种都有。列表里没有的服务商，以及 LiteLLM、new-api 这类兼容代理，选*通用*。
+- **服务商**决定可以选哪些协议，并让网关适配各家服务商的差异。编辑页只提供服务商支持的协议，见上表。列表里没有的服务商，以及 LiteLLM、new-api 这类兼容代理，选*通用*。
   - *通用*、*Anthropic* 和 *OpenAI* 转发请求的方式相同。
-  - *DeepSeek*：只有请求关闭了思考模式（`"thinking": {"type": "disabled"}`）时才提供 OpenViking 工具，因为 DeepSeek 的思考模式需要推理历史，而聊天应用不会把推理历史发回来。记忆照常补充。
-  - *火山方舟*：请求发往方舟自己的路径。Chat Completions 和 Responses 的每段对话都使用一个固定的 `prompt_cache_key`，方舟的前缀缓存就能跟着对话走。如果请求的模型、思考模式、采样参数、系统提示词或工具与对话的第一个请求不同，就会被标记为**缓存参数有变化**（`ark_cache_parameters_changed`），因为这些参数一变，方舟就会重新建立缓存。
+  - *DeepSeek*：只有请求关闭了思考模式（`"thinking": {"type": "disabled"}`）时才提供 OpenViking 工具，因为 DeepSeek 的思考模式需要推理历史，而聊天应用不会把推理历史发回来。标准的 Responses 请求没有 `thinking` 字段，所以不会得到 OpenViking 工具。记忆照常补充。
+  - *火山方舟*和它的海外站 *BytePlus 方舟*行为相同：请求发往方舟自己的路径。Chat Completions 和 Responses 的每段对话都使用一个固定的 `prompt_cache_key`，方舟的前缀缓存就能跟着对话走。如果请求的模型、思考模式、采样参数、系统提示词或工具与对话的第一个请求不同，就会被标记为**缓存参数有变化**（`ark_cache_parameters_changed`），因为这些参数一变，方舟就会重新建立缓存。
 - **协议**决定上游能处理哪些客户端请求，也决定网关如何发送密钥：Anthropic Messages 用 `x-api-key`，另外两种用 `Authorization: Bearer`。
-- **Base URL。** 网关把客户端的请求路径拼接在后面，并去掉重复的 `/v1`，所以 `https://api.openai.com/v1` 和 `https://api.anthropic.com` 都能用。编辑页会显示请求实际发往的地址。DeepSeek 的 Anthropic Messages 接口请填写 `https://api.deepseek.com/anthropic`。方舟请填写不带路径的地址 `https://ark.cn-beijing.volces.com`，它适用于全部三种协议；以 `/api/v3` 结尾的地址只适用于 Chat Completions 和 Responses，以 `/api/compatible/v1` 结尾的只适用于 Anthropic Messages。API 路径不以 `/v1` 结尾的服务商（例如 `…/api/paas/v4`）不能直接使用，需要在中间加一个 LiteLLM 之类的兼容代理。
+- **Base URL。** 选择服务商后，编辑页会填入上表中的默认地址。切换服务商或协议时，只有地址为空或仍是之前的默认地址，才会换成新的默认地址，自己填写的地址不会被覆盖；地址与默认地址不同时，点输入框下方的**使用默认地址**即可恢复。网关把客户端的请求路径拼接在后面，并去掉重复的 `/v1`，所以 `https://api.openai.com/v1` 和 `https://api.anthropic.com` 都能用。编辑页会显示请求实际发往的地址。火山方舟和 BytePlus 方舟请填写不带路径的地址，例如 `https://ark.cn-beijing.volces.com`，它适用于全部三种协议；以 `/api/v3` 结尾的地址只适用于 Chat Completions 和 Responses，以 `/api/compatible/v1` 结尾的只适用于 Anthropic Messages。API 路径不以 `/v1` 结尾的服务商（例如 `…/api/paas/v4`）不能直接使用，需要在中间加一个 LiteLLM 之类的兼容代理。
 
 **凭证。**
 
@@ -327,11 +338,11 @@ server {
 - **优先级。** 对每个请求，网关从密钥绑定的已启用上游中挑出使用这种 API、并且提供所请求模型的那些，再选优先级最高的一个。只要原来的上游还能服务，对话就一直留在它开始时的上游上，所以修改优先级只影响新对话。
 - **启用。** 停用的上游不接收请求，也不出现在模型列表里。原本使用它的对话会转到下一个候选上游，这会造成一次服务商缓存未命中，并丢掉之前的 Claude 思考块；这些请求会被标记为**上游已切换**（`upstream_changed`）。想保留恢复的余地，就用停用代替删除。
 - **允许 OpenViking 工具**决定能否通过这个上游提供 OpenViking 工具。关闭后立即生效，已经带工具的对话也会受影响。
-- **最小可缓存长度**（仅方舟）是模型能缓存的最短提示词长度，只影响请求日志如何报告缓存资格。
+- **最小可缓存长度**（仅火山方舟和 BytePlus 方舟）是模型能缓存的最短提示词长度，只影响请求日志如何报告缓存资格。
 
 其他上游设置都立即生效，对进行中的对话也一样。网关没有故障转移：选中的上游出错时，客户端会收到这个错误；服务商无法访问时返回 502 "Model upstream is unavailable"。
 
-列表中的**测试**和编辑页的**测试连接**会用上游的凭证和请求头请求服务商的模型列表（`/v1/models`，方舟为 `/api/v3/models`），最多等待 10 秒。测试通过说明主机可达，并且服务商接受这个 API Key。测试不检查模型名，也不检查 Coding Plan 设置。没有模型列表接口、或者访问这个接口需要额外请求头的服务商，可能测试失败而实际请求正常。“每个客户端自带 API Key”的上游无法测试。
+列表中的**测试**和编辑页的**测试连接**会用上游的凭证和请求头请求服务商的模型列表（`/v1/models`，火山方舟和 BytePlus 方舟为 `/api/v3/models`），最多等待 10 秒。测试通过说明主机可达，并且服务商接受这个 API Key。测试不检查模型名，也不检查 Coding Plan 设置。没有模型列表接口、或者访问这个接口需要额外请求头的服务商，可能测试失败而实际请求正常。“每个客户端自带 API Key”的上游无法测试。
 
 有密钥在使用的上游不能删除；先吊销这些密钥，或者改为停用这个上游。
 
@@ -460,7 +471,7 @@ server {
 | `tools_structured_output` | 请求要求结构化输出（`response_format`、`text.format` 或 `output_config.format`）。 |
 | `tools_non_function` | Chat Completions 客户端传入了 function 以外类型的工具。 |
 | `tools_forced_choice` | `tool_choice` 为 `required`，或者指定了某个工具。 |
-| `deepseek_reasoning_history_required` | 上游的服务商是 DeepSeek，并且请求没有关闭思考模式。 |
+| `deepseek_reasoning_history_required` | 上游的服务商是 DeepSeek，并且请求没有关闭思考模式（`"thinking": {"type": "disabled"}`）。标准的 Responses 请求没有 `thinking` 字段，也属于这种情况。 |
 | `tool_name_collision` | 客户端定义了与某个 `openviking_*` 工具同名的工具。 |
 | `tools_not_selected_at_session_start` | 上下文配置开启了工具，但对话的第一个请求因为上面某个原因用不了工具，所以整段对话都没有工具。 |
 
@@ -645,8 +656,8 @@ URL 类设置必须是普通的 `http` 或 `https` 地址，不能包含账号�
 | --- | --- | --- | --- |
 | 名称 | `name` | | 显示名称。 |
 | 协议 | `protocol` | | `anthropic`（Anthropic Messages）、`chat`（Chat Completions）或 `responses`（Responses）。 |
-| 服务商 | `vendor` | `generic` | `generic`、`anthropic`、`openai`、`deepseek` 或 `ark`（火山方舟）。Studio 只提供服务商支持的协议，API 接受任意组合。 |
-| Base URL | `base_url` | | 服务商地址；路径规则见[上游](#上游)。 |
+| 服务商 | `vendor` | `generic` | `generic`、`anthropic`、`openai`、`deepseek`、`ark`（火山方舟）或 `byteplus`（BytePlus 方舟）。Studio 只提供服务商支持的协议，API 接受任意组合。 |
+| Base URL | `base_url` | | 服务商地址；各服务商的默认地址和路径规则见[上游](#上游)。 |
 | API Key 由谁提供 | `auth_mode` | `managed` | `managed`（由网关保管 API Key）或 `passthrough`（每个客户端自带 API Key）。 |
 | API Key | `api_key` | | 只能写入。编辑时留空表示保留已保存的密钥。 |
 | 额外请求头 | `headers` | `{}` | 值只能写入，名称可见。 |
@@ -658,7 +669,7 @@ URL 类设置必须是普通的 `http` 或 `https` 地址，不能包含账号�
 | 允许 OpenViking 工具 | `allow_gateway_tools` | `true` | 能否通过这个上游提供 OpenViking 工具。 |
 | 这是 Coding Plan 或订阅密钥 | `coding_plan` | `false` | 除非另外允许，否则拒绝发往这个上游的请求。 |
 | 仍然允许 | `allow_coding_plan` | `false` | 允许使用被标记为 Coding Plan 的密钥。 |
-| 最小可缓存长度 | `cache_min_tokens` | `1024` | 仅方舟；影响缓存资格的报告。 |
+| 最小可缓存长度 | `cache_min_tokens` | `1024` | 仅火山方舟和 BytePlus 方舟；影响缓存资格的报告。 |
 
 **网关密钥字段：** 名称（`name`）、OpenViking 密钥（`openviking_key`）、上下文配置（`policy_id`）、上游（`upstream_ids`，至少一个）和允许的模型（`models`）。通过 OpenViking Server 签发时，可以用本账号用户的 `user_id` 代替 `openviking_key`，由 OpenViking Server 读取这个用户的密钥；两者只能提供一个。
 
@@ -753,7 +764,7 @@ OpenViking Server 无法使用网关时，上下文网关页面会显示一张�
 
 - **记忆记录缺失**（`missing_injection_record`）：网关存储丢失、从旧备份恢复，或者记录已过期，之前补充的记忆无法重放。进行中的对话在一次未命中之后就会恢复。
 - **上游已切换**（`upstream_changed`）：对话原来的上游被停用、没有绑定到客户端当前使用的密钥，或者不再提供这个模型，于是对话转到了另一个上游。
-- **缓存参数有变化**（`ark_cache_parameters_changed`）：在方舟上，客户端在同一段对话里改变了模型、思考模式、采样参数、系统提示词或工具。
+- **缓存参数有变化**（`ark_cache_parameters_changed`）：在火山方舟或 BytePlus 方舟上，客户端在同一段对话里改变了模型、思考模式、采样参数、系统提示词或工具。
 - 没有标出异常：客户端本身可能每轮都在改动之前的消息或系统提示词，例如插入当前时间，网关无法修正这种情况。长对话的每次摘要也会造成一次未命中，这是预期内的。
 
 ### 文件导入失败
@@ -775,7 +786,7 @@ OpenViking Server 无法使用网关时，上下文网关页面会显示一张�
 | 上游已切换（`upstream_changed`） | 对话原来的上游无法再服务，转到了另一个上游，造成一次缓存未命中，之前的 Claude 思考内容也被去掉。 | 重新启用这个上游，或者让客户端改用包含它的密钥；也可以接受这次切换。 |
 | 记忆记录缺失（`missing_injection_record`） | Claude 对话中，之前补充的记忆已经没有记录，所以之前的思考内容被去掉了一次。 | 存储丢失后，或者在很久以前的对话里出现，都在预期之内。反复出现时，开始一段新对话。 |
 | 检测到 OpenViking 插件（`plugin_present`） | 检测到了 OpenViking 插件，这段对话不再使用网关记忆。 | 使用插件时出现这一项是正常的。同一个客户端在插件和网关之间二选一。 |
-| 缓存参数有变化（`ark_cache_parameters_changed`） | 在方舟上，影响缓存的参数与对话的第一个请求不同，方舟的缓存很可能没有命中。 | 在同一段对话里保持模型、思考模式、采样参数、系统提示词和工具不变。 |
+| 缓存参数有变化（`ark_cache_parameters_changed`） | 在火山方舟或 BytePlus 方舟上，影响缓存的参数与对话的第一个请求不同，提示词缓存很可能没有命中。 | 在同一段对话里保持模型、思考模式、采样参数、系统提示词和工具不变。 |
 | 摘要未就绪（`archive_wait_timeout`） | 对话已经接近上下文窗口，但摘要没有及时就绪，于是发送了完整历史。 | 见[长对话](#长对话)。 |
 | 工具历史无法继续使用（`hidden_tool_history_unavailable`） | Claude 对话曾使用 OpenViking 工具，但当前请求无法使用这些工具，之前的思考内容已被去掉。 | 查看请求详情中的工具停用原因，恢复原设置，或开始一段新对话。 |
 | OpenViking 工具调用失败（`hidden_tool_loop_failed`） | 模型使用 OpenViking 工具时未能完成回答，客户端收到了错误。 | 见 [OpenViking 工具](#openviking-工具)。 |
