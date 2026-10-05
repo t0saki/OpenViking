@@ -5,6 +5,7 @@
 import asyncio
 import base64
 import binascii
+import html
 import re
 import time
 import uuid
@@ -16,21 +17,88 @@ import orjson
 
 from .capture_store import Document
 from .client import VikingError
+from .protocols import messages_of
 from .state_store import get_state
 from .storage import digest
-from .tool_catalog import PREFIX, TOOL_OVERRIDES, attachments, has_shell
+from .tool_catalog import PREFIX, TOOL_OVERRIDES
 
 UPLOAD_URL = re.compile(
     r'https?://[^\s<>"\x27`]+/api/v1/resources/temp_upload\?token=[^\s<>"\x27`]+'
 )
 
 
-def upload_token(result):
-    if not isinstance(result, dict) or not isinstance(result.get("content", []), list):
+def has_shell(body):
+    return any(
+        re.search(
+            r"(^|[_-])(bash|shell|exec_command|terminal|run_command)([_-]|$)",
+            tool.get("function", tool).get("name", ""),
+            re.I,
+        )
+        for tool in body.get("tools", [])
+        if isinstance(tool, dict)
+    )
+
+
+def attachments(body):
+    output = []
+    for message in messages_of(body, "responses" if "input" in body else "chat"):
+        if message.get("role") not in {"user", "system"}:
+            continue
+        content = message.get("content", [])
+        if isinstance(content, list):
+            for part in content:
+                if isinstance(part, dict) and part.get("type") in {"file", "input_file"}:
+                    output.append(part.get("file", part))
+                elif isinstance(part, dict) and part.get("type") == "document":
+                    source = part.get("source", {})
+                    if source.get("type") == "base64":
+                        output.append(
+                            {
+                                "filename": part.get("title", "attachment.pdf"),
+                                "file_data": source.get("data", ""),
+                            }
+                        )
+                    elif source.get("type") == "text":
+                        output.append(
+                            {
+                                "filename": part.get("title", "attachment.txt"),
+                                "text": source.get("data", ""),
+                            }
+                        )
+        # Open WebUI can send extracted documents as source tags instead of bytes.
+        # Only marked source text is importable, never arbitrary conversation text.
+        texts = (
+            [content]
+            if isinstance(content, str)
+            else [p.get("text", "") for p in content if isinstance(p, dict)]
+        )
+        for text in texts:
+            for context in re.findall(r"<context>([\s\S]*?)</context>", text):
+                for index, (attrs, source) in enumerate(
+                    re.findall(r"<source\b([^>]*)>([\s\S]*?)</source>", context)
+                ):
+                    name = re.search(r'name=["\']([^"\']+)["\']', attrs)
+                    filename = html.unescape(name[1]) if name else f"source-{index}.txt"
+                    output.append(
+                        {
+                            "filename": filename + ".txt"
+                            if not filename.endswith(".txt")
+                            else filename,
+                            "text": html.unescape(source),
+                        }
+                    )
+    return output
+
+
+def content_blocks(result):
+    blocks = result.get("content", []) if isinstance(result, dict) else None
+    if not isinstance(blocks, list) or not all(isinstance(block, dict) for block in blocks):
         raise ValueError("Invalid MCP result")
-    for block in result.get("content", []):
-        if not isinstance(block, dict):
-            raise ValueError("Invalid MCP content block")
+    return blocks
+
+
+def upload_token(result):
+    for block in content_blocks(result):
         if block.get("type") == "text":
             match = UPLOAD_URL.search(block.get("text", ""))
             if match:
@@ -62,19 +130,16 @@ def attachment_bytes(part, limit):
     return name, data
 
 
-def result_text(value, limit):
-    if not isinstance(value, dict) or not isinstance(value.get("content", []), list):
-        raise ValueError("Invalid MCP result")
+def result_text(result, limit):
+    """Text blocks only; structuredContent repeats them, and media becomes a note."""
     parts = []
-    for block in value.get("content", []):
-        if not isinstance(block, dict):
-            raise ValueError("Invalid MCP content block")
-        if block.get("type") == "text":
-            if not isinstance(block.get("text"), str):
-                raise ValueError("Invalid MCP text block")
+    for block in content_blocks(result):
+        if block.get("type") != "text":
+            parts.append(f"[OpenViking returned {block.get('type', 'non-text')} content; omitted.]")
+        elif isinstance(block.get("text"), str):
             parts.append(block["text"])
         else:
-            parts.append(f"[OpenViking returned {block.get('type', 'non-text')} content; omitted.]")
+            raise ValueError("Invalid MCP text block")
     text = "\n".join(parts)
     if len(orjson.dumps(text)) > limit:
         suffix = "\n[Tool result truncated.]"

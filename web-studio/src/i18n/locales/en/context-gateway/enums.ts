@@ -67,6 +67,8 @@ const enums = {
     deepseek_reasoning_history_required:
       'DeepSeek thinking is on; tools need it turned off',
     tool_name_collision: 'The client defines a tool with the same name',
+    tools_unavailable:
+      "OpenViking's tool list couldn't be loaded when this conversation started",
     tools_not_selected_at_session_start:
       'Tools were not available when this conversation started',
   },

@@ -361,7 +361,7 @@ Each section has its own switch:
 | Recall memory | Searches OpenViking with each new user message and appends what is relevant to that message. | Sources: memories, resources, skills · Budget per message: 1,600 tokens · Budget per conversation: 6,000 tokens · Relevance threshold: 0.35 · Time limit: 2 s |
 | Save conversations | Writes finished turns to an OpenViking session and commits it, so OpenViking can extract memories. | Save the latest reply after: 600 s · Commit after: 20,000 tokens · Keep recent messages: 10 |
 | Long conversations | Replaces older history with OpenViking's summary once a conversation is long. Needs Save conversations. | Start after: 30,000 tokens · Keep recent turns: 3 · Wait for summary: 30 s |
-| OpenViking tools | Lets the model search and read OpenViking while it answers. Chat Completions, full-history Responses and Anthropic Messages. Off by default. | All tools available from OpenViking; uncheck any you do not want |
+| OpenViking tools | Lets the model use OpenViking's tools while it answers. Chat Completions, full-history Responses and Anthropic Messages. Off by default. | All tools available from OpenViking; uncheck any you do not want |
 
 How the recall settings play out:
 
@@ -462,7 +462,7 @@ This is meant for chat apps and API apps that cannot connect to OpenViking's MCP
 
 To turn the tools on, enable **OpenViking tools** in a context profile. The **Tools** list comes from your OpenViking server and all tools are selected by default. Uncheck the ones this profile should not provide. Issue a gateway key first if the list is empty. New tools added to OpenViking are available automatically unless you uncheck them; ongoing conversations keep the tool list they started with.
 
-**Allow OpenViking tools** is on by default for each upstream. With both switches on, new conversations get the selected tools with an `openviking_` prefix: for example `openviking_find`, `openviking_read`, `openviking_grep` and `openviking_glob`. The descriptions in Studio explain what each available tool does. Read-only labels appear only when OpenViking supplies that information.
+**Allow OpenViking tools** is on by default for each upstream. With both switches on, new conversations get the selected tools with an `openviking_` prefix: for example `openviking_find`, `openviking_read`, `openviking_grep` and `openviking_glob`. The descriptions in Studio explain what each available tool does. Read-only labels appear only when OpenViking supplies that information. The definitions of the offered tools go with every request in the conversation; OpenViking's full set adds about 3,500 input tokens, so unchecking tools nobody needs also saves tokens.
 
 > **Note**: All selected tools run without the client's permission prompts, including tools that write or delete data. Uncheck those tools if they should not be available. A tool-call notice shows what happened; it is not a request for approval.
 

@@ -109,7 +109,7 @@ The profile and catalogs can appear even when the first message has no search re
 
 **Long conversations.** Once about 30,000 tokens of a conversation have been saved, the gateway lets OpenViking archive the older part and write a summary of it. From then on the model receives that summary plus the latest three turns word for word, instead of the full history, so the conversation does not run into the model's context window. The prompt changes once at each archive point, which costs one provider cache miss there. See [Long conversations](22-context-gateway-operations.md#long-conversations) for the details.
 
-**OpenViking tools.** A context profile can also let the model use your OpenViking server's tools while answering. This works with Chat Completions, full-history Responses and Anthropic Messages, with streaming or nonstreaming replies. It is off by default; see [OpenViking tools](22-context-gateway-operations.md#openviking-tools) for setup and client requirements.
+**OpenViking tools.** A context profile can also let the model use your OpenViking server's tools while answering. This works with Chat Completions, full-history Responses and Anthropic Messages, with streaming or nonstreaming replies. It is off by default. Once it is on, every tool OpenViking provides is selected, including tools that change or delete data, and the gateway runs them without the client's permission prompts; uncheck any tool the model should not use. See [OpenViking tools](22-context-gateway-operations.md#openviking-tools) for setup and client requirements.
 
 All of these numbers come from the key's **context profile**, where you can change budgets and timing or turn each feature off.
 

@@ -361,7 +361,7 @@ server {
 | 召回记忆 | 用每条新的用户消息搜索 OpenViking，把相关内容附加到这条消息上。 | 检索范围：记忆、资源、技能 · 单条消息预算：1,600 token · 单段对话预算：6,000 token · 相关度阈值：0.35 · 超时时间：2 秒 |
 | 保存对话 | 把已完成的轮次写入 OpenViking 会话并提交，供 OpenViking 提取记忆。 | 最新回复等待时长：600 秒 · 提交阈值：20,000 token · 保留最近消息：10 |
 | 长对话 | 对话变长后，用 OpenViking 的摘要替换较早的历史。需要开启保存对话。 | 开始摘要的长度：30,000 token · 保留最近轮数：3 · 等待摘要：30 秒 |
-| OpenViking 工具 | 让模型在回答时搜索和读取 OpenViking。支持 Chat Completions、完整历史的 Responses 和 Anthropic Messages，默认关闭。 | 默认选择 OpenViking 提供的全部工具，可取消勾选 |
+| OpenViking 工具 | 让模型在回答时使用 OpenViking 的工具。支持 Chat Completions、完整历史的 Responses 和 Anthropic Messages，默认关闭。 | 默认选择 OpenViking 提供的全部工具，可取消勾选 |
 
 召回设置的实际效果：
 
@@ -462,7 +462,7 @@ server {
 
 要开启工具，在上下文配置中打开 **OpenViking 工具**。**工具**清单来自你的 OpenViking 服务，默认全部勾选；不希望这份配置提供的工具，取消勾选即可。还没有网关密钥时，先签发一个密钥再加载清单。OpenViking 后续新增的工具也会默认可用，已有对话仍沿用开始时的工具清单。
 
-每个上游的**允许 OpenViking 工具**默认开启。两个开关都开启后，新对话会获得选中的工具，名称加上 `openviking_` 前缀，例如 `openviking_find`、`openviking_read`、`openviking_grep` 和 `openviking_glob`。Studio 中的说明介绍各个工具的用途；只有 OpenViking 提供了相应信息时，页面才显示只读标记。
+每个上游的**允许 OpenViking 工具**默认开启。两个开关都开启后，新对话会获得选中的工具，名称加上 `openviking_` 前缀，例如 `openviking_find`、`openviking_read`、`openviking_grep` 和 `openviking_glob`。Studio 中的说明介绍各个工具的用途；只有 OpenViking 提供了相应信息时，页面才显示只读标记。提供给模型的工具定义会随对话中的每个请求发送，OpenViking 的全部工具约占 3,500 个输入 token，所以取消勾选用不到的工具也能节省 token。
 
 > **注意**：所有选中的工具都直接执行，不经过客户端的权限确认，包括写入和删除数据的工具。不希望模型使用这些工具时，请取消勾选。调用提示用于说明已经发生的操作，不是权限确认。
 

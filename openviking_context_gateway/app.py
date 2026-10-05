@@ -284,10 +284,19 @@ def create_app(config: ContextGatewayConfig | None = None):
 
     @app.get("/admin/tools")
     async def list_tools(request: Request):
-        keys = await management.list(admin_account(request), "keys")
-        if not keys:
-            return []
-        catalog = await app.state.viking.tools(keys[0]["openviking_key"])
+        # Every user sees the same MCP tools, so any key OpenViking accepts will do.
+        catalog, failure = [], None
+        for key in await management.list(admin_account(request), "keys"):
+            try:
+                catalog, failure = await app.state.viking.tools(key["openviking_key"]), None
+                break
+            except VikingError as error:
+                failure = error
+                if error.status not in {401, 403}:
+                    break
+        if failure:
+            # Studio would take a passed-through 401 for its own sign-in failing.
+            raise VikingError(failure.reason, 502)
         return [
             {
                 "name": tool["name"],

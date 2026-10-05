@@ -47,6 +47,7 @@ describe('enum labels', () => {
     expect(toolSkipReasonLabel(t, 'tools_require_full_history')).toContain(
       'full conversation',
     )
+    expect(toolSkipReasonLabel(zhT, 'tools_unavailable')).toContain('工具清单')
   })
 
   it('explains OpenViking reasons by pattern', () => {

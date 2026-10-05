@@ -24,8 +24,8 @@ class VikingClient:
     def __init__(self, http: aiohttp.ClientSession, base_url: str, min_version: str):
         self.http, self.base_url, self.min_version = http, base_url.rstrip("/"), min_version
         self.unavailable_reason = ""
-        self._tools_cache = TTLCache(ttl=300, capacity=8)
-        self._last_tools = {}
+        # Every caller sees the same MCP tools; the last good list outlives failures.
+        self.tools_cache, self.last_tools = TTLCache(ttl=300, capacity=1), None
 
     async def request(self, method, path, key, body=None, timeout=30):
         try:
@@ -181,22 +181,21 @@ class VikingClient:
         async def load():
             try:
                 result = await self.mcp("tools/list", key, timeout=5)
-                catalog = result.get("tools") if isinstance(result, dict) else None
-                if not isinstance(catalog, list) or any(
-                    not isinstance(tool, dict)
-                    or not isinstance(tool.get("name"), str)
-                    or not isinstance(tool.get("inputSchema"), dict)
-                    for tool in catalog
+                tools = result.get("tools") if isinstance(result, dict) else None
+                if not isinstance(tools, list) or not all(
+                    isinstance(tool, dict)
+                    and isinstance(tool.get("name"), str)
+                    and isinstance(tool.get("inputSchema"), dict)
+                    for tool in tools
                 ):
                     raise VikingError("openviking_mcp_invalid_catalog")
-                self._last_tools[self.base_url] = catalog
-                return catalog
+                self.last_tools = tools
             except VikingError:
-                if self.base_url in self._last_tools:
-                    return self._last_tools[self.base_url]
-                raise
+                if self.last_tools is None:
+                    raise
+            return self.last_tools
 
-        return await self._tools_cache.get(self.base_url, load)
+        return await self.tools_cache.get("tools/list", load)
 
     async def mcp(self, method, key, params=None, timeout=120):
         """Stateless Streamable HTTP MCP; accept both JSON and SSE responses."""
@@ -221,7 +220,7 @@ class VikingClient:
                 allow_redirects=False,
             ) as response:
                 if response.status >= 300:
-                    raise VikingError("openviking_mcp_failed", response.status)
+                    raise VikingError(f"openviking_http_{response.status}", response.status)
                 if "text/event-stream" in response.headers.get("content-type", ""):
                     decoder = SSEDecoder()
                     async for chunk in response.content.iter_any():
@@ -237,7 +236,7 @@ class VikingClient:
                     raise VikingError("openviking_mcp_error")
                 return value["result"]
         except (aiohttp.ClientError, asyncio.TimeoutError, ValueError, KeyError) as error:
-            raise VikingError("openviking_mcp_unavailable") from error
+            raise VikingError("openviking_unavailable") from error
 
     async def upload(self, token, filename, content):
         data = aiohttp.FormData()

@@ -68,47 +68,6 @@ def call(identifier, name, arguments):
     }
 
 
-def clip(value, limit=80):
-    value = " ".join(value.split())
-    return value if len(value) <= limit else value[: limit - 1] + "…"
-
-
-def notice_head(item):
-    """The visible line for one gateway-run call, shown before it runs."""
-    short = item["function"]["name"].removeprefix(PREFIX)
-    try:
-        args = orjson.loads(item["function"].get("arguments") or "{}")
-    except (TypeError, ValueError):
-        args = {}
-    args = args if isinstance(args, dict) else {}
-
-    def text(key):
-        value = args.get(key)
-        return clip(value) if isinstance(value, str) else ""
-
-    index = args.get("attachment_index")
-    attachment = f"attachment {index}" if type(index) is int else ""
-    uris = args.get("uris") if isinstance(args.get("uris"), list) else []
-    uris = [clip(u) for u in uris if isinstance(u, str) and u.strip()]
-    from ..tool_catalog import TOOL_OVERRIDES
-
-    target = ""
-    for key in TOOL_OVERRIDES.get(short, {}).get("notice", ()):
-        if key == "attachment_index":
-            target = attachment
-        elif key == "data":
-            target = "SKILL.md text" if text(key) else ""
-        elif key == "uris":
-            target = uris[0] + (f" (+{len(uris) - 1} more)" if len(uris) > 1 else "") if uris else ""
-        elif key == "query":
-            target = f'"{text(key)}"' if text(key) else ""
-        else:
-            target = text(key)
-        if target:
-            break
-    return "> OpenViking " + short + (": " + target if target else "")
-
-
 def notice_tail(failed, skipped):
     """The outcome that completes a notice line once the call has run."""
     if skipped:

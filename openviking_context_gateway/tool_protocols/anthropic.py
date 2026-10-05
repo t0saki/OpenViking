@@ -186,7 +186,7 @@ class AnthropicProtocol(ToolProtocol):
                         "type": "tool_result",
                         "tool_use_id": r["tool_call_id"],
                         "content": r["content"],
-                        "is_error": r.get("failed", False),
+                        **({"is_error": True} if r.get("failed") else {}),
                     }
                     for r in results
                 ],

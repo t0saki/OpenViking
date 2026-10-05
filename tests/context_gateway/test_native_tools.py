@@ -886,8 +886,7 @@ async def test_hidden_round_with_no_visible_anchor_does_not_write_a_root_record(
 
 @pytest.mark.parametrize("protocol", ["responses", "anthropic"])
 def test_native_file_attachments_preserve_bytes(protocol):
-    from openviking_context_gateway.tool_catalog import attachments
-    from openviking_context_gateway.tool_executor import attachment_bytes
+    from openviking_context_gateway.tool_executor import attachment_bytes, attachments
 
     part = (
         {"type": "input_file", "filename": "note.txt", "file_data": "aGVsbG8="}

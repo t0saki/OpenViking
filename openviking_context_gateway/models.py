@@ -45,10 +45,10 @@ class Policy(BaseModel):
     tool_total_tokens: int = Field(default=100000, ge=1024, le=1000000)
     show_tool_calls: bool = True
 
-
     @model_validator(mode="before")
     @classmethod
     def migrate(cls, value):
+        """Drop storage metadata and retired fields that saved policies may still carry."""
         if isinstance(value, dict):
             obsolete = {"allow_write_tools", "tool_allowlist", "id", "revision"}
             return {key: item for key, item in value.items() if key not in obsolete}

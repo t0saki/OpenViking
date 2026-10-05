@@ -146,3 +146,10 @@ async def test_other_requests_pass_through_unchanged(app, forwarded, method, pat
     assert request.url.path == "/admin/" + path
     assert request.content == body
     app.state.api_key_manager.refresh_account_users_from_store.assert_not_called()
+
+
+@pytest.mark.parametrize("path", ["uploads", "v1/models"])
+async def test_only_management_resources_are_forwarded(app, forwarded, path):
+    response = await send(app, "GET", path)
+    assert response.status_code == 404
+    assert forwarded == []

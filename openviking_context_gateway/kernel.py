@@ -4,11 +4,11 @@
 
 import asyncio
 import logging
-
-import orjson
 import time
 import uuid
 from dataclasses import dataclass, field
+
+import orjson
 
 from .archives import POLL_SECONDS
 from .blocks import block, gateway_note, token_estimate
@@ -33,11 +33,7 @@ from .protocols import (
 from .records import RecordKind as K
 from .state_store import get_state
 from .storage import KernelStore, digest
-from .tool_catalog import (
-    TOOL_VERSION,
-    select_tools,
-    tool_block_reason,
-)
+from .tool_catalog import TOOL_VERSION, select_tools, tool_block_reason
 from .tool_protocols import hidden_chain, replay_hidden, tool_protocol
 from .vendors import parameter_fingerprint
 
@@ -222,7 +218,8 @@ class MemoryKernel:
     ):
         root = records.get((K.ROOT, ""))
         if root is None:
-            catalog, reason = [], ""
+            # The tool list is frozen here, so a failed load leaves the session without tools.
+            tools, reason = [], ""
             if (
                 not plugin
                 and policy.get("gateway_tools")
@@ -230,6 +227,7 @@ class MemoryKernel:
             ):
                 try:
                     catalog = await self.viking.tools(credential["openviking_key"])
+                    tools = select_tools(catalog, policy)
                 except VikingError:
                     reason = "tools_unavailable"
             root = await self.store.replay.put(
@@ -240,7 +238,7 @@ class MemoryKernel:
                 {
                     "upstream_id": upstream["id"],
                     "tool_version": TOOL_VERSION,
-                    "tools": select_tools(body, protocol, upstream, policy, catalog),
+                    "tools": tools,
                     "tool_skip_reason": reason,
                     "policy": policy,
                     "credential_id": credential["id"],

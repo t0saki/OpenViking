@@ -65,6 +65,7 @@ const enums = {
     deepseek_reasoning_history_required:
       'DeepSeek 开启了思考模式，需要关闭后才能使用工具',
     tool_name_collision: '客户端定义了同名工具',
+    tools_unavailable: '这段对话开始时无法加载 OpenViking 工具清单',
     tools_not_selected_at_session_start: '这段对话开始时还没有启用工具',
   },
   toolStopReason: {

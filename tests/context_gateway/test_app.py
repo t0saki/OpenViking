@@ -1027,3 +1027,69 @@ async def test_user_and_account_data_deletion_routes(running_gateway):
     assert (await client.get("/admin/keys", headers=admin)).json() == []
     response = await client.get("/v1/models", headers={"Authorization": "Bearer " + key["key"]})
     assert response.status_code == 401
+
+
+async def test_admin_tools_list_the_mcp_tools_for_profiles(running_gateway):
+    app, client, admin, _, _, _ = running_gateway
+    backend = app.state.test_backend
+    backend["catalog"] = [{**MCP_TOOLS[0], "annotations": {"readOnlyHint": True}}, MCP_TOOLS[3]]
+    response = await client.get("/admin/tools", headers=admin)
+    assert response.status_code == 200
+    assert response.json() == [
+        {"name": "find", "description": "OpenViking find", "annotations": {"readOnlyHint": True}},
+        {"name": "list", "description": "OpenViking list"},
+    ]
+    assert backend["tools_calls"] == ["user-key"]
+    # An account without gateway keys has no OpenViking key to list tools with.
+    response = await client.get("/admin/tools", headers={**admin, "X-OpenViking-Account": "new"})
+    assert response.status_code == 200 and response.json() == []
+    assert backend["tools_calls"] == ["user-key"]
+
+
+async def test_admin_tools_skip_rejected_keys_and_report_failures_cleanly(running_gateway):
+    app, client, admin, _, _, _ = running_gateway
+    backend = app.state.test_backend
+    response = await client.post(
+        "/admin/keys",
+        headers=admin,
+        json={
+            "name": "second",
+            "openviking_key": "second-key",
+            "policy_id": "default",
+            "upstream_ids": ["chat"],
+        },
+    )
+    assert response.status_code == 200, response.text
+    # A 401 here would read as the admin's own Studio sign-in failing.
+    backend["tools_status"] = {"user-key": 401, "second-key": 401}
+    response = await client.get("/admin/tools", headers=admin)
+    assert response.status_code == 502 and "private server detail" not in response.text
+    # An outage is not retried with every key.
+    backend["tools_status"] = {"user-key": 503, "second-key": 503}
+    backend["tools_calls"] = []
+    response = await client.get("/admin/tools", headers=admin)
+    assert response.status_code == 502 and len(backend["tools_calls"]) == 1
+    backend["tools_status"] = {"user-key": 401}
+    response = await client.get("/admin/tools", headers=admin)
+    assert response.status_code == 200 and len(response.json()) == len(MCP_TOOLS)
+    assert backend["tools_calls"][-1] == "second-key"
+
+
+async def test_profiles_with_retired_tool_fields_still_save(running_gateway):
+    _, client, admin, _, _, _ = running_gateway
+    response = await client.put(
+        "/admin/policies/old",
+        headers=admin,
+        json={
+            "name": "Old",
+            "gateway_tools": True,
+            "allow_write_tools": True,
+            "tool_allowlist": ["search"],
+            "id": "old",
+            "revision": 3,
+        },
+    )
+    assert response.status_code == 200, response.text
+    saved = response.json()
+    assert saved["gateway_tools"] and saved["disabled_tools"] == []
+    assert not {"allow_write_tools", "tool_allowlist"} & saved.keys()

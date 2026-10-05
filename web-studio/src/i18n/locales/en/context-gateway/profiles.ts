@@ -183,11 +183,11 @@ const profiles = {
     readOnly: 'Read only',
     modifiesData: 'Modifies data',
     executionNotice:
-      'The gateway runs selected tools without asking for permission in your client. Tools may change or delete data. With Show tool calls on, notices appear after each call.',
+      "The gateway runs the selected tools without the client's permission prompts, and some of them change or delete data. Show tool calls reports each call in the reply; it never asks for approval first.",
     showCalls: {
       label: 'Show tool calls',
       description:
-        'Add a one-line notice to the reply after each OpenViking tool call. These notices do not ask for permission before a call. The model never sees them, and they are not saved to OpenViking.',
+        'Add a one-line notice to the reply each time the gateway runs an OpenViking tool, so users can see the call. The model never sees these lines, and they are not saved to OpenViking.',
     },
     maxRounds: {
       label: 'Rounds per request',

@@ -72,8 +72,8 @@ def gateway_note(policy, tools):
         )
         lines.append(
             f"- The gateway runs the tools {listed} itself whenever it offers them. They are "
-            "not in the client's tool list" + seen
-            + " Tool names in their descriptions omit the openviking_ prefix."
+            f"not in the client's tool list{seen} Tool names in their descriptions omit the "
+            "openviking_ prefix."
         )
     if policy.capture:
         lines.append("- The gateway saves this conversation to the user's OpenViking memory.")

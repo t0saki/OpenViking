@@ -187,6 +187,8 @@ const nameInput = () =>
   screen.getByLabelText<HTMLInputElement>('profiles.name.label')
 const sectionSwitch = (section: string) =>
   screen.getByRole('switch', { name: `profiles.${section}.title` })
+/** A tool checkbox's accessible name starts with the tool name; its description follows. */
+const toolName = (name: string) => new RegExp(`^${name}\\b`)
 
 beforeEach(() => {
   vi.spyOn(window, 'scrollTo').mockImplementation(() => {})
@@ -440,13 +442,15 @@ describe('profile editor', () => {
     await screen.findByDisplayValue('Chat')
     expect(sectionSwitch('tools').getAttribute('aria-checked')).toBe('false')
     expect(api.listTools).not.toHaveBeenCalled()
-    expect(screen.queryByRole('checkbox', { name: 'find' })).toBeNull()
+    expect(
+      screen.queryByRole('checkbox', { name: toolName('find') }),
+    ).toBeNull()
     fireEvent.click(sectionSwitch('tools'))
-    await screen.findByRole('checkbox', { name: 'find' })
+    await screen.findByRole('checkbox', { name: toolName('find') })
     for (const tool of tools) {
       expect(
         screen
-          .getByRole('checkbox', { name: tool.name })
+          .getByRole('checkbox', { name: toolName(tool.name) })
           .getAttribute('aria-checked'),
       ).toBe('true')
       expect(screen.getByText(tool.description)).toBeTruthy()
@@ -455,9 +459,9 @@ describe('profile editor', () => {
       screen.queryByRole('switch', { name: 'profiles.tools.allowWrite.label' }),
     ).toBeNull()
     expect(screen.getByText('profiles.tools.executionNotice')).toBeTruthy()
-    fireEvent.click(screen.getByRole('checkbox', { name: 'write' }))
-    fireEvent.click(screen.getByRole('checkbox', { name: 'read' }))
-    fireEvent.click(screen.getByRole('checkbox', { name: 'read' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: toolName('write') }))
+    fireEvent.click(screen.getByRole('checkbox', { name: toolName('read') }))
+    fireEvent.click(screen.getByRole('checkbox', { name: toolName('read') }))
     fireEvent.click(saveButton())
 
     await waitFor(() => expect(api.saveProfile).toHaveBeenCalledTimes(1))
@@ -475,9 +479,13 @@ describe('profile editor', () => {
 
   it('uses only explicit readOnlyHint annotations for badges', async () => {
     renderAt('/context-gateway/profiles/p1')
-    await screen.findByRole('checkbox', { name: 'read' })
+    await screen.findByRole('checkbox', { name: toolName('read') })
     const labelFor = (name: string) =>
-      within(screen.getByRole('checkbox', { name }).closest('label')!)
+      within(
+        screen
+          .getByRole('checkbox', { name: toolName(name) })
+          .closest('label')!,
+      )
     expect(labelFor('read').getByText('profiles.tools.readOnly')).toBeTruthy()
     expect(
       labelFor('write').getByText('profiles.tools.modifiesData'),
@@ -492,11 +500,13 @@ describe('profile editor', () => {
 
   it('preserves missing tool exclusions while re-enabling a listed tool', async () => {
     renderAt('/context-gateway/profiles/p1')
-    const readTool = await screen.findByRole('checkbox', { name: 'read' })
+    const readTool = await screen.findByRole('checkbox', {
+      name: toolName('read'),
+    })
     expect(readTool.getAttribute('aria-checked')).toBe('false')
     expect(
       screen
-        .getByRole('checkbox', { name: 'future_tool' })
+        .getByRole('checkbox', { name: toolName('future_tool') })
         .getAttribute('aria-checked'),
     ).toBe('true')
     fireEvent.click(readTool)
@@ -511,9 +521,11 @@ describe('profile editor', () => {
     renderAt('/context-gateway/profiles/p2')
     await screen.findByDisplayValue('Chat')
     fireEvent.click(sectionSwitch('tools'))
-    await screen.findByRole('checkbox', { name: 'find' })
+    await screen.findByRole('checkbox', { name: toolName('find') })
     for (const tool of tools)
-      fireEvent.click(screen.getByRole('checkbox', { name: tool.name }))
+      fireEvent.click(
+        screen.getByRole('checkbox', { name: toolName(tool.name) }),
+      )
     expect(saveButton().disabled).toBe(false)
     fireEvent.click(saveButton())
     await waitFor(() => expect(api.saveProfile).toHaveBeenCalledTimes(1))
@@ -541,7 +553,7 @@ describe('profile editor', () => {
     expect(screen.queryByText('profiles.tools.empty')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'actions.retry' }))
     expect(
-      await screen.findByRole('checkbox', { name: 'future_tool' }),
+      await screen.findByRole('checkbox', { name: toolName('future_tool') }),
     ).toBeTruthy()
     expect(api.listTools).toHaveBeenCalledTimes(2)
   })

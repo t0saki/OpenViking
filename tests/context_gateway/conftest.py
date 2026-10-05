@@ -26,16 +26,17 @@ def mcp_tool(name, properties, required=()):
     }
 
 
+TEXT = {"type": "string"}
 MCP_TOOLS = [
-    mcp_tool("find", {"query": {"type": "string"}}, ("query",)),
-    mcp_tool("search", {"query": {"type": "string"}, "session_id": {"type": "string"}}, ("query",)),
-    mcp_tool("read", {"uris": {"type": "array", "items": {"type": "string"}}}, ("uris",)),
-    mcp_tool("list", {"uri": {"type": "string"}}, ("uri",)),
-    mcp_tool("write", {"uri": {"type": "string"}, "content": {"type": "string"}}, ("uri", "content")),
-    mcp_tool("add_resource", {"path": {"type": "string"}, "description": {"type": "string"}}),
-    mcp_tool("add_skill", {"path": {"type": "string"}, "data": {"type": "string"}, "target_uri": {"type": "string"}}),
-    mcp_tool("grep", {"uri": {"type": "string"}, "pattern": {"type": "string"}}, ("uri", "pattern")),
-    mcp_tool("glob", {"pattern": {"type": "string"}}, ("pattern",)),
+    mcp_tool("find", {"query": TEXT}, ("query",)),
+    mcp_tool("search", {"query": TEXT, "session_id": TEXT}, ("query",)),
+    mcp_tool("read", {"uris": {"type": "array", "items": TEXT}}, ("uris",)),
+    mcp_tool("list", {"uri": TEXT}, ("uri",)),
+    mcp_tool("write", {"uri": TEXT, "content": TEXT}, ("uri", "content")),
+    mcp_tool("add_resource", {"path": TEXT, "description": TEXT}),
+    mcp_tool("add_skill", {"path": TEXT, "data": TEXT, "target_uri": TEXT}),
+    mcp_tool("grep", {"uri": TEXT, "pattern": TEXT}, ("uri", "pattern")),
+    mcp_tool("glob", {"pattern": TEXT}, ("pattern",)),
     mcp_tool("health", {}),
 ]
 
@@ -216,9 +217,12 @@ async def running_gateway(tmp_path, monkeypatch):
 
     async def backend(request):
         if request.path == "/mcp" and (await request.json()).get("method") == "tools/list":
-            override.setdefault("tools_calls", []).append(request.headers.get("X-API-Key"))
-            if override.get("tools_error"):
-                return web.json_response({"error": "private server detail"}, status=503)
+            key = request.headers.get("X-API-Key")
+            override.setdefault("tools_calls", []).append(key)
+            # Maps an OpenViking key to the HTTP status its tools/list gets.
+            status = override.get("tools_status", {}).get(key, 200)
+            if status != 200:
+                return web.json_response({"error": "private server detail"}, status=status)
             return web.json_response(
                 {"jsonrpc": "2.0", "id": 1, "result": {"tools": override.get("catalog", MCP_TOOLS)}}
             )

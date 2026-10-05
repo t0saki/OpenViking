@@ -10,15 +10,9 @@ import orjson
 
 from .protocols import SSEDecoder, messages_of, usage_of
 from .records import RecordKind as K
+from .tool_catalog import notice_head
 from .tool_protocols import hidden_chain, tool_protocol
-from .tool_protocols.common import (
-    PREFIX,
-    ToolLoopError,
-    ToolRound,
-    add_usage,
-    notice_head,
-    notice_tail,
-)
+from .tool_protocols.common import PREFIX, ToolLoopError, ToolRound, add_usage, notice_tail
 
 
 def added_tokens(value):

@@ -3,14 +3,16 @@
 """Freeze MCP tool definitions with small gateway-specific overrides."""
 
 import copy
-import html
-import re
 
-from .protocols import enhanced_supported, messages_of
+import orjson
+
+from .protocols import enhanced_supported
 from .tool_protocols import tool_protocol
 from .tool_protocols.common import PREFIX
 
 TOOL_VERSION = 2
+# Only what the gateway adds to MCP: the arguments a notice names, in order of
+# preference, and the attachment upload hook with its usage note.
 TOOL_OVERRIDES = {
     "find": {"notice": ("query",)},
     "search": {"notice": ("query",)},
@@ -36,68 +38,6 @@ TOOL_OVERRIDES = {
         ),
     },
 }
-
-def has_shell(body):
-    return any(
-        re.search(
-            r"(^|[_-])(bash|shell|exec_command|terminal|run_command)([_-]|$)",
-            tool.get("function", tool).get("name", ""),
-            re.I,
-        )
-        for tool in body.get("tools", [])
-        if isinstance(tool, dict)
-    )
-
-
-def attachments(body):
-    output = []
-    for message in messages_of(body, "responses" if "input" in body else "chat"):
-        if message.get("role") not in {"user", "system"}:
-            continue
-        content = message.get("content", [])
-        if isinstance(content, list):
-            for part in content:
-                if isinstance(part, dict) and part.get("type") in {"file", "input_file"}:
-                    output.append(part.get("file", part))
-                elif isinstance(part, dict) and part.get("type") == "document":
-                    source = part.get("source", {})
-                    if source.get("type") == "base64":
-                        output.append(
-                            {
-                                "filename": part.get("title", "attachment.pdf"),
-                                "file_data": source.get("data", ""),
-                            }
-                        )
-                    elif source.get("type") == "text":
-                        output.append(
-                            {
-                                "filename": part.get("title", "attachment.txt"),
-                                "text": source.get("data", ""),
-                            }
-                        )
-        # Open WebUI can send extracted documents as source tags instead of bytes.
-        # Only marked source text is importable, never arbitrary conversation text.
-        texts = (
-            [content]
-            if isinstance(content, str)
-            else [p.get("text", "") for p in content if isinstance(p, dict)]
-        )
-        for text in texts:
-            for context in re.findall(r"<context>([\s\S]*?)</context>", text):
-                for index, (attrs, source) in enumerate(
-                    re.findall(r"<source\b([^>]*)>([\s\S]*?)</source>", context)
-                ):
-                    name = re.search(r'name=["\']([^"\']+)["\']', attrs)
-                    filename = html.unescape(name[1]) if name else f"source-{index}.txt"
-                    output.append(
-                        {
-                            "filename": filename + ".txt"
-                            if not filename.endswith(".txt")
-                            else filename,
-                            "text": html.unescape(source),
-                        }
-                    )
-    return output
 
 
 def tool_block_reason(body, protocol, upstream):
@@ -125,9 +65,8 @@ def tool_block_reason(body, protocol, upstream):
     return ""
 
 
-def select_tools(body, protocol, upstream, policy, catalog):
-    if not policy.get("gateway_tools") or tool_block_reason(body, protocol, upstream):
-        return []
+def select_tools(catalog, policy):
+    """Freeze the MCP tools the policy leaves enabled as prefixed function tools."""
     disabled = set(policy.get("disabled_tools", []))
     selected = []
     for tool in catalog:
@@ -153,3 +92,36 @@ def select_tools(body, protocol, upstream, policy, catalog):
             }
         )
     return selected
+
+
+def clip(value, limit=80):
+    value = " ".join(value.split())
+    return value if len(value) <= limit else value[: limit - 1] + "…"
+
+
+def notice_head(item):
+    """The visible line for one gateway-run call, shown before it runs."""
+    short = item["function"]["name"].removeprefix(PREFIX)
+    try:
+        args = orjson.loads(item["function"].get("arguments") or "{}")
+    except (TypeError, ValueError):
+        args = {}
+    args = args if isinstance(args, dict) else {}
+    target = ""
+    for key in TOOL_OVERRIDES.get(short, {}).get("notice", ()):
+        value = args.get(key)
+        if key == "attachment_index":
+            target = f"attachment {value}" if type(value) is int else ""
+        elif key == "uris" and isinstance(value, list):
+            uris = [clip(u) for u in value if isinstance(u, str) and u.strip()]
+            more = f" (+{len(uris) - 1} more)" if len(uris) > 1 else ""
+            target = uris[0] + more if uris else ""
+        elif isinstance(value, str) and value.strip():
+            target = clip(value)
+            if key == "query":
+                target = f'"{target}"'
+            elif key == "data":
+                target = "SKILL.md text"
+        if target:
+            break
+    return "> OpenViking " + short + (": " + target if target else "")

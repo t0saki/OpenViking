@@ -111,7 +111,7 @@ Relevant memory from OpenViking. Use the openviking_read tool to expand URIs.
 
 以上数字都来自密钥使用的**上下文配置**。你可以在其中调整预算和时间，也可以分别关闭每项功能。
 
-**OpenViking 工具。** 上下文配置还可以允许模型在回答时使用 OpenViking 服务提供的工具。支持 Chat Completions、完整历史的 Responses 和 Anthropic Messages，包括流式和非流式回复，默认关闭。开启后默认选择全部可用工具；不希望模型使用的工具可以取消勾选，包括会修改数据的工具。它们不经过客户端的权限确认。启用方法和客户端要求见 [OpenViking 工具](22-context-gateway-operations.md#openviking-工具)。
+**OpenViking 工具。** 上下文配置还可以允许模型在回答时使用 OpenViking 服务提供的工具。支持 Chat Completions、完整历史的 Responses 和 Anthropic Messages，包括流式和非流式回复，默认关闭。开启后默认选中 OpenViking 提供的全部工具，其中也有会修改或删除数据的工具，而且网关执行它们时不经过客户端的权限确认；不希望模型使用的工具可以取消勾选。启用方法和客户端要求见 [OpenViking 工具](22-context-gateway-operations.md#openviking-工具)。
 
 ## 快速开始
 

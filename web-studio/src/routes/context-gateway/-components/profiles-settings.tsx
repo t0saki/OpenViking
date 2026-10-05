@@ -189,14 +189,12 @@ function OptionGroup({
   id,
   label,
   description,
-  badge,
   error,
   children,
 }: {
   id: string
   label: string
   description?: string
-  badge?: React.ReactNode
   error?: string
   children: React.ReactNode
 }) {
@@ -219,11 +217,14 @@ function OptionCheckbox({
   onCheckedChange,
   label,
   description,
+  badge,
 }: {
   checked: boolean
   onCheckedChange: (checked: boolean) => void
   label: string
   description?: string
+  /** Shown after the label, such as a tool's read-only mark. */
+  badge?: React.ReactNode
 }) {
   if (!description && !badge) {
     return (
@@ -583,7 +584,7 @@ export function ProfileSettingsForm({
               onRetry={() => void tools.refetch()}
             />
           ) : tools.data.length === 0 ? (
-            <Notice>{t('profiles.tools.empty')}</Notice>
+            <Notice tone="info">{t('profiles.tools.empty')}</Notice>
           ) : (
             <div className="grid gap-2 md:grid-cols-2">
               {tools.data.map(toolOption)}
