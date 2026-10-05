@@ -25,6 +25,7 @@ export const PROFILE_DEFAULTS: ProfileSettings = {
   archive_wait_seconds: 30,
   gateway_tools: false,
   allow_write_tools: false,
+  show_tool_calls: true,
   tool_allowlist: ['search', 'read', 'list'],
   tool_max_rounds: 5,
   tool_timeout_seconds: 30,

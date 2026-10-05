@@ -230,9 +230,10 @@ def completion(message, finish="stop", **extra):
 
 @pytest.mark.parametrize("streaming", [False, True])
 @pytest.mark.parametrize("mixed", [False, True])
-async def test_hidden_tools_mixed_replay_and_usage(running_gateway, streaming, mixed):
+@pytest.mark.parametrize("show", [True, False])
+async def test_hidden_tools_mixed_replay_and_usage(running_gateway, streaming, mixed, show):
     app, client, admin, key, _, _ = running_gateway
-    await enable_tools(client, admin)
+    await enable_tools(client, admin, show_tool_calls=show)
     calls, model_requests = [], []
 
     async def backend(request):
@@ -335,7 +336,8 @@ async def test_hidden_tools_mixed_replay_and_usage(running_gateway, streaming, m
         "model": "model",
         "messages": [{"role": "user", "content": "Find blue"}],
         "stream": streaming,
-        "stream_options": {"include_usage": True},
+        # Some clients send a null stream_options on nonstreaming requests.
+        "stream_options": {"include_usage": True} if streaming else None,
         "tools": [
             {
                 "type": "function",
@@ -375,7 +377,12 @@ async def test_hidden_tools_mixed_replay_and_usage(running_gateway, streaming, m
     else:
         visible = response.json()["choices"][0]["message"]
         assert response.json()["provider_field"] == "keep"
-    assert visible["content"] == ("Looking. " if mixed else "Looking. Blue.")
+    notice = '\n\n> OpenViking search: "blue" — done\n\n' if show else ""
+    assert visible["content"] == "Looking. " + notice + ("" if mixed else "Blue.")
+    if streaming and show:
+        # The call's head streams before it runs; its outcome follows.
+        deltas = [c["delta"].get("content") for e in events for c in e.get("choices", [])]
+        assert deltas[1:4] == ['\n\n> OpenViking search: "blue"', " — done", "\n\n"]
     # A typical chat UI drops reasoning/unknown fields from its returned history.
     visible = {k: v for k, v in visible.items() if k in {"role", "content", "tool_calls"}}
     body["messages"].append(visible)
@@ -396,6 +403,8 @@ async def test_hidden_tools_mixed_replay_and_usage(running_gateway, streaming, m
     assert replay["messages"][2]["tool_call_id"] == "g-1"
     if mixed:
         assert replay["messages"][3]["tool_call_id"] == "c-1"
+    # The notices stay in the replaced visible span; the model never sees them.
+    assert "> OpenViking" not in orjson.dumps(replay).decode()
     assert len(calls) == 1
     logs = (await client.get("/admin/logs", headers=admin)).json()
     assert any(log.get("hidden_rounds") == 1 for log in logs)

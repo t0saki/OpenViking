@@ -455,11 +455,19 @@ server {
 
 模型在同一条回复中同时调用 OpenViking 和客户端工具时，网关会处理 OpenViking 调用，客户端照常执行自己的工具并回传结果。Responses 支持客户端的 function 和 custom 工具，Anthropic Messages 支持客户端的 tool_use 调用。
 
-这项功能面向无法连接 OpenViking MCP 服务器的聊天应用和 API 应用。支持 MCP 或有插件的客户端，例如 Claude Code 和 Codex，用 MCP 或插件更合适，因为工具调用在那里看得见。
+这项功能面向无法连接 OpenViking MCP 服务器的聊天应用和 API 应用。支持 MCP 或有插件的客户端，例如 Claude Code 和 Codex，用 MCP 或插件更合适，因为客户端会在那里显示每次工具调用及其结果，并在调用前请求确认。
 
 要开启工具，在上下文配置中打开 **OpenViking 工具**部分，在**工具**下勾选**检索**、**读取**和**列出目录**。每个上游的**允许 OpenViking 工具**默认开启。保存之后开始的对话会带上这些工具，模型看到的名称是 `openviking_search`、`openviking_read` 和 `openviking_list`。对话开始时，网关会告诉模型这些工具由网关提供，不在客户端的工具列表里。写入工具**写入**（`openviking_write`）、**导入文件**（`openviking_add_resource`）和**导入技能**（`openviking_add_skill`）只有在开启**允许写入工具**并勾选对应工具后才会提供。
 
 > **注意**：工具调用在网关内部执行，从不经过客户端的权限确认。写入工具会在不询问用户的情况下修改用户的 OpenViking 数据。只给清楚这一点的用户开启写入工具。
+
+**工具调用提示。** 开启**显示工具调用**（默认开启）时，网关每执行一次 OpenViking 工具调用，就在回复中调用发生的位置加一行提示：
+
+```text
+> OpenViking search: "release date" — done
+```
+
+提示写明工具名和调用对象：检索的查询词，读取、列出或写入的 URI，或者正在导入的文件或技能。流式回复中，调用一开始提示就会出现，所以导入这类耗时的调用进行时，用户也能看到网关在工作；非流式回复会在最终消息里带上同样的提示。调用结束后再补上结果：`done` 表示完成，`failed` 表示调用返回了错误，`skipped` 表示 token 预算已经用完，网关没有执行这次调用。每条提示单独成段。在 Chat Completions 中，提示是回复文本的一部分；在 Anthropic Messages 中，同一轮调用的提示放在同一个文本块里；在 Responses 中，同一轮调用的提示放在同一条助手消息里。模型看不到这些提示，它收到的是真实的调用和结果；网关也不会把提示保存到 OpenViking。要隐藏提示，在上下文配置的 **OpenViking 工具**部分关闭**显示工具调用**，回复里就只有模型自己的输出。和其他工具设置一样，改动只影响新对话。
 
 对话是否带工具，在它的第一个请求时就决定了，之后保持不变，所以修改上下文配置只影响新对话。请求没有带工具时，请求日志的详情会说明原因：
 
@@ -644,6 +652,7 @@ URL 类设置必须是普通的 `http` 或 `https` 地址，不能包含账号�
 | OpenViking 工具 | `gateway_tools` | `false` | | 为 Chat、完整历史的 Responses 和 Anthropic Messages 提供 OpenViking 工具。 |
 | 允许写入工具 | `allow_write_tools` | `false` | | 提供任何写入工具之前都必须开启。 |
 | 工具 | `tool_allowlist` | `search`、`read`、`list` | `search`、`read`、`list`、`write`、`add_resource`、`add_skill` | 提供哪些工具，名称为 `openviking_<name>`。 |
+| 显示工具调用 | `show_tool_calls` | `true` | | 每次 OpenViking 工具调用都在回复里加一行提示。 |
 | 每次请求的工具轮数 | `tool_max_rounds` | `5` | 1–20 | 见 [OpenViking 工具](#openviking-工具)。 |
 | 单次调用超时 | `tool_timeout_seconds` | `30` | 最多 120 | |
 | 结果大小上限 | `tool_result_bytes` | `65536` | 1,024–1,048,576 | |

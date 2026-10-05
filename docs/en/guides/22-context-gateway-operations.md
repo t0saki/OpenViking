@@ -455,11 +455,19 @@ Tools support streaming and nonstreaming requests in all three protocols:
 
 If a reply calls both OpenViking and client tools, the gateway handles the OpenViking calls. The client runs its own tools and returns their results as usual. Responses supports client function and custom tools; Anthropic Messages supports client tool_use calls.
 
-This is meant for chat apps and API apps that cannot connect to OpenViking's MCP server. Clients that support MCP or have a plugin, such as Claude Code and Codex, are better served by those, where tool calls are visible.
+This is meant for chat apps and API apps that cannot connect to OpenViking's MCP server. Clients that support MCP or have a plugin, such as Claude Code and Codex, are better served by those, where the client shows each tool call with its result and asks for permission first.
 
 To turn the tools on, enable the **OpenViking tools** section in a context profile and check the tools under **Tools**: **Search**, **Read** and **List**. **Allow OpenViking tools** is on by default on every upstream. Conversations that start after you save get the tools. The model sees them as `openviking_search`, `openviking_read` and `openviking_list`, and is told at the start of the conversation that these tools come from the gateway and are not in the client's tool list. The write tools, **Write** (`openviking_write`), **Import files** (`openviking_add_resource`) and **Import skills** (`openviking_add_skill`), are offered only when **Allow write tools** is on and the tool is checked.
 
 > **Note**: Tool calls run inside the gateway, so they never go through the client's permission prompts. A write tool changes the user's OpenViking data without asking. Allow write tools only for users who expect that.
+
+**Tool call notices.** With **Show tool calls** on (the default), the reply gets a one-line notice for each OpenViking tool call the gateway runs, at the point in the answer where the call happened:
+
+```text
+> OpenViking search: "release date" — done
+```
+
+The notice names the tool and what it works on: the search query, the URI read, listed or written, or the file or skill being imported. In a streaming reply it appears as soon as the call starts, so users can see that something is happening during a slow import; a nonstreaming reply gets the same lines in the final message. The outcome is added when the call ends: `done`; `failed` when the call returned an error; `skipped` when the token budget was already spent and the gateway did not run the call. Each notice is a paragraph of its own. In Chat Completions the notices are part of the reply text. In Anthropic Messages the notices for one round of calls share one text block, and in Responses they share one assistant message. The model never sees these lines; it gets the actual calls and results. The gateway does not save the notices to OpenViking either. To hide them, turn off **Show tool calls** in the profile's **OpenViking tools** section, and the reply contains only the model's own output. Like the other tool settings, the change applies to new conversations.
 
 Whether a conversation gets tools is decided at its first request and kept, so profile changes reach new conversations only. When a request runs without tools, its detail on the Requests tab says why:
 
@@ -644,6 +652,7 @@ URL settings must be plain `http` or `https` addresses without credentials, quer
 | OpenViking tools | `gateway_tools` | `false` | | Offer OpenViking tools for Chat, full-history Responses and Anthropic Messages. |
 | Allow write tools | `allow_write_tools` | `false` | | Required before any write tool is offered. |
 | Tools | `tool_allowlist` | `search`, `read`, `list` | `search`, `read`, `list`, `write`, `add_resource`, `add_skill` | The tools offered, as `openviking_<name>`. |
+| Show tool calls | `show_tool_calls` | `true` | | Add a one-line notice to the reply for each OpenViking tool call. |
 | Rounds per request | `tool_max_rounds` | `5` | 1–20 | See [OpenViking tools](#openviking-tools). |
 | Time limit per call | `tool_timeout_seconds` | `30` | up to 120 | |
 | Result size | `tool_result_bytes` | `65536` | 1,024–1,048,576 | |

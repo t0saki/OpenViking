@@ -198,7 +198,12 @@ const profiles = {
       label: 'Allow write tools',
       description: 'Let the model change data in OpenViking.',
       warning:
-        "The model decides when to call write tools, and the client doesn't see these calls. Import files and Import skills are offered only when the client can run shell commands or the conversation has an attachment; importing a local file also needs context_gateway.public_url in ov.conf.",
+        "The model decides when to call write tools; unless Show tool calls is on, the client doesn't see these calls. Import files and Import skills are offered only when the client can run shell commands or the conversation has an attachment; importing a local file also needs context_gateway.public_url in ov.conf.",
+    },
+    showCalls: {
+      label: 'Show tool calls',
+      description:
+        'Add a one-line notice to the reply each time the gateway runs an OpenViking tool, so users can see the call. The model never sees these lines, and they are not saved to OpenViking.',
     },
     maxRounds: {
       label: 'Rounds per request',

@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import orjson
 import pytest
 
+from openviking_context_gateway.capture import capture_messages
 from openviking_context_gateway.models import Policy, Upstream
 from openviking_context_gateway.protocols import ResponseCapture
 from openviking_context_gateway.proxy import upstream_url
@@ -13,8 +14,13 @@ from openviking_context_gateway.storage import SQLiteKernelStore
 from openviking_context_gateway.tool_catalog import attachments, select_tools
 from openviking_context_gateway.tool_executor import ToolExecutor, attachment_bytes
 from openviking_context_gateway.tool_loop import HiddenToolLoop
-from openviking_context_gateway.tool_protocols import hidden_chain
-from openviking_context_gateway.tool_protocols.common import sse
+from openviking_context_gateway.tool_protocols import hidden_chain, tool_protocol
+from openviking_context_gateway.tool_protocols.common import (
+    NOTICE,
+    notice_head,
+    notice_tail,
+    sse,
+)
 from openviking_context_gateway.vendors import ark_url
 
 
@@ -216,6 +222,187 @@ async def test_stream_text_precedes_tool_completion_and_cancel_closes():
     assert b"live text" in event and not waiting.is_set()
     await stream.aclose()
     assert closed and not loop.capture.complete
+
+
+def gateway_call(name, arguments, identifier="g-1"):
+    if not isinstance(arguments, str):
+        arguments = orjson.dumps(arguments).decode()
+    return {
+        "id": identifier,
+        "type": "function",
+        "function": {"name": "openviking_" + name, "arguments": arguments},
+    }
+
+
+@pytest.mark.parametrize(
+    "name,arguments,expected",
+    [
+        ("search", {"query": " release\n  date "}, '> OpenViking search: "release date"'),
+        ("search", {"query": "q" * 200}, '> OpenViking search: "' + "q" * 79 + '…"'),
+        ("read", {"uris": ["viking://a"]}, "> OpenViking read: viking://a"),
+        (
+            "read",
+            {"uris": ["viking://a", "viking://b", 3]},
+            "> OpenViking read: viking://a (+1 more)",
+        ),
+        ("list", {"uri": "viking://resources"}, "> OpenViking list: viking://resources"),
+        ("list", {}, "> OpenViking list"),
+        ("write", {"uri": "viking://n.md", "content": "x"}, "> OpenViking write: viking://n.md"),
+        ("add_resource", {"path": "https://x/a.pdf"}, "> OpenViking add_resource: https://x/a.pdf"),
+        ("add_resource", {"attachment_index": 0}, "> OpenViking add_resource: attachment 0"),
+        ("add_resource", {"attachment_index": True}, "> OpenViking add_resource"),
+        ("add_skill", {"path": "./s", "target_uri": "viking://t"}, "> OpenViking add_skill: ./s"),
+        ("add_skill", {"target_uri": "viking://t"}, "> OpenViking add_skill: viking://t"),
+        ("add_skill", {"attachment_index": 1}, "> OpenViking add_skill: attachment 1"),
+        ("add_skill", {"data": "---\nname: s"}, "> OpenViking add_skill: SKILL.md text"),
+        ("add_skill", {}, "> OpenViking add_skill"),
+        ("search", "not json", "> OpenViking search"),
+        ("search", "[1]", "> OpenViking search"),
+        ("search", {"query": "  "}, "> OpenViking search"),
+    ],
+)
+def test_notice_names_each_call_target(name, arguments, expected):
+    head = notice_head(gateway_call(name, arguments))
+    assert head == expected
+    # Capture must recognize every rendered line, whatever its outcome.
+    for outcome in ("done", "failed", "skipped"):
+        assert NOTICE.fullmatch(head + " — " + outcome)
+
+
+@pytest.mark.parametrize(
+    "content,skipped,expected",
+    [
+        ('{"content":[{"type":"text","text":"ok"}]}', False, " — done"),
+        ('{"content":[{"type":"text","text":"denied"}],"isError":true}', False, " — failed"),
+        ('{"error":"Tool is not allowed"}', False, " — failed"),
+        ('{"truncated":true,"text":"{\\"error\\""}', False, " — done"),
+        ("plain text", False, " — done"),
+        ("Gateway tool budget reached; answer using the available results.", True, " — skipped"),
+    ],
+)
+def test_notice_outcome(content, skipped, expected):
+    assert notice_tail(content, skipped) == expected
+
+
+async def test_notices_stream_around_each_gateway_call():
+    contents = iter(['{"content":[]}', '{"error":"' + "x" * 4000 + '"}'])
+    deltas, seen = [], []
+
+    async def execute(call):
+        # The call's head has already streamed when the call starts.
+        seen.append(deltas[-1])
+        return {"role": "tool", "tool_call_id": call["id"], "content": next(contents)}
+
+    prepared = SimpleNamespace(
+        body={"messages": [], "stream": True},
+        protocol="chat",
+        root={"policy": {"tool_total_tokens": 1000}},
+        metrics={},
+    )
+    executor = SimpleNamespace(allowed={"openviking_search"}, execute=execute)
+    loop = HiddenToolLoop(prepared, executor, None, ResponseCapture("chat"))
+    loop.adapter.begin()
+    calls = [
+        gateway_call("search", {"query": "blue"}, "g-1"),
+        gateway_call("add_resource", {"attachment_index": 0}, "g-2"),
+        gateway_call("read", {"uris": ["viking://a", "viking://b"]}, "g-3"),
+    ]
+    async for chunk in loop.execute(calls):
+        deltas.append(orjson.loads(chunk.removeprefix(b"data: "))["choices"][0]["delta"]["content"])
+    assert deltas == [
+        '\n\n> OpenViking search: "blue"',
+        " — done",
+        "\n\n> OpenViking add_resource: attachment 0",
+        " — failed",
+        "\n\n> OpenViking read: viking://a (+1 more)",
+        " — skipped",
+        "\n\n",
+    ]
+    assert seen == [deltas[0], deltas[2]]
+    assert loop.adapter.visible[0]["content"] == "".join(deltas)
+    # The model receives the real results, never the notices.
+    assert "OpenViking" not in orjson.dumps(loop.body["messages"]).decode()
+
+
+async def test_notices_off_leave_the_reply_unchanged():
+    async def execute(call):
+        return {"role": "tool", "tool_call_id": call["id"], "content": "{}"}
+
+    prepared = SimpleNamespace(
+        body={"messages": [], "stream": True},
+        protocol="chat",
+        root={"policy": {"show_tool_calls": False}},
+        metrics={},
+    )
+    executor = SimpleNamespace(allowed={"openviking_search"}, execute=execute)
+    loop = HiddenToolLoop(prepared, executor, None, ResponseCapture("chat"))
+    loop.adapter.begin()
+    events = [e async for e in loop.execute([gateway_call("search", {"query": "blue"})])]
+    assert events == [] and loop.adapter.visible == [{"role": "assistant", "content": ""}]
+
+
+def test_capture_drops_tool_notices_from_assistant_text():
+    notice = "\n\n> OpenViking add_resource: https://x/a.pdf — done\n\n"
+    two = '\n\n> OpenViking search: "a — b" — done\n\n> OpenViking read: viking://a — failed\n\n'
+    messages = [
+        {"role": "user", "content": '> OpenViking search: "quoted by the user" — done'},
+        {"role": "assistant", "content": "Let me call it." + notice + "Added."},
+        {"role": "user", "content": "Again"},
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "text", "text": "Looking."},
+                {"type": "text", "text": two},
+                {"type": "text", "text": "Found it."},
+            ],
+        },
+        {"role": "user", "content": "Import it"},
+        {
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": notice}],
+        },
+    ]
+    captured = capture_messages(messages, [str(i) for i in range(len(messages))])
+    texts = [m["parts"][0]["text"] for m in captured]
+    assert texts == [
+        messages[0]["content"],
+        "Let me call it.\n\nAdded.",
+        "Again",
+        "Looking.\n\n\nFound it.",
+        "Import it",
+    ]
+
+
+@pytest.mark.parametrize("protocol", ["chat", "anthropic", "responses"])
+def test_omitted_hidden_history_drops_tool_notices(protocol):
+    notice = '\n\n> OpenViking search: "blue" — done\n\n'
+    messages = [
+        {"role": "user", "content": notice},
+        {"role": "assistant", "content": "Looking." + notice + "Blue."},
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "text", "text": "Looking."},
+                {"type": "text", "text": notice},
+                {"type": "tool_use", "id": "c-1", "name": "shell", "input": {}},
+            ],
+        },
+        {
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": notice}],
+        },
+        {"type": "function_call", "call_id": "c-1", "name": "shell", "arguments": "{}"},
+    ]
+    cleaned = tool_protocol(protocol).omit_hidden_history(messages)
+    # Only assistant text changes; a part or item left empty is dropped.
+    assert cleaned == [
+        messages[0],
+        {"role": "assistant", "content": "Looking.\n\nBlue."},
+        {"role": "assistant", "content": [messages[2]["content"][0], messages[2]["content"][2]]},
+        messages[4],
+    ]
 
 
 @pytest.mark.parametrize(

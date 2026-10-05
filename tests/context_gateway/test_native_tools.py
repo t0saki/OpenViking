@@ -300,12 +300,76 @@ def visible_response(protocol, response, streaming):
     return value
 
 
+NOTICE = '\n\n> OpenViking search: "blue" — done\n\n'
+
+
+def expected_output(protocol, upstream, show):
+    """Visible items of every round, a notice after each round of gateway calls."""
+    output = []
+    for value in upstream:
+        items = value["output"] if protocol == "responses" else value["content"]
+        calls = [i for i in items if i["type"] in {"function_call", "custom_tool_call", "tool_use"}]
+        output += [i for i in items if i not in calls]
+        if show and any(c.get("call_id", c.get("id")).startswith("gateway-") for c in calls):
+            output.append(
+                {"notice": True} if protocol == "responses" else {"type": "text", "text": NOTICE}
+            )
+        output += [c for c in calls if not c.get("call_id", c.get("id")).startswith("gateway-")]
+    return output
+
+
+def check_notice_events(protocol, response, notices):
+    """Each notice streams its head before the call runs, like a model's own text."""
+    events = [SSEDecoder.data(f) for f in SSEDecoder().feed(response.content)]
+    head, tail = '\n\n> OpenViking search: "blue"', " — done"
+    if protocol == "anthropic":
+        starts = [e["index"] for e in events if e["type"] == "content_block_start"]
+        assert sorted(e["index"] for e in events if e["type"] == "content_block_stop") == starts
+        texts = [e for e in events if e.get("delta", {}).get("text") == head]
+        assert len(texts) == notices
+        for delta in texts:
+            sequence = [e for e in events if e.get("index") == delta["index"]]
+            assert [e["type"] for e in sequence] == [
+                "content_block_start",
+                *["content_block_delta"] * 3,
+                "content_block_stop",
+            ]
+            assert sequence[0]["content_block"] == {"type": "text", "text": ""}
+            assert [e["delta"]["text"] for e in sequence[1:4]] == [head, tail, "\n\n"]
+        return
+    items = [
+        e["item"]
+        for e in events
+        if e["type"] == "response.output_item.done" and "role" in e["item"]
+    ]
+    items = [i for i in items if i["content"][0]["text"] == NOTICE]
+    assert len(items) == notices
+    for item in items:
+        sequence = [
+            e for e in events if e.get("item_id", e.get("item", {}).get("id")) == item["id"]
+        ]
+        assert [e["type"] for e in sequence] == [
+            "response.output_item.added",
+            "response.content_part.added",
+            *["response.output_text.delta"] * 3,
+            "response.output_text.done",
+            "response.content_part.done",
+            "response.output_item.done",
+        ]
+        assert len({e["output_index"] for e in sequence}) == 1
+        assert all(e["content_index"] == 0 for e in sequence[1:-1])
+        assert sequence[0]["item"] == {**item, "status": "in_progress", "content": []}
+        assert [e["delta"] for e in sequence[2:5]] == [head, tail, "\n\n"]
+        assert sequence[5]["text"] == NOTICE
+
+
 @pytest.mark.parametrize("protocol", ["responses", "anthropic"])
 @pytest.mark.parametrize("streaming", [False, True])
 @pytest.mark.parametrize("mixed", [False, True])
-async def test_native_hidden_rounds_exact_replay(running_gateway, protocol, streaming, mixed):
+@pytest.mark.parametrize("show", [True, False])
+async def test_native_hidden_rounds_exact_replay(running_gateway, protocol, streaming, mixed, show):
     app, client, admin, key, _, _ = running_gateway
-    await enable_tools(client, admin)
+    await enable_tools(client, admin, show_tool_calls=show)
     requests, calls, upstream = [], [], []
 
     async def backend(request):
@@ -343,6 +407,15 @@ async def test_native_hidden_rounds_exact_replay(running_gateway, protocol, stre
     visible = visible_response(protocol, response, streaming)
     rounds = 1 if mixed else 3
     assert len(requests) == rounds and len(calls) == (1 if mixed else 2)
+    shown = visible["output"] if protocol == "responses" else visible["content"]
+    if protocol == "responses":
+        notices = [i for i in shown if i["type"] == "message" and i["content"][0]["text"] == NOTICE]
+        assert all(i["id"].startswith("msg_") and i["status"] == "completed" for i in notices)
+        shown = [{"notice": True} if i in notices else i for i in shown]
+    # Without notices the reply is exactly the model's visible output.
+    assert shown == expected_output(protocol, upstream, show)
+    if streaming and show:
+        check_notice_events(protocol, response, 1 if mixed else 2)
     assert visible["usage"]["input_tokens"] == rounds * 110000
     assert visible["usage"]["output_tokens"] == rounds * 20
     field = "input" if protocol == "responses" else "messages"
@@ -387,6 +460,8 @@ async def test_native_hidden_rounds_exact_replay(running_gateway, protocol, stre
         if not mixed:
             assert requests[1][field] == replay[field][: len(requests[1][field])]
             assert requests[2][field] == replay[field][: len(requests[2][field])]
+    # Notices are visible history only; no model request ever contains one.
+    assert not any("> OpenViking" in orjson.dumps(r).decode() for r in requests)
     # Capture remains on the same OV session as the final/client-tool continuation.
     logs = (await client.get("/admin/logs", headers=admin)).json()
     assert len({log["session"] for log in logs}) == 1
@@ -931,6 +1006,9 @@ async def test_admin_disabling_anthropic_tools_preserves_history_and_logs(
     if used_gateway_tool:
         assert logs[0]["degradation"] == "hidden_tool_history_unavailable"
         assert "signature" not in orjson.dumps(requests[-1]["messages"]).decode()
+        # The echoed notices go with the hidden history they described.
+        assert "> OpenViking" in orjson.dumps(body["messages"]).decode()
+        assert "> OpenViking" not in orjson.dumps(requests[-1]["messages"]).decode()
     else:
         assert not logs[0].get("degradation")
         assert requests[-1]["messages"] == [requests[0]["messages"][0], *body["messages"][1:]]

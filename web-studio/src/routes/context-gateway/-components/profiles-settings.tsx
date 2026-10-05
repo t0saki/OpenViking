@@ -559,6 +559,13 @@ export function ProfileSettingsForm({
             {WRITE_TOOLS.map(toolOption)}
           </div>
         </ToggleRow>
+        <ToggleRow
+          id="profile-show_tool_calls"
+          label={t('profiles.tools.showCalls.label')}
+          description={t('profiles.tools.showCalls.description')}
+          checked={value.show_tool_calls}
+          onCheckedChange={(show_tool_calls) => onChange({ show_tool_calls })}
+        />
       </SettingSection>
     </>
   )

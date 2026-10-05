@@ -11,7 +11,14 @@ import orjson
 from .protocols import SSEDecoder, messages_of, usage_of
 from .records import RecordKind as K
 from .tool_protocols import hidden_chain, tool_protocol
-from .tool_protocols.common import PREFIX, ToolLoopError, ToolRound, add_usage
+from .tool_protocols.common import (
+    PREFIX,
+    ToolLoopError,
+    ToolRound,
+    add_usage,
+    notice_head,
+    notice_tail,
+)
 
 
 def added_tokens(value):
@@ -82,7 +89,12 @@ class HiddenToolLoop:
         for key, value in normalized.items():
             self.prepared.metrics[prefix + key] = self.prepared.metrics.get(prefix + key, 0) + value
 
+    def stream(self, events):
+        # Adapters update visible history either way; only streams send events.
+        return [self.adapter.encode(e) for e in events] if self.body.get("stream") else []
+
     async def execute(self, calls):
+        """Run gateway-owned calls, yielding the visible notice for each one."""
         if (
             self.rounds >= self.policy.get("tool_max_rounds", 5)
             or self.adapter.tool_choice(self.body) == "none"
@@ -90,9 +102,17 @@ class HiddenToolLoop:
             raise ToolLoopError("Model exceeded the hidden tool round limit")
         if not self.rounds:
             self.token_cost += added_tokens(calls)
+        show = self.policy.get("show_tool_calls", True)
+        events = self.adapter.open_notice() if show else []
         results = []
         for call in calls:
-            if self.token_cost >= self.policy.get("tool_total_tokens", 100000):
+            skipped = self.token_cost >= self.policy.get("tool_total_tokens", 100000)
+            if show:
+                # The head streams before a slow call runs; its outcome follows.
+                events.extend(self.adapter.notice("\n\n" + notice_head(call)))
+                for event in self.stream(events):
+                    yield event
+            if skipped:
                 result = {
                     "role": "tool",
                     "tool_call_id": call["id"],
@@ -100,8 +120,14 @@ class HiddenToolLoop:
                 }
             else:
                 result = await self.executor.execute(call)
+            if show:
+                events = self.adapter.notice(notice_tail(result["content"], skipped))
             results.append(result)
             self.token_cost += added_tokens(result)
+        if show:
+            events.extend([*self.adapter.notice("\n\n"), *self.adapter.close_notice()])
+            for event in self.stream(events):
+                yield event
         results = self.adapter.results(results)
         self.transcript.extend(results)
         self.body[self.adapter.field].extend([*self.round.output, *results])
@@ -161,11 +187,10 @@ class HiddenToolLoop:
                     if owned:
                         if not self.round.tool_handoff:
                             raise ToolLoopError("Gateway tool call has an invalid stop reason")
-                        await self.execute(owned)
-                    events = self.adapter.publish_calls(client)
-                    if self.body.get("stream"):
-                        for event in events:
-                            yield self.adapter.encode(event)
+                        async for event in self.execute(owned):
+                            yield event
+                    for event in self.stream(self.adapter.publish_calls(client)):
+                        yield event
                     if client or not owned:
                         await self.persist()
                         if self.body.get("stream"):

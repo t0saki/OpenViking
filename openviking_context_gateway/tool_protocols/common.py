@@ -7,6 +7,7 @@ execute tools, own budgets, or access storage. The shared loop owns those steps.
 """
 
 import copy
+import re
 import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -18,6 +19,9 @@ from ..protocols import prefix_chain
 PREFIX = "openviking_"
 # None is the Chat Completions [DONE] marker; all other events are native JSON.
 StreamEvent = dict | None
+# One rendered notice line, with the blank lines that separate it. Capture
+# strips exactly these lines, so this pattern must follow notice_head/tail.
+NOTICE = re.compile(r"^> OpenViking \w+(?:: [^\n]+)? — (?:done|failed|skipped)$\n*", re.M)
 
 
 class ToolLoopError(Exception):
@@ -62,6 +66,78 @@ def call(identifier, name, arguments):
         "type": "function",
         "function": {"name": name, "arguments": arguments},
     }
+
+
+def clip(value, limit=80):
+    value = " ".join(value.split())
+    return value if len(value) <= limit else value[: limit - 1] + "…"
+
+
+def notice_head(item):
+    """The visible line for one gateway-run call, shown before it runs."""
+    short = item["function"]["name"].removeprefix(PREFIX)
+    try:
+        args = orjson.loads(item["function"].get("arguments") or "{}")
+    except (TypeError, ValueError):
+        args = {}
+    args = args if isinstance(args, dict) else {}
+
+    def text(key):
+        value = args.get(key)
+        return clip(value) if isinstance(value, str) else ""
+
+    index = args.get("attachment_index")
+    attachment = f"attachment {index}" if type(index) is int else ""
+    uris = args.get("uris") if isinstance(args.get("uris"), list) else []
+    uris = [clip(u) for u in uris if isinstance(u, str) and u.strip()]
+    target = {
+        "search": text("query") and f'"{text("query")}"',
+        "read": uris[0] + (f" (+{len(uris) - 1} more)" if len(uris) > 1 else "") if uris else "",
+        "list": text("uri"),
+        "write": text("uri"),
+        "add_resource": text("path") or attachment,
+        "add_skill": text("path")
+        or text("target_uri")
+        or attachment
+        or ("SKILL.md text" if text("data") else ""),
+    }.get(short, "")
+    return "> OpenViking " + short + (": " + target if target else "")
+
+
+def notice_tail(content, skipped):
+    """The outcome that completes a notice line once the call has run."""
+    if skipped:
+        return " — skipped"
+    try:
+        value = orjson.loads(content)
+    except (TypeError, ValueError):
+        value = None
+    failed = isinstance(value, dict) and ("error" in value or value.get("isError") is True)
+    return " — failed" if failed else " — done"
+
+
+def strip_notices(messages):
+    """Remove tool notices from echoed assistant text, dropping emptied text parts."""
+    result = []
+    for message in messages:
+        content = message.get("content")
+        if message.get("role") == "assistant" and isinstance(content, str):
+            message = {**message, "content": NOTICE.sub("", content)}
+        elif message.get("role") == "assistant" and isinstance(content, list):
+            parts = []
+            for part in content:
+                text = part.get("text") if isinstance(part, dict) else None
+                if isinstance(text, str) and NOTICE.search(text):
+                    text = NOTICE.sub("", text)
+                    if not text.strip():
+                        continue
+                    part = {**part, "text": text}
+                parts.append(part)
+            if not parts and content:
+                continue
+            message = {**message, "content": parts}
+        result.append(message)
+    return result
 
 
 @dataclass(frozen=True)
@@ -124,8 +200,8 @@ class ToolProtocol(ABC):
 
     @staticmethod
     def omit_hidden_history(messages: list[dict]) -> list[dict]:
-        """Drop reasoning that cannot be used without the omitted tool history."""
-        return messages
+        """Drop what cannot be used without the omitted tool history."""
+        return strip_notices(messages)
 
     def begin(self) -> None:
         self.output, self.calls, self.usage, self.envelope = [], [], {}, {}
@@ -146,6 +222,17 @@ class ToolProtocol(ABC):
     @abstractmethod
     def publish_calls(self, client: list[dict]) -> list[dict]:
         """Add client-owned calls to visible history and return their events."""
+
+    def open_notice(self) -> list[dict]:
+        """Start visible text for the calls the gateway runs and return its events."""
+        return []
+
+    @abstractmethod
+    def notice(self, text: str) -> list[dict]:
+        """Append text to the open notice in visible history and return its events."""
+
+    def close_notice(self) -> list[dict]:
+        return []
 
     @abstractmethod
     def results(self, receipts: list[dict]) -> list[dict]:

@@ -108,6 +108,7 @@ export type ProfileSettings = {
   archive_wait_seconds: number
   gateway_tools: boolean
   allow_write_tools: boolean
+  show_tool_calls: boolean
   tool_allowlist: GatewayTool[]
   tool_max_rounds: number
   tool_timeout_seconds: number

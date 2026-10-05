@@ -3,6 +3,7 @@
 """Stateless Responses output items and a single numbered event stream."""
 
 import copy
+import uuid
 
 from ..protocols import messages_of
 from .common import PREFIX, ToolLoopError, ToolProtocol, ToolRound, call
@@ -136,6 +137,58 @@ class ResponsesProtocol(ToolProtocol):
                 {**event, "output_index": index} for event in self.buffered.get(original_index, [])
             )
         return events
+
+    def open_notice(self):
+        # Notices are a gateway-written assistant message, streamed like a model's.
+        item = {
+            "id": "msg_" + uuid.uuid4().hex,
+            "type": "message",
+            "status": "in_progress",
+            "content": [],
+            "role": "assistant",
+        }
+        part = {"type": "output_text", "annotations": [], "text": ""}
+        index = len(self.visible)
+        events = [
+            {"type": "response.output_item.added", "output_index": index, "item": dict(item)},
+            {
+                "type": "response.content_part.added",
+                "output_index": index,
+                "item_id": item["id"],
+                "content_index": 0,
+                "part": dict(part),
+            },
+        ]
+        self.visible.append({**item, "content": [part]})
+        return events
+
+    def notice(self, text):
+        item = self.visible[-1]
+        item["content"][0]["text"] += text
+        return [
+            {
+                "type": "response.output_text.delta",
+                "output_index": len(self.visible) - 1,
+                "item_id": item["id"],
+                "content_index": 0,
+                "delta": text,
+            }
+        ]
+
+    def close_notice(self):
+        item = self.visible[-1]
+        item["status"] = "completed"
+        part = item["content"][0]
+        place = {"output_index": len(self.visible) - 1, "item_id": item["id"], "content_index": 0}
+        return [
+            {"type": "response.output_text.done", **place, "text": part["text"]},
+            {"type": "response.content_part.done", **place, "part": dict(part)},
+            {
+                "type": "response.output_item.done",
+                "output_index": place["output_index"],
+                "item": copy.deepcopy(item),
+            },
+        ]
 
     def results(self, results):
         return [

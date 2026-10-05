@@ -46,6 +46,16 @@ describe('toProfileSettings', () => {
     expect(settings.context_window).toBe(128000)
   })
 
+  it('shows tool calls for profiles saved before the setting existed', () => {
+    const { show_tool_calls: _omitted, ...legacy } = profile()
+    expect(toProfileSettings(legacy as ProfileSettings).show_tool_calls).toBe(
+      true,
+    )
+    expect(
+      toProfileSettings(profile({ show_tool_calls: false })),
+    ).toMatchObject({ show_tool_calls: false })
+  })
+
   it('duplicates under a new name', () => {
     expect(
       duplicateProfile({ ...profile(), id: 'p', revision: 1 }, 'Copy'),

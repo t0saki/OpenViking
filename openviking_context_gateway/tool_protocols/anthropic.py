@@ -7,7 +7,7 @@ import copy
 import orjson
 
 from ..protocols import strip_thinking
-from .common import ToolLoopError, ToolProtocol, ToolRound, call
+from .common import ToolLoopError, ToolProtocol, ToolRound, call, strip_notices
 
 
 class AnthropicProtocol(ToolProtocol):
@@ -41,7 +41,7 @@ class AnthropicProtocol(ToolProtocol):
 
     @staticmethod
     def omit_hidden_history(messages):
-        return strip_thinking(messages)
+        return strip_thinking(strip_notices(messages))
 
     def __init__(self, body):
         super().__init__(body)
@@ -151,6 +151,31 @@ class AnthropicProtocol(ToolProtocol):
                 ]
             )
         return events
+
+    def open_notice(self):
+        content = self.visible[0]["content"]
+        content.append({"type": "text", "text": ""})
+        return [
+            {
+                "type": "content_block_start",
+                "index": len(content) - 1,
+                "content_block": {"type": "text", "text": ""},
+            }
+        ]
+
+    def notice(self, text):
+        content = self.visible[0]["content"]
+        content[-1]["text"] += text
+        return [
+            {
+                "type": "content_block_delta",
+                "index": len(content) - 1,
+                "delta": {"type": "text_delta", "text": text},
+            }
+        ]
+
+    def close_notice(self):
+        return [{"type": "content_block_stop", "index": len(self.visible[0]["content"]) - 1}]
 
     def results(self, results):
         return [

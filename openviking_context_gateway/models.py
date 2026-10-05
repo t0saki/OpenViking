@@ -44,6 +44,7 @@ class Policy(BaseModel):
     tool_result_bytes: int = Field(default=65536, ge=1024, le=1048576)
     tool_total_seconds: float = Field(default=120, gt=0, le=600)
     tool_total_tokens: int = Field(default=100000, ge=1024, le=1000000)
+    show_tool_calls: bool = True
 
 
 class Upstream(BaseModel):

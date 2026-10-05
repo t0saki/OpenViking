@@ -384,6 +384,25 @@ describe('profile editor', () => {
     })
   })
 
+  it('shows tool calls by default and saves the switch', async () => {
+    renderAt('/context-gateway/profiles/p2')
+    await screen.findByDisplayValue('Chat')
+    fireEvent.click(sectionSwitch('tools'))
+    const showCalls = screen.getByRole('switch', {
+      name: 'profiles.tools.showCalls.label',
+    })
+    expect(showCalls.getAttribute('aria-checked')).toBe('true')
+
+    fireEvent.click(showCalls)
+    fireEvent.click(saveButton())
+
+    await waitFor(() => expect(api.saveProfile).toHaveBeenCalledTimes(1))
+    expect(api.saveProfile.mock.calls[0][2]).toMatchObject({
+      gateway_tools: true,
+      show_tool_calls: false,
+    })
+  })
+
   it('starts category limits from the searched sources', async () => {
     renderAt('/context-gateway/profiles/p2')
     await screen.findByDisplayValue('Chat')

@@ -186,7 +186,12 @@ const profiles = {
       label: '允许写入工具',
       description: '允许模型修改 OpenViking 中的数据。',
       warning:
-        '写入工具由模型自行决定何时调用，客户端看不到这些调用。只有客户端能执行 shell 命令或对话带有附件时，才会提供“导入文件”和“导入技能”；导入本地文件还需要在 ov.conf 中设置 context_gateway.public_url。',
+        '写入工具由模型自行决定何时调用；关闭“显示工具调用”后，客户端就看不到这些调用。只有客户端能执行 shell 命令或对话带有附件时，才会提供“导入文件”和“导入技能”；导入本地文件还需要在 ov.conf 中设置 context_gateway.public_url。',
+    },
+    showCalls: {
+      label: '显示工具调用',
+      description:
+        '网关每执行一次 OpenViking 工具，就在回复里加一行提示，让用户看到这次调用。模型看不到这些提示，它们也不会保存到 OpenViking。',
     },
     maxRounds: {
       label: '每次请求的工具轮数',

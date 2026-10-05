@@ -66,9 +66,15 @@ def gateway_note(policy, tools):
     if tools:
         names = [t["function"]["name"] for t in tools]
         listed = ", ".join(names[:-1]) + " and " + names[-1] if len(names) > 1 else names[0]
+        seen = (
+            ". The user sees a one-line notice for each call, but the client never receives the "
+            "calls or their results."
+            if policy.show_tool_calls
+            else ", and the client never sees their calls or results."
+        )
         lines.append(
             f"- The gateway runs the tools {listed} itself whenever it offers them. They are "
-            "not in the client's tool list, and the client never sees their calls or results."
+            "not in the client's tool list" + seen
         )
     if policy.capture:
         lines.append("- The gateway saves this conversation to the user's OpenViking memory.")

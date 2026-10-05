@@ -102,6 +102,10 @@ class ChatProtocol(ToolProtocol):
         self.visible[0]["tool_calls"] = client
         return [self.chunk({"tool_calls": [{"index": i, **c} for i, c in enumerate(client)]})]
 
+    def notice(self, text):
+        self.visible[0]["content"] = (self.visible[0].get("content") or "") + text
+        return [self.chunk({"content": text})]
+
     def results(self, results):
         return results
 
@@ -132,7 +136,7 @@ class ChatProtocol(ToolProtocol):
 
     def terminal(self, final):
         events = [self.chunk({}, self.finish)]
-        if self.body.get("stream_options", {}).get("include_usage"):
+        if (self.body.get("stream_options") or {}).get("include_usage"):
             events.append({**self.chunk({}), "choices": [], "usage": final["usage"]})
         return [*events, None]
 
