@@ -14,7 +14,7 @@ from .records import RecordKind as K
 from .tool_catalog import notice_head
 from .tool_protocols import hidden_chain, tool_protocol
 from .tool_protocols.common import PREFIX, ToolLoopError, ToolRound, add_usage, notice_tail
-from .windows import ALONE, NEW_CONTEXT, cut
+from .windows import ALONE, NEW_CONTEXT, window_number
 
 
 def added_tokens(value):
@@ -162,7 +162,7 @@ class HiddenToolLoop:
         self.transcript, self.window = [], (anchor, value)
         # Later native calls see the cut the way the next request replays it.
         self.prepared.records[K.REPLACEMENT, anchor] = value
-        self.prepared.metrics.update(window=cut(self.prepared)[1], window_reset=True)
+        self.prepared.metrics.update(window=window_number(self.prepared), window_reset=True)
 
     async def persist(self):
         visible = self.adapter.visible

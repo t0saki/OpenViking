@@ -7,9 +7,9 @@ import orjson
 import pytest
 from aiohttp import web
 from conftest import replay_records
+from test_review_regressions import worker_for
 
-from openviking_context_gateway.blocks import block
-from openviking_context_gateway.capture import CapturePipeline
+from openviking_context_gateway.blocks import block, history_hint
 from openviking_context_gateway.client import VikingClient
 from openviking_context_gateway.compaction import (
     HEADER,
@@ -109,10 +109,10 @@ async def test_user_cut_replaces_the_history_before_the_latest_user_message(
     assert "compaction_tokens" not in again.metrics
 
 
-async def test_continuation_cut_keeps_thinking_and_confirms_delivery(
-    setup_kernel, credential, policy, monkeypatch
+async def test_continuation_cut_keeps_thinking_and_delivers_the_cut_part_at_once(
+    setup_kernel, credential, policy
 ):
-    kernel, _, _, _ = setup_kernel
+    kernel, store, viking, encryption = setup_kernel
     policy.update(context_window=1024, recall=False)
     thinking = {"type": "enabled", "budget_tokens": 2000}
     call = {
@@ -131,12 +131,6 @@ async def test_continuation_cut_keeps_thinking_and_confirms_delivery(
         kernel, "anthropic", messages, credential, policy, extra={"thinking": thinking}
     )
     await answered(kernel, first, credential, call)
-    confirmed = []
-
-    async def confirm_cut(self, request, anchor):
-        confirmed.append(anchor)
-
-    monkeypatch.setattr(CapturePipeline, "confirm_cut", confirm_cut)
     summarize = Summarizer("anthropic")
     second = await prepare(
         kernel,
@@ -157,7 +151,14 @@ async def test_continuation_cut_keeps_thinking_and_confirms_delivery(
     assert second.body["messages"][0]["content"].startswith(
         '<openviking-context source="gateway-compaction">'
     )
-    assert confirmed == [second.capture_chain[2]]
+    # The replaced part is saved before the turn ends, so the model can search it now.
+    worker = await worker_for(store, encryption, credential, viking)
+    assert await worker.once()
+    state = (await store.capture.get(second.scope, second.session)).value
+    assert state["delivered"] and not state["pending"]
+    assert viking.write_sessions == [second.capture_target]
+    # The tool result travels with its call.
+    assert viking.writes[0][-1]["parts"][-1]["tool_output"] == "blue ok"
 
 
 @pytest.mark.parametrize(
@@ -507,34 +508,31 @@ async def test_proxy_sends_the_summary_with_vendor_alias_and_headers(running_gat
     assert log["compaction_applied"] and log["context_window"] == 1024
 
 
-async def test_history_hints_name_the_sessions_that_hold_replaced_history(
-    setup_kernel, credential, policy, monkeypatch
-):
-    import openviking_context_gateway.kernel as kernel_module
-
-    kernel, _, _, _ = setup_kernel
-    policy.update(context_window=1024)
-    hints = []
-
-    def history_hint(user_id, sessions, tools, capture):
-        hints.append((user_id, sessions, capture))
-        return "Search " + ", ".join(sessions)
-
-    monkeypatch.setattr(kernel_module, "history_hint", history_hint)
-    monkeypatch.setattr(kernel_module, "lineage", lambda value: ["earlier-session"])
+async def test_hints_name_the_sessions_that_hold_earlier_history(setup_kernel, credential, policy):
+    kernel, store, viking, encryption = setup_kernel
+    policy.update(context_window=1024, gateway_tools=True)
+    worker = await worker_for(store, encryption, credential, viking)
+    reply = {"role": "assistant", "content": "Blue."}
     messages = [{"role": "user", "content": "How do I deploy?"}]
     first = await prepare(kernel, "chat", messages, credential, policy)
-    # A new history names the sessions of the capture document it still carries.
-    assert hints == [("alice", ["earlier-session"], True)]
-    assert "Search earlier-session" in opening_block(first.records, first.chain)
-    reply = {"role": "assistant", "content": "Blue."}
-    await answered(kernel, first, credential, reply)
+    await kernel.completed(first, credential, ResponseCapture("chat", reply, complete=True))
+    messages += [reply, {"role": "user", "content": "And staging?"}]
+    await prepare(kernel, "chat", messages, credential, policy)
+    assert await worker.once()
+    # The client compacts its own history: the new history's opening block points
+    # to the session that holds the old one.
+    messages = [{"role": "user", "content": "Summary of our deploy work. Continue."}]
+    fresh = await prepare(kernel, "chat", messages, credential, policy)
+    assert fresh.capture_target != first.capture_target
+    tools = fresh.root["tools"]
+    hint = history_hint("alice", [first.capture_target], tools, True)
+    assert hint and hint in opening_block(fresh.records, fresh.chain)
+    # A gateway cut names the current session first: the replaced part is queued for it.
+    await answered(kernel, fresh, credential, reply)
     messages += [reply, {"role": "user", "content": "Next?"}]
     second = await prepare(
         kernel, "chat", messages, credential, policy, summarize=Summarizer("chat")
     )
-    # The summary names the current session first: the replaced part is queued for it.
-    current = second.capture.value["ov_session"]
-    assert hints[-1] == ("alice", [current, "earlier-session"], True)
+    hint = history_hint("alice", [fresh.capture_target, first.capture_target], tools, True)
     summary_block = second.body["messages"][0]["content"].split("</openviking-context>")[0]
-    assert summary_block.endswith(f"Search {current}, earlier-session\n")
+    assert summary_block.endswith("\n\n" + hint + "\n")

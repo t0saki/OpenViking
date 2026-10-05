@@ -19,6 +19,7 @@ from .compaction import (
     INSTRUCTION,
     active_cut,
     apply_cut,
+    cut_hint,
     cut_point,
     estimate,
     opening_block,
@@ -625,12 +626,7 @@ class MemoryKernel:
             logger.exception("Context Gateway summary failed")
             await self.compaction_failed(request, "summary_failed")
             return
-        capture = request.capture.value
-        # The replaced part is queued for the current session even if none of it arrived yet.
-        sessions = (
-            list(dict.fromkeys([capture["ov_session"], *lineage(capture)])) if capture else []
-        )
-        hint = history_hint(credential["user_id"], sessions, request.root["tools"], policy.capture)
+        hint = cut_hint(request, credential["user_id"], policy)
         text = replacement_text(summary, hint, opening_block(request.records, request.chain))
         anchor = request.capture_chain[cut]
         # A concurrent request may have written this cut first; its text wins.

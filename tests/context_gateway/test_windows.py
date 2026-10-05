@@ -10,11 +10,13 @@ import pytest
 from aiohttp import web
 from conftest import MCP_TOOLS
 from test_app import completion, enable_tools
+from test_compaction import Summarizer, answered
 from test_native_tools import native_response, request_body, visible_response, wire_response
 
 from openviking_context_gateway.blocks import block, gateway_note, history_hint, token_estimate
 from openviking_context_gateway.capture import CapturePipeline
 from openviking_context_gateway.capture_store import Document
+from openviking_context_gateway.compaction import active_cut
 from openviking_context_gateway.models import Policy
 from openviking_context_gateway.protocols import (
     ResponseCapture,
@@ -34,9 +36,9 @@ from openviking_context_gateway.windows import (
     SEARCHABLE,
     amount,
     context_remaining,
-    cut,
     due,
     new_context,
+    window_number,
 )
 
 PATHS = {"chat": "/v1/chat/completions", "anthropic": "/v1/messages", "responses": "/v1/responses"}
@@ -305,18 +307,21 @@ def test_reminders_fire_once_per_window_and_only_new_style_cuts_count():
         context_tokens=75,
         context_window=100,
     )
-    assert cut(request) == (-1, 1) and due(request, policy, -1) == ""
+    assert active_cut(request) == -1 and window_number(request) == 1
+    assert due(request, policy, -1) == ""
     request.context_tokens = 90
     assert due(request, policy, -1) == "hard"
     records[K.INJECTION, "d"] = {"text": "x", "reminder": "hard"}
     assert due(request, policy, -1) == ""
     # Old Working Memory takeovers have no source and are not cuts.
     records[K.REPLACEMENT, "a"] = {"text": "summary"}
-    assert cut(request) == (-1, 1)
+    assert active_cut(request) == -1 and window_number(request) == 1
     records[K.REPLACEMENT, "b"] = {"source": "compaction", "text": "", "tokens": 0}
-    assert cut(request) == (1, 1)
+    assert active_cut(request) == 1 and window_number(request) == 1
     records[K.REPLACEMENT, "c"] = {"source": "window", "text": "", "tokens": 0}
-    assert cut(request) == (2, 2) and cut(request, 2) == (1, 1)
+    assert (
+        active_cut(request) == 2 and window_number(request) == 2 and window_number(request, 2) == 1
+    )
     del records[K.INJECTION, "d"]
     request.context_tokens = 75
     assert due(request, policy, 2) == "soft"
@@ -669,14 +674,21 @@ async def test_context_remaining_reads_the_latest_round(running_gateway):
     assert not stored(app, "replacement")
 
 
-@pytest.mark.xfail(reason="needs apply_cut (integration)", strict=True)
 @pytest.mark.parametrize("protocol", ["chat", "anthropic", "responses"])
-async def test_reset_replays_on_the_next_request(running_gateway, confirmed_cuts, protocol):
-    _, client, admin, _, _, _ = running_gateway
+async def test_reset_replays_on_the_next_request(running_gateway, protocol):
+    app, client, admin, _, _, _ = running_gateway
     await enable_tools(client, admin, agent_windows=True)
     run = await send(running_gateway, protocol, False, [[(NEW_CONTEXT, NOTES)]])
     field = FIELDS[protocol]
     header = run.requests[1][field][-1]["content"]
+    # The history up to the cut is queued for delivery at once.
+    anchor = hidden_chain(run.body[field], protocol)[-1]
+    store = app.state.store
+    with store.connect() as c:
+        (value,) = c.execute("SELECT value FROM capture").fetchone()
+    state = store.decode(value)
+    confirmed = [turn["anchor"] for turn in state["pending"] if turn["confirmed"]]
+    assert anchor in [state["delivered"], *confirmed]
     run.body[field] += [
         *visible_messages(protocol, run.response, False),
         {"role": "user", "content": "Go"},
@@ -689,3 +701,37 @@ async def test_reset_replays_on_the_next_request(running_gateway, confirmed_cuts
     assert replay[len(prefix) + 1 : -1] == round_output(protocol, run.upstream[1])
     assert text_content(replay[-1]).startswith("Go\n")
     assert "[context-status] window w2 " in text_content(replay[-1])
+
+
+async def test_compaction_cuts_when_the_model_never_starts_a_window(
+    setup_kernel, credential, policy
+):
+    kernel, _, _, _ = setup_kernel
+    policy.update(recall=False)
+    upstream = {"id": "u", "context_windows": {"model": 20_000}}
+    messages = [{"role": "user", "content": "Deploy to blue?"}]
+    first = await windows_request(kernel, credential, policy, messages, upstream)
+    reply = {"role": "assistant", "content": "Use blue."}
+    await answered(kernel, first, credential, reply, tokens=19_000)
+    messages += [reply, {"role": "user", "content": "Go"}]
+    second = await kernel.prepare(
+        {"model": "model", "messages": messages},
+        "chat",
+        {"x-openviking-session": "windows"},
+        credential,
+        upstream,
+        policy,
+        summarize=Summarizer("chat"),
+    )
+    assert second.metrics["compaction_tokens"] and second.metrics["context_tokens"] > 18_000
+    summary, latest = second.body["messages"]
+    # The opening block, and with it the window guidance, survives the cut.
+    assert "You manage your own context windows" in summary["content"]
+    # The status line describes the compacted context; a compaction does not number windows.
+    assert second.context_tokens < 2_000
+    status = (
+        f"[context-status] window w1 · ~{amount(second.context_tokens)}/20k tokens "
+        f"({second.context_tokens / 20_000:.0%})"
+    )
+    assert status in text_content(latest) and "[context-reminder]" not in text_content(latest)
+    assert second.metrics["window"] == 1 and "window_reminder" not in second.metrics

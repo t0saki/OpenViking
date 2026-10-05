@@ -11,7 +11,7 @@ import re
 
 import orjson
 
-from .blocks import block, token_estimate
+from .blocks import block, history_hint, token_estimate
 from .records import RecordKind as K
 from .tool_protocols import tool_protocol
 
@@ -105,6 +105,13 @@ def opening_block(records, chain):
             match = OPENING.search(decision["text"])
             return match[0] if match else ""
     return ""
+
+
+def cut_hint(request, user_id, policy):
+    """The history hint at a cut; the current session comes first, as it gets the cut part."""
+    capture = request.capture.value
+    sessions = [capture["ov_session"], *capture.get("previous", [])] if capture else []
+    return history_hint(user_id, sessions, request.root["tools"], policy.capture)
 
 
 def replacement_text(summary, hint, opening):

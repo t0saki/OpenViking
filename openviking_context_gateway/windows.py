@@ -13,9 +13,8 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
-from .blocks import block, history_hint, token_estimate
-from .capture import lineage
-from .compaction import opening_block
+from .blocks import block, token_estimate
+from .compaction import active_cut, cut_hint, opening_block
 from .models import Policy
 from .protocols import append_context, clean_text, is_user, text_content, unwrap_client
 from .records import RecordKind as K
@@ -72,14 +71,12 @@ def active(request):
     )
 
 
-def cut(request, end=None):
-    """The index of the latest cut before end, and the number of the window in force there."""
-    index, window = -1, 1
-    for position, anchor in enumerate(request.capture_chain[:end]):
-        record = request.records.get((K.REPLACEMENT, anchor)) if anchor else None
-        if record and record.get("source"):
-            index, window = position, window + (record["source"] == "window")
-    return index, window
+def window_number(request, end=None):
+    """The number of the window in force before ``end``: one more than the window cuts."""
+    return 1 + sum(
+        request.records.get((K.REPLACEMENT, anchor), {}).get("source") == "window"
+        for anchor in request.capture_chain[:end]
+    )
 
 
 def amount(tokens):
@@ -119,7 +116,7 @@ def status_line(request, policy):
     """The status line and any due reminder that end a user message's recall block."""
     if not active(request):
         return "", ""
-    index, window = cut(request)
+    index, window = active_cut(request), window_number(request)
     percent = f"{request.context_tokens / request.context_window:.0%}"
     line = (
         f"[context-status] window w{window} · ~{amount(request.context_tokens)}/"
@@ -139,7 +136,7 @@ async def remind(store, request, policy):
     """Number the window, and append a due reminder to a continuation's last message."""
     if not active(request):
         return
-    index, window = cut(request)
+    index, window = active_cut(request), window_number(request)
     request.metrics["window"] = window
     anchor = (request.chain or [""])[-1]
     if request.kind != "continuation" or not anchor or (K.INJECTION, anchor) in request.records:
@@ -177,7 +174,7 @@ async def new_context(request, credential, args):
         return {"content": "reason and notes must be non-empty strings.", "failed": True}
     # The cut follows the last client message, so every later request can replay it.
     position = max((i for i, a in enumerate(request.capture_chain) if a), default=-1)
-    window = cut(request, position)[1] + 1
+    window = window_number(request, position) + 1
     parts = [
         f"This is context window {window}. You started it by calling {NEW_CONTEXT}, and the "
         "gateway wrote this message from that call; the user did not write it. Files, "
@@ -195,14 +192,8 @@ async def new_context(request, credential, args):
     )
     if latest:
         parts.append("The user's most recent message, verbatim:\n" + latest)
-    policy = Policy.model_validate(request.root["policy"])
     parts.append(
-        history_hint(
-            credential["user_id"],
-            lineage(request.capture.value),
-            request.root["tools"],
-            policy.capture,
-        )
+        cut_hint(request, credential["user_id"], Policy.model_validate(request.root["policy"]))
     )
     text = "\n\n".join(
         part
@@ -222,7 +213,7 @@ async def new_context(request, credential, args):
 
 async def context_remaining(request, credential, args):
     policy = Policy.model_validate(request.root["policy"])
-    index, window = cut(request)
+    index, window = active_cut(request), window_number(request)
     used, size = request.context_tokens, request.context_window
     ratio = used / size
     lines = [

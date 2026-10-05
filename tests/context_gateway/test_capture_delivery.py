@@ -342,7 +342,6 @@ async def test_turn_queued_during_archive_observation_survives_the_worker(
 ):
     kernel, store, viking, encryption = setup_kernel
     policy.update(recall=False, commit_tokens=1, keep_recent_messages=0)
-    viking.summary = ""
     first = await prepare(
         kernel, credential, policy, [*history(1), {"role": "user", "content": "next"}]
     )
