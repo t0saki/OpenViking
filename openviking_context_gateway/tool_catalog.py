@@ -8,11 +8,11 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .protocols import enhanced_supported, messages_of, prefix_chain
-from .records import RecordKind as K
+from .protocols import enhanced_supported, messages_of
+from .tool_protocols import tool_protocol
+from .tool_protocols.common import PREFIX
 
 TOOL_VERSION = 1
-PREFIX = "openviking_"
 WRITE_TOOLS = {"write", "add_resource", "add_skill"}
 
 
@@ -162,44 +162,14 @@ def tool_block_reason(body, protocol, upstream):
     )
     if output_format.get("type", "text") != "text":
         return "tools_structured_output"
-    if protocol == "chat" and any(
-        t.get("type", "function") != "function" for t in body.get("tools", [])
-    ):
-        return "tools_non_function"
-    if protocol == "responses" and any(
-        m.get("type") == "item_reference" for m in messages_of(body, protocol)
-    ):
-        return "tools_require_full_history"
-    choice = body.get("tool_choice", "auto")
-    if protocol == "anthropic" and isinstance(choice, dict):
-        choice = choice.get("type")
-    if choice not in ("auto", "none"):
-        return "tools_forced_choice"
+    reason = tool_protocol(protocol).block_reason(body)
+    if reason:
+        return reason
     if upstream.get("vendor") == "deepseek":
         thinking = body.get("thinking") or {}
         if thinking.get("type") != "disabled":
             return "deepseek_reasoning_history_required"
     return ""
-
-
-def wire_tools(tools, protocol):
-    """The frozen catalogue is shared; only the wire schema varies."""
-    if protocol == "chat":
-        return tools
-    if protocol == "responses":
-        return [{"type": "function", **t["function"], "strict": False} for t in tools]
-    return [
-        {
-            "name": t["function"]["name"],
-            "description": t["function"]["description"],
-            "input_schema": t["function"]["parameters"],
-        }
-        for t in tools
-    ]
-
-
-def disable_tools(body, protocol):
-    body["tool_choice"] = {"type": "none"} if protocol == "anthropic" else "none"
 
 
 def select_tools(body, protocol, upstream, policy):
@@ -224,59 +194,3 @@ def select_tools(body, protocol, upstream, policy):
             }
         )
     return selected
-
-
-def replay_hidden(messages, chain, records, protocol="chat"):
-    """Expand a client-visible assistant reply into the exact upstream sequence.
-
-    The endpoint hash includes the visible reply. Regenerated/edited replies are
-    separate immutable branches even when they share a user-message anchor.
-    """
-    result, offsets = [], []
-    for index, (message, anchor) in enumerate(zip(messages, chain, strict=True)):
-        offsets.append(len(result))
-        result.append(message)
-        record = records.get((K.HIDDEN, anchor))
-        if record:
-            count = record["visible_count"]
-            if 0 < count <= index + 1:
-                result[offsets[index + 1 - count] :] = record["messages"]
-    if protocol == "anthropic":
-        result = merge_tool_results(result)
-    return result
-
-
-def hidden_chain(messages, protocol="chat"):
-    if protocol != "chat":
-        return prefix_chain(messages)
-    # Chat frontends often omit reasoning/vendor metadata when returning a
-    # message. Match the visible content and calls, retaining the original full
-    # assistant objects inside the encrypted hidden record.
-    canonical = []
-    for message in messages:
-        if message.get("role") == "assistant":
-            message = {
-                "role": "assistant",
-                "content": message.get("content") or "",
-                **({"tool_calls": message["tool_calls"]} if message.get("tool_calls") else {}),
-            }
-        canonical.append(message)
-    return prefix_chain(canonical)
-
-
-def merge_tool_results(messages):
-    """Mixed calls must receive all results in the immediately following user message."""
-    result = []
-    for message in messages:
-        prior = result[-1] if result else {}
-        if (
-            prior.get("role") == message.get("role") == "user"
-            and isinstance(prior.get("content"), list)
-            and isinstance(message.get("content"), list)
-            and all(b.get("type") == "tool_result" for b in prior["content"])
-            and any(b.get("type") == "tool_result" for b in message["content"])
-        ):
-            result[-1] = {**prior, **message, "content": [*prior["content"], *message["content"]]}
-        else:
-            result.append(message)
-    return result

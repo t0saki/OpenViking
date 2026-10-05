@@ -19,9 +19,9 @@ import orjson
 from .archives import TERMINAL, observe_archive
 from .capture_store import Document, LeaseLost
 from .models import Policy
-from .protocols import clean_text, is_user, prefix_chain, text_content, unwrap_client
+from .protocols import clean_text, is_user, text_content, unwrap_client
 from .records import RecordKind as K
-from .tool_catalog import hidden_chain
+from .tool_protocols import hidden_chain
 
 logger = logging.getLogger(__name__)
 MAX_ATTEMPTS = 5
@@ -132,9 +132,7 @@ class CapturePipeline:
 
     async def stage(self, request, response, policy):
         messages = [*request.messages, *(response.output_items or [response.message])]
-        chain = await asyncio.to_thread(
-            hidden_chain if request.protocol == "chat" else prefix_chain, messages
-        )
+        chain = await asyncio.to_thread(hidden_chain, messages, request.protocol)
         turns = await asyncio.to_thread(
             self.turns, messages, chain, request.anchor, False, policy.idle_seconds
         )

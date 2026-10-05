@@ -4,8 +4,8 @@
 
 import copy
 
-from ..tool_catalog import PREFIX
-from .common import ToolLoopError, ToolProtocol, call
+from ..protocols import messages_of
+from .common import PREFIX, ToolLoopError, ToolProtocol, ToolRound, call
 
 CLIENT_CALLS = {"function_call", "custom_tool_call"}
 
@@ -13,7 +13,23 @@ CLIENT_CALLS = {"function_call", "custom_tool_call"}
 class ResponsesProtocol(ToolProtocol):
     field = "input"
     id_prefix = "resp_"
-    call_finish = "completed"
+
+    @staticmethod
+    def wire_tools(tools):
+        return [{"type": "function", **t["function"], "strict": False} for t in tools]
+
+    @staticmethod
+    def block_reason(body):
+        if any(m.get("type") == "item_reference" for m in messages_of(body, "responses")):
+            return "tools_require_full_history"
+        return ToolProtocol.block_reason(body)
+
+    @classmethod
+    def add_tools(cls, body, tools):
+        super().add_tools(body, tools)
+        body["include"] = list(
+            dict.fromkeys([*body.get("include", []), "reasoning.encrypted_content"])
+        )
 
     def __init__(self, body):
         super().__init__(body)
@@ -107,6 +123,8 @@ class ResponsesProtocol(ToolProtocol):
             if item["type"] in CLIENT_CALLS
         ]
 
+        return ToolRound(self.output, self.calls, self.usage, self.finish == "completed")
+
     def publish_calls(self, client):
         ids, events = {c["id"] for c in client}, []
         for original_index, item in enumerate(self.output):
@@ -129,10 +147,10 @@ class ResponsesProtocol(ToolProtocol):
         return self.public_response({**self.envelope, "output": self.visible, "usage": usage})
 
     def terminal(self, final):
-        return [self.encode({"type": "response." + self.finish, "response": final})]
+        return [{"type": "response." + self.finish, "response": final}]
 
     def error(self, message):
-        return self.encode(
+        return [
             {
                 "type": "response.failed",
                 "response": {
@@ -145,4 +163,4 @@ class ResponsesProtocol(ToolProtocol):
                     "output": self.visible,
                 },
             }
-        )
+        ]

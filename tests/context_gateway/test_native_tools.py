@@ -525,7 +525,7 @@ async def test_native_incompatible_mode_keeps_only_visible_history(
     header = {"x-openviking-session": "native-tools"}
     prepared = await kernel.prepare(body, protocol, header, credential, {"id": "u"}, policy)
     native = native_response(protocol, 1, owned=True)
-    from openviking_context_gateway.tool_catalog import hidden_chain
+    from openviking_context_gateway.tool_protocols import hidden_chain
 
     output = (
         native["output"][:-1]
@@ -637,7 +637,7 @@ async def test_native_replay_survives_restart_edits_and_archive_boundary(
 ):
     from openviking_context_gateway.models import Policy
     from openviking_context_gateway.storage import SQLiteKernelStore
-    from openviking_context_gateway.tool_catalog import hidden_chain, replay_hidden
+    from openviking_context_gateway.tool_protocols import hidden_chain, replay_hidden
 
     kernel, store, _, encryption = setup_kernel
     policy.update(gateway_tools=True, recall=False)
@@ -853,3 +853,78 @@ async def test_anthropic_stream_no_argument_tool(running_gateway, arguments):
         visible_response("anthropic", response, True)
         assert len(requests) == 2 and len(calls) == 1
         assert requests[1]["messages"][-2]["content"][-1]["input"] == {}
+
+
+@pytest.mark.parametrize("used_gateway_tool", [False, True])
+async def test_admin_disabling_anthropic_tools_preserves_history_and_logs(
+    running_gateway, used_gateway_tool
+):
+    app, client, admin, key, _, _ = running_gateway
+    await enable_tools(client, admin, capture=False)
+    requests = []
+    disabled = False
+
+    async def backend(request):
+        if request.path == "/mcp":
+            return web.json_response({"id": 1, "result": {"content": []}})
+        if request.path != "/v1/messages":
+            return None
+        payload = await request.json()
+        requests.append(payload)
+        if disabled:
+            # Anthropic requires thinking before the last assistant's tool_use
+            # when the client returns its tool result with thinking enabled.
+            assistant = next(m for m in reversed(payload["messages"]) if m["role"] == "assistant")
+            blocks = assistant["content"]
+            if any(b["type"] == "tool_use" for b in blocks) and blocks[0]["type"] != "thinking":
+                return web.json_response({"error": "missing thinking before tool_use"}, status=400)
+        return web.json_response(
+            native_response(
+                "anthropic",
+                len(requests),
+                owned=used_gateway_tool and len(requests) == 1,
+                mixed=not used_gateway_tool and not disabled,
+            )
+        )
+
+    app.state.test_backend["handler"] = backend
+    body = request_body("anthropic", False)
+    headers = {"Authorization": "Bearer " + key["key"], "X-OpenViking-Session": "admin-switch"}
+    first = await client.post("/v1/messages", headers=headers, json=body)
+    assert first.status_code == 200, first.text
+    body["messages"].extend(
+        [
+            {"role": "assistant", "content": first.json()["content"]},
+            {
+                "role": "user",
+                "content": "Continue"
+                if used_gateway_tool
+                else [{"type": "tool_result", "tool_use_id": "client-1", "content": "/work"}],
+            },
+        ]
+    )
+    upstreams = (await client.get("/admin/upstreams", headers=admin)).json()
+    upstream = next(u for u in upstreams if u["id"] == "anthropic")
+    changed = await client.put(
+        "/admin/upstreams/anthropic",
+        headers=admin,
+        json={
+            "name": "anthropic",
+            "protocol": "anthropic",
+            "base_url": upstream["base_url"],
+            "models": ["model"],
+            "allow_gateway_tools": False,
+        },
+    )
+    assert changed.status_code == 200, changed.text
+    disabled = True
+    response = await client.post("/v1/messages", headers=headers, json=body)
+    assert response.status_code == 200, response.text
+    logs = (await client.get("/admin/logs", headers=admin)).json()
+    assert logs[0]["tool_skip_reason"] == "upstream_tools_disabled"
+    if used_gateway_tool:
+        assert logs[0]["degradation"] == "hidden_tool_history_unavailable"
+        assert "signature" not in orjson.dumps(requests[-1]["messages"]).decode()
+    else:
+        assert not logs[0].get("degradation")
+        assert requests[-1]["messages"] == body["messages"]

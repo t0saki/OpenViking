@@ -4,12 +4,38 @@
 
 import copy
 
-from .common import ToolLoopError, ToolProtocol, merge_delta, sse
+from ..protocols import prefix_chain
+from .common import ToolLoopError, ToolProtocol, ToolRound, merge_delta, sse
 
 
 class ChatProtocol(ToolProtocol):
     id_prefix = "chatcmpl-"
-    call_finish = "tool_calls"
+    canonicalizes_history = True
+
+    @staticmethod
+    def wire_tools(tools):
+        return tools
+
+    @staticmethod
+    def block_reason(body):
+        if any(t.get("type", "function") != "function" for t in body.get("tools", [])):
+            return "tools_non_function"
+        return ToolProtocol.block_reason(body)
+
+    @staticmethod
+    def history_chain(messages):
+        # Chat clients often omit reasoning/vendor metadata. Match visible
+        # content and calls; the stored transcript retains the original objects.
+        canonical = []
+        for message in messages:
+            if message.get("role") == "assistant":
+                message = {
+                    "role": "assistant",
+                    "content": message.get("content") or "",
+                    **({"tool_calls": message["tool_calls"]} if message.get("tool_calls") else {}),
+                }
+            canonical.append(message)
+        return prefix_chain(canonical)
 
     def __init__(self, body):
         super().__init__(body)
@@ -20,7 +46,7 @@ class ChatProtocol(ToolProtocol):
         self.message, self.fragments = {"role": "assistant"}, {}
 
     def encode(self, value):
-        return sse(value)
+        return super().encode(value) if value is None else sse(value)
 
     def event(self, value):
         self.envelope.update({k: v for k, v in value.items() if k not in {"choices", "usage"}})
@@ -68,6 +94,7 @@ class ChatProtocol(ToolProtocol):
         self.message.setdefault("content", None)
         self.output = [self.message]
         self.calls = self.message.get("tool_calls") or []
+        return ToolRound(self.output, self.calls, self.usage, self.finish == "tool_calls")
 
     def publish_calls(self, client):
         if not client:
@@ -104,12 +131,10 @@ class ChatProtocol(ToolProtocol):
         }
 
     def terminal(self, final):
-        events = [sse(self.chunk({}, self.finish))]
+        events = [self.chunk({}, self.finish)]
         if self.body.get("stream_options", {}).get("include_usage"):
-            events.append(sse({**self.chunk({}), "choices": [], "usage": final["usage"]}))
-        return [*events, b"data: [DONE]\n\n"]
+            events.append({**self.chunk({}), "choices": [], "usage": final["usage"]})
+        return [*events, None]
 
     def error(self, message):
-        return (
-            sse({"error": {"type": "gateway_tool_error", "message": message}}) + b"data: [DONE]\n\n"
-        )
+        return [{"error": {"type": "gateway_tool_error", "message": message}}, None]

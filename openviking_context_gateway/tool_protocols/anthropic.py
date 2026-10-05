@@ -6,12 +6,42 @@ import copy
 
 import orjson
 
-from .common import ToolLoopError, ToolProtocol, call
+from ..protocols import strip_thinking
+from .common import ToolLoopError, ToolProtocol, ToolRound, call
 
 
 class AnthropicProtocol(ToolProtocol):
     id_prefix = "msg_"
-    call_finish = "tool_use"
+
+    @staticmethod
+    def wire_tools(tools):
+        return [
+            {
+                "name": t["function"]["name"],
+                "description": t["function"]["description"],
+                "input_schema": t["function"]["parameters"],
+            }
+            for t in tools
+        ]
+
+    @staticmethod
+    def tool_choice(body):
+        choice = body.get("tool_choice", {"type": "auto"})
+        if isinstance(choice, dict):
+            choice = choice.get("type")
+        return choice
+
+    @staticmethod
+    def disable_tools(body):
+        body["tool_choice"] = {"type": "none"}
+
+    @staticmethod
+    def join_replayed_history(messages):
+        return merge_tool_results(messages)
+
+    @staticmethod
+    def omit_hidden_history(messages):
+        return strip_thinking(messages)
 
     def __init__(self, body):
         super().__init__(body)
@@ -92,6 +122,8 @@ class AnthropicProtocol(ToolProtocol):
             if b["type"] == "tool_use"
         ]
 
+        return ToolRound(self.output, self.calls, self.usage, self.finish == "tool_use")
+
     def publish_calls(self, client):
         ids = {c["id"] for c in client}
         events = []
@@ -148,15 +180,28 @@ class AnthropicProtocol(ToolProtocol):
 
     def terminal(self, final):
         return [
-            self.encode(
-                {
-                    "type": "message_delta",
-                    "delta": {
-                        "stop_reason": self.finish,
-                        "stop_sequence": final.get("stop_sequence"),
-                    },
-                    "usage": final["usage"],
-                }
-            ),
-            self.encode({"type": "message_stop"}),
+            {
+                "type": "message_delta",
+                "delta": {"stop_reason": self.finish, "stop_sequence": final.get("stop_sequence")},
+                "usage": final["usage"],
+            },
+            {"type": "message_stop"},
         ]
+
+
+def merge_tool_results(messages):
+    """Mixed calls must receive all results in the immediately following user message."""
+    result = []
+    for message in messages:
+        prior = result[-1] if result else {}
+        if (
+            prior.get("role") == message.get("role") == "user"
+            and isinstance(prior.get("content"), list)
+            and isinstance(message.get("content"), list)
+            and all(b.get("type") == "tool_result" for b in prior["content"])
+            and any(b.get("type") == "tool_result" for b in message["content"])
+        ):
+            result[-1] = {**prior, **message, "content": [*prior["content"], *message["content"]]}
+        else:
+            result.append(message)
+    return result

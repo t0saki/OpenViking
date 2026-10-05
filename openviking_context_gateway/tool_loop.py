@@ -10,9 +10,8 @@ import orjson
 
 from .protocols import SSEDecoder, messages_of, usage_of
 from .records import RecordKind as K
-from .tool_catalog import PREFIX, disable_tools, hidden_chain
-from .tool_protocols import tool_protocol
-from .tool_protocols.common import ToolLoopError, add_usage
+from .tool_protocols import hidden_chain, tool_protocol
+from .tool_protocols.common import PREFIX, ToolLoopError, ToolRound, add_usage
 
 
 def added_tokens(value):
@@ -24,7 +23,7 @@ class HiddenToolLoop:
     def __init__(self, prepared, executor, store, capture):
         self.prepared, self.executor, self.store, self.capture = prepared, executor, store, capture
         self.protocol = prepared.protocol
-        self.adapter = tool_protocol(self.protocol, prepared.body)
+        self.adapter = tool_protocol(self.protocol)(prepared.body)
         self.body = {
             **prepared.body,
             self.adapter.field: list(messages_of(prepared.body, self.protocol)),
@@ -34,6 +33,7 @@ class HiddenToolLoop:
         self.transcript, self.usage = [], {}
         self.final, self.hidden = None, False
         self.rounds, self.token_cost = 0, 0
+        self.round = ToolRound([], [], {}, False)
 
     async def read(self, response):
         adapter = self.adapter
@@ -67,26 +67,25 @@ class HiddenToolLoop:
                         yield adapter.encode(event)
             if decoder.buffer.strip():
                 raise ToolLoopError("Incomplete model event stream")
-        adapter.end()
+        self.round = adapter.end()
         response.close()
 
     def observe(self):
-        adapter = self.adapter
-        self.transcript.extend(adapter.output)
-        add_usage(self.usage, adapter.usage)
-        normalized = usage_of({"usage": adapter.usage})
+        self.transcript.extend(self.round.output)
+        add_usage(self.usage, self.round.usage)
+        normalized = usage_of({"usage": self.round.usage})
         self.capture.context_usage = normalized
         if self.rounds:
-            self.token_cost += normalized["output_tokens"] or added_tokens(adapter.output)
+            self.token_cost += normalized["output_tokens"] or added_tokens(self.round.output)
             self.prepared.metrics["hidden_upstream_calls"] = self.rounds
         prefix = "hidden_upstream_" if self.rounds else "first_upstream_"
         for key, value in normalized.items():
             self.prepared.metrics[prefix + key] = self.prepared.metrics.get(prefix + key, 0) + value
 
     async def execute(self, calls):
-        if self.rounds >= self.policy.get("tool_max_rounds", 5) or self.body.get("tool_choice") in (
-            "none",
-            {"type": "none"},
+        if (
+            self.rounds >= self.policy.get("tool_max_rounds", 5)
+            or self.adapter.tool_choice(self.body) == "none"
         ):
             raise ToolLoopError("Model exceeded the hidden tool round limit")
         if not self.rounds:
@@ -105,13 +104,13 @@ class HiddenToolLoop:
             self.token_cost += added_tokens(result)
         results = self.adapter.results(results)
         self.transcript.extend(results)
-        self.body[self.adapter.field].extend([*self.adapter.output, *results])
+        self.body[self.adapter.field].extend([*self.round.output, *results])
         self.rounds += 1
         self.hidden = True
         self.prepared.metrics.update(hidden_rounds=self.rounds, hidden_added_tokens=self.token_cost)
         exhausted = self.token_cost >= self.policy.get("tool_total_tokens", 100000)
         if exhausted or self.rounds >= self.policy.get("tool_max_rounds", 5):
-            disable_tools(self.body, self.protocol)
+            self.adapter.disable_tools(self.body)
         if exhausted:
             self.prepared.metrics["tool_stop_reason"] = "token_budget"
 
@@ -136,11 +135,14 @@ class HiddenToolLoop:
             self.prepared.metrics["degradation"] = "hidden_reply_without_anchor"
         self.final = self.adapter.final(self.usage)
         self.capture.nonstream(self.final)
-        if self.adapter.calls and self.adapter.finish == self.adapter.call_finish:
+        if self.round.calls and self.round.tool_handoff:
             # A successful client-tool handoff is replayable too. The next
             # continuation replaces this unconfirmed capture tail in place.
             self.capture.complete = True
         self.prepared.metrics["hidden_rounds"] = self.rounds
+
+    def error(self, message: str) -> bytes:
+        return b"".join(self.adapter.encode(event) for event in self.adapter.error(message))
 
     async def run(self, response, send):
         """Publish the terminal event only after the exact transcript is durable."""
@@ -151,13 +153,13 @@ class HiddenToolLoop:
                         yield event
                     self.observe()
                     owned, client = [], []
-                    for call in self.adapter.calls:
+                    for call in self.round.calls:
                         name = call["function"]["name"]
                         if name.startswith(PREFIX) and name not in self.allowed:
                             raise ToolLoopError("Model called an unavailable gateway tool")
                         (owned if name in self.allowed else client).append(call)
                     if owned:
-                        if self.adapter.finish != self.adapter.call_finish:
+                        if not self.round.tool_handoff:
                             raise ToolLoopError("Gateway tool call has an invalid stop reason")
                         await self.execute(owned)
                     events = self.adapter.publish_calls(client)
@@ -168,7 +170,7 @@ class HiddenToolLoop:
                         await self.persist()
                         if self.body.get("stream"):
                             for event in self.adapter.terminal(self.final):
-                                yield event
+                                yield self.adapter.encode(event)
                         return
                     response = await send(self.body, max(0.01, self.deadline - time.monotonic()))
         except (ValueError, TypeError, KeyError, IndexError) as error:

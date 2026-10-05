@@ -9,9 +9,10 @@ import pytest
 from openviking_context_gateway.models import Policy, Upstream
 from openviking_context_gateway.protocols import ResponseCapture
 from openviking_context_gateway.storage import SQLiteKernelStore
-from openviking_context_gateway.tool_catalog import attachments, hidden_chain, select_tools
+from openviking_context_gateway.tool_catalog import attachments, select_tools
 from openviking_context_gateway.tool_executor import ToolExecutor, attachment_bytes
 from openviking_context_gateway.tool_loop import HiddenToolLoop
+from openviking_context_gateway.tool_protocols import hidden_chain
 from openviking_context_gateway.tool_protocols.common import sse
 from openviking_context_gateway.vendors import ark_url
 
@@ -149,7 +150,7 @@ async def test_hidden_branch_restart_and_archive_mapping(setup_kernel, credentia
         p.scope,
         p.session,
         "hidden",
-        hidden_chain(messages)[-1],
+        hidden_chain(messages, "chat")[-1],
         {"messages": history, "visible_count": 1},
     )
     kernel.store = SQLiteKernelStore(store.path, encryption)
@@ -174,13 +175,13 @@ async def test_hidden_branch_restart_and_archive_mapping(setup_kernel, credentia
     ]
     p = await kernel.prepare({"messages": raw}, "chat", {}, credential, {"id": "u"}, policy)
     p.body["messages"] = copy.deepcopy(raw)
-    p.body_chain = hidden_chain(raw)
+    p.body_chain = hidden_chain(raw, "chat")
     from openviking_context_gateway.models import Policy
-    from openviking_context_gateway.tool_catalog import replay_hidden
+    from openviking_context_gateway.tool_protocols import replay_hidden
 
     p.records["replacement", p.chain[2]] = {"text": "summary"}
     assert kernel.replace_archive(p, Policy(keep_recent_turns=1))
-    p.body["messages"] = replay_hidden(p.body["messages"], p.body_chain, p.records)
+    p.body["messages"] = replay_hidden(p.body["messages"], p.body_chain, p.records, "chat")
     assert p.body["messages"] == [raw[0], {"role": "user", "content": "summary"}, *raw[3:]]
 
 
@@ -318,7 +319,7 @@ async def test_incompatible_tools_keep_visible_history(setup_kernel, credential,
         first.scope,
         first.session,
         "hidden",
-        hidden_chain(messages)[-1],
+        hidden_chain(messages, "chat")[-1],
         {"messages": transcript, "visible_count": 1},
     )
     body = {

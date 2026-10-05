@@ -313,7 +313,7 @@ class ProxyRequest:
                 finished = True
             except (ToolLoopError, aiohttp.ClientError) as error:
                 self.metrics["degradation"] = "hidden_tool_loop_failed"
-                yield loop.adapter.error(str(error))
+                yield loop.error(str(error))
             finally:
                 if not finished:
                     capture.complete = False

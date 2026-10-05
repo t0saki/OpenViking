@@ -32,13 +32,10 @@ from .state_store import get_state
 from .storage import KernelStore, digest
 from .tool_catalog import (
     TOOL_VERSION,
-    disable_tools,
-    hidden_chain,
-    replay_hidden,
     select_tools,
     tool_block_reason,
-    wire_tools,
 )
+from .tool_protocols import hidden_chain, replay_hidden, tool_protocol
 from .vendors import parameter_fingerprint
 
 logger = logging.getLogger(__name__)
@@ -117,11 +114,11 @@ class MemoryKernel:
 
     async def identity(self, messages, protocol, headers, credential, tools):
         sid = session_id(headers)
-        needs_hidden = protocol == "chat" and (sid is None or tools)
+        needs_hidden = tool_protocol(protocol).canonicalizes_history and (sid is None or tools)
 
         def chains():
             chain = prefix_chain(messages)
-            return chain, hidden_chain(messages) if needs_hidden else chain
+            return chain, hidden_chain(messages, protocol) if needs_hidden else chain
 
         # Small prompts need no executor; large payloads must not block the loop.
         if len(messages) > 32 or any(len(m.get("content") or "") > 8192 for m in messages):
@@ -175,11 +172,11 @@ class MemoryKernel:
             records, scope, sid, body, protocol, upstream, policy, credential, plugin
         )
         if (
-            protocol == "chat"
+            tool_protocol(protocol).canonicalizes_history
             and (root["tools"] or root["policy"]["capture"])
             and body_chain is chain
         ):
-            body_chain = await asyncio.to_thread(hidden_chain, messages)
+            body_chain = await asyncio.to_thread(hidden_chain, messages, protocol)
             if body_chain != chain:
                 records.update(await self.store.replay.read(scope, sid, body_chain))
         upstream = next((u for u in upstreams if u["id"] == root["upstream_id"]), upstream)
@@ -191,7 +188,7 @@ class MemoryKernel:
         if plugin and not disabled:
             await self.store.replay.put(scope, sid, K.DISABLED, "", {"reason": "plugin_present"})
             disabled = True
-        field = "input" if protocol == "responses" else "messages"
+        field = tool_protocol(protocol).field
         result = {**body, field: [dict(m) for m in messages]}
         prepared = Prepared(
             result,
@@ -268,6 +265,7 @@ class MemoryKernel:
     @staticmethod
     def configure_tools(request, policy):
         tools = request.root["tools"]
+        adapter = tool_protocol(request.protocol)
         if tools:
             reason = tool_block_reason(request.original, request.protocol, request.upstream)
             names = {t["function"]["name"] for t in tools}
@@ -276,27 +274,19 @@ class MemoryKernel:
             )
             if reason or collision:
                 request.metrics["tool_skip_reason"] = reason or "tool_name_collision"
-                if request.protocol == "anthropic" and any(
-                    (K.HIDDEN, anchor) in request.records for anchor in request.body_chain
-                ):
-                    request.body["messages"] = strip_thinking(request.body["messages"])
-                    request.metrics["degradation"] = "hidden_tool_history_unavailable"
+                if any((K.HIDDEN, anchor) in request.records for anchor in request.body_chain):
+                    messages = request.body[adapter.field]
+                    cleaned = adapter.omit_hidden_history(messages)
+                    if cleaned != messages:
+                        request.body[adapter.field] = cleaned
+                        request.metrics["degradation"] = "hidden_tool_history_unavailable"
             else:
-                request.body["tools"] = [
-                    *request.original.get("tools", []),
-                    *wire_tools(tools, request.protocol),
-                ]
+                adapter.add_tools(request.body, tools)
                 request.tools_active = True
-                if request.protocol == "responses":
-                    request.body["include"] = list(
-                        dict.fromkeys(
-                            [*request.original.get("include", []), "reasoning.encrypted_content"]
-                        )
-                    )
                 if request.kind != "count" and (
                     request.disabled or request.kind not in {"user", "continuation"}
                 ):
-                    disable_tools(request.body, request.protocol)
+                    adapter.disable_tools(request.body)
         elif policy.gateway_tools:
             request.metrics["tool_skip_reason"] = (
                 tool_block_reason(request.original, request.protocol, request.upstream)
@@ -305,7 +295,7 @@ class MemoryKernel:
 
     @staticmethod
     def replay(request):
-        field = "input" if request.protocol == "responses" else "messages"
+        field = tool_protocol(request.protocol).field
         messages = request.body[field]
         missing = False
         sent = set(request.observation.value.get("sent", []))
@@ -359,7 +349,7 @@ class MemoryKernel:
             await self.settle_recall(request, anchor, decision["tokens"])
         request.records[K.INJECTION, anchor] = decision
         if decision["text"]:
-            field = "input" if request.protocol == "responses" else "messages"
+            field = tool_protocol(request.protocol).field
             append_context(request.body[field][request.anchor], decision["text"], request.protocol)
         request.metrics.update(
             recall_count=len(decision["uris"]),
@@ -442,11 +432,7 @@ class MemoryKernel:
             and request.kind in {"user", "continuation"}
         ):
             returned = [*request.messages, *(response.output_items or [response.message])]
-            endpoint = (
-                await asyncio.to_thread(
-                    hidden_chain if request.protocol == "chat" else prefix_chain, returned
-                )
-            )[-1]
+            endpoint = (await asyncio.to_thread(hidden_chain, returned, request.protocol))[-1]
             if endpoint:
                 key = "prefix:" + endpoint
                 old = await get_state(self.store.state, request.scope, key)
@@ -522,7 +508,7 @@ class MemoryKernel:
             replacement = request.records.get((K.REPLACEMENT, anchor))
             if replacement is None or not self.eligible(request, anchor, policy):
                 continue
-            field = "input" if request.protocol == "responses" else "messages"
+            field = tool_protocol(request.protocol).field
             prefix = [
                 m
                 for m in request.body[field][: index + 1]

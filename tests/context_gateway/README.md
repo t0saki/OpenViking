@@ -35,11 +35,27 @@ restart/edit/archive replay and preserved thinking/signature blocks. The existin
 contracts remain in `test_app.py` and `test_tools.py`.
 
 `HiddenToolLoop` owns execution, budgets, durable receipts and usage. The three adapters in
-`tool_protocols` only assemble native output and project client-visible events. No storage
-port or record kind is protocol-specific. A hidden record's `visible_count` makes an entire
+`tool_protocols` own native request/history rules, assemble native output and project
+client-visible events. `ToolProtocol` declares the full adapter contract; `end()` returns
+a `ToolRound` so the loop does not inspect partial protocol state. All event producers
+return native JSON (or the Chat `[DONE]` marker); only `encode()` returns bytes. No storage
+port or record kind is protocol-specific. A hidden record's required `visible_count` makes an entire
 Responses output array one replayable span. Responses requires full input history and
 `store: false`; native reasoning items remain intact. Anthropic joins gateway and client
 results in the user message immediately following the original tool call.
+
+Protocol changes reviewers should account for:
+
+- The former `tools_chat_only` skip reason is now `tools_require_full_history`, because
+  Responses tools require full history with `store: false` and no `item_reference`.
+- Responses tool requests add `reasoning.encrypted_content` to `include`, preserving the
+  client's other entries. Opaque reasoning is retained in native records and continuations.
+- When Anthropic tools are blocked, thinking is removed only if this request matches a
+  stored hidden round; actual removal reports `hidden_tool_history_unavailable`.
+  Ordinary client tool-result continuations keep their thinking and signatures.
+- Responses stream failures use `response.failed` with the same response ID and monotonic
+  sequence numbers. Empty Anthropic tool-argument deltas preserve the initial `{}` input;
+  nonempty malformed JSON still fails without executing the tool.
 
 Signatures in these tests are synthetic. A successful compatible-provider run does not
 establish native Claude signature binding or native OpenAI reasoning-encryption support.
