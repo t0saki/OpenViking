@@ -1,11 +1,16 @@
 import { describe, expect, it } from 'vitest'
 
-import type { Upstream, UpstreamInput } from './api'
+import type { Upstream, UpstreamInput, Vendor } from './api'
 import {
+  PROTOCOLS,
   UPSTREAM_DEFAULTS,
+  VENDORS,
+  VENDOR_PROTOCOLS,
   endpointPreview,
   isValidBaseUrl,
+  protocolFor,
   servedModels,
+  supportsProtocol,
   toUpstreamInput,
   upstreamUrl,
   validateUpstream,
@@ -56,6 +61,46 @@ it('lists models and alias names once', () => {
   expect(
     servedModels({ models: ['a', 'b'], aliases: { b: 'x', c: 'y' } }),
   ).toEqual(['a', 'b', 'c'])
+})
+
+describe('protocols per provider', () => {
+  it('offers every protocol for Generic and Ark, and at least one everywhere', () => {
+    expect(VENDOR_PROTOCOLS.generic).toEqual(PROTOCOLS)
+    expect(VENDOR_PROTOCOLS.ark).toEqual(PROTOCOLS)
+    for (const vendor of VENDORS) {
+      expect(VENDOR_PROTOCOLS[vendor].length, vendor).toBeGreaterThan(0)
+    }
+  })
+
+  it.each([
+    ['anthropic', 'anthropic', true],
+    ['anthropic', 'chat', false],
+    ['openai', 'anthropic', false],
+    ['openai', 'responses', true],
+    ['deepseek', 'anthropic', true],
+    ['deepseek', 'responses', false],
+  ] as const)('%s offers %s: %s', (vendor, protocol, offered) => {
+    expect(supportsProtocol(vendor, protocol)).toBe(offered)
+  })
+
+  it.each([
+    ['openai', 'responses', 'responses'],
+    ['openai', 'anthropic', 'chat'],
+    ['anthropic', 'chat', 'anthropic'],
+    ['anthropic', 'responses', 'anthropic'],
+    ['deepseek', 'responses', 'chat'],
+    ['generic', 'anthropic', 'anthropic'],
+  ] as const)('switching to %s from %s picks %s', (vendor, current, next) => {
+    expect(protocolFor(vendor, current)).toBe(next)
+  })
+
+  it('treats a provider id it does not know like Generic', () => {
+    const vendor = 'newcomer' as Vendor
+    for (const protocol of PROTOCOLS) {
+      expect(supportsProtocol(vendor, protocol), protocol).toBe(true)
+      expect(protocolFor(vendor, protocol)).toBe(protocol)
+    }
+  })
 })
 
 describe('base URLs', () => {
@@ -164,6 +209,19 @@ describe('validateUpstream', () => {
       key: 'validation.contextWindow',
       values: { name: 'm', min: 1024 },
     })
+  })
+
+  it('rejects a protocol the provider does not offer', () => {
+    expect(
+      validateUpstream(input({ vendor: 'openai', protocol: 'anthropic' }))
+        .protocol,
+    ).toEqual({
+      key: 'validation.protocolUnsupported',
+      values: { vendor: 'openai', protocol: 'anthropic' },
+    })
+    expect(
+      validateUpstream(input({ vendor: 'deepseek', protocol: 'anthropic' })),
+    ).toEqual({})
   })
 
   it('checks name, URL and numbers', () => {

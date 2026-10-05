@@ -2,6 +2,10 @@ const common = {
   title: '上下文网关',
   description:
     '让任何使用 API Key 的模型客户端都能用上 OpenViking 记忆。把客户端指向网关后，网关会为每条新消息补充相关记忆，并把对话保存回 OpenViking。',
+  beta: {
+    label: 'Beta',
+    hint: '测试版：上下文网关仍在完善，后续版本可能调整设置和接口。',
+  },
   tabs: {
     label: '上下文网关分区',
     overview: '概览',
@@ -135,6 +139,8 @@ const common = {
     headerValue: '请填写“{{name}}”的取值',
     aliasTarget: '请填写“{{name}}”对应的上游模型',
     contextWindow: '“{{name}}”的上下文窗口至少为 {{min}} Token',
+    protocolUnsupported:
+      '$t(enums.vendor.{{vendor}}) 不提供 $t(enums.protocol.{{protocol}}) 接口。请换一种协议，或者把服务商改成“$t(enums.vendor.generic)”。',
   },
   units: {
     bytes: '字节',

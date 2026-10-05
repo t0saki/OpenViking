@@ -76,6 +76,16 @@ describe('enum labels', () => {
     expect(healthReasonLabel(t, 'something_else')).toBe('something_else')
   })
 
+  it('names the provider and protocol in the unsupported-protocol message', () => {
+    const values = { vendor: 'openai', protocol: 'anthropic' }
+    expect(t('validation.protocolUnsupported', values)).toBe(
+      'OpenAI does not offer Anthropic Messages. Pick another protocol, or set the provider to Generic.',
+    )
+    expect(zhT('validation.protocolUnsupported', values)).toBe(
+      'OpenAI 不提供 Anthropic Messages 接口。请换一种协议，或者把服务商改成“通用”。',
+    )
+  })
+
   it('explains every degradation in both languages', () => {
     for (const reason of DEGRADATIONS) {
       for (const translate of [t, zhT]) {

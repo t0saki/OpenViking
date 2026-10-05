@@ -10,7 +10,7 @@ The gateway accepts the three common model APIs: Anthropic Messages, OpenAI Chat
 
 > **Note**: Context Gateway runs as its own process, `openviking-context-gateway`, next to OpenViking Server. It is unrelated to the VikingBot gateway (`vikingbot gateway`).
 
-This page explains how the gateway works and how to connect clients. To deploy it for a team and run it day to day, see [Context Gateway deployment and operations](22-context-gateway-operations.md).
+Context Gateway is currently in beta. This page explains how the gateway works and how to connect clients. To deploy it for a team and run it day to day, see [Context Gateway deployment and operations](22-context-gateway-operations.md).
 
 ## Gateway or plugin?
 
@@ -185,7 +185,7 @@ Right after startup `openviking` may still read `{"status":"starting"}`. If it s
 
 Open <http://127.0.0.1:1933/studio>, open **Connection Settings**, and paste alice's key as both the **User API key** and the **Admin API key**. Then choose **Context Gateway** in the sidebar's **Settings** group. Until the first request arrives, the **Overview** tab shows a **Get started** checklist with the same four steps:
 
-1. **Add an upstream.** On the Upstreams tab, choose **Add upstream**. Give it a name, pick the protocol your client speaks (Chat Completions for this walkthrough), choose the provider, enter its base URL (for example `https://api.openai.com/v1`), keep **The gateway holds the API key** selected and paste the provider's API key. Save, then use **Test** in the upstream list to check that the gateway can reach the provider.
+1. **Add an upstream.** On the Upstreams tab, choose **Add upstream**. Give it a name, choose the provider, pick the protocol your client speaks (Chat Completions for this walkthrough), enter its base URL (for example `https://api.openai.com/v1`), keep **The gateway holds the API key** selected and paste the provider's API key. Save, then use **Test** in the upstream list to check that the gateway can reach the provider.
 2. **Create a context profile.** On the Profiles tab, choose **Create with recommended settings**. This creates a profile named "Default".
 3. **Issue a gateway key.** On the Keys tab, choose **Issue key**. Enter a name, paste alice's key as the **OpenViking key**, pick the "Default" profile and your upstream, then issue it. The **Copy your gateway key** dialog shows the full `ovcg_…` key once; copy it before you close the dialog.
 4. **Connect a client.** The Connect tab shows the setup for each client with your gateway address filled in. The same setups are listed in [Connect clients](#connect-clients) below.

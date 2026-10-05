@@ -6,6 +6,8 @@ description: Deploy Context Gateway with Docker Compose, Helm or your own proxy,
 
 This page is for the people who run Context Gateway: deploying it, managing upstreams, context profiles and keys in Studio, keeping data safe, and fixing problems. For what the gateway does and how to connect clients, see [Context Gateway](15-context-gateway.md).
 
+Context Gateway is currently in beta. Its settings and APIs may change between releases, so read the release notes before you upgrade.
+
 The gateway is a separate process next to OpenViking Server, normally on port 1935. Clients send their model requests to it. You manage it in Studio, which OpenViking Server serves; Studio's management calls reach the gateway through OpenViking Server.
 
 ```text
@@ -298,12 +300,12 @@ The upstream editor has four sections.
 
 **Endpoint.**
 
-- **Protocol** decides which client requests the upstream can serve, and how the gateway sends the key: `x-api-key` for Anthropic Messages, `Authorization: Bearer` for the others.
-- **Provider** adjusts the gateway to a provider's quirks:
-  - *Generic*, *Anthropic* and *OpenAI* behave the same.
+- **Provider** decides which protocols you can pick and adjusts the gateway to the provider's quirks. The editor offers only the protocols the provider supports: Anthropic Messages for *Anthropic*; Chat Completions and Responses for *OpenAI*; Chat Completions and Anthropic Messages for *DeepSeek*; all three for *Volcano Engine Ark* and *Generic*. Choose *Generic* for a provider not listed here, or for a compatible proxy such as LiteLLM or new-api.
+  - *Generic*, *Anthropic* and *OpenAI* forward requests the same way.
   - *DeepSeek*: OpenViking tools are offered only when a request turns thinking off (`"thinking": {"type": "disabled"}`), because DeepSeek's thinking mode needs reasoning history that chat apps do not send back. Memory is added as usual.
   - *Volcano Engine Ark*: requests go to Ark's own paths. Each conversation gets a stable `prompt_cache_key` for Chat Completions and Responses, so Ark's prefix cache follows the conversation. Requests whose model, thinking, sampling, system prompt or tools differ from the conversation's first request are flagged **Cache parameters changed** (`ark_cache_parameters_changed`), because Ark resets its cache when these change.
-- **Base URL.** The gateway appends the client's request path and drops a duplicate `/v1`, so `https://api.openai.com/v1` and `https://api.anthropic.com` both work. The editor shows where requests will go. For Ark, use the origin `https://ark.cn-beijing.volces.com`, which works for every protocol; a base ending in `/api/v3` works only for Chat Completions and Responses, and one ending in `/api/compatible/v1` only for Anthropic Messages. A provider whose API path does not end in `/v1`, such as `…/api/paas/v4`, cannot be used directly; put a compatible proxy such as LiteLLM in between.
+- **Protocol** decides which client requests the upstream can serve, and how the gateway sends the key: `x-api-key` for Anthropic Messages, `Authorization: Bearer` for the others.
+- **Base URL.** The gateway appends the client's request path and drops a duplicate `/v1`, so `https://api.openai.com/v1` and `https://api.anthropic.com` both work. The editor shows where requests will go. For DeepSeek's Anthropic Messages API, use `https://api.deepseek.com/anthropic`. For Ark, use the origin `https://ark.cn-beijing.volces.com`, which works for every protocol; a base ending in `/api/v3` works only for Chat Completions and Responses, and one ending in `/api/compatible/v1` only for Anthropic Messages. A provider whose API path does not end in `/v1`, such as `…/api/paas/v4`, cannot be used directly; put a compatible proxy such as LiteLLM in between.
 
 **Credentials.**
 
@@ -643,7 +645,7 @@ URL settings must be plain `http` or `https` addresses without credentials, quer
 | --- | --- | --- | --- |
 | Name | `name` | | Display name. |
 | Protocol | `protocol` | | `anthropic` (Anthropic Messages), `chat` (Chat Completions) or `responses` (Responses). |
-| Provider | `vendor` | `generic` | `generic`, `anthropic`, `openai`, `deepseek` or `ark` (Volcano Engine Ark). |
+| Provider | `vendor` | `generic` | `generic`, `anthropic`, `openai`, `deepseek` or `ark` (Volcano Engine Ark). Studio offers only the protocols the provider supports; the API accepts any pair. |
 | Base URL | `base_url` | | Provider address; see [Upstreams](#upstreams) for path rules. |
 | Who provides the API key | `auth_mode` | `managed` | `managed` (The gateway holds the API key) or `passthrough` (Each client sends its own key). |
 | API key | `api_key` | | Write-only. Blank on edit keeps the stored key. |

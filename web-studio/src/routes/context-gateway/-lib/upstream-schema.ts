@@ -31,6 +31,42 @@ export const VENDORS: Vendor[] = [
   'ark',
 ]
 
+/**
+ * Protocols each provider offers, the only ones the editor lets you pick. The
+ * gateway itself accepts any pair; Generic covers unlisted providers and
+ * compatible proxies, so it allows all three.
+ */
+export const VENDOR_PROTOCOLS: Record<Vendor, Protocol[]> = {
+  generic: PROTOCOLS,
+  anthropic: ['anthropic'],
+  openai: ['chat', 'responses'],
+  deepseek: ['anthropic', 'chat'],
+  ark: PROTOCOLS,
+}
+
+/**
+ * Protocols `vendor` offers. A provider id this Studio doesn't know yet (from
+ * a newer gateway) is treated like Generic.
+ */
+function vendorProtocols(vendor: Vendor): Protocol[] {
+  const known: Partial<Record<string, Protocol[]>> = VENDOR_PROTOCOLS
+  return known[vendor] ?? PROTOCOLS
+}
+
+export function supportsProtocol(vendor: Vendor, protocol: Protocol): boolean {
+  return vendorProtocols(vendor).includes(protocol)
+}
+
+/**
+ * The protocol to use after switching to `vendor`: `current` when the vendor
+ * offers it, else Chat Completions, else the vendor's first protocol.
+ */
+export function protocolFor(vendor: Vendor, current: Protocol): Protocol {
+  if (supportsProtocol(vendor, current)) return current
+  if (supportsProtocol(vendor, 'chat')) return 'chat'
+  return vendorProtocols(vendor)[0]
+}
+
 /** Client endpoint each protocol serves on the gateway. */
 export const PROTOCOL_PATHS: Record<Protocol, string> = {
   anthropic: '/v1/messages',
@@ -151,6 +187,14 @@ export function validateUpstream(
 ): ValidationErrors {
   const errors: ValidationErrors = {}
   collect(errors, 'name', checkRequired(input.name))
+  // Only an upstream saved through the API can hold such a pair. The values
+  // are ids; the message nests their labels.
+  if (!supportsProtocol(input.vendor, input.protocol)) {
+    collect(errors, 'protocol', {
+      key: 'validation.protocolUnsupported',
+      values: { vendor: input.vendor, protocol: input.protocol },
+    })
+  }
   collect(
     errors,
     'base_url',

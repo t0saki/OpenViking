@@ -157,7 +157,10 @@ function UpstreamEditorForm({ stored, usedBy }: UpstreamEditorFormProps) {
 
   const errorFor = (field: UpstreamField) => {
     const issue = errors[field]
-    return issue && visited.has(field) ? t(issue.key, issue.values) : undefined
+    // The editor never picks a protocol the provider lacks, so that error
+    // comes from a stored upstream and shows before any field is visited.
+    const shown = visited.has(field) || field === 'protocol'
+    return issue && shown ? t(issue.key, issue.values) : undefined
   }
 
   const save = useMutation({

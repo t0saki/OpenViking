@@ -1,3 +1,4 @@
+import * as React from 'react'
 import {
   Link,
   Outlet,
@@ -24,11 +25,17 @@ import {
   CardTitle,
 } from '#/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '#/components/ui/tabs'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '#/components/ui/tooltip'
 
 import { useConnectionInfo, useGateway } from '../-lib/use-gateway'
 import { CopyButton } from './copy-button'
 import { LoadingState } from './empty-state'
 import { GatewayDevMode, GatewayUnavailable } from './gateway-unavailable'
+import { ToneBadge } from './status-badges'
 
 /** Sections in tab order; editor routes belong to their list's tab. */
 const TABS = [
@@ -93,6 +100,33 @@ function AddressChip({ address }: { address: string }) {
   )
 }
 
+/** "Beta" pill after the title; focus or hover explains what it means. */
+function BetaBadge() {
+  const { t } = useTranslation('contextGateway')
+  const hintId = React.useId()
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            type="button"
+            aria-describedby={hintId}
+            className="inline-flex cursor-default rounded-4xl focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+          />
+        }
+      >
+        <ToneBadge tone="neutral">{t('beta.label')}</ToneBadge>
+      </TooltipTrigger>
+      <span id={hintId} hidden>
+        {t('beta.hint')}
+      </span>
+      <TooltipContent className="max-w-72 text-pretty">
+        {t('beta.hint')}
+      </TooltipContent>
+    </Tooltip>
+  )
+}
+
 /** Line tabs; clicking a tab also leaves an editor for its list. */
 function SectionTabs({ activeTab }: { activeTab: GatewayTab }) {
   const { t } = useTranslation('contextGateway')
@@ -144,9 +178,12 @@ export function ContextGatewayLayout() {
     <div className="flex w-full min-w-0 flex-col gap-5">
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div className="grid max-w-3xl gap-1.5">
-          <h1 className="text-2xl font-semibold tracking-tight">
-            {t('title')}
-          </h1>
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="text-2xl font-semibold tracking-tight">
+              {t('title')}
+            </h1>
+            <BetaBadge />
+          </div>
           <p className="text-sm leading-6 text-muted-foreground">
             {t('description')}
           </p>

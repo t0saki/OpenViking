@@ -6,6 +6,8 @@ description: 用 Docker Compose、Helm 或自建反向代理部署上下文网�
 
 本页写给负责运行上下文网关的人，内容包括部署网关，在 Studio 中管理上游、上下文配置和密钥，保护数据，以及排查问题。网关能做什么、客户端怎么接入，见[上下文网关](15-context-gateway.md)。
 
+上下文网关目前处于 Beta 阶段，设置和接口可能随版本调整，升级前请先阅读发布说明。
+
 网关是独立于 OpenViking Server 的进程，默认监听 1935 端口。客户端把模型请求发给网关；管理网关则在 Studio 中进行，Studio 由 OpenViking Server 提供，管理操作经 OpenViking Server 转发给网关。
 
 ```text
@@ -298,12 +300,12 @@ server {
 
 **接口。**
 
-- **协议**决定上游能处理哪些客户端请求，也决定网关如何发送密钥：Anthropic Messages 用 `x-api-key`，另外两种用 `Authorization: Bearer`。
-- **服务商**让网关适配各家服务商的差异：
-  - *通用*、*Anthropic* 和 *OpenAI* 的行为相同。
+- **服务商**决定可以选哪些协议，并让网关适配各家服务商的差异。编辑页只提供服务商支持的协议：*Anthropic* 只有 Anthropic Messages；*OpenAI* 有 Chat Completions 和 Responses；*DeepSeek* 有 Chat Completions 和 Anthropic Messages；*火山方舟*和*通用*三种都有。列表里没有的服务商，以及 LiteLLM、new-api 这类兼容代理，选*通用*。
+  - *通用*、*Anthropic* 和 *OpenAI* 转发请求的方式相同。
   - *DeepSeek*：只有请求关闭了思考模式（`"thinking": {"type": "disabled"}`）时才提供 OpenViking 工具，因为 DeepSeek 的思考模式需要推理历史，而聊天应用不会把推理历史发回来。记忆照常补充。
   - *火山方舟*：请求发往方舟自己的路径。Chat Completions 和 Responses 的每段对话都使用一个固定的 `prompt_cache_key`，方舟的前缀缓存就能跟着对话走。如果请求的模型、思考模式、采样参数、系统提示词或工具与对话的第一个请求不同，就会被标记为**缓存参数有变化**（`ark_cache_parameters_changed`），因为这些参数一变，方舟就会重新建立缓存。
-- **Base URL。** 网关把客户端的请求路径拼接在后面，并去掉重复的 `/v1`，所以 `https://api.openai.com/v1` 和 `https://api.anthropic.com` 都能用。编辑页会显示请求实际发往的地址。方舟请填写不带路径的地址 `https://ark.cn-beijing.volces.com`，它适用于全部三种协议；以 `/api/v3` 结尾的地址只适用于 Chat Completions 和 Responses，以 `/api/compatible/v1` 结尾的只适用于 Anthropic Messages。API 路径不以 `/v1` 结尾的服务商（例如 `…/api/paas/v4`）不能直接使用，需要在中间加一个 LiteLLM 之类的兼容代理。
+- **协议**决定上游能处理哪些客户端请求，也决定网关如何发送密钥：Anthropic Messages 用 `x-api-key`，另外两种用 `Authorization: Bearer`。
+- **Base URL。** 网关把客户端的请求路径拼接在后面，并去掉重复的 `/v1`，所以 `https://api.openai.com/v1` 和 `https://api.anthropic.com` 都能用。编辑页会显示请求实际发往的地址。DeepSeek 的 Anthropic Messages 接口请填写 `https://api.deepseek.com/anthropic`。方舟请填写不带路径的地址 `https://ark.cn-beijing.volces.com`，它适用于全部三种协议；以 `/api/v3` 结尾的地址只适用于 Chat Completions 和 Responses，以 `/api/compatible/v1` 结尾的只适用于 Anthropic Messages。API 路径不以 `/v1` 结尾的服务商（例如 `…/api/paas/v4`）不能直接使用，需要在中间加一个 LiteLLM 之类的兼容代理。
 
 **凭证。**
 
@@ -643,7 +645,7 @@ URL 类设置必须是普通的 `http` 或 `https` 地址，不能包含账号�
 | --- | --- | --- | --- |
 | 名称 | `name` | | 显示名称。 |
 | 协议 | `protocol` | | `anthropic`（Anthropic Messages）、`chat`（Chat Completions）或 `responses`（Responses）。 |
-| 服务商 | `vendor` | `generic` | `generic`、`anthropic`、`openai`、`deepseek` 或 `ark`（火山方舟）。 |
+| 服务商 | `vendor` | `generic` | `generic`、`anthropic`、`openai`、`deepseek` 或 `ark`（火山方舟）。Studio 只提供服务商支持的协议，API 接受任意组合。 |
 | Base URL | `base_url` | | 服务商地址；路径规则见[上游](#上游)。 |
 | API Key 由谁提供 | `auth_mode` | `managed` | `managed`（由网关保管 API Key）或 `passthrough`（每个客户端自带 API Key）。 |
 | API Key | `api_key` | | 只能写入。编辑时留空表示保留已保存的密钥。 |

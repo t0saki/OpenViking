@@ -180,6 +180,12 @@ describe('layout gates', () => {
     })
     renderLayout()
     expect(await screen.findByText('https://gw.example.com')).toBeTruthy()
+    expect(
+      screen.getByRole('button', {
+        name: 'beta.label',
+        description: 'beta.hint',
+      }),
+    ).toBeTruthy()
     for (const tab of [
       'overview',
       'upstreams',

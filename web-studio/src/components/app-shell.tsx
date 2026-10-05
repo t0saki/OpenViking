@@ -46,6 +46,7 @@ import {
   SidebarHeader,
   SidebarInset,
   SidebarMenu,
+  SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarMenuSub,
@@ -436,14 +437,20 @@ function AppShellInner({ children }: { children: React.ReactNode }) {
                     <SidebarMenuButton
                       render={<Link to="/context-gateway" />}
                       isActive={contextGatewayActive}
-                      tooltip={t('footer.contextGateway', { ns: 'appShell' })}
-                      className="h-9"
+                      tooltip={t('footer.contextGatewayBeta', {
+                        ns: 'appShell',
+                      })}
+                      className="h-9 pr-12"
                     >
                       <WaypointsIcon />
                       <span>
                         {t('footer.contextGateway', { ns: 'appShell' })}
                       </span>
                     </SidebarMenuButton>
+                    {/* Hidden while the sidebar is collapsed; the tooltip says Beta then. */}
+                    <SidebarMenuBadge className="h-4.5 rounded-full border border-sidebar-border px-1.5 text-[10px] font-medium text-sidebar-foreground/55 peer-data-[size=default]/menu-button:top-[9px]">
+                      {t('footer.beta', { ns: 'appShell' })}
+                    </SidebarMenuBadge>
                   </SidebarMenuItem>
                 ) : null}
                 {canManageUsers ? (

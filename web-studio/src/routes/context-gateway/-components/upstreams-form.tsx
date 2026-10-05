@@ -19,8 +19,15 @@ import {
   SelectValue,
 } from '#/components/ui/select'
 import { PLAIN_INPUT_PROPS } from '#/lib/form-input'
+import { cn } from '#/lib/utils'
 
-import type { AuthMode, Upstream, UpstreamInput, Vendor } from '../-lib/api'
+import type {
+  AuthMode,
+  Protocol,
+  Upstream,
+  UpstreamInput,
+  Vendor,
+} from '../-lib/api'
 import { formatNumber } from '../-lib/format'
 import { protocolLabel, vendorLabel } from '../-lib/localize'
 import {
@@ -30,6 +37,8 @@ import {
   UPSTREAM_KEY_HEADER,
   VENDORS,
   endpointPreview,
+  protocolFor,
+  supportsProtocol,
 } from '../-lib/upstream-schema'
 import { KeyValueEditor } from './key-value-editor'
 import { Notice } from './notice'
@@ -51,11 +60,20 @@ const BASE_URL_EXAMPLES: Record<Vendor, string> = {
   ark: 'https://ark.cn-beijing.volces.com',
 }
 
+function baseUrlExample(vendor: Vendor, protocol: Protocol): string {
+  // DeepSeek serves Anthropic Messages under a path of its own.
+  if (vendor === 'deepseek' && protocol === 'anthropic') {
+    return 'https://api.deepseek.com/anthropic'
+  }
+  return BASE_URL_EXAMPLES[vendor]
+}
+
 const AUTH_MODES: AuthMode[] = ['managed', 'passthrough']
 
 /** Translation key under `upstreams.form` of each field's label. */
 export const UPSTREAM_FIELD_LABELS: Partial<Record<UpstreamField, string>> = {
   name: 'name',
+  protocol: 'protocol',
   base_url: 'baseUrl',
   api_key: 'apiKey',
   headers: 'headers',
@@ -85,22 +103,45 @@ function ChoiceCard({
   title,
   description,
   detail,
+  unavailable,
 }: {
   value: string
   title: React.ReactNode
   description: React.ReactNode
   /** Monospace line under the description, e.g. an API path. */
   detail?: string
+  /** Why the option can't be picked; disables it and replaces `detail`. */
+  unavailable?: string
 }) {
   return (
-    <label className="flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors hover:bg-muted/30 has-data-checked:border-primary/40 has-data-checked:bg-primary/[0.04] dark:has-data-checked:bg-primary/[0.08]">
-      <RadioGroupItem value={value} className="mt-0.5" />
+    <label
+      className={cn(
+        'flex items-start gap-3 rounded-lg border p-3 transition-colors has-data-checked:border-primary/40 has-data-checked:bg-primary/[0.04] dark:has-data-checked:bg-primary/[0.08]',
+        unavailable
+          ? 'cursor-not-allowed bg-muted/30'
+          : 'cursor-pointer hover:bg-muted/30',
+      )}
+    >
+      <RadioGroupItem
+        value={value}
+        disabled={Boolean(unavailable)}
+        className="mt-0.5 data-disabled:opacity-50"
+      />
       <span className="grid min-w-0 gap-1">
-        <span className="text-sm font-medium">{title}</span>
+        <span
+          className={cn(
+            'text-sm font-medium',
+            unavailable && 'text-muted-foreground',
+          )}
+        >
+          {title}
+        </span>
         <span className="text-xs leading-5 text-muted-foreground">
           {description}
         </span>
-        {detail ? (
+        {unavailable ? (
+          <span className="text-xs text-muted-foreground">{unavailable}</span>
+        ) : detail ? (
           <code className="truncate font-mono text-[11px] text-muted-foreground">
             {detail}
           </code>
@@ -179,30 +220,6 @@ export function UpstreamForm({
           />
         </SettingField>
         <SettingField
-          label={t('upstreams.form.protocol.label')}
-          description={t('upstreams.form.protocol.description')}
-        >
-          <RadioGroup
-            value={draft.protocol}
-            aria-label={t('upstreams.form.protocol.label')}
-            className="grid gap-2 md:grid-cols-3"
-            onValueChange={(value) => {
-              const protocol = PROTOCOLS.find((item) => item === value)
-              if (protocol) onChange('protocol', protocol)
-            }}
-          >
-            {PROTOCOLS.map((protocol) => (
-              <ChoiceCard
-                key={protocol}
-                value={protocol}
-                title={protocolLabel(t, protocol)}
-                description={t(`upstreams.form.protocol.options.${protocol}`)}
-                detail={PROTOCOL_PATHS[protocol]}
-              />
-            ))}
-          </RadioGroup>
-        </SettingField>
-        <SettingField
           label={t('upstreams.form.vendor.label')}
           htmlFor="upstream-vendor"
           description={vendorHint}
@@ -211,7 +228,12 @@ export function UpstreamForm({
             value={draft.vendor}
             onValueChange={(value) => {
               const vendor = VENDORS.find((item) => item === value)
-              if (vendor) onChange('vendor', vendor)
+              if (!vendor) return
+              onChange('vendor', vendor)
+              // Batched with the vendor, so no render pairs it with a
+              // protocol it doesn't offer.
+              const protocol = protocolFor(vendor, draft.protocol)
+              if (protocol !== draft.protocol) onChange('protocol', protocol)
             }}
           >
             <SelectTrigger id="upstream-vendor" className="w-full sm:w-72">
@@ -227,6 +249,42 @@ export function UpstreamForm({
           </Select>
         </SettingField>
         <SettingField
+          label={t('upstreams.form.protocol.label')}
+          description={t('upstreams.form.protocol.description')}
+          error={error('protocol')}
+        >
+          {/* Base UI sets the Tab stop from the checked card only on mount,
+              so remount when the provider may have switched the protocol. */}
+          <RadioGroup
+            key={draft.vendor}
+            value={draft.protocol}
+            aria-label={t('upstreams.form.protocol.label')}
+            aria-invalid={Boolean(error('protocol'))}
+            className="grid gap-2 md:grid-cols-3"
+            onValueChange={(value) => {
+              const protocol = PROTOCOLS.find((item) => item === value)
+              if (protocol) onChange('protocol', protocol)
+            }}
+          >
+            {PROTOCOLS.map((protocol) => (
+              <ChoiceCard
+                key={protocol}
+                value={protocol}
+                title={protocolLabel(t, protocol)}
+                description={t(`upstreams.form.protocol.options.${protocol}`)}
+                detail={PROTOCOL_PATHS[protocol]}
+                unavailable={
+                  supportsProtocol(draft.vendor, protocol)
+                    ? undefined
+                    : t('upstreams.form.protocol.unsupported', {
+                        vendor: vendorLabel(t, draft.vendor),
+                      })
+                }
+              />
+            ))}
+          </RadioGroup>
+        </SettingField>
+        <SettingField
           label={t('upstreams.form.baseUrl.label')}
           htmlFor="upstream-base-url"
           description={t('upstreams.form.baseUrl.description')}
@@ -239,7 +297,7 @@ export function UpstreamForm({
               type="url"
               inputMode="url"
               value={draft.base_url}
-              placeholder={BASE_URL_EXAMPLES[draft.vendor]}
+              placeholder={baseUrlExample(draft.vendor, draft.protocol)}
               aria-invalid={Boolean(error('base_url'))}
               className="font-mono"
               onChange={(event) => onChange('base_url', event.target.value)}

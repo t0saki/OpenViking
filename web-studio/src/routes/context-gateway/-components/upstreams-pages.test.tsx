@@ -164,6 +164,28 @@ function renderAt(path: string) {
   return router
 }
 
+/** The radio inside the protocol card titled with `protocol`'s label. */
+const protocolRadio = (protocol: string) => {
+  const radio = screen
+    .getByText(`enums.protocol.${protocol}`)
+    .closest('label')
+    ?.querySelector('[role="radio"]')
+  if (!radio) throw new Error(`no radio for ${protocol}`)
+  return radio
+}
+
+async function chooseVendor(vendor: string) {
+  fireEvent.click(
+    screen.getByRole('combobox', { name: 'upstreams.form.vendor.label' }),
+  )
+  const option = await screen.findByRole('option', {
+    name: `enums.vendor.${vendor}`,
+  })
+  // Base UI selects only the highlighted option; hovering highlights it.
+  fireEvent.mouseMove(option)
+  fireEvent.click(option)
+}
+
 const rowOf = (name: string) => {
   const row = screen.getByText(name).closest('tr')
   if (!row) throw new Error(`no row for ${name}`)
@@ -450,6 +472,90 @@ describe('UpstreamEditor', () => {
         }),
       ).toBeNull(),
     )
+  })
+
+  it('offers only the protocols the chosen provider supports', async () => {
+    renderAt('/context-gateway/upstreams/new')
+    await screen.findByText('upstreams.editor.newTitle')
+    expect(protocolRadio('chat').getAttribute('aria-checked')).toBe('true')
+    expect(screen.queryByText('upstreams.form.protocol.unsupported')).toBeNull()
+
+    await chooseVendor('anthropic')
+    await waitFor(() =>
+      expect(protocolRadio('anthropic').getAttribute('aria-checked')).toBe(
+        'true',
+      ),
+    )
+    for (const protocol of ['chat', 'responses']) {
+      expect(protocolRadio(protocol).getAttribute('aria-disabled')).toBe('true')
+    }
+    expect(protocolRadio('anthropic').hasAttribute('aria-disabled')).toBe(false)
+    // Tabbing into the group lands on the selected card, not a disabled one.
+    expect(protocolRadio('anthropic').getAttribute('tabindex')).toBe('0')
+    expect(protocolRadio('chat').getAttribute('tabindex')).toBe('-1')
+    expect(
+      screen.getAllByText('upstreams.form.protocol.unsupported'),
+    ).toHaveLength(2)
+    expect(
+      screen
+        .getByLabelText('upstreams.form.baseUrl.label')
+        .getAttribute('placeholder'),
+    ).toBe('https://api.anthropic.com')
+  })
+
+  it('keeps a supported protocol and replaces an unsupported one', async () => {
+    renderAt('/context-gateway/upstreams/new')
+    await screen.findByText('upstreams.editor.newTitle')
+    fireEvent.click(screen.getByText('enums.protocol.anthropic'))
+    await waitFor(() =>
+      expect(protocolRadio('anthropic').getAttribute('aria-checked')).toBe(
+        'true',
+      ),
+    )
+
+    await chooseVendor('deepseek')
+    await waitFor(() =>
+      expect(
+        screen
+          .getByLabelText('upstreams.form.baseUrl.label')
+          .getAttribute('placeholder'),
+      ).toBe('https://api.deepseek.com/anthropic'),
+    )
+    expect(protocolRadio('anthropic').getAttribute('aria-checked')).toBe('true')
+    expect(protocolRadio('responses').getAttribute('aria-disabled')).toBe(
+      'true',
+    )
+
+    await chooseVendor('openai')
+    await waitFor(() =>
+      expect(protocolRadio('chat').getAttribute('aria-checked')).toBe('true'),
+    )
+    expect(protocolRadio('anthropic').getAttribute('aria-disabled')).toBe(
+      'true',
+    )
+  })
+
+  it('flags a stored protocol the provider does not offer and blocks saving', async () => {
+    api.listUpstreams.mockResolvedValue([
+      { ...openai, id: 'u4', name: 'Mismatch', protocol: 'anthropic' },
+    ])
+    renderAt('/context-gateway/upstreams/u4')
+    await screen.findByLabelText('upstreams.form.name.label')
+
+    // Shown at once and left as stored, not switched behind the user's back.
+    expect(screen.getByText('validation.protocolUnsupported')).toBeTruthy()
+    expect(protocolRadio('anthropic').getAttribute('aria-checked')).toBe('true')
+
+    fireEvent.change(screen.getByLabelText('upstreams.form.name.label'), {
+      target: { value: 'Renamed' },
+    })
+    const save = screen.getByRole('button', { name: 'actions.save' })
+    expect(screen.getByText('upstreams.editor.missing')).toBeTruthy()
+    expect(save.hasAttribute('disabled')).toBe(true)
+
+    fireEvent.click(screen.getByText('enums.protocol.chat'))
+    await waitFor(() => expect(save.hasAttribute('disabled')).toBe(false))
+    expect(screen.queryByText('validation.protocolUnsupported')).toBeNull()
   })
 
   it('reports an upstream that no longer exists', async () => {

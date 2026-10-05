@@ -118,8 +118,8 @@ const upstreams = {
     },
     protocol: {
       label: '协议',
-      description:
-        '服务商支持的接口协议。客户端必须用同一种协议调用网关，网关不做协议转换。',
+      description: '客户端必须用同一种协议调用网关，网关不做协议转换。',
+      unsupported: '{{vendor}} 不提供这种接口',
       options: {
         anthropic: 'Claude Code 和 Anthropic SDK',
         chat: '大多数聊天客户端和 SDK',
@@ -129,10 +129,10 @@ const upstreams = {
     vendor: {
       label: '服务商',
       description:
-        '只有 DeepSeek 和火山方舟会改变网关的行为。其他服务商选“通用”效果完全相同。',
+        '选定服务商后，下方只能选它提供的协议。列表里没有的服务商，以及 LiteLLM 这类兼容代理，请选“通用”。',
       hints: {
         deepseek:
-          '只有请求关闭了思考模式，网关才会提供 OpenViking 工具。召回记忆不受影响。',
+          '使用 Anthropic Messages 时，Base URL 填 https://api.deepseek.com/anthropic。只有请求关闭了思考模式，网关才会提供 OpenViking 工具。召回记忆不受影响。',
         ark: '填写不带路径的方舟地址，例如 https://ark.cn-beijing.volces.com。网关会按协议补上 /api/v3 或 /api/compatible/v1，并让每段对话的 prompt_cache_key 保持不变，缓存才能持续命中。',
       },
     },

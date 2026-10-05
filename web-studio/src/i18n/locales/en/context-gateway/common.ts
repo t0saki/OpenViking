@@ -2,6 +2,10 @@ const common = {
   title: 'Context Gateway',
   description:
     'Give any API-key model client OpenViking memory. Point the client at the gateway, and it adds relevant memory to each new message and saves conversations back to OpenViking.',
+  beta: {
+    label: 'Beta',
+    hint: 'Beta: Context Gateway is still evolving; later releases may change its settings and APIs.',
+  },
   tabs: {
     label: 'Context Gateway sections',
     overview: 'Overview',
@@ -143,6 +147,8 @@ const common = {
     headerValue: 'Enter a value for “{{name}}”',
     aliasTarget: 'Enter the upstream model for “{{name}}”',
     contextWindow: 'The window for “{{name}}” must be at least {{min}} tokens',
+    protocolUnsupported:
+      '$t(enums.vendor.{{vendor}}) does not offer $t(enums.protocol.{{protocol}}). Pick another protocol, or set the provider to $t(enums.vendor.generic).',
   },
   units: {
     bytes: 'bytes',

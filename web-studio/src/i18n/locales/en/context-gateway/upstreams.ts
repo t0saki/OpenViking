@@ -123,7 +123,8 @@ const upstreams = {
     protocol: {
       label: 'Protocol',
       description:
-        'The API this provider speaks. Clients must call the gateway with the same API; requests are never converted.',
+        'Clients must call the gateway with this same API; the gateway does not convert between protocols.',
+      unsupported: 'Not offered by {{vendor}}',
       options: {
         anthropic: 'Claude Code and Anthropic SDKs',
         chat: 'Most chat clients and SDKs',
@@ -133,10 +134,10 @@ const upstreams = {
     vendor: {
       label: 'Provider',
       description:
-        'Only DeepSeek and Volcano Engine Ark change how the gateway behaves. For any other provider, Generic works the same.',
+        'Limits the protocols below to the ones this provider offers. For a provider not listed here, or a compatible proxy such as LiteLLM, choose Generic.',
       hints: {
         deepseek:
-          'OpenViking tools are only offered when a request turns thinking off. Recalling memory works as usual.',
+          'For Anthropic Messages, use the base URL https://api.deepseek.com/anthropic. OpenViking tools are only offered when a request turns thinking off. Recalling memory works as usual.',
         ark: "Enter the Ark address without a path, such as https://ark.cn-beijing.volces.com. The gateway adds /api/v3 or /api/compatible/v1 for each protocol and keeps each conversation's prompt_cache_key stable so the cache keeps hitting.",
       },
     },
