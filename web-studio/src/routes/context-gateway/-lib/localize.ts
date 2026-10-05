@@ -13,7 +13,6 @@ export const DEGRADATIONS = [
   'missing_injection_record',
   'plugin_present',
   'ark_cache_parameters_changed',
-  'archive_wait_timeout',
   'hidden_tool_loop_failed',
   'hidden_tool_history_unavailable',
   'hidden_reply_without_anchor',
@@ -48,6 +47,10 @@ export const toolSkipReasonLabel = (t: Translate, reason: string) =>
 
 export const toolStopReasonLabel = (t: Translate, reason: string) =>
   label(t, 'toolStopReason', reason)
+
+/** Reminder the model got to start a new context window: soft or hard. */
+export const windowReminderLabel = (t: Translate, reminder: string) =>
+  label(t, 'windowReminder', reminder)
 
 const OPENVIKING_REASONS: Record<string, string> = {
   openviking_unavailable: 'unavailable',

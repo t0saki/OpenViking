@@ -83,8 +83,15 @@ const requests = {
     recall: 'Recall',
     recallResult_one: '{{count}} entry in {{duration}}',
     recallResult_other: '{{count}} entries in {{duration}}',
-    summary: 'Long conversation',
-    summaryUsed: 'Older history was replaced by the OpenViking summary',
+    context: 'Context window',
+    contextUsage: 'About {{tokens}} of {{window}} tokens ({{percent}})',
+    compactionApplied: 'Sent with the earlier history replaced',
+    compactionWritten:
+      'Summary of about {{tokens}} tokens written in {{duration}}',
+    compactionFailed:
+      'Compaction failed ({{reason}}), so the full history was sent',
+    window: 'Window {{number}}, managed by the model',
+    windowReset: 'The model started a new window',
     saving: 'Saving to OpenViking',
     nextRetry: 'Next retry at {{time}}',
     tools: 'OpenViking tools',

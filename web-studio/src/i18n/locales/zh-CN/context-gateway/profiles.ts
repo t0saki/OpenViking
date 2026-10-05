@@ -21,7 +21,8 @@ const profiles = {
   },
   summary: {
     recallOn: '开启 · 每条消息 {{tokens}} Token',
-    takeoverOn: '超过 {{tokens}} Token 后',
+    compactionOn: '用到 {{percent}} 时压缩',
+    agentWindowsOn: 'Agent 自管窗口',
     toolsEnabled_one: '已启用 {{count}} 个工具',
     toolsEnabled_other: '已启用 {{count}} 个工具',
   },
@@ -84,8 +85,9 @@ const profiles = {
       description: '一条消息最多附加多少记忆，按网关的估算计算。',
     },
     sessionMaxTokens: {
-      label: '单段对话预算',
-      description: '整段对话累计最多附加多少记忆。设为 0 相当于关闭召回。',
+      label: '单个上下文窗口预算',
+      description:
+        '一个上下文窗口内累计最多附加多少记忆，对话每压缩一次就重新计算。设为 0 相当于关闭召回。',
     },
     scoreThreshold: {
       label: '相关度阈值',
@@ -134,28 +136,43 @@ const profiles = {
       description: '每次提交至少在会话中留下最近这么多条消息，按整轮计算。',
     },
   },
-  takeover: {
+  longConversations: {
     title: '长对话',
-    description:
-      '对话变长后，用 OpenViking 生成的摘要替换较早的历史，避免超出上下文窗口。',
-    needsCapture: '需要先开启“保存对话”，摘要基于已保存的对话生成。',
-    takeoverTokens: {
-      label: '开始摘要的长度',
-      description: '对话中已保存的内容达到这个量后，开始生成摘要。',
-    },
-    keepRecentTurns: {
-      label: '保留最近轮数',
-      description: '模型始终能看到完整内容的最近轮数，包括当前这一轮。',
-    },
-    archiveWaitSeconds: {
-      label: '等待摘要',
+    description: '让长对话始终不超出模型的上下文窗口。',
+    compaction: {
+      label: '压缩',
       description:
-        '对话接近上下文窗口而摘要还没生成时，最多等待这么久，之后发送完整历史。设为 0 则不等待。',
+        '对话接近模型的上下文窗口时，由同一个模型为它写一份摘要，用摘要替换之前的消息。',
+    },
+    threshold: {
+      label: '压缩时机',
+      description: '上下文窗口用到多大比例时压缩，取值 0.5 到 0.98。',
+    },
+    summaryMaxTokens: {
+      label: '摘要长度上限',
+      description: '模型写一份摘要最多能用多少 Token。',
     },
     contextWindow: {
       label: '默认上下文窗口',
       description:
-        '上游没有列出该模型的上下文窗口时使用。两处都没有设置时，请求不会等待摘要。',
+        '上游没有列出该模型的上下文窗口时使用。两处都没有设置时，网关按 1,000,000 Token 计算，所以窗口更小的模型需要设置这一项。',
+    },
+    agentWindows: {
+      label: 'Agent 自管上下文窗口',
+      experimental: '实验性',
+      description:
+        '给模型两个工具，让它自己写好交接笔记、开启新的上下文窗口，并告诉它当前窗口用了多少。开启压缩时，压缩仍作为兜底。只在能使用 OpenViking 工具的对话中生效。',
+      needsTools: '这份配置没有开启 OpenViking 工具，此设置不会生效。',
+    },
+    softRatio: {
+      label: '软提醒时机',
+      description:
+        '上下文窗口用到这个比例时，提醒模型找个合适的节点开启新窗口。每个窗口只提醒一次。',
+    },
+    hardRatio: {
+      label: '硬提醒时机',
+      description:
+        '上下文窗口用到这个比例时，要求模型立即开启新窗口。每个窗口只提醒一次，须高于软提醒。',
     },
   },
   tools: {

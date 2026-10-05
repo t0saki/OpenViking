@@ -71,6 +71,10 @@ const enums = {
   toolStopReason: {
     token_budget: '工具 Token 预算已用完',
   },
+  windowReminder: {
+    soft: '已提醒模型尽快开启新窗口',
+    hard: '已要求模型立即开启新窗口',
+  },
   openviking: {
     unavailable: 'OpenViking 无法访问或响应超时',
     unauthorized: 'OpenViking 拒绝了这个密钥，它可能填错了或已被吊销。',
@@ -120,13 +124,6 @@ const enums = {
       explanation:
         '模型、思考模式、采样参数、系统提示词或工具与对话的第一次请求不同，方舟的提示词缓存很可能没有命中。',
       action: '在同一段对话里保持这些参数不变。',
-    },
-    archive_wait_timeout: {
-      label: '摘要未就绪',
-      explanation:
-        '对话已接近模型的上下文窗口，但 OpenViking 的摘要没有及时生成，网关只能发送完整历史，可能超出窗口。',
-      action:
-        '在上下文配置里延长等待摘要的时间，或更早开始摘要，并检查 OpenViking 生成摘要的速度。',
     },
     hidden_reply_without_anchor: {
       label: '模型未返回回答',

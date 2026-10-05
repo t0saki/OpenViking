@@ -205,7 +205,7 @@ const upstreams = {
     contextWindows: {
       label: 'Context windows',
       description:
-        'Lets long conversations wait briefly for a summary before the window overflows. Use the model name sent to the upstream, after aliases.',
+        "Long conversations are compacted near the model's context window. A model not listed here uses the context profile's default window, or 1,000,000 tokens when that isn't set either. Use the model name sent to the upstream, after aliases.",
       model: 'Upstream model',
       tokens: 'Tokens',
       add: 'Add window',

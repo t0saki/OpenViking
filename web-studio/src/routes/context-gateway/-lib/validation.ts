@@ -16,7 +16,6 @@ export type Unit =
   | 'seconds'
   | 'characters'
   | 'messages'
-  | 'turns'
   | 'rounds'
   | 'bytes'
   | 'entries'

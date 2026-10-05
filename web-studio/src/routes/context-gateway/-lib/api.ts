@@ -102,11 +102,13 @@ export type ProfileSettings = {
   commit_tokens: number
   keep_recent_messages: number
   idle_seconds: number
-  takeover: boolean
-  takeover_tokens: number
-  keep_recent_turns: number
+  compaction: boolean
+  compaction_threshold: number
+  summary_max_tokens: number
   context_window: number | null
-  archive_wait_seconds: number
+  agent_windows: boolean
+  window_soft_ratio: number
+  window_hard_ratio: number
   gateway_tools: boolean
   show_tool_calls: boolean
   disabled_tools: string[]
@@ -242,7 +244,20 @@ export type LogRecord = {
   hidden_upstream_cached_tokens?: number
   hidden_upstream_cache_write_tokens?: number
   degradation?: string
-  archive_replayed?: string
+  /** Anchor of the cut whose replacement this request used. */
+  compaction_applied?: string
+  /** Why generating a summary failed; the full history was sent. */
+  compaction_failed?: string
+  /** Estimated size of the summary written for this request. */
+  compaction_tokens?: number
+  compaction_ms?: number
+  /** Estimated context size and the window it was compared with. */
+  context_tokens?: number
+  context_window?: number
+  /** Current context window, while the model manages its own windows. */
+  window?: number
+  window_reset?: boolean
+  window_reminder?: 'soft' | 'hard'
   input_tokens?: number
   output_tokens?: number
   cached_tokens?: number

@@ -128,6 +128,7 @@ const common = {
     selectOneSource: '至少选择一个来源',
     unknownCategory: '未知分类“{{name}}”',
     quotasAllZero: '至少把一个分类设为大于 0，或关闭分类限额',
+    softBelowHard: '须低于硬提醒时机',
     baseUrl:
       '请输入 http:// 或 https:// 地址，不能包含账号密码、查询参数或片段',
     subscriptionKey:
@@ -149,7 +150,6 @@ const common = {
     rounds: '轮',
     seconds: '秒',
     tokens: 'Token',
-    turns: '轮',
   },
   field: {
     default: '默认值：{{value}}',

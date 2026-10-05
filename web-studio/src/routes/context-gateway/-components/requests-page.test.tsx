@@ -339,6 +339,60 @@ describe('RequestsPage', () => {
     ).toBeTruthy()
   })
 
+  it('shows how full the context window was and what replaced earlier history', async () => {
+    api.listLogs.mockResolvedValue([
+      {
+        time: NOW - 30,
+        request_id: 'req-compacted',
+        kind: 'user',
+        model: 'compacted-model',
+        status: 200,
+        context_tokens: 180000,
+        context_window: 200000,
+        compaction_applied: 'anchor-1',
+        compaction_tokens: 2400,
+        compaction_ms: 8500,
+      },
+      {
+        time: NOW - 60,
+        request_id: 'req-window',
+        kind: 'continuation',
+        model: 'window-model',
+        status: 200,
+        context_tokens: 150000,
+        context_window: 200000,
+        compaction_failed: 'summary_truncated',
+        window: 2,
+        window_reset: true,
+        window_reminder: 'hard',
+      },
+    ])
+    renderPage()
+    await screen.findByText('compacted-model')
+    expand('compacted-model')
+    expect(
+      screen.getByText('About 180,000 of 200,000 tokens (90%)'),
+    ).toBeTruthy()
+    expect(
+      screen.getByText('Sent with the earlier history replaced'),
+    ).toBeTruthy()
+    expect(
+      screen.getByText('Summary of about 2,400 tokens written in 8.5 sec'),
+    ).toBeTruthy()
+
+    expand('window-model')
+    expect(
+      screen.getByText(
+        'Compaction failed (summary_truncated), so the full history was sent',
+      ),
+    ).toBeTruthy()
+    expect(screen.getByText('Window 2, managed by the model')).toBeTruthy()
+    expect(screen.getByText('The model started a new window')).toBeTruthy()
+    expect(
+      screen.getByText('Told the model to start a new window now'),
+    ).toBeTruthy()
+  })
+
   it('resyncs a conversation after confirmation', async () => {
     renderPage()
     await screen.findByText('gpt-5')

@@ -55,7 +55,7 @@ client                        Context Gateway                          model pro
                                          |  search, save turns, commit
                                          v
                                  OpenViking Server
-                       (extracts memories, writes summaries)
+                                 (extracts memories)
 ```
 
 **What the model sees.** Model APIs are stateless: the client resends the whole conversation with every request. When a request ends with a new user message, the gateway searches OpenViking with the text of that message and appends the results to the end of the same message:
@@ -71,7 +71,7 @@ The team moved the 2.0 release to the first week of November.
 </openviking-context>
 ```
 
-The client never sees this block. It is not part of the reply, and the client's own history stays as it was. The token usage the provider reports, which the gateway passes back unchanged, does include it. Memory is searched once per user message; tool steps, sub-agent calls and housekeeping requests such as title generation reuse what was already added. Within one conversation an entry is added only once, and per-message and per-conversation budgets cap how much is added.
+The client never sees this block. It is not part of the reply, and the client's own history stays as it was. The token usage the provider reports, which the gateway passes back unchanged, does include it. Memory is searched once per user message; tool steps, sub-agent calls and housekeeping requests such as title generation reuse what was already added. Within one context window, that is until the conversation is compacted, an entry is added only once, and budgets per message and per context window cap how much is added.
 
 **The opening context.** A new conversation starts with your OpenViking user profile. When the Read tool is enabled, it also gets memory and skill catalogs, so the model can find relevant material beyond the automatic search. These use a separate 4,000-token budget; skills use at most a quarter of it. You can disable the profile or change the budget in the context profile. Unavailable parts are omitted without blocking the conversation.
 
@@ -107,9 +107,11 @@ The profile and catalogs can appear even when the first message has no search re
 
 **When conversations are saved.** The gateway saves finished turns to an OpenViking session owned by the key's user; these sessions are named `context-gateway-…`. A turn is saved when the next user message arrives, which confirms the client kept it, so regenerated or abandoned answers are never saved. The last turn of a conversation is saved after 10 quiet minutes. Then the gateway commits the session, and OpenViking extracts memories from it in the background. The gateway also commits whenever 20,000 tokens are waiting in the session to be committed. Text the gateway added, and client noise such as `<system-reminder>` blocks, are stripped before saving. Sub-agent, housekeeping and token-count requests are never saved.
 
-**Long conversations.** Once about 30,000 tokens of a conversation have been saved, the gateway lets OpenViking archive the older part and write a summary of it. From then on the model receives that summary plus the latest three turns word for word, instead of the full history, so the conversation does not run into the model's context window. The prompt changes once at each archive point, which costs one provider cache miss there. See [Long conversations](22-context-gateway-operations.md#long-conversations) for the details.
+**Long conversations.** When a conversation reaches 90% of the model's context window (the default), the gateway compacts it: the same model writes a bounded summary of the conversation so far, and from then on that summary replaces everything before the cut. Nothing before the cut is kept word for word. When conversations are saved and the model has the OpenViking grep and read tools, the summary is followed by directions for searching the saved conversation for details. OpenViking's Working Memory summaries are not used, and new OpenViking sessions the gateway creates have Working Memory turned off. The gateway assumes a 1,000,000-token window unless the upstream or the context profile sets the model's window, so set it for models with smaller windows. Each compaction costs one extra model request and one provider cache miss. See [Long conversations](22-context-gateway-operations.md#long-conversations) for the details.
 
 **OpenViking tools.** A context profile can also let the model use your OpenViking server's tools while answering. This works with Chat Completions, full-history Responses and Anthropic Messages, with streaming or nonstreaming replies. It is off by default. Once it is on, every tool OpenViking provides is selected, including tools that change or delete data, and the gateway runs them without the client's permission prompts; uncheck any tool the model should not use. See [OpenViking tools](22-context-gateway-operations.md#openviking-tools) for setup and client requirements.
+
+**Experimental: agent-managed context windows.** Where the model has OpenViking tools, a profile can also let it manage its own context windows: it gets two more tools, one to check how full its window is and one to start a fresh window with hand-off notes it writes itself, and the gateway reminds it as the window fills. This is off by default. See [Experimental: agent-managed context windows](22-context-gateway-operations.md#experimental-agent-managed-context-windows).
 
 All of these numbers come from the key's **context profile**, where you can change budgets and timing or turn each feature off.
 
@@ -336,7 +338,7 @@ print(reply.choices[0].message.content)
 
 SDKs for the other two APIs work the same way. Point the Anthropic SDK at `https://ov.example.com`. For the Responses API, use `https://ov.example.com/v1` and send the full history with `store: false` in every request; other Responses requests are forwarded without memory. The upstream must speak the same API as the SDK.
 
-When you stream Chat Completions, also request usage (`"stream_options": {"include_usage": true}`). Without it the provider reports no token counts for streamed replies, so Studio cannot show them and the gateway cannot tell when a long conversation is about to fill the context window.
+When you stream Chat Completions, also request usage (`"stream_options": {"include_usage": true}`). Without it the provider reports no token counts for streamed replies, so Studio cannot show them and the gateway has to estimate from the request text how full the context window is.
 
 ### Open WebUI
 
@@ -436,7 +438,7 @@ Without any of them, the gateway looks at the latest assistant reply in the hist
 
 Conversations belong to the OpenViking user behind the key, separately for each API. Two gateway keys for the same user that send the same session value share one conversation; the same session value on another API is a different conversation. The gateway removes every `X-OpenViking-*` header before forwarding, so providers never see them.
 
-When a request is not recognized, memory still works: new messages are searched, and memory added earlier is replayed, because the gateway finds it by the messages themselves. What changes is that the request starts a new conversation. Its turns are saved to a new OpenViking session, and it starts with a fresh per-conversation budget and the key's current profile.
+When a request is not recognized, memory still works: new messages are searched, and memory added earlier is replayed, because the gateway finds it by the messages themselves. What changes is that the request starts a new conversation. Its turns are saved to a new OpenViking session, and it starts with a fresh memory budget and the key's current profile.
 
 ## What to expect
 
@@ -444,7 +446,7 @@ When a request is not recognized, memory still works: new messages are searched,
 - **Settings apply to new conversations.** A conversation keeps the context profile and upstream it started with. Long-lived clients such as Claude Code and Codex keep a conversation across many days, so a profile change reaches them when they start a new conversation. A conversation's state is removed after 30 days without use.
 - **Saving is one turn behind.** The last turn of a conversation is saved after 10 quiet minutes, and memories appear only after OpenViking has processed the commit.
 - **Edited history starts over.** If the client edits or deletes earlier messages, regenerates an answer after it was saved, or compacts the conversation, the gateway saves the history as it now stands to a new OpenViking session. Turns already saved stay in the old session.
-- **Clients may still compact.** Clients count tokens by their own history. Even when the gateway sends a summary instead of older turns, a client can decide to compact on its own.
+- **Clients keep their full history.** After the gateway compacts a conversation, the client still resends the whole history, and the gateway replaces the part before the cut on every request. The usage the client sees is small after compaction, so clients that compact by token usage seldom do so on their own, and a very long session can eventually reach the request size limit.
 - **One key is one memory owner.** Everyone who uses a key shares the memory of the OpenViking user behind it. Issue one key per person, and per client if you want separate profiles.
 - **Subscription logins are not supported.** Requests that carry a Claude subscription token are rejected. Configure provider API keys on the upstreams.
 - **Responses needs the full history.** Responses requests that rely on state stored at the provider (`previous_response_id`, `conversation`, `background`) or that do not set `store: false` are forwarded without memory. Later lookups of those responses still reach the upstream that created them.

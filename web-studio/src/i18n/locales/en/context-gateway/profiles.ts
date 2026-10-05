@@ -21,7 +21,8 @@ const profiles = {
   },
   summary: {
     recallOn: 'On · {{tokens}} tokens per message',
-    takeoverOn: 'After {{tokens}} tokens',
+    compactionOn: 'Compact at {{percent}}',
+    agentWindowsOn: 'Agent-managed windows',
     toolsEnabled_one: '{{count}} tool enabled',
     toolsEnabled_other: '{{count}} tools enabled',
   },
@@ -89,9 +90,9 @@ const profiles = {
         'The most memory added to one message, as estimated by the gateway.',
     },
     sessionMaxTokens: {
-      label: 'Budget per conversation',
+      label: 'Budget per context window',
       description:
-        'The most memory added over a whole conversation. 0 turns recall off.',
+        'The most memory added within one context window. It starts over each time the conversation is compacted. 0 turns recall off.',
     },
     scoreThreshold: {
       label: 'Relevance threshold',
@@ -142,31 +143,45 @@ const profiles = {
         'Each commit leaves at least this many of the latest messages, in whole turns, in the session.',
     },
   },
-  takeover: {
+  longConversations: {
     title: 'Long conversations',
-    description:
-      "Once a conversation is long, replace its older history with OpenViking's summary so it never hits the context window.",
-    needsCapture:
-      'Turn on Save conversations to use this. Summaries are built from saved conversations.',
-    takeoverTokens: {
-      label: 'Start after',
+    description: "Keep long conversations within the model's context window.",
+    compaction: {
+      label: 'Compaction',
       description:
-        'Start summarizing once this much of the conversation has been saved.',
+        "When a conversation nears the model's context window, the same model writes a summary of it, and the summary replaces the earlier messages.",
     },
-    keepRecentTurns: {
-      label: 'Keep recent turns',
+    threshold: {
+      label: 'Compact at',
       description:
-        'The latest turns the model always sees in full, including the current one.',
+        'The share of the context window, from 0.5 to 0.98, that triggers compaction.',
     },
-    archiveWaitSeconds: {
-      label: 'Wait for summary',
-      description:
-        "When a conversation nears the context window and its summary isn't ready yet, wait up to this long, then send the full history. 0 never waits.",
+    summaryMaxTokens: {
+      label: 'Summary length',
+      description: 'The most tokens the model may write for one summary.',
     },
     contextWindow: {
       label: 'Default context window',
       description:
-        "Used when the upstream doesn't list this model's window. Without either, requests never wait for a summary.",
+        "Used when the upstream doesn't list this model's window. Without either, the gateway assumes 1,000,000 tokens, so set it for models with a smaller window.",
+    },
+    agentWindows: {
+      label: 'Agent-managed context windows',
+      experimental: 'Experimental',
+      description:
+        'Give the model two tools to start a fresh context window with its own hand-off notes, and tell it how full the window is. Compaction, when on, remains the fallback. Works only in conversations that get OpenViking tools.',
+      needsTools:
+        'OpenViking tools are off in this profile, so this setting has no effect.',
+    },
+    softRatio: {
+      label: 'Soft reminder at',
+      description:
+        'The share of the context window at which the model is reminded to start a new window at a natural break. Sent once per window.',
+    },
+    hardRatio: {
+      label: 'Hard reminder at',
+      description:
+        'The share of the context window at which the model is told to start a new window now. Sent once per window; must be above the soft reminder.',
     },
   },
   tools: {

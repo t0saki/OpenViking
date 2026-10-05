@@ -9,6 +9,10 @@ type ToggleRowProps = {
   description: string
   checked: boolean
   onCheckedChange: (checked: boolean) => void
+  /** Shown after the label, such as an "Experimental" mark. */
+  badge?: React.ReactNode
+  /** A dependent setting is invalid, so they stay visible while the switch is off. */
+  invalid?: boolean
   /** Dependent settings, shown below the row while it is on. */
   children?: React.ReactNode
 }
@@ -20,13 +24,18 @@ export function ToggleRow({
   description,
   checked,
   onCheckedChange,
+  badge,
+  invalid = false,
   children,
 }: ToggleRowProps) {
   return (
     <div className="grid rounded-lg border">
       <div className="flex items-start justify-between gap-4 px-4 py-3">
         <div className="grid gap-1">
-          <Label htmlFor={id}>{label}</Label>
+          <span className="flex flex-wrap items-center gap-2">
+            <Label htmlFor={id}>{label}</Label>
+            {badge}
+          </span>
           <p className="text-xs leading-5 text-muted-foreground">
             {description}
           </p>
@@ -38,7 +47,7 @@ export function ToggleRow({
           onCheckedChange={(value) => onCheckedChange(value)}
         />
       </div>
-      {checked && children ? (
+      {(checked || invalid) && children ? (
         <div className="grid gap-4 border-t p-4">{children}</div>
       ) : null}
     </div>

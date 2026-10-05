@@ -75,6 +75,10 @@ const enums = {
   toolStopReason: {
     token_budget: 'Tool token budget reached',
   },
+  windowReminder: {
+    soft: 'Reminded the model to start a new window soon',
+    hard: 'Told the model to start a new window now',
+  },
   openviking: {
     unavailable: "OpenViking is unreachable or didn't answer in time",
     unauthorized: 'OpenViking rejected the key. It may be wrong or revoked.',
@@ -125,13 +129,6 @@ const enums = {
       explanation:
         "Model, thinking, sampling, system prompt or tools differ from the conversation's first request, so Ark's prompt cache likely missed.",
       action: 'Keep these parameters the same within a conversation.',
-    },
-    archive_wait_timeout: {
-      label: 'Summary not ready',
-      explanation:
-        "The conversation was close to the model's context window, but OpenViking's summary wasn't ready in time, so the full history was sent and may not fit.",
-      action:
-        'Wait longer for the summary or start summarizing earlier in the profile, and check how quickly OpenViking writes summaries.',
     },
     hidden_reply_without_anchor: {
       label: 'No usable model reply',

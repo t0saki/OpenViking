@@ -16,6 +16,7 @@ import {
   protocolLabel,
   recallReasonLabel,
   toolSkipReasonLabel,
+  windowReminderLabel,
 } from './localize'
 import type { Translate } from './localize'
 
@@ -48,6 +49,10 @@ describe('enum labels', () => {
       'full conversation',
     )
     expect(toolSkipReasonLabel(zhT, 'tools_unavailable')).toContain('工具清单')
+    expect(windowReminderLabel(t, 'hard')).toBe(
+      'Told the model to start a new window now',
+    )
+    expect(windowReminderLabel(zhT, 'soft')).toBe('已提醒模型尽快开启新窗口')
   })
 
   it('explains OpenViking reasons by pattern', () => {
@@ -97,6 +102,11 @@ describe('enum labels', () => {
       }
     }
     expect(degradationInfo(t, 'new_reason')).toEqual({ label: 'new_reason' })
+    // Long conversations no longer wait for a summary.
+    expect(DEGRADATIONS).not.toContain('archive_wait_timeout')
+    expect(degradationInfo(t, 'archive_wait_timeout')).toEqual({
+      label: 'archive_wait_timeout',
+    })
   })
 })
 

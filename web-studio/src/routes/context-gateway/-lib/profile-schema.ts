@@ -20,11 +20,13 @@ export const PROFILE_DEFAULTS: ProfileSettings = {
   commit_tokens: 20000,
   keep_recent_messages: 10,
   idle_seconds: 600,
-  takeover: true,
-  takeover_tokens: 30000,
-  keep_recent_turns: 3,
+  compaction: true,
+  compaction_threshold: 0.9,
+  summary_max_tokens: 8000,
   context_window: null,
-  archive_wait_seconds: 30,
+  agent_windows: false,
+  window_soft_ratio: 0.7,
+  window_hard_ratio: 0.85,
   gateway_tools: false,
   show_tool_calls: true,
   disabled_tools: [],
@@ -52,10 +54,11 @@ export const PROFILE_LIMITS: Record<NumericField, NumberRule> = {
   commit_tokens: { min: 1, integer: true, unit: 'tokens' },
   keep_recent_messages: { min: 0, max: 1000, integer: true, unit: 'messages' },
   idle_seconds: { min: 1, unit: 'seconds' },
-  takeover_tokens: { min: 1, integer: true, unit: 'tokens' },
-  keep_recent_turns: { min: 1, max: 100, integer: true, unit: 'turns' },
+  compaction_threshold: { min: 0.5, max: 0.98, step: 0.01 },
+  summary_max_tokens: { min: 1000, max: 32000, integer: true, unit: 'tokens' },
   context_window: { min: 1024, integer: true, optional: true, unit: 'tokens' },
-  archive_wait_seconds: { min: 0, max: 60, unit: 'seconds' },
+  window_soft_ratio: { min: 0.3, max: 0.95, step: 0.01 },
+  window_hard_ratio: { min: 0.4, max: 0.97, step: 0.01 },
   tool_max_rounds: { min: 1, max: 20, integer: true, unit: 'rounds' },
   tool_timeout_seconds: {
     min: 0,
@@ -113,6 +116,12 @@ export function validateProfile(settings: ProfileSettings): ValidationErrors {
   collect(errors, 'name', checkRequired(settings.name))
   for (const [field, rule] of Object.entries(PROFILE_LIMITS)) {
     collect(errors, field, checkNumber(settings[field as NumericField], rule))
+  }
+  if (
+    !errors.window_hard_ratio &&
+    settings.window_soft_ratio >= settings.window_hard_ratio
+  ) {
+    collect(errors, 'window_soft_ratio', { key: 'validation.softBelowHard' })
   }
   if (settings.recall && settings.context_types.length === 0) {
     collect(errors, 'context_types', { key: 'validation.selectOneSource' })

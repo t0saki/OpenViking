@@ -331,7 +331,7 @@ The upstream editor has four sections.
 
 - **Models** lists the model names this upstream serves. Leave it empty to accept any name. Only listed names and aliases appear in the model list clients can request (`/v1/models`).
 - **Model aliases** map a name clients use to the model sent to the upstream, for example the Claude model names Claude Code asks for to the model your provider serves. Aliases appear in the model list, and request logs show the name the client used.
-- **Context windows** maps a model to its context window in tokens (at least 1,024), keyed by the name sent to the upstream after aliases. It lets long conversations wait briefly for a summary instead of overflowing; see [Long conversations](#long-conversations).
+- **Context windows** maps a model to its context window in tokens (at least 1,024), keyed by the name sent to the upstream after aliases. Long conversations are compacted at a share of this window. A model not listed here uses the profile's **Default context window**, or 1,000,000 tokens when that is not set either, so list every model with a smaller window; see [Long conversations](#long-conversations).
 
 **Routing.**
 
@@ -354,13 +354,13 @@ The **Profiles** tab shows one card per profile with a summary of its four secti
 
 > **Note**: Saved changes apply to conversations that start afterwards. A conversation takes a snapshot of its key's profile at its first request and keeps it, because changing what the model sees in the middle of a conversation would break the provider cache. Clients that open a new conversation for every chat pick up changes quickly. Claude Code, Codex and clients that send a stable session header keep the old settings until they start a new conversation, or until the conversation has gone unused for 30 days (`session_ttl_days`).
 
-Each section has its own switch:
+Each section has its own switch; Long conversations has one for each of its two features:
 
 | Section | What it does | Main settings and defaults |
 | --- | --- | --- |
-| Recall memory | Searches OpenViking with each new user message and appends what is relevant to that message. | Sources: memories, resources, skills · Budget per message: 1,600 tokens · Budget per conversation: 6,000 tokens · Relevance threshold: 0.35 · Time limit: 2 s |
+| Recall memory | Searches OpenViking with each new user message and appends what is relevant to that message. | Sources: memories, resources, skills · Budget per message: 1,600 tokens · Budget per context window: 6,000 tokens · Relevance threshold: 0.35 · Time limit: 2 s |
 | Save conversations | Writes finished turns to an OpenViking session and commits it, so OpenViking can extract memories. | Save the latest reply after: 600 s · Commit after: 20,000 tokens · Keep recent messages: 10 |
-| Long conversations | Replaces older history with OpenViking's summary once a conversation is long. Needs Save conversations. | Start after: 30,000 tokens · Keep recent turns: 3 · Wait for summary: 30 s |
+| Long conversations | Compacts a conversation near the model's context window: the same model summarizes it, and the summary replaces the earlier messages. Agent-managed context windows are an experimental alternative. | Compaction: on · Compact at: 0.9 of the context window · Summary length: 8,000 tokens · Agent-managed context windows: off |
 | OpenViking tools | Lets the model use OpenViking's tools while it answers. Chat Completions, full-history Responses and Anthropic Messages. Off by default. | All tools available from OpenViking; uncheck any you do not want |
 
 How the recall settings play out:
@@ -369,7 +369,7 @@ How the recall settings play out:
 - Recall uses the content OpenViking selects and formats within the requested budget, including entries that provide a URI for the model to read later.
 
 - The search query is the user message with client noise removed, cut to **Query length** characters (8,000). Messages shorter than 3 characters are not searched.
-- Each message gets at most the smaller of **Budget per message** and what is left of **Budget per conversation**; with less than 64 tokens left, the gateway skips the search. A budget per conversation of 0 turns recall off. Token counts are a conservative estimate, not the provider's billing count.
+- Each message gets at most the smaller of **Budget per message** and what is left of **Budget per context window**; with less than 64 tokens left, the gateway skips the search. The budget per context window starts over whenever the conversation is compacted, by the gateway or by the client. A budget of 0 turns recall off. Token counts are a conservative estimate, not the provider's billing count.
 - If OpenViking does not answer within the **Time limit**, the message goes to the model without memory and never gets it later, even when the client retries.
 - **Limit by category** (under **Advanced settings**) searches only the categories with a limit above 0, among events, entities, preferences, experiences, resources and skills, and takes at most that many entries from each. When it is off, all sources are ranked together.
 
@@ -419,7 +419,7 @@ The **Overview** tab summarizes the latest 10,000 request-log records within the
 - **Degraded requests**: how often each issue occurred, with an explanation; the issues are listed in the [troubleshooting table](#issues-on-degraded-requests).
 - **Recent requests**, with a link to the Requests tab.
 
-The **Requests** tab lists the latest 1,000 records, newest first, and refreshes its first page every 30 seconds while you view it. Filter by **All**, **New messages**, **Tool steps** or **Issues**, by **Request type**, or search by model, conversation or key. Columns show the type, model (the name the client sent), the provider's HTTP status, tokens (input, cached share, output), **Memory** (`+3`: entries this request's search added, with the search time; `↺ 4`: memory added to 4 earlier messages, sent again unchanged), **Saving** status and **Issue**. Expand a row for the conversation ID, upstream, key, duration, the token breakdown, the memory search result, saving status with the next retry time, OpenViking tool details and, for an issue, what it means and what to do.
+The **Requests** tab lists the latest 1,000 records, newest first, and refreshes its first page every 30 seconds while you view it. Filter by **All**, **New messages**, **Tool steps** or **Issues**, by **Request type**, or search by model, conversation or key. Columns show the type, model (the name the client sent), the provider's HTTP status, tokens (input, cached share, output), **Memory** (`+3`: entries this request's search added, with the search time; `↺ 4`: memory added to 4 earlier messages, sent again unchanged), **Saving** status and **Issue**. Expand a row for the conversation ID, upstream, key, duration, the token breakdown, the memory search result, the context window (how full it was, and any compaction or new window), saving status with the next retry time, OpenViking tool details and, for an issue, what it means and what to do.
 
 Only requests that reached a model provider are logged. Requests the gateway rejects first, such as an invalid key, a model the key does not allow, no matching upstream or a body over the size limit, are not; the client receives the error instead.
 
@@ -516,22 +516,51 @@ If an upstream keeps failing, turn off its **Allow OpenViking tools** setting. C
 
 ## Long conversations
 
-With **Long conversations** on, a conversation can keep going beyond the model's context window:
+A model's context window limits how long a conversation can get. With **Compaction** on (the default), the gateway replaces the earlier part of a conversation with a summary before the conversation fills the window.
 
-1. Saving writes the conversation to an OpenViking session.
-2. Once the saved content reaches **Start after** (30,000 tokens), the gateway commits everything except the latest turns. OpenViking archives that part and writes a summary in the background. From then on, a commit happens each time another **Start after** worth of tokens is waiting.
-3. When the summary is ready, every later request carries three things: the system and developer messages; one user message that starts with `[OpenViking Session Context]`, says that the gateway replaced the earlier part of the conversation, holds the summary and ends with the gateway's opening note; and the latest **Keep recent turns** turns (3) word for word, counting the current one. Memory for the new message is still added.
-4. Each new archive builds on the previous summary and replaces it.
+**When it compacts.** On each new user message and each tool step, the gateway estimates how full the context window is: the token usage the provider reported for the previous reply in this conversation, plus an estimate for the messages added since. Without that usage, for example for streamed Chat Completions without `stream_options.include_usage`, it estimates the whole request. When the estimate reaches **Compact at** (0.9 of the window), the gateway compacts. Housekeeping, sub-agent and token-count requests never trigger compaction.
 
-The prompt changes once at each archive point, which costs one provider cache miss there. Thinking blocks are removed from the kept turns, because their signatures covered the history that was replaced; a client's own compaction has the same effect. Long conversations need **Save conversations**. The summary replaces the older history in every request of the conversation that resends it, including housekeeping requests such as a client's own compaction; sub-agents usually send their own, separate history, which stays untouched.
+The window comes from the upstream's **Context windows** entry for the model (the name sent to the upstream), else from the profile's **Default context window**. Without either, the gateway assumes 1,000,000 tokens. For a model with a smaller window, set one of the two; otherwise the provider rejects the conversation as too long before compaction ever starts.
 
-**Waiting for a summary.** Until a summary is ready, the gateway sends the full history and does not wait. It waits only when the conversation is about to overflow: the model's context window is known, and the last request to the same upstream and model used at least 90% of it. Then it waits up to **Wait for summary** (30 seconds, at most 60), checking every 5 seconds. If no summary arrives in time, it sends the full history anyway, which may fail with a context-length error, and flags the request **Summary not ready** (`archive_wait_timeout`).
+**How the summary is written.** The gateway sends one extra, nonstreaming request to the same upstream and model, with the client's system prompt, tools and thinking settings unchanged, so most of it is served from the provider's prompt cache. The request holds the conversation up to the cut and an instruction to summarize it for the model itself: the user's goals and latest request word for word, decisions and progress, files, paths and identifiers, errors and their fixes, open items, and key facts from recent tool results. An earlier summary is folded into the new one. The summary is plain text of at most **Summary length** tokens (8,000), and the provider bills the request like any other.
 
-- The context window comes from the upstream's **Context windows** entry for the model (the name sent to the upstream), else from the profile's **Default context window**. Without either, the gateway never waits.
-- The usage figure comes from the provider's response. Streamed Chat Completions report it only when the client requests it with `stream_options.include_usage`.
-- If **Summary not ready** shows up often, raise **Wait for summary**, lower **Start after** so summaries are ready earlier, or check that OpenViking's VLM writes summaries promptly. The gateway gives up on a summary that takes longer than 15 minutes.
+**What the model receives afterwards.** Where the cut falls depends on the request:
 
-Clients still count tokens by their own history and may compact on their own, even though the gateway passes back the provider's smaller usage after a summary. When a client compacts or edits its history, the gateway saves the new history to a new OpenViking session and starts counting again.
+- On a new user message, the cut falls right before that message. The model receives the system and developer messages, the summary as one user message, and the new message.
+- During a tool step, the cut falls after the latest tool result, and the model continues the task from the summary.
+
+The summary message starts with a note that the gateway replaced the earlier part of the conversation and that the user did not write it, and ends with the conversation's opening note and profile, so these survive compaction. Every later request that resends this history, including housekeeping and token-count requests, gets the same replacement; sub-agents usually send their own, separate history, which stays untouched. A compaction costs one provider cache miss at the cut; after that, the cache works as before.
+
+**Nothing before the cut is kept word for word**, not even the latest turns. The model's earlier messages and their thinking depend on the history being replaced, and keeping some of them would break Claude's thinking signatures. Everything generated after the cut is sent as usual, thinking included.
+
+**Searching what was cut.** The conversation itself is still saved in OpenViking. When **Save conversations** is on and the conversation offers the `openviking_grep` and `openviking_read` tools, the summary is followed by directions: the conversation's OpenViking sessions (`viking://user/<user_id>/sessions/<session_id>/`), where their messages are stored, and how to search them: grep a session with a specific pattern to get line numbers, then read the lines around a match. When a cut falls in the middle of a turn, the part before it is saved to OpenViking right away, so the model can search it while the turn continues.
+
+**When compaction fails.** If the summary request fails, or the reply calls a tool, is empty or is cut off at the length limit, the gateway sends the full history instead and does not try again in that conversation for 60 seconds. The request's detail on the Requests tab shows **Compaction failed** with the reason.
+
+**Working Memory is not used.** The summary comes from the conversation's own model, not from OpenViking's session summaries. New OpenViking sessions the gateway creates have Working Memory turned off: commits still archive the messages and OpenViking still extracts memories, but it writes no session summary.
+
+**Memory budget.** **Budget per context window** starts over after each compaction, so an entry added before the cut can be added again.
+
+**Clients' own compaction.** After the gateway compacts, the client still resends its full history, and the gateway replaces the part before the cut on every request. The usage the client sees is small, so clients that compact by token usage seldom compact on their own, and a very long session can eventually exceed `max_body_bytes`. When a client compacts or edits its history, the gateway saves the new history to a new OpenViking session; when the search tools are available, the opening note of the new history points the model to the earlier sessions.
+
+Each request's detail on the Requests tab shows how full the context window was, whether earlier history was replaced, and the size and duration of a newly written summary.
+
+### Experimental: agent-managed context windows
+
+With **Agent-managed context windows** on (off by default), the model decides itself when to start a fresh context window and writes its own hand-off notes, instead of waiting for a summary. The setting takes effect only in conversations that get [OpenViking tools](#openviking-tools); elsewhere it does nothing, and compaction works as described above. Compaction, when on, also remains the fallback for a model that never starts a new window.
+
+What the model sees:
+
+- Two tools next to the OpenViking tools. They are not part of the profile's **Tools** list; this setting alone controls them.
+  - `openviking_new_context(reason, notes, next_steps)` starts a new window; `next_steps` is optional. It must be the only tool call in its round. Called together with other tools, every call in the round returns an error and the window is not reset.
+  - `openviking_context_remaining()` reports the window number, the estimated tokens used and left, the user turns in this window, the time since the user's previous message, and a one-line recommendation.
+- A line in the opening note saying that the model manages its own context windows with these tools.
+- A status line after each new user message, at the end of the memory block: `[context-status] window wN · ~X/Y tokens (P%) · T since your previous message`.
+- At most one soft and one hard reminder per window, when the window reaches **Soft reminder at** (0.7) and **Hard reminder at** (0.85). The soft reminder suggests starting a new window at a natural break; the hard one asks for it now. A reminder is attached to the latest message, which during a tool step is the tool result.
+
+When the model calls `openviking_new_context`, the gateway replaces the conversation so far with a window header, and the model carries on in the same reply. The header says that the model started window N and that the user did not write it, then gives the reason, the notes and next steps, the user's latest message word for word, directions for searching earlier windows (under the same conditions as for compaction), and the conversation's opening note. Later requests rebuild the same window from the client's history. The part before the reset is saved to OpenViking right away and stays searchable. The reason and notes appear only in the header; they are not saved to OpenViking. A reset costs one provider cache miss but no summary request.
+
+Each request's detail on the Requests tab shows the window number, whether the model started a new window, and which reminder it got. How well this works depends on the model, and the behavior may change in later releases.
 
 ## Security and data
 
@@ -643,7 +672,7 @@ URL settings must be plain `http` or `https` addresses without credentials, quer
 | Opening context budget | `profile_max_tokens` | `4000` | 0–32,000 | Separate budget for the profile and catalogs; 0 omits them. Catalogs require the Read tool. |
 | Sources | `context_types` | `memory`, `resource`, `skill` | at least one | What to search: memories, resources, skills. |
 | Budget per message | `max_tokens` | `1600` | 64–32,000 | Most tokens added to one message. |
-| Budget per conversation | `session_max_tokens` | `6000` | ≥ 0 | Most tokens added over a whole conversation; 0 turns recall off. |
+| Budget per context window | `session_max_tokens` | `6000` | ≥ 0 | Most tokens added within one context window; starts over after each compaction. 0 turns recall off. |
 | Relevance threshold | `score_threshold` | `0.35` | 0–1 | Lowest relevance score accepted. |
 | Time limit | `recall_timeout` | `2` (seconds) | up to 30 | How long a search may take before the message goes on without memory. |
 | Query length | `query_max_chars` | `8000` | 3–32,000 | Characters of the message used as the search query. |
@@ -652,11 +681,13 @@ URL settings must be plain `http` or `https` addresses without credentials, quer
 | Save the latest reply after | `idle_seconds` | `600` (seconds) | ≥ 1 | Quiet time before the last turn is saved and the session committed. |
 | Commit after | `commit_tokens` | `20000` | ≥ 1 | Tokens waiting in the session that trigger a commit. |
 | Keep recent messages | `keep_recent_messages` | `10` | 0–1,000 | Messages left in the session after a commit. |
-| Long conversations | `takeover` | `true` | | Replace older history with OpenViking's summary. |
-| Start after | `takeover_tokens` | `30000` | ≥ 1 | Saved tokens after which summaries take over. |
-| Keep recent turns | `keep_recent_turns` | `3` | 1–100 | Turns sent word for word after the summary. |
-| Wait for summary | `archive_wait_seconds` | `30` (seconds) | 0–60 | Longest wait for a pending summary near the context window. |
-| Default context window | `context_window` | unset | ≥ 1,024 | Window used when the upstream does not list the model. |
+| Compaction | `compaction` | `true` | | Replace the earlier part of a conversation with a summary near the context window. |
+| Compact at | `compaction_threshold` | `0.9` | 0.5–0.98 | Share of the context window that triggers compaction. |
+| Summary length | `summary_max_tokens` | `8000` | 1,000–32,000 | Most tokens in one summary. |
+| Default context window | `context_window` | unset (1,000,000 assumed) | ≥ 1,024 | Window used when the upstream does not list the model. |
+| Agent-managed context windows | `agent_windows` | `false` | | Experimental. Let the model start new context windows itself; needs OpenViking tools. |
+| Soft reminder at | `window_soft_ratio` | `0.7` | 0.3–0.95, below `window_hard_ratio` | Share of the context window at which the model is reminded to start a new window soon. |
+| Hard reminder at | `window_hard_ratio` | `0.85` | 0.4–0.97 | Share of the context window at which the model is told to start a new window now. |
 | OpenViking tools | `gateway_tools` | `false` | | Offer OpenViking tools for Chat, full-history Responses and Anthropic Messages. |
 | Unselected tools | `disabled_tools` | `[]` | Tool names from OpenViking, without `openviking_` | Tools unavailable to new conversations. An empty list enables every available tool when the main switch is on. |
 | Show tool calls | `show_tool_calls` | `true` | | Add a one-line notice to the reply for each OpenViking tool call. |
@@ -781,7 +812,15 @@ Compare it with what the provider reaches without the gateway, then look at the 
 - **Memory record missing** (`missing_injection_record`): the gateway's storage was lost, restored from an old backup or expired, so memory added earlier could not be replayed. Ongoing conversations recover after one miss.
 - **Upstream switched** (`upstream_changed`): conversations moved to another upstream because theirs was disabled, is not bound to the key the client now uses, or stopped serving the model.
 - **Cache parameters changed** (`ark_cache_parameters_changed`): on Ark or ModelArk, the client changes the model, thinking, sampling, system prompt or tools within a conversation.
-- No issue: the client itself may change earlier messages or its system prompt every turn, for example by inserting the current time. The gateway cannot fix that. Each summary in a long conversation also costs one miss, which is expected.
+- No issue: the client itself may change earlier messages or its system prompt every turn, for example by inserting the current time. The gateway cannot fix that. Each compaction, and each new context window the model starts, also costs one miss, which is expected.
+
+### Long conversations hit the context limit
+
+If the provider rejects long conversations as too long for the model:
+
+- **The model's window is unknown to the gateway.** Without an entry in the upstream's **Context windows** or a **Default context window** in the profile, the gateway assumes 1,000,000 tokens and compacts too late for smaller models. Add the model's window.
+- **Compaction is off** in the conversation's profile. Profile changes reach new conversations only.
+- **Compaction failed.** The request detail shows the reason, and the gateway tries again after 60 seconds. If summaries are cut off at the length limit, raise **Summary length**.
 
 ### File imports fail
 
@@ -803,7 +842,6 @@ The **Requests** and **Overview** tabs flag requests the gateway could not fully
 | Memory record missing (`missing_injection_record`) | Claude conversation: memory added earlier is no longer on record, so earlier thinking was dropped once. | Expected after storage loss or for very old conversations. Start a new conversation if it repeats. |
 | OpenViking plugin in use (`plugin_present`) | An OpenViking plugin was detected; gateway memory is off for this conversation. | Expected when a plugin is in use. Use either the plugin or the gateway for that client. |
 | Cache parameters changed (`ark_cache_parameters_changed`) | On Ark or ModelArk, cache-relevant parameters differ from the conversation's first request; the prompt cache probably missed. | Keep model, thinking, sampling, system prompt and tools stable within a conversation. |
-| Summary not ready (`archive_wait_timeout`) | The conversation was near the context window and its summary was not ready in time; the full history was sent. | See [Long conversations](#long-conversations). |
 | Tool history unavailable (`hidden_tool_history_unavailable`) | A Claude conversation previously used OpenViking tools, but this request cannot use them, so earlier thinking has been removed. | Check the tool skip reason in the request detail, restore the original settings or start a new conversation. |
 | OpenViking tools failed (`hidden_tool_loop_failed`) | The model could not finish answering while using OpenViking tools, and the client received an error. | See [OpenViking tools](#openviking-tools). |
 | Reply not saved (`capture_parse_failure`) | A streamed reply could not be parsed, so this reply was not saved. The client was not affected. | Nothing; it is informational. |

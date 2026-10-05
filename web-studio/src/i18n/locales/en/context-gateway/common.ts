@@ -135,6 +135,7 @@ const common = {
     selectOneSource: 'Choose at least one source',
     unknownCategory: 'Unknown category “{{name}}”',
     quotasAllZero: 'Set at least one category above 0, or turn the limit off',
+    softBelowHard: 'Must be below the hard reminder',
     baseUrl:
       'Enter an http:// or https:// URL without credentials, query or fragment',
     subscriptionKey:
@@ -157,7 +158,6 @@ const common = {
     rounds: 'rounds',
     seconds: 'seconds',
     tokens: 'tokens',
-    turns: 'turns',
   },
   field: {
     default: 'Default: {{value}}',

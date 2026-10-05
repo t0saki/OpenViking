@@ -20,6 +20,7 @@ import {
   recallReasonLabel,
   toolSkipReasonLabel,
   toolStopReasonLabel,
+  windowReminderLabel,
 } from '../-lib/localize'
 import type { Translate } from '../-lib/localize'
 import { CopyButton } from './copy-button'
@@ -214,6 +215,12 @@ export function RequestDetails({
     record.tool_stop_reason ||
     (record.hidden_rounds ?? 0) > 0,
   )
+  const hasContext = Boolean(
+    record.context_window ||
+    record.compaction_applied ||
+    record.compaction_failed ||
+    record.window,
+  )
 
   return (
     <div className="grid gap-4">
@@ -362,9 +369,49 @@ export function RequestDetails({
             ) : null}
           </DetailItem>
         ) : null}
-        {record.archive_replayed ? (
-          <DetailItem label={t('requests.details.summary')}>
-            {t('requests.details.summaryUsed')}
+        {hasContext ? (
+          <DetailItem label={t('requests.details.context')}>
+            {record.context_window ? (
+              <span className="tabular-nums">
+                {t('requests.details.contextUsage', {
+                  tokens: formatNumber(record.context_tokens ?? 0, locale),
+                  window: formatNumber(record.context_window, locale),
+                  percent: formatPercent(
+                    (record.context_tokens ?? 0) / record.context_window,
+                    locale,
+                  ),
+                })}
+              </span>
+            ) : null}
+            {record.compaction_applied ? (
+              <span>{t('requests.details.compactionApplied')}</span>
+            ) : null}
+            {record.compaction_tokens !== undefined ? (
+              <span className="text-xs text-muted-foreground tabular-nums">
+                {t('requests.details.compactionWritten', {
+                  tokens: formatNumber(record.compaction_tokens, locale),
+                  duration: formatDuration(record.compaction_ms ?? 0, locale),
+                })}
+              </span>
+            ) : null}
+            {record.compaction_failed ? (
+              <span className="text-amber-700 dark:text-amber-300">
+                {t('requests.details.compactionFailed', {
+                  reason: record.compaction_failed,
+                })}
+              </span>
+            ) : null}
+            {record.window ? (
+              <span>
+                {t('requests.details.window', { number: record.window })}
+              </span>
+            ) : null}
+            {record.window_reset ? (
+              <span>{t('requests.details.windowReset')}</span>
+            ) : null}
+            {record.window_reminder ? (
+              <span>{windowReminderLabel(t, record.window_reminder)}</span>
+            ) : null}
           </DetailItem>
         ) : null}
         {record.capture_status ? (

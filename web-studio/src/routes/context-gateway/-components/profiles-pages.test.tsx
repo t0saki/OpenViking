@@ -85,6 +85,8 @@ const coding = {
   query_max_chars: 1234,
   quotas: { events: 2, skills: 1 },
   context_window: 64000,
+  compaction_threshold: 0.8,
+  agent_windows: true,
   idle_seconds: 30.5,
   gateway_tools: true,
   disabled_tools: ['read', 'removed_tool'],
@@ -218,8 +220,13 @@ describe('profile list', () => {
     expect(
       codingCard.getByText('profiles.summary.recallOn {"tokens":"1,600"}'),
     ).toBeTruthy()
-    // Saving is off, so long conversations are off too.
-    expect(codingCard.getAllByText('states.off')).toHaveLength(2)
+    // Long conversations do not depend on saving.
+    expect(codingCard.getAllByText('states.off')).toHaveLength(1)
+    expect(
+      codingCard.getByText(
+        'profiles.summary.compactionOn {"percent":"80%"} · profiles.summary.agentWindowsOn',
+      ),
+    ).toBeTruthy()
     expect(
       await codingCard.findByText('profiles.summary.toolsEnabled {"count":4}'),
     ).toBeTruthy()
@@ -227,7 +234,7 @@ describe('profile list', () => {
 
     const chatCard = within(card('Chat'))
     expect(
-      chatCard.getByText('profiles.summary.takeoverOn {"tokens":"30K"}'),
+      chatCard.getByText('profiles.summary.compactionOn {"percent":"90%"}'),
     ).toBeTruthy()
     expect(chatCard.getByText('profiles.unused')).toBeTruthy()
   })
@@ -352,7 +359,7 @@ describe('profile editor', () => {
     )
   })
 
-  it('hides settings of switched-off sections and needs saving for long conversations', async () => {
+  it('hides settings of switched-off sections and switches long-conversation features on their own', async () => {
     renderAt('/context-gateway/profiles/p2')
     await screen.findByDisplayValue('Chat')
 
@@ -364,16 +371,62 @@ describe('profile editor', () => {
       screen.getByLabelText('profiles.recall.maxTokens.label'),
     ).toBeTruthy()
 
-    expect(
-      screen.getByLabelText('profiles.takeover.takeoverTokens.label'),
-    ).toBeTruthy()
-    expect(sectionSwitch('takeover').hasAttribute('data-disabled')).toBe(false)
+    const threshold = 'profiles.longConversations.threshold.label'
+    expect(screen.getByLabelText(threshold)).toBeTruthy()
     fireEvent.click(sectionSwitch('capture'))
-    expect(sectionSwitch('takeover').hasAttribute('data-disabled')).toBe(true)
-    expect(screen.getByText('profiles.takeover.needsCapture')).toBeTruthy()
+    expect(screen.getByLabelText(threshold)).toBeTruthy()
+    fireEvent.click(
+      screen.getByRole('switch', {
+        name: 'profiles.longConversations.compaction.label',
+      }),
+    )
+    expect(screen.queryByLabelText(threshold)).toBeNull()
+
+    const softRatio = 'profiles.longConversations.softRatio.label'
+    const needsTools = 'profiles.longConversations.agentWindows.needsTools'
+    expect(screen.queryByLabelText(softRatio)).toBeNull()
     expect(
-      screen.queryByLabelText('profiles.takeover.takeoverTokens.label'),
-    ).toBeNull()
+      screen.getByText('profiles.longConversations.agentWindows.experimental'),
+    ).toBeTruthy()
+    fireEvent.click(
+      screen.getByRole('switch', {
+        name: 'profiles.longConversations.agentWindows.label',
+      }),
+    )
+    expect(screen.getByLabelText(softRatio)).toBeTruthy()
+    expect(screen.getByText(needsTools)).toBeTruthy()
+    fireEvent.click(sectionSwitch('tools'))
+    expect(screen.queryByText(needsTools)).toBeNull()
+
+    fireEvent.click(saveButton())
+    await waitFor(() => expect(api.saveProfile).toHaveBeenCalledTimes(1))
+    expect(api.saveProfile.mock.calls[0][2]).toMatchObject({
+      capture: false,
+      compaction: false,
+      agent_windows: true,
+      gateway_tools: true,
+    })
+  })
+
+  it('keeps reminder ratios in view while they conflict', async () => {
+    renderAt('/context-gateway/profiles/p1')
+    await screen.findByDisplayValue('Coding')
+    fireEvent.change(
+      screen.getByLabelText('profiles.longConversations.softRatio.label'),
+      { target: { value: '0.9' } },
+    )
+    expect(screen.getByText('validation.softBelowHard')).toBeTruthy()
+    expect(saveButton().disabled).toBe(true)
+
+    fireEvent.click(
+      screen.getByRole('switch', {
+        name: 'profiles.longConversations.agentWindows.label',
+      }),
+    )
+    expect(
+      screen.getByLabelText('profiles.longConversations.softRatio.label'),
+    ).toBeTruthy()
+    expect(screen.getByText('field.sectionInvalid')).toBeTruthy()
   })
 
   it('shows limit errors inline and blocks saving', async () => {

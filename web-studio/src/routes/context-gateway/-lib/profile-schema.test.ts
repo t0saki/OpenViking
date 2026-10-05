@@ -74,6 +74,43 @@ describe('toProfileSettings', () => {
     ).toEqual(['forget', 'future_tool'])
   })
 
+  it('drops long-conversation settings that were replaced and defaults the new ones', () => {
+    const {
+      compaction: _compaction,
+      compaction_threshold: _threshold,
+      summary_max_tokens: _summary,
+      agent_windows: _windows,
+      window_soft_ratio: _soft,
+      window_hard_ratio: _hard,
+      ...rest
+    } = profile({ context_window: 200000 })
+    const legacy = {
+      ...rest,
+      takeover: false,
+      takeover_tokens: 30000,
+      keep_recent_turns: 3,
+      archive_wait_seconds: 30,
+    }
+    const settings = toProfileSettings(legacy as unknown as ProfileSettings)
+    for (const field of [
+      'takeover',
+      'takeover_tokens',
+      'keep_recent_turns',
+      'archive_wait_seconds',
+    ]) {
+      expect(settings).not.toHaveProperty(field)
+    }
+    expect(settings).toMatchObject({
+      compaction: true,
+      compaction_threshold: 0.9,
+      summary_max_tokens: 8000,
+      context_window: 200000,
+      agent_windows: false,
+      window_soft_ratio: 0.7,
+      window_hard_ratio: 0.85,
+    })
+  })
+
   it('duplicates under a new name', () => {
     expect(
       duplicateProfile({ ...profile(), id: 'p', revision: 1 }, 'Copy'),
@@ -111,21 +148,23 @@ describe('validateProfile', () => {
         max_tokens: 63,
         recall_timeout: 0,
         query_max_chars: Number.NaN,
-        keep_recent_turns: 101,
+        compaction_threshold: 0.99,
+        summary_max_tokens: 500,
         context_window: 1000,
-        archive_wait_seconds: 61,
+        window_hard_ratio: 0.3,
         tool_result_bytes: 1.5,
       }),
     )
     expect(Object.keys(errors).sort()).toEqual([
-      'archive_wait_seconds',
+      'compaction_threshold',
       'context_window',
-      'keep_recent_turns',
       'max_tokens',
       'name',
       'query_max_chars',
       'recall_timeout',
+      'summary_max_tokens',
       'tool_result_bytes',
+      'window_hard_ratio',
     ])
     expect(errors.recall_timeout?.key).toBe('validation.rangeExclusive')
     expect(errors.query_max_chars?.key).toBe('validation.required')
@@ -134,6 +173,22 @@ describe('validateProfile', () => {
 
   it('allows an empty context window', () => {
     expect(validateProfile(profile({ context_window: null }))).toEqual({})
+  })
+
+  it('needs the soft reminder below the hard one, even while agent windows are off', () => {
+    for (const soft of [0.85, 0.9]) {
+      expect(
+        validateProfile(profile({ window_soft_ratio: soft })).window_soft_ratio,
+      ).toEqual({ key: 'validation.softBelowHard' })
+    }
+    expect(
+      validateProfile(profile({ agent_windows: true, window_soft_ratio: 0.5 })),
+    ).toEqual({})
+    // An out-of-range ratio reports its range instead.
+    expect(
+      validateProfile(profile({ window_soft_ratio: 0.96 })).window_soft_ratio
+        ?.key,
+    ).toBe('validation.range')
   })
 
   it('needs a source while recall is on', () => {

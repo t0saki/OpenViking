@@ -1,7 +1,6 @@
 import * as React from 'react'
 import {
   BrainIcon,
-  InfoIcon,
   SaveIcon,
   ScrollTextIcon,
   WrenchIcon,
@@ -38,21 +37,25 @@ import { SettingField } from './setting-field'
 import { SettingSection } from './setting-section'
 import { ToggleRow } from './toggle-row'
 
-/** The four switchable groups of a context profile, in page order. */
-export type ProfileSection = 'recall' | 'capture' | 'takeover' | 'tools'
+/** The four groups of a context profile, in page order. */
+export type ProfileSection =
+  | 'recall'
+  | 'capture'
+  | 'longConversations'
+  | 'tools'
 
 export const PROFILE_SECTIONS: Array<{ id: ProfileSection; icon: LucideIcon }> =
   [
     { id: 'recall', icon: BrainIcon },
     { id: 'capture', icon: SaveIcon },
-    { id: 'takeover', icon: ScrollTextIcon },
+    { id: 'longConversations', icon: ScrollTextIcon },
     { id: 'tools', icon: WrenchIcon },
   ]
 
 /** Element id of a section card, for the editor's section navigation. */
 export const sectionAnchor = (section: ProfileSection) => `profile-${section}`
 
-/** Whether a section takes effect; long conversations also need saving on. */
+/** Whether a section takes effect; long conversations count while either switch is on. */
 export function isSectionOn(
   settings: ProfileSettings,
   section: ProfileSection,
@@ -62,8 +65,8 @@ export function isSectionOn(
       return settings.recall
     case 'capture':
       return settings.capture
-    case 'takeover':
-      return settings.capture && settings.takeover
+    case 'longConversations':
+      return settings.compaction || settings.agent_windows
     case 'tools':
       return settings.gateway_tools
   }
@@ -82,10 +85,11 @@ const FIELD_COPY: Record<NumericField, `${ProfileSection}.${string}`> = {
   idle_seconds: 'capture.idleSeconds',
   commit_tokens: 'capture.commitTokens',
   keep_recent_messages: 'capture.keepRecentMessages',
-  takeover_tokens: 'takeover.takeoverTokens',
-  keep_recent_turns: 'takeover.keepRecentTurns',
-  archive_wait_seconds: 'takeover.archiveWaitSeconds',
-  context_window: 'takeover.contextWindow',
+  compaction_threshold: 'longConversations.threshold',
+  summary_max_tokens: 'longConversations.summaryMaxTokens',
+  context_window: 'longConversations.contextWindow',
+  window_soft_ratio: 'longConversations.softRatio',
+  window_hard_ratio: 'longConversations.hardRatio',
   tool_max_rounds: 'tools.maxRounds',
   tool_timeout_seconds: 'tools.timeoutSeconds',
   tool_result_bytes: 'tools.resultBytes',
@@ -101,7 +105,7 @@ const LIST_FIELD_SECTIONS: Partial<Record<string, ProfileSection>> = {
 /** Fields under each section's "Advanced settings". */
 const ADVANCED_FIELDS: Partial<Record<ProfileSection, string[]>> = {
   recall: ['query_max_chars', 'quotas'],
-  takeover: ['archive_wait_seconds', 'context_window'],
+  longConversations: ['context_window'],
   tools: [
     'tool_max_rounds',
     'tool_timeout_seconds',
@@ -521,33 +525,57 @@ export function ProfileSettingsForm({
       </SettingSection>
 
       <SettingSection
-        id={sectionAnchor('takeover')}
-        {...validity('takeover')}
+        id={sectionAnchor('longConversations')}
+        {...validity('longConversations')}
         icon={<ScrollTextIcon />}
-        title={t('profiles.takeover.title')}
-        description={t('profiles.takeover.description')}
-        checked={isSectionOn(value, 'takeover')}
-        switchDisabled={!value.capture}
-        onCheckedChange={(takeover) => onChange({ takeover })}
-        note={
-          value.capture ? undefined : (
-            <p className="flex items-start gap-2 text-muted-foreground">
-              <InfoIcon className="mt-0.5 size-4 shrink-0" />
-              {t('profiles.takeover.needsCapture')}
-            </p>
-          )
-        }
+        title={t('profiles.longConversations.title')}
+        description={t('profiles.longConversations.description')}
         advanced={
           <div className="grid gap-5 md:grid-cols-2">
-            {numberField('archive_wait_seconds')}
             {numberField('context_window')}
           </div>
         }
       >
-        <div className="grid gap-5 md:grid-cols-2">
-          {numberField('takeover_tokens')}
-          {numberField('keep_recent_turns')}
-        </div>
+        <ToggleRow
+          id="profile-compaction"
+          label={t('profiles.longConversations.compaction.label')}
+          description={t('profiles.longConversations.compaction.description')}
+          checked={value.compaction}
+          invalid={Boolean(
+            errors.compaction_threshold || errors.summary_max_tokens,
+          )}
+          onCheckedChange={(compaction) => onChange({ compaction })}
+        >
+          <div className="grid gap-5 md:grid-cols-2">
+            {numberField('compaction_threshold')}
+            {numberField('summary_max_tokens')}
+          </div>
+        </ToggleRow>
+        <ToggleRow
+          id="profile-agent_windows"
+          label={t('profiles.longConversations.agentWindows.label')}
+          badge={
+            <Badge variant="outline">
+              {t('profiles.longConversations.agentWindows.experimental')}
+            </Badge>
+          }
+          description={t('profiles.longConversations.agentWindows.description')}
+          checked={value.agent_windows}
+          invalid={Boolean(
+            errors.window_soft_ratio || errors.window_hard_ratio,
+          )}
+          onCheckedChange={(agent_windows) => onChange({ agent_windows })}
+        >
+          {value.gateway_tools ? null : (
+            <Notice tone="info">
+              {t('profiles.longConversations.agentWindows.needsTools')}
+            </Notice>
+          )}
+          <div className="grid gap-5 md:grid-cols-2">
+            {numberField('window_soft_ratio')}
+            {numberField('window_hard_ratio')}
+          </div>
+        </ToggleRow>
       </SettingSection>
 
       <SettingSection

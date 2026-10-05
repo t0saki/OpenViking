@@ -25,7 +25,7 @@ import { cn } from '#/lib/utils'
 
 import { deleteProfile, keysUsing } from '../-lib/api'
 import type { GatewayTool, Profile } from '../-lib/api'
-import { EMPTY_VALUE, formatCompact, formatNumber } from '../-lib/format'
+import { EMPTY_VALUE, formatNumber, formatPercent } from '../-lib/format'
 import { gatewayErrorMessage } from '../-lib/localize'
 import type { Translate } from '../-lib/localize'
 import { offeredTools, toProfileSettings } from '../-lib/profile-schema'
@@ -59,11 +59,17 @@ function summarize(
       }),
     ),
     capture: state(settings.capture, t('states.on')),
-    takeover: state(
-      isSectionOn(settings, 'takeover'),
-      t('profiles.summary.takeoverOn', {
-        tokens: formatCompact(settings.takeover_tokens, locale),
-      }),
+    longConversations: state(
+      isSectionOn(settings, 'longConversations'),
+      [
+        settings.compaction &&
+          t('profiles.summary.compactionOn', {
+            percent: formatPercent(settings.compaction_threshold, locale),
+          }),
+        settings.agent_windows && t('profiles.summary.agentWindowsOn'),
+      ]
+        .filter(Boolean)
+        .join(' · '),
     ),
     tools: state(
       settings.gateway_tools,
