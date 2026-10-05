@@ -141,12 +141,27 @@ export function keysUsing(
   ).length
 }
 
-export type KeyRequest = {
+/**
+ * Who a new key acts as: a user of this account, whose key OpenViking Server
+ * looks up itself, or that user's OpenViking key pasted by the admin.
+ */
+export type KeyOwner =
+  | { user_id: string; openviking_key?: never }
+  | { openviking_key: string; user_id?: never }
+
+export type KeyRequest = KeyOwner & {
   name: string
-  openviking_key: string
   policy_id: string
   upstream_ids: string[]
   models: string[]
+}
+
+/** A user of this account a key can act as; root is never one of them. */
+export type KeyUser = {
+  user_id: string
+  role: 'admin' | 'user'
+  /** False when the server can't read the user's key, e.g. it keeps only a hash. */
+  api_key_available: boolean
 }
 
 export type CacheStats = {
@@ -357,13 +372,15 @@ const BASE_PATH = '/api/v1/admin/context-gateway'
 
 type Method = 'GET' | 'POST' | 'PUT' | 'DELETE'
 
-async function send<T>(
+type RequestOptions = { query?: Record<string, unknown>; body?: unknown }
+
+/** One OpenViking Server call; any failure becomes a `GatewayError`. */
+async function call<T>(
   connection: AdminConnection,
   method: Method,
-  segments: string[],
-  options: { query?: Record<string, unknown>; body?: unknown } = {},
+  url: string,
+  options: RequestOptions = {},
 ): Promise<T> {
-  const url = [BASE_PATH, ...segments.map(encodeURIComponent)].join('/')
   const body =
     options.body === undefined
       ? {}
@@ -383,6 +400,17 @@ async function send<T>(
   } catch (error) {
     throw toGatewayError(error)
   }
+}
+
+/** Calls the gateway's management API through OpenViking Server. */
+function send<T>(
+  connection: AdminConnection,
+  method: Method,
+  segments: string[],
+  options?: RequestOptions,
+): Promise<T> {
+  const url = [BASE_PATH, ...segments.map(encodeURIComponent)].join('/')
+  return call<T>(connection, method, url, options)
 }
 
 /**
@@ -443,7 +471,30 @@ export const deleteProfile = (connection: AdminConnection, id: string) =>
 export const listKeys = (connection: AdminConnection) =>
   send<GatewayKey[]>(connection, 'GET', ['keys'])
 
-/** Issues a key; the response is the only time the secret is available. */
+const KEY_USER_ROLES: readonly string[] = ['admin', 'user']
+
+/**
+ * Users of the current account a key can act as. The server says only
+ * whether it can read each user's key; the key never reaches the browser.
+ */
+export async function listKeyUsers(
+  connection: AdminConnection,
+): Promise<KeyUser[]> {
+  const users = await call<Array<Omit<KeyUser, 'role'> & { role: string }>>(
+    connection,
+    'GET',
+    `/api/v1/admin/accounts/${encodeURIComponent(connection.accountId)}/users`,
+    { query: { include_credentials: false } },
+  )
+  return users.filter((user): user is KeyUser =>
+    KEY_USER_ROLES.includes(user.role),
+  )
+}
+
+/**
+ * Issues a key; the response is the only time the secret is available. For a
+ * `user_id`, OpenViking Server sends that user's stored key to the gateway.
+ */
 export const issueKey = (connection: AdminConnection, request: KeyRequest) =>
   send<IssuedKey>(connection, 'POST', ['keys'], { body: request })
 

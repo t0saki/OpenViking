@@ -33,12 +33,19 @@ import { PLAIN_INPUT_PROPS } from '#/lib/form-input'
 import { cn } from '#/lib/utils'
 
 import { issueKey, toGatewayError } from '../-lib/api'
-import type { IssuedKey, KeyRequest, Profile, Upstream } from '../-lib/api'
+import type {
+  IssuedKey,
+  KeyOwner,
+  KeyRequest,
+  KeyUser,
+  Profile,
+  Upstream,
+} from '../-lib/api'
 import { gatewayErrorMessage } from '../-lib/localize'
 import type { Translate } from '../-lib/localize'
 import { NEW_ID } from '../-lib/search'
 import { servedModels } from '../-lib/upstream-schema'
-import { useGateway } from '../-lib/use-gateway'
+import { useGateway, useKeyUsers } from '../-lib/use-gateway'
 import { SettingField } from './setting-field'
 import { ProtocolBadge, ToneBadge } from './status-badges'
 import { TagInput } from './tag-input'
@@ -47,7 +54,12 @@ import { TagInput } from './tag-input'
 const GATEWAY_KEY_PREFIX = 'ovcg_'
 const MODEL_PREVIEW = 3
 
-type KeyField = 'name' | 'openviking_key' | 'policy_id' | 'upstream_ids'
+type KeyField =
+  | 'name'
+  | 'user_id'
+  | 'openviking_key'
+  | 'policy_id'
+  | 'upstream_ids'
 
 /** Field → i18n key of the first problem; empty when the request can be sent. */
 export type KeyRequestErrors = Partial<Record<KeyField, string>>
@@ -55,11 +67,15 @@ export type KeyRequestErrors = Partial<Record<KeyField, string>>
 /** Checks a key request before sending it. */
 export function validateKeyRequest(request: KeyRequest): KeyRequestErrors {
   const errors: KeyRequestErrors = {}
-  const secret = request.openviking_key.trim()
   if (!request.name.trim()) errors.name = 'validation.required'
-  if (!secret) errors.openviking_key = 'validation.required'
-  else if (secret.startsWith(GATEWAY_KEY_PREFIX)) {
-    errors.openviking_key = 'keys.form.openvikingKey.gatewayKey'
+  if (request.user_id !== undefined) {
+    if (!request.user_id) errors.user_id = 'validation.required'
+  } else {
+    const secret = request.openviking_key.trim()
+    if (!secret) errors.openviking_key = 'validation.required'
+    else if (secret.startsWith(GATEWAY_KEY_PREFIX)) {
+      errors.openviking_key = 'keys.form.openvikingKey.gatewayKey'
+    }
   }
   if (!request.policy_id) errors.policy_id = 'validation.required'
   if (!request.upstream_ids.length) {
@@ -68,8 +84,18 @@ export function validateKeyRequest(request: KeyRequest): KeyRequestErrors {
   return errors
 }
 
-/** Issuance failures about the OpenViking key, with copy that says what to do. */
+/** Issuance failures about the user or their key, with copy that says what to do. */
 const ISSUE_ERRORS: Array<[RegExp, string, boolean]> = [
+  [
+    /^Unknown OpenViking user in this account$/,
+    'keys.errors.unknownUser',
+    true,
+  ],
+  [
+    /^This user's OpenViking key cannot be read/,
+    'keys.errors.userKeyUnreadable',
+    true,
+  ],
   [/^root_key_not_allowed$/, 'keys.errors.rootKey', true],
   [
     /^OpenViking key belongs to another account/i,
@@ -84,7 +110,7 @@ const ISSUE_ERRORS: Array<[RegExp, string, boolean]> = [
 
 export type IssueProblem = {
   message: string
-  /** Shown under the OpenViking key field instead of in the dialog alert. */
+  /** Shown under the OpenViking user or key field instead of in the dialog alert. */
   keyField: boolean
 }
 
@@ -100,6 +126,15 @@ function byName<T extends { name: string }>(items: T[]): T[] {
   return [...items].sort((a, b) => a.name.localeCompare(b.name))
 }
 
+/** Whether the admin picks the key's user or pastes that user's OpenViking key. */
+type OwnerMode = 'user' | 'key'
+
+/** Form state; keeps the picked user and the pasted key while switching modes. */
+type KeyDraft = Omit<KeyRequest, keyof KeyOwner> & {
+  user_id: string
+  openviking_key: string
+}
+
 type KeysIssueDialogProps = {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -110,9 +145,10 @@ type KeysIssueDialogProps = {
 }
 
 /**
- * Form for a new gateway key: name, OpenViking key, context profile,
- * upstreams and an optional model allowlist. Mount it with a fresh `key`
- * each time it opens to start from an empty form.
+ * Form for a new gateway key: name, OpenViking user (or that user's pasted
+ * OpenViking key), context profile, upstreams and an optional model
+ * allowlist. Mount it with a fresh `key` each time it opens to start from an
+ * empty form.
  */
 export function KeysIssueDialog({
   open,
@@ -122,15 +158,25 @@ export function KeysIssueDialog({
   onIssued,
 }: KeysIssueDialogProps) {
   const { t } = useTranslation('contextGateway')
-  const { connection, invalidate } = useGateway()
+  const { connection, invalidate, role } = useGateway()
+  // OpenViking may resolve a root key to another account than the one Studio
+  // shows, so only an account admin picks the user; root pastes their key.
+  const canPickUser = role === 'admin'
+  const usersQuery = useKeyUsers({ enabled: open && canPickUser })
   const formId = React.useId()
-  const [draft, setDraft] = React.useState<KeyRequest>(() => ({
+  const userTriggerRef = React.useRef<HTMLButtonElement>(null)
+  const keyInputRef = React.useRef<HTMLInputElement>(null)
+  /** Set by a switch the admin makes, so the new field gets focus. */
+  const focusOwner = React.useRef(false)
+  const [draft, setDraft] = React.useState<KeyDraft>(() => ({
     name: '',
+    user_id: '',
     openviking_key: '',
     policy_id: profiles.length === 1 ? profiles[0].id : '',
     upstream_ids: upstreams.length === 1 ? [upstreams[0].id] : [],
     models: [],
   }))
+  const [chosenMode, setChosenMode] = React.useState<OwnerMode>('user')
   const [submitted, setSubmitted] = React.useState(false)
 
   const issue = useMutation({
@@ -140,19 +186,61 @@ export function KeysIssueDialog({
       await invalidate('keys', 'overview')
     },
     onError: (error) => {
-      // A profile or upstream deleted meanwhile; show the current lists.
-      if (toGatewayError(error).status === 400) {
-        void invalidate('profiles', 'upstreams')
+      // A user, profile or upstream changed meanwhile; show the current lists.
+      const { status } = toGatewayError(error)
+      if (status === 400 || status === 409) {
+        void invalidate('users', 'profiles', 'upstreams')
       }
     },
   })
   const pending = issue.isPending
+
+  const users = [...(usersQuery.data ?? [])].sort((a, b) =>
+    a.user_id.localeCompare(b.user_id),
+  )
+  const available = users.filter((user) => user.api_key_available)
+  // Without a user whose key the server can read, pasting is the only way.
+  const fallback = !canPickUser
+    ? 'root'
+    : usersQuery.isError
+      ? 'loadFailed'
+      : usersQuery.isSuccess && !available.length
+        ? 'none'
+        : undefined
+  const mode: OwnerMode = fallback ? 'key' : chosenMode
+  // Only an empty choice is filled in; a chosen user who disappears leaves
+  // the picker empty rather than switching to someone else.
+  const userId = draft.user_id
+    ? available.some((user) => user.user_id === draft.user_id)
+      ? draft.user_id
+      : ''
+    : available.length === 1
+      ? available[0].user_id
+      : ''
+  const selectedUser = users.find((user) => user.user_id === userId)
+
+  const owner: KeyOwner =
+    mode === 'user'
+      ? { user_id: userId }
+      : { openviking_key: draft.openviking_key.trim() }
+  const request: KeyRequest = {
+    ...owner,
+    name: draft.name.trim(),
+    policy_id: draft.policy_id,
+    upstream_ids: upstreams
+      .map((upstream) => upstream.id)
+      .filter((id) => draft.upstream_ids.includes(id)),
+    models: draft.models,
+  }
+
   const problem = issue.isError ? issueProblem(t, issue.error) : undefined
-  const errors = submitted ? validateKeyRequest(draft) : {}
-  const keyError = errors.openviking_key
-    ? t(errors.openviking_key)
-    : problem?.keyField
-      ? problem.message
+  const errors = submitted ? validateKeyRequest(request) : {}
+  const ownerError = errors.user_id ?? errors.openviking_key
+  // The server's reason first: it can empty the field (say, a removed user).
+  const keyError = problem?.keyField
+    ? problem.message
+    : ownerError
+      ? t(ownerError)
       : undefined
 
   const sortedProfiles = byName(profiles)
@@ -166,8 +254,22 @@ export function KeysIssueDialog({
     ),
   ].sort()
 
-  function update(patch: Partial<KeyRequest>) {
+  function update(patch: Partial<KeyDraft>) {
     setDraft((current) => ({ ...current, ...patch }))
+    if (issue.isError) issue.reset()
+  }
+
+  // The switch button goes away with its field; move focus to the new one.
+  React.useEffect(() => {
+    if (!focusOwner.current) return
+    focusOwner.current = false
+    const field = mode === 'user' ? userTriggerRef : keyInputRef
+    field.current?.focus()
+  }, [mode])
+
+  function switchMode(next: OwnerMode) {
+    setChosenMode(next)
+    focusOwner.current = true
     if (issue.isError) issue.reset()
   }
 
@@ -182,15 +284,12 @@ export function KeysIssueDialog({
   function submit(event: React.FormEvent) {
     event.preventDefault()
     setSubmitted(true)
-    if (Object.keys(validateKeyRequest(draft)).length) return
-    issue.mutate({
-      ...draft,
-      name: draft.name.trim(),
-      openviking_key: draft.openviking_key.trim(),
-      upstream_ids: upstreams
-        .map((upstream) => upstream.id)
-        .filter((id) => draft.upstream_ids.includes(id)),
-    })
+    if (Object.keys(validateKeyRequest(request)).length) return
+    // A preselected user becomes the choice, so a retry goes to the same user.
+    if (mode === 'user') {
+      setDraft((current) => ({ ...current, user_id: userId }))
+    }
+    issue.mutate(request)
   }
 
   const id = (field: string) => `${formId}-${field}`
@@ -231,26 +330,103 @@ export function KeysIssueDialog({
             />
           </SettingField>
 
-          <SettingField
-            label={t('keys.form.openvikingKey.label')}
-            htmlFor={id('openviking-key')}
-            description={t('keys.form.openvikingKey.description')}
-            error={keyError}
-          >
-            <Input
-              {...PLAIN_INPUT_PROPS}
-              id={id('openviking-key')}
-              type="password"
-              autoComplete="new-password"
-              className="font-mono"
-              value={draft.openviking_key}
-              aria-invalid={Boolean(keyError)}
-              disabled={pending}
-              onChange={(event) =>
-                update({ openviking_key: event.target.value })
+          {mode === 'user' ? (
+            <SettingField
+              label={t('keys.form.user.label')}
+              htmlFor={id('user')}
+              description={
+                <>
+                  {t('keys.form.user.description')}{' '}
+                  <ModeSwitch
+                    disabled={pending}
+                    onClick={() => switchMode('key')}
+                  >
+                    {t('keys.form.openvikingKey.paste')}
+                  </ModeSwitch>
+                </>
               }
-            />
-          </SettingField>
+              error={keyError}
+            >
+              <Select
+                value={userId || null}
+                disabled={pending || !usersQuery.isSuccess}
+                onValueChange={(value) => {
+                  if (value) update({ user_id: value })
+                }}
+              >
+                <SelectTrigger
+                  ref={userTriggerRef}
+                  id={id('user')}
+                  className="w-full"
+                  aria-invalid={Boolean(keyError)}
+                >
+                  <SelectValue>
+                    {selectedUser ? (
+                      <KeyUserLabel user={selectedUser} />
+                    ) : (
+                      <span className="text-muted-foreground">
+                        {usersQuery.isSuccess
+                          ? t('keys.form.user.placeholder')
+                          : t('keys.form.user.loading')}
+                      </span>
+                    )}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent className="max-h-[min(18rem,var(--available-height))]">
+                  {users.map((user) => (
+                    <SelectItem
+                      key={user.user_id}
+                      value={user.user_id}
+                      disabled={!user.api_key_available}
+                    >
+                      <KeyUserLabel user={user} />
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </SettingField>
+          ) : (
+            <SettingField
+              label={t('keys.form.openvikingKey.label')}
+              htmlFor={id('openviking-key')}
+              description={
+                fallback ? (
+                  <>
+                    <span className="block text-foreground">
+                      {t(`keys.form.user.${fallback}`)}
+                    </span>
+                    {t('keys.form.openvikingKey.description')}
+                  </>
+                ) : (
+                  <>
+                    {t('keys.form.openvikingKey.description')}{' '}
+                    <ModeSwitch
+                      disabled={pending}
+                      onClick={() => switchMode('user')}
+                    >
+                      {t('keys.form.user.choose')}
+                    </ModeSwitch>
+                  </>
+                )
+              }
+              error={keyError}
+            >
+              <Input
+                {...PLAIN_INPUT_PROPS}
+                ref={keyInputRef}
+                id={id('openviking-key')}
+                type="password"
+                autoComplete="new-password"
+                className="font-mono"
+                value={draft.openviking_key}
+                aria-invalid={Boolean(keyError)}
+                disabled={pending}
+                onChange={(event) =>
+                  update({ openviking_key: event.target.value })
+                }
+              />
+            </SettingField>
+          )}
 
           <SettingField
             label={t('keys.form.profile.label')}
@@ -400,6 +576,46 @@ export function KeysIssueDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  )
+}
+
+/** Text button at the end of a field description that switches how the user is given. */
+function ModeSwitch({
+  disabled,
+  onClick,
+  children,
+}: {
+  disabled: boolean
+  onClick: () => void
+  children: React.ReactNode
+}) {
+  return (
+    <button
+      type="button"
+      className="font-medium text-foreground underline underline-offset-4 disabled:opacity-50"
+      disabled={disabled}
+      onClick={onClick}
+    >
+      {children}
+    </button>
+  )
+}
+
+/** A user's ID with a quiet role tag and, when they can't be picked, why. */
+function KeyUserLabel({ user }: { user: KeyUser }) {
+  const { t } = useTranslation('contextGateway')
+  return (
+    <span className="flex min-w-0 items-baseline gap-2">
+      <span className="truncate">{user.user_id}</span>
+      <span className="text-xs text-muted-foreground">
+        {t(`keys.form.user.roles.${user.role}`)}
+      </span>
+      {user.api_key_available ? null : (
+        <span className="text-xs text-muted-foreground">
+          {t('keys.form.user.unavailable')}
+        </span>
+      )}
+    </span>
   )
 }
 

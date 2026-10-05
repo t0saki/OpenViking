@@ -33,7 +33,7 @@ description: 用 Docker Compose、Helm 或自建反向代理部署上下文网�
 - **OpenViking Server 0.4.16 或更高版本，并运行在 API Key 模式**（`server.auth_mode: "api_key"`，同时配置 `root_api_key`）。网关用每个人自己的 OpenViking 密钥，以这个人的身份访问 OpenViking。dev 模式下任何密钥都按 root 身份处理，而网关不接受 root 身份，所以一个网关密钥也签发不了。
 - **网关本身**：在 Python 3.10 或更高版本上安装 `openviking[context-gateway]` 可选依赖，或者使用官方 OpenViking Docker 镜像，镜像里已经包含 `openviking-context-gateway` 命令。
 - **用于 Studio 的账号管理员密钥。** 你在 Studio 中配置的内容，都属于登录所用密钥所在的账号。root key 也能用，但它管理的是它解析到的那个账号，所以优先使用账号管理员的密钥。
-- **每位领取网关密钥的人都要有 OpenViking 用户密钥**，并且来自同一个账号。管理员密钥也可以，root key 不行。
+- **每位领取网关密钥的人都要是同一账号中的 OpenViking 用户**，普通用户和管理员都可以，root 不行。签发时由 OpenViking Server 读取这个用户的 OpenViking 密钥；如果它只保存密钥哈希，就需要这个用户自己提供密钥。
 - **模型服务商的 API Key。** 订阅登录会被拒绝；Coding Plan 密钥默认也会被拒绝，除非你明确允许。
 - **单台主机上的本地磁盘**，用于网关存储（默认 `~/.openviking/context-gateway`）。不支持网络文件系统，也不支持在多台主机之间共享存储。
 - **加密密钥和管理令牌**，见下一节。
@@ -375,19 +375,19 @@ server {
 在“密钥”标签页选择**签发密钥**，然后填写：
 
 - **名称**：方便日后辨认，例如“alice · Claude Code”。
-- **OpenViking 密钥**：本账号中某个 OpenViking 用户的密钥。网关以这个用户的身份搜索和保存记忆。不接受 root key。它加密存储，之后不再显示。
+- **OpenViking 用户**：本账号中的一个用户或管理员。网关以这个用户的身份搜索和保存记忆。签发时，OpenViking Server 读取这个用户的 OpenViking 密钥并交给网关，网关加密保存；密钥不经过浏览器，之后也不再显示。如果 OpenViking Server 只保存密钥的哈希（启用了 `encryption.api_key_hashing.enabled`），或者因为其他原因读不到某个用户的密钥，这个用户在列表里不可选。这时选择**粘贴 OpenViking 密钥**，填入该用户自己的密钥。用 root key 登录 Studio 时没有用户列表可选：root key 解析到的账号可能不是 Studio 当前显示的账号，所以要粘贴用户的密钥。粘贴的密钥不能是 root key。
 - **上下文配置**。
 - **上游**：至少一个。这个密钥只能访问选中的上游。
 - **允许的模型**（可选）：留空表示允许这些上游提供的所有模型。这里填客户端发送的名称，包括别名。请求其他模型会返回 403 "Model is not allowed by this key"，模型列表也只显示允许的名称。
 
-签发前，网关会向 OpenViking 核实这个 OpenViking 密钥。root key、其他账号的密钥、无效的密钥，或者 OpenViking 无法访问，都会让签发失败，见[签发密钥失败](#签发密钥失败)。
+签发前，网关会向 OpenViking 核实这个用户的 OpenViking 密钥。如果粘贴的是 root key、其他账号的密钥或无效的密钥，或者 OpenViking 无法访问，签发就会失败，见[签发密钥失败](#签发密钥失败)。
 
 签发成功后，**复制网关密钥**对话框显示完整密钥。这是唯一一次显示：网关只保存密钥的哈希和开头几个字符。对话框里还有 Claude Code、Codex CLI 和聊天客户端的配置，已经填好真实密钥和网关地址，可以直接粘贴。密钥丢了就重新签发一个。
 
-- **密钥不能编辑。** 要更换密钥的上下文配置、上游、允许的模型或 OpenViking 密钥，就签发一个新密钥，再吊销旧的。
+- **密钥不能编辑。** 要更换密钥的上下文配置、上游、允许的模型或 OpenViking 用户，就签发一个新密钥，再吊销旧的。
 - **对话属于用户，不属于密钥。** 只要客户端发送相同的会话 ID，同一 OpenViking 用户的新密钥就会接着原来的对话，所以换密钥不会打断对话。
 - **吊销**会立即切断客户端的访问（其他工作进程约 2 秒内跟上），正在进行的请求会正常完成。最后使用这个密钥的对话里还没保存的轮次会被丢弃，对话和记忆本身都保留。想换密钥又不丢轮次，就先把客户端切到新密钥，再吊销旧的。
-- **OpenViking 密钥变了怎么办。** 如果用户的 OpenViking 密钥被重新生成或删除，网关密钥仍能通过客户端认证，但记忆搜索会失败，保存也会因 `openviking_http_401` 暂停。用该用户新的 OpenViking 密钥签发新的网关密钥，切换客户端，再吊销旧的网关密钥。
+- **OpenViking 密钥变了怎么办。** 网关保存的是签发时这个用户的 OpenViking 密钥。如果该密钥被重新生成或删除，网关密钥仍能通过客户端认证，但记忆搜索会失败，保存也会因 `openviking_http_401` 暂停。为该用户重新签发网关密钥（Studio 会读取新的 OpenViking 密钥），切换客户端，再吊销旧的网关密钥。
 - **每人一个密钥。** 使用同一个密钥的人共享其 OpenViking 用户的记忆。请给每人签发一个密钥；想让不同客户端使用不同的上下文配置，就按客户端再分开签发。
 
 **删除该用户的网关数据…**（在密钥的**更多操作**菜单中）会吊销该 OpenViking 用户的所有网关密钥，并删除网关为该用户保存的对话状态。OpenViking 中的会话和记忆不受影响，需要在 OpenViking 中删除。在 OpenViking 中删除用户或账号时，网关会自动做同样的清理，见[安全与数据](#安全与数据)。
@@ -660,7 +660,7 @@ URL 类设置必须是普通的 `http` 或 `https` 地址，不能包含账号�
 | 仍然允许 | `allow_coding_plan` | `false` | 允许使用被标记为 Coding Plan 的密钥。 |
 | 最小可缓存长度 | `cache_min_tokens` | `1024` | 仅方舟；影响缓存资格的报告。 |
 
-**网关密钥字段：** 名称（`name`）、OpenViking 密钥（`openviking_key`）、上下文配置（`policy_id`）、上游（`upstream_ids`，至少一个）和允许的模型（`models`）。
+**网关密钥字段：** 名称（`name`）、OpenViking 密钥（`openviking_key`）、上下文配置（`policy_id`）、上游（`upstream_ids`，至少一个）和允许的模型（`models`）。通过 OpenViking Server 签发时，可以用本账号用户的 `user_id` 代替 `openviking_key`，由 OpenViking Server 读取这个用户的密钥；两者只能提供一个。
 
 Studio 通过 OpenViking Server 上 `/api/v1/admin/context-gateway/` 下的管理 API 操作网关，资源包括 `overview`、`logs`、`guides`、`upstreams`、`policies`、`keys` 和 `users/{user_id}/data`。脚本也可以用账号管理员密钥调用这些路径。
 
@@ -693,10 +693,11 @@ OpenViking Server 无法使用网关时，上下文网关页面会显示一张�
 
 ### 签发密钥失败
 
-**签发网关密钥**对话框会显示 OpenViking 拒绝这个密钥的原因。括号里的代码是管理 API 返回的原因值。
+**签发网关密钥**对话框会显示签发失败的原因。括号里的代码是管理 API 返回的原因值。
 
 | Studio 中的提示 | 原因和处理 |
 | --- | --- |
+| 服务端读不到这个用户的 OpenViking 密钥，请改为粘贴。 | OpenViking Server 读不到所选用户的密钥，通常是因为它只保存密钥的哈希（`encryption.api_key_hashing.enabled`）。选择**粘贴 OpenViking 密钥**，填入该用户自己的密钥。 |
 | 这是 Root 密钥。（`root_key_not_allowed`） | OpenViking 密钥是 root key，或者 OpenViking 运行在 dev 模式，此时任何密钥都按 root 身份处理。请使用用户自己的密钥，并启用 API Key 模式。 |
 | 这个 OpenViking 密钥属于其他账号。 | 密钥所属的账号不是你在 Studio 中管理的账号。 |
 | OpenViking 拒绝了这个密钥。（`openviking_http_401`） | 密钥不完整、已被重新生成，或者它的用户已被删除。请使用该用户当前的密钥。 |

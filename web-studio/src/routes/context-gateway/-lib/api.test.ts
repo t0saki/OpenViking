@@ -7,6 +7,7 @@ import {
   deleteUserData,
   getConnectionInfo,
   issueKey,
+  listKeyUsers,
   listLogs,
   newObjectId,
   resyncCapture,
@@ -79,7 +80,7 @@ describe('gateway calls', () => {
     await resyncCapture(connection, 'key-1', { session: 's', protocol: 'chat' })
     await issueKey(connection, {
       name: 'Laptop',
-      openviking_key: 'user-key',
+      user_id: 'alice',
       policy_id: 'p',
       upstream_ids: ['u'],
       models: [],
@@ -92,6 +93,32 @@ describe('gateway calls', () => {
       ['POST', '/api/v1/admin/context-gateway/keys'],
       ['DELETE', '/api/v1/admin/context-gateway/users/alice/data'],
     ])
+  })
+})
+
+describe('listKeyUsers', () => {
+  it("lists the account's users and admins without their credentials", async () => {
+    request.mockResolvedValue(
+      ok({
+        status: 'ok',
+        result: [
+          { user_id: 'alice', role: 'user', api_key_available: true },
+          { user_id: 'boss', role: 'admin', api_key_available: false },
+          { user_id: 'root', role: 'root', api_key_available: true },
+        ],
+      }),
+    )
+    await expect(
+      listKeyUsers({ ...connection, accountId: 'acme/team' }),
+    ).resolves.toEqual([
+      { user_id: 'alice', role: 'user', api_key_available: true },
+      { user_id: 'boss', role: 'admin', api_key_available: false },
+    ])
+    expect(request.mock.calls[0][0]).toMatchObject({
+      method: 'GET',
+      url: '/api/v1/admin/accounts/acme%2Fteam/users',
+      query: { include_credentials: false },
+    })
   })
 })
 

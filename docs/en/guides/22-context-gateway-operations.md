@@ -33,7 +33,7 @@ The gateway is a separate process next to OpenViking Server, normally on port 19
 - **OpenViking Server 0.4.16 or later, in API key mode** (`server.auth_mode: "api_key"` with a `root_api_key`). The gateway acts for each person with that person's OpenViking key. In dev mode every key acts as root, which the gateway refuses, so no gateway key can be issued.
 - **The gateway itself**: the `openviking[context-gateway]` extra on Python 3.10 or later, or the official OpenViking Docker image, which already contains the `openviking-context-gateway` command.
 - **An account admin key** for Studio. Everything you configure belongs to the account of the key you sign in with. A root key also works but manages whichever account it resolves to, so prefer the account admin's key.
-- **An OpenViking user key for each person** who gets a gateway key, from the same account. Admin keys are accepted too; root keys are not.
+- **An OpenViking user for each person** who gets a gateway key, in the same account. Users and admins both work; root does not. When you issue the key, OpenViking Server reads the user's OpenViking key itself; if it stores only key hashes, the user has to provide their key.
 - **API keys for your model providers.** Subscription logins are rejected, and Coding Plan keys are refused unless you explicitly allow them.
 - **A local disk on one host** for the gateway's storage (`~/.openviking/context-gateway` by default). Network file systems and storage shared between hosts are not supported.
 - **Two secrets**, described next.
@@ -375,19 +375,19 @@ A gateway key (`ovcg_…`) is what a client uses in place of a provider key. Eac
 To issue one, choose **Issue key** on the **Keys** tab and fill in:
 
 - **Name**, to recognize the key later, for example "alice · Claude Code".
-- **OpenViking key**: a key of an OpenViking user in this account. The gateway searches and saves memory as this user. Root keys are not accepted. It is stored encrypted and never shown again.
+- **OpenViking user**: a user or admin in this account. The gateway searches and saves memory as this user. When you issue the key, OpenViking Server reads this user's OpenViking key and hands it to the gateway, which stores it encrypted; the key never passes through the browser and is never shown. If OpenViking Server stores only key hashes (`encryption.api_key_hashing.enabled`), or cannot read a user's key for another reason, that user can't be chosen in the list. Choose **Paste an OpenViking key** instead and enter the user's own key. When Studio is signed in with a root key, there is no list to choose from: a root key may resolve to another account than the one Studio shows, so paste the user's key. A pasted key can't be a root key.
 - **Context profile**.
 - **Upstreams**: at least one. The key can reach only these.
 - **Allowed models** (optional): leave empty to allow every model these upstreams serve. The names are the ones clients send, including aliases. Requests for other models fail with 403 "Model is not allowed by this key", and the model list shows only allowed names.
 
-Before issuing, the gateway checks the OpenViking key with OpenViking. A root key, a key from another account, an invalid key or an unreachable OpenViking stops the issue; see [Issuing a key fails](#issuing-a-key-fails).
+Before issuing, the gateway checks the user's OpenViking key with OpenViking. A pasted root key, a key from another account or an invalid key, or an unreachable OpenViking, stops the issue; see [Issuing a key fails](#issuing-a-key-fails).
 
 The **Copy your gateway key** dialog then shows the full key. This is the only time it is shown: the gateway keeps only a hash and the first characters. The dialog also has ready-to-paste setups for Claude Code, Codex CLI and chat clients with the real key and gateway address filled in. If a key is lost, issue a new one.
 
-- **Keys cannot be edited.** To change a key's profile, upstreams, allowed models or OpenViking key, issue a new key and revoke the old one.
+- **Keys cannot be edited.** To change a key's profile, upstreams, allowed models or OpenViking user, issue a new key and revoke the old one.
 - **Conversations belong to the user, not the key.** A new key for the same OpenViking user continues the same conversations when the client sends the same session ID, so replacing a key is seamless.
 - **Revoking** cuts off clients at once (other worker processes follow within about 2 seconds); requests already in flight finish. Turns not yet saved for conversations last used with that key are dropped. Conversations and memories stay. To replace a key without losing turns, switch the client to the new key first, then revoke the old one.
-- **When an OpenViking key changes.** If the user's OpenViking key is regenerated or removed, the gateway key keeps authenticating clients, but memory search fails and saving pauses with `openviking_http_401`. Issue a new gateway key with the user's new OpenViking key, switch the client, and revoke the old gateway key.
+- **When an OpenViking key changes.** The gateway keeps the user's OpenViking key from the time the key was issued. If that key is regenerated or removed, the gateway key keeps authenticating clients, but memory search fails and saving pauses with `openviking_http_401`. Issue a new gateway key for the user (Studio reads their new OpenViking key), switch the client, and revoke the old gateway key.
 - **One key per person.** Everyone using a key shares the memory of its OpenViking user. Issue one key per person, and per client when you want different profiles.
 
 **Delete this user's gateway data…** (in a key's **More actions** menu) revokes every gateway key of that OpenViking user and deletes the gateway's conversation state for them. Sessions and memories in OpenViking are not affected; delete those in OpenViking. Removing a user or account in OpenViking does this automatically; see [Security and data](#security-and-data).
@@ -660,7 +660,7 @@ URL settings must be plain `http` or `https` addresses without credentials, quer
 | Allow it anyway | `allow_coding_plan` | `false` | Allows a key marked as Coding Plan. |
 | Minimum cacheable prompt | `cache_min_tokens` | `1024` | Ark only; affects cache-eligibility reporting. |
 
-**Gateway key fields:** Name (`name`), OpenViking key (`openviking_key`), Context profile (`policy_id`), Upstreams (`upstream_ids`, at least one) and Allowed models (`models`).
+**Gateway key fields:** Name (`name`), OpenViking key (`openviking_key`), Context profile (`policy_id`), Upstreams (`upstream_ids`, at least one) and Allowed models (`models`). When you issue through OpenViking Server, you can send the `user_id` of a user in this account instead of `openviking_key`, and OpenViking Server reads that user's key; send only one of the two.
 
 Studio calls the management API on OpenViking Server under `/api/v1/admin/context-gateway/`, with the resources `overview`, `logs`, `guides`, `upstreams`, `policies`, `keys` and `users/{user_id}/data`. Scripts can call the same paths with an account admin key.
 
@@ -693,10 +693,11 @@ If **Context Gateway** is missing from the sidebar, Studio has no admin access: 
 
 ### Issuing a key fails
 
-The **Issue a gateway key** dialog shows why OpenViking refused the key. The code in parentheses is the reason the management API returns.
+The **Issue a gateway key** dialog shows why issuing failed. The code in parentheses is the reason the management API returns.
 
 | Message in Studio | Cause and fix |
 | --- | --- |
+| The server can't read this user's OpenViking key. Paste the key instead. | OpenViking Server can't read the chosen user's key, usually because it stores only key hashes (`encryption.api_key_hashing.enabled`). Choose **Paste an OpenViking key** and enter the user's own key. |
 | This is a root key. (`root_key_not_allowed`) | The OpenViking key is a root key, or OpenViking runs in dev mode, where every key acts as root. Use the user's own key, and API key mode. |
 | This OpenViking key belongs to another account. | The key belongs to a different account than the one you manage in Studio. |
 | OpenViking rejected this key. (`openviking_http_401`) | The key is incomplete, was regenerated, or its user was removed. Use the user's current key. |

@@ -58,11 +58,28 @@ const keys = {
       placeholder: '例如：Alice · Claude Code',
       description: '用来区分不同的密钥，写上使用者和客户端最清楚。',
     },
+    user: {
+      label: 'OpenViking 用户',
+      placeholder: '选择 OpenViking 用户',
+      loading: '正在加载用户…',
+      description:
+        '网关会以这个用户的身份召回和保存记忆。该用户的 OpenViking 密钥在服务端读取，由网关加密保存，不会显示。',
+      roles: {
+        admin: '管理员',
+        user: '用户',
+      },
+      unavailable: '服务端读不到这个用户的密钥，请改为粘贴',
+      loadFailed: '无法加载本账号的用户，请直接粘贴密钥。',
+      none: '服务端读不到本账号用户的密钥，请直接粘贴。',
+      root: '使用 Root 密钥时无法在这里选择用户，请直接粘贴密钥。',
+      choose: '选择用户',
+    },
     openvikingKey: {
       label: 'OpenViking 密钥',
       description:
         '本账号中某个 OpenViking 用户的密钥。网关会以这个用户的身份召回和保存记忆。不接受 Root 密钥。密钥加密保存，之后不再显示。',
       gatewayKey: '这是网关密钥，请填写 OpenViking 用户自己的密钥。',
+      paste: '粘贴 OpenViking 密钥',
     },
     profile: {
       label: '上下文配置',
@@ -97,6 +114,8 @@ const keys = {
     unavailable: '网关连不上 OpenViking，无法校验这个密钥。请稍后重试。',
     versionMismatch:
       'OpenViking 版本低于网关的要求。请升级 OpenViking 后重试。',
+    unknownUser: '这个用户已不在本账号中，请重新选择。',
+    userKeyUnreadable: '服务端读不到这个用户的 OpenViking 密钥，请改为粘贴。',
   },
   secret: {
     title: '复制网关密钥',

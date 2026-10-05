@@ -13,7 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { GatewayError } from '../-lib/api'
 import type * as Api from '../-lib/api'
-import type { IssuedKey, Profile, Upstream } from '../-lib/api'
+import type { IssuedKey, KeyUser, Profile, Upstream } from '../-lib/api'
 import type { Translate } from '../-lib/localize'
 import { PROFILE_DEFAULTS } from '../-lib/profile-schema'
 import { UPSTREAM_DEFAULTS } from '../-lib/upstream-schema'
@@ -24,11 +24,13 @@ import {
 } from './keys-issue-dialog'
 import { KeysSecretDialog, snippetModel } from './keys-secret-dialog'
 
-const api = vi.hoisted(() => ({ issueKey: vi.fn() }))
+const api = vi.hoisted(() => ({ issueKey: vi.fn(), listKeyUsers: vi.fn() }))
+const state = vi.hoisted(() => ({ role: 'admin' }))
 
 vi.mock('../-lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof Api>()),
   issueKey: api.issueKey,
+  listKeyUsers: api.listKeyUsers,
 }))
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 vi.mock('react-i18next', () => ({
@@ -46,7 +48,7 @@ vi.mock('#/hooks/use-app-connection', () => ({
       apiKey: '',
       adminApiKey: 'admin-key',
     },
-    connectionRole: 'admin',
+    connectionRole: state.role,
     isConnectionRoleLoading: false,
     serverMode: 'api_key',
   }),
@@ -59,7 +61,11 @@ vi.mock('@tanstack/react-router', async (importOriginal) => ({
 }))
 
 afterEach(cleanup)
-beforeEach(() => vi.clearAllMocks())
+beforeEach(() => {
+  vi.clearAllMocks()
+  state.role = 'admin'
+  api.listKeyUsers.mockResolvedValue([alice])
+})
 
 const t = ((key: string) => key) as unknown as Translate
 
@@ -89,45 +95,75 @@ const profile: Profile = {
   name: 'Coding',
 }
 
-const request = {
+const alice: KeyUser = {
+  user_id: 'alice',
+  role: 'user',
+  api_key_available: true,
+}
+const boss: KeyUser = {
+  user_id: 'boss',
+  role: 'admin',
+  api_key_available: true,
+}
+const hashed: KeyUser = {
+  user_id: 'hashed',
+  role: 'user',
+  api_key_available: false,
+}
+
+const settings = {
   name: 'Alice',
-  openviking_key: 'ov-key',
   policy_id: 'p1',
   upstream_ids: ['u1'],
   models: [],
 }
+const request = { ...settings, user_id: 'alice' }
+const pasted = { ...settings, openviking_key: 'ov-key' }
 
 describe('validateKeyRequest', () => {
-  it('accepts a complete request', () => {
+  it('accepts a complete request for a user or with a pasted key', () => {
     expect(validateKeyRequest(request)).toEqual({})
+    expect(validateKeyRequest(pasted)).toEqual({})
   })
 
   it('requires every field but the model list', () => {
-    expect(
-      validateKeyRequest({
-        name: ' ',
-        openviking_key: '',
-        policy_id: '',
-        upstream_ids: [],
-        models: [],
-      }),
-    ).toEqual({
+    const empty = { name: ' ', policy_id: '', upstream_ids: [], models: [] }
+    const missing = {
       name: 'validation.required',
-      openviking_key: 'validation.required',
       policy_id: 'validation.required',
       upstream_ids: 'keys.form.upstreams.required',
+    }
+    expect(validateKeyRequest({ ...empty, user_id: '' })).toEqual({
+      ...missing,
+      user_id: 'validation.required',
+    })
+    expect(validateKeyRequest({ ...empty, openviking_key: '' })).toEqual({
+      ...missing,
+      openviking_key: 'validation.required',
     })
   })
 
   it('rejects a gateway key pasted as the OpenViking key', () => {
     expect(
-      validateKeyRequest({ ...request, openviking_key: 'ovcg_abc' }),
+      validateKeyRequest({ ...settings, openviking_key: 'ovcg_abc' }),
     ).toEqual({ openviking_key: 'keys.form.openvikingKey.gatewayKey' })
   })
 })
 
 describe('issueProblem', () => {
   it.each([
+    [
+      'Unknown OpenViking user in this account',
+      400,
+      'keys.errors.unknownUser',
+      true,
+    ],
+    [
+      "This user's OpenViking key cannot be read on the server; paste the user's OpenViking key instead",
+      409,
+      'keys.errors.userKeyUnreadable',
+      true,
+    ],
     ['root_key_not_allowed', 403, 'keys.errors.rootKey', true],
     [
       'OpenViking key belongs to another account',
@@ -182,12 +218,27 @@ function renderIssueDialog(upstreams: Upstream[] = [deepseek]) {
   return { onIssued, onOpenChange }
 }
 
-function fillRequiredFields() {
+const userPicker = () =>
+  screen.getByRole('combobox', { name: 'keys.form.user.label' })
+
+function fillName() {
   fireEvent.change(screen.getByLabelText('keys.form.name.label'), {
     target: { value: 'Alice' },
   })
+}
+
+/** Names the key and waits for the only available user to be preselected. */
+async function fillRequiredFields() {
+  fillName()
+  await waitFor(() => expect(userPicker().textContent).toContain('alice'))
+}
+
+function pasteKey(value: string) {
+  fireEvent.click(
+    screen.getByRole('button', { name: 'keys.form.openvikingKey.paste' }),
+  )
   fireEvent.change(screen.getByLabelText('keys.form.openvikingKey.label'), {
-    target: { value: 'ov-key' },
+    target: { value },
   })
 }
 
@@ -195,9 +246,196 @@ const submit = () =>
   fireEvent.click(screen.getByRole('button', { name: 'keys.form.submit' }))
 
 describe('KeysIssueDialog', () => {
-  it('shows what is missing instead of sending an incomplete request', () => {
+  it('lists the account users and disables those whose key the server cannot read', async () => {
+    api.listKeyUsers.mockResolvedValue([hashed, boss, alice])
+    api.issueKey.mockResolvedValue({})
+    renderIssueDialog()
+    fillName()
+    await waitFor(() =>
+      expect(userPicker().textContent).toContain('keys.form.user.placeholder'),
+    )
+    // Several users can be picked, so none is chosen for the admin.
+    submit()
+    expect(await screen.findByText('validation.required')).toBeTruthy()
+    expect(api.issueKey).not.toHaveBeenCalled()
+
+    fireEvent.click(userPicker())
+    const options = await screen.findAllByRole('option')
+    expect(options.map((option) => option.textContent)).toEqual([
+      'alicekeys.form.user.roles.user',
+      'bosskeys.form.user.roles.admin',
+      'hashedkeys.form.user.roles.userkeys.form.user.unavailable',
+    ])
+    expect(options[2].getAttribute('aria-disabled')).toBe('true')
+    expect(options[1].getAttribute('aria-disabled')).not.toBe('true')
+    // Base UI selects only the highlighted option; hovering highlights it.
+    fireEvent.mouseMove(options[1])
+    fireEvent.click(options[1])
+    submit()
+
+    await waitFor(() =>
+      expect(api.issueKey).toHaveBeenCalledWith(expect.anything(), {
+        ...request,
+        user_id: 'boss',
+      }),
+    )
+  })
+
+  it('preselects the only user whose key the server can read', async () => {
+    api.listKeyUsers.mockResolvedValue([alice, hashed])
+    api.issueKey.mockResolvedValue({})
+    renderIssueDialog()
+    await fillRequiredFields()
+    submit()
+
+    await waitFor(() =>
+      expect(api.issueKey).toHaveBeenCalledWith(expect.anything(), request),
+    )
+  })
+
+  it('switches to pasting an OpenViking key and back', async () => {
+    api.issueKey.mockResolvedValue({})
+    renderIssueDialog()
+    await fillRequiredFields()
+    pasteKey('  ov-key  ')
+    expect(
+      screen.queryByRole('combobox', { name: 'keys.form.user.label' }),
+    ).toBeNull()
+    fireEvent.click(
+      screen.getByRole('button', { name: 'keys.form.user.choose' }),
+    )
+    expect(userPicker().textContent).toContain('alice')
+    // The pasted key survives switching back and forth.
+    fireEvent.click(
+      screen.getByRole('button', { name: 'keys.form.openvikingKey.paste' }),
+    )
+    submit()
+
+    await waitFor(() =>
+      expect(api.issueKey).toHaveBeenCalledWith(expect.anything(), pasted),
+    )
+  })
+
+  it('moves focus to the field that a switch shows', async () => {
+    renderIssueDialog()
+    await fillRequiredFields()
+    fireEvent.click(
+      screen.getByRole('button', { name: 'keys.form.openvikingKey.paste' }),
+    )
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        screen.getByLabelText('keys.form.openvikingKey.label'),
+      ),
+    )
+    fireEvent.click(
+      screen.getByRole('button', { name: 'keys.form.user.choose' }),
+    )
+    await waitFor(() => expect(document.activeElement).toBe(userPicker()))
+  })
+
+  it('asks root for a pasted key without listing users', async () => {
+    // A root key may act on another account than the one Studio shows.
+    state.role = 'root'
+    api.issueKey.mockResolvedValue({})
+    renderIssueDialog()
+    fillName()
+
+    expect(screen.getByText('keys.form.user.root')).toBeTruthy()
+    expect(
+      screen.queryByRole('button', { name: 'keys.form.user.choose' }),
+    ).toBeNull()
+    fireEvent.change(screen.getByLabelText('keys.form.openvikingKey.label'), {
+      target: { value: 'ov-key' },
+    })
+    submit()
+
+    await waitFor(() =>
+      expect(api.issueKey).toHaveBeenCalledWith(expect.anything(), pasted),
+    )
+    expect(api.listKeyUsers).not.toHaveBeenCalled()
+  })
+
+  it('keeps a removed user unselected instead of choosing another', async () => {
+    api.listKeyUsers.mockResolvedValue([alice, boss])
+    api.issueKey.mockRejectedValue(
+      new GatewayError('Unknown OpenViking user in this account', 400),
+    )
+    renderIssueDialog()
+    fillName()
+    await waitFor(() =>
+      expect(userPicker().textContent).toContain('keys.form.user.placeholder'),
+    )
+    fireEvent.click(userPicker())
+    const options = await screen.findAllByRole('option')
+    fireEvent.mouseMove(options[1])
+    fireEvent.click(options[1])
+    // boss is removed meanwhile; alice is now the only user left.
+    api.listKeyUsers.mockResolvedValue([alice])
+    submit()
+
+    expect(await screen.findByText('keys.errors.unknownUser')).toBeTruthy()
+    await waitFor(() => expect(api.listKeyUsers).toHaveBeenCalledTimes(2))
+    await waitFor(() =>
+      expect(userPicker().textContent).toContain('keys.form.user.placeholder'),
+    )
+    expect(screen.getByText('keys.errors.unknownUser')).toBeTruthy()
+    submit()
+    expect(api.issueKey).toHaveBeenCalledTimes(1)
+  })
+
+  it('retries a preselected user rather than another one', async () => {
+    api.issueKey.mockRejectedValue(
+      new GatewayError('Unknown OpenViking user in this account', 400),
+    )
+    renderIssueDialog()
+    await fillRequiredFields()
+    // alice is replaced by bob, who would otherwise be preselected.
+    api.listKeyUsers.mockResolvedValue([{ ...alice, user_id: 'bob' }])
+    submit()
+
+    expect(await screen.findByText('keys.errors.unknownUser')).toBeTruthy()
+    await waitFor(() => expect(api.listKeyUsers).toHaveBeenCalledTimes(2))
+    await waitFor(() =>
+      expect(userPicker().textContent).toContain('keys.form.user.placeholder'),
+    )
+  })
+
+  it.each([
+    ['the users cannot be listed', 'keys.form.user.loadFailed', false],
+    ['no user key can be read', 'keys.form.user.none', true],
+  ])('asks for a pasted key when %s', async (_case, reason, listed) => {
+    if (listed) api.listKeyUsers.mockResolvedValue([hashed])
+    else api.listKeyUsers.mockRejectedValue(new GatewayError('Forbidden', 403))
+    renderIssueDialog()
+
+    expect(await screen.findByText(reason)).toBeTruthy()
+    expect(screen.getByLabelText('keys.form.openvikingKey.label')).toBeTruthy()
+    expect(
+      screen.queryByRole('button', { name: 'keys.form.user.choose' }),
+    ).toBeNull()
+  })
+
+  it('explains an unreadable user key next to the picker', async () => {
+    api.issueKey.mockRejectedValue(
+      new GatewayError(
+        "This user's OpenViking key cannot be read on the server; paste the user's OpenViking key instead",
+        409,
+      ),
+    )
+    renderIssueDialog()
+    await fillRequiredFields()
+    submit()
+
+    expect(
+      await screen.findByText('keys.errors.userKeyUnreadable'),
+    ).toBeTruthy()
+    expect(userPicker().getAttribute('aria-invalid')).toBe('true')
+    expect(screen.queryByText('keys.errors.title')).toBeNull()
+  })
+
+  it('shows what is missing instead of sending an incomplete request', async () => {
     renderIssueDialog([deepseek, openai])
-    fillRequiredFields()
+    await fillRequiredFields()
     submit()
 
     expect(screen.getByText('keys.form.upstreams.required')).toBeTruthy()
@@ -219,7 +457,7 @@ describe('KeysIssueDialog', () => {
     }
     api.issueKey.mockResolvedValue(issued)
     const { onIssued } = renderIssueDialog([deepseek, openai])
-    fillRequiredFields()
+    await fillRequiredFields()
     fireEvent.click(screen.getAllByRole('checkbox')[1])
     // Suggestions come from the selected upstreams only.
     expect(screen.queryByRole('button', { name: 'deepseek-chat' })).toBeNull()
@@ -239,7 +477,8 @@ describe('KeysIssueDialog', () => {
       new GatewayError('root_key_not_allowed', 403),
     )
     const { onIssued } = renderIssueDialog()
-    fillRequiredFields()
+    fillName()
+    pasteKey('ov-key')
     submit()
 
     expect(await screen.findByText('keys.errors.rootKey')).toBeTruthy()
@@ -263,7 +502,7 @@ describe('KeysIssueDialog', () => {
       new GatewayError('openviking_unavailable', 503),
     )
     renderIssueDialog()
-    fillRequiredFields()
+    await fillRequiredFields()
     submit()
 
     const alert = await screen.findByRole('alert')

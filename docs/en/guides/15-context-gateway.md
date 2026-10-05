@@ -187,7 +187,7 @@ Open <http://127.0.0.1:1933/studio>, open **Connection Settings**, and paste ali
 
 1. **Add an upstream.** On the Upstreams tab, choose **Add upstream**. Give it a name, choose the provider, pick the protocol your client speaks (Chat Completions for this walkthrough), enter its base URL (for example `https://api.openai.com/v1`), keep **The gateway holds the API key** selected and paste the provider's API key. Save, then use **Test** in the upstream list to check that the gateway can reach the provider.
 2. **Create a context profile.** On the Profiles tab, choose **Create with recommended settings**. This creates a profile named "Default".
-3. **Issue a gateway key.** On the Keys tab, choose **Issue key**. Enter a name, paste alice's key as the **OpenViking key**, pick the "Default" profile and your upstream, then issue it. The **Copy your gateway key** dialog shows the full `ovcg_…` key once; copy it before you close the dialog.
+3. **Issue a gateway key.** On the Keys tab, choose **Issue key**. Enter a name, choose alice as the **OpenViking user** (she is already selected when she is the account's only user), pick the "Default" profile and your upstream, then issue it. The **Copy your gateway key** dialog shows the full `ovcg_…` key once; copy it before you close the dialog.
 4. **Connect a client.** The Connect tab shows the setup for each client with your gateway address filled in. The same setups are listed in [Connect clients](#connect-clients) below.
 
 ### 8. Send a test request

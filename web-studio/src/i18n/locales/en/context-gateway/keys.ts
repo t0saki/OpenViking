@@ -60,12 +60,30 @@ const keys = {
       description:
         'Helps you tell keys apart. The person and the client make a good name.',
     },
+    user: {
+      label: 'OpenViking user',
+      placeholder: 'Choose an OpenViking user',
+      loading: 'Loading users…',
+      description:
+        'The gateway recalls and saves memory as this user. Their OpenViking key is read on the server, stored encrypted by the gateway and never shown.',
+      roles: {
+        admin: 'Admin',
+        user: 'User',
+      },
+      unavailable: "Key can't be read on the server; paste it instead",
+      loadFailed:
+        "Couldn't load this account's users, so paste the key instead.",
+      none: "The server can't read the keys of this account's users, so paste the key instead.",
+      root: "With the root key you can't choose a user here, so paste the key instead.",
+      choose: 'Choose a user',
+    },
     openvikingKey: {
       label: 'OpenViking key',
       description:
         "An OpenViking user key from this account. The gateway recalls and saves memory as this user. Root keys aren't accepted. Stored encrypted and never shown again.",
       gatewayKey:
         "This is a gateway key. Enter the OpenViking user's own key instead.",
+      paste: 'Paste an OpenViking key',
     },
     profile: {
       label: 'Context profile',
@@ -104,6 +122,9 @@ const keys = {
       "The gateway couldn't reach OpenViking to check this key. Try again in a moment.",
     versionMismatch:
       'OpenViking is older than the gateway requires. Upgrade OpenViking, then try again.',
+    unknownUser: 'This user is no longer in this account. Choose another user.',
+    userKeyUnreadable:
+      "The server can't read this user's OpenViking key. Paste the key instead.",
   },
   secret: {
     title: 'Copy your gateway key',

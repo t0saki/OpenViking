@@ -9,6 +9,7 @@ import { resolveStudioManagementCapabilities } from '#/lib/studio-permissions'
 import {
   getConnectionInfo,
   getOverview,
+  listKeyUsers,
   listKeys,
   listLogs,
   listProfiles,
@@ -18,6 +19,7 @@ import type {
   ConnectionInfo,
   GatewayError,
   GatewayKey,
+  KeyUser,
   LogRecord,
   Overview,
   Profile,
@@ -32,6 +34,7 @@ export type GatewayResource =
   | 'upstreams'
   | 'profiles'
   | 'keys'
+  | 'users'
 
 /** Whose gateway data a query holds: server, account and a hash of the admin key. */
 export type GatewayScope = readonly [string, string, string]
@@ -104,6 +107,8 @@ export function useGateway() {
     /** OpenViking runs in development mode, where Studio can't manage the gateway. */
     devMode: serverMode === 'dev',
     isRoleLoading: isConnectionRoleLoading,
+    /** Role of the admin key; `admin` or `root` whenever `allowed`. */
+    role: connectionRole,
     connection: admin,
     scope,
     invalidate,
@@ -159,3 +164,7 @@ export const useProfiles = (options?: GatewayQueryOptions<Profile[]>) =>
 
 export const useKeys = (options?: GatewayQueryOptions<GatewayKey[]>) =>
   useGatewayQuery('keys', [], listKeys, options)
+
+/** Users of this account a key can act as, and whether the server can read their key. */
+export const useKeyUsers = (options?: GatewayQueryOptions<KeyUser[]>) =>
+  useGatewayQuery('users', [], listKeyUsers, options)

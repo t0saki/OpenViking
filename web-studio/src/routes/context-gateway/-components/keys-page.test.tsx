@@ -23,6 +23,7 @@ const api = vi.hoisted(() => ({
   listKeys: vi.fn(),
   listProfiles: vi.fn(),
   listUpstreams: vi.fn(),
+  listKeyUsers: vi.fn(),
   issueKey: vi.fn(),
   revokeKey: vi.fn(),
   deleteUserData: vi.fn(),
@@ -152,6 +153,9 @@ beforeEach(() => {
   api.listProfiles.mockResolvedValue([profile])
   api.listUpstreams.mockResolvedValue([claude, deepseek])
   api.listKeys.mockResolvedValue([ci, laptop])
+  api.listKeyUsers.mockResolvedValue([
+    { user_id: 'carol', role: 'user', api_key_available: true },
+  ])
 })
 afterEach(cleanup)
 
@@ -253,15 +257,15 @@ describe('KeysPage', () => {
     fireEvent.change(screen.getByLabelText('keys.form.name.label'), {
       target: { value: '  Carol  ' },
     })
-    fireEvent.change(screen.getByLabelText('keys.form.openvikingKey.label'), {
-      target: { value: 'ov-user-key' },
-    })
+    // The account's only user is picked for the admin.
+    const user = screen.getByRole('combobox', { name: 'keys.form.user.label' })
+    await waitFor(() => expect(user.textContent).toContain('carol'))
     fireEvent.click(screen.getByRole('button', { name: 'keys.form.submit' }))
 
     await waitFor(() =>
       expect(api.issueKey).toHaveBeenCalledWith(connection, {
         name: 'Carol',
-        openviking_key: 'ov-user-key',
+        user_id: 'carol',
         policy_id: 'p1',
         upstream_ids: ['u1'],
         models: [],
