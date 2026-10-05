@@ -41,6 +41,16 @@ INSTRUCTION = (
     "into this one. Leave out the gateway's opening notes; the gateway adds them again. Write "
     "plain text, do not call tools, and stay under {tokens} tokens."
 )
+# A continuation is cut while the model is still working on the latest request.
+# Models summarizing their own tool loop tend to report that work as delivered.
+UNFINISHED = (
+    "The conversation above stops while you are still working on the user's most recent "
+    "request: you have not answered it yet. Say so, and say what remains to be done."
+)
+IN_PROGRESS = (
+    "When this summary was written, you had not yet answered the user's most recent request "
+    "that it quotes; you were in the middle of working on it."
+)
 
 
 def estimate(value):
@@ -117,8 +127,14 @@ def cut_hint(request, user_id, policy):
     return history_hint(user_id, sessions, request.root["tools"], policy.capture)
 
 
-def replacement_text(summary, hint, opening):
+def summary_instruction(tokens, in_progress):
+    instruction = INSTRUCTION.format(tokens=tokens)
+    return instruction + "\n" + UNFINISHED if in_progress else instruction
+
+
+def replacement_text(summary, hint, opening, in_progress=False):
+    header = HEADER + " " + IN_PROGRESS if in_progress else HEADER
     text = block(
-        "gateway-compaction", "\n\n".join(part for part in (HEADER, summary, hint) if part)
+        "gateway-compaction", "\n\n".join(part for part in (header, summary, hint) if part)
     )
     return text + "\n\n" + opening if opening else text

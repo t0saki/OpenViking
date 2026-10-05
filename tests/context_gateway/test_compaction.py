@@ -13,8 +13,10 @@ from openviking_context_gateway.blocks import block, history_hint
 from openviking_context_gateway.client import VikingClient
 from openviking_context_gateway.compaction import (
     HEADER,
+    IN_PROGRESS,
     INSTRUCTION,
     MEDIA_TOKENS,
+    UNFINISHED,
     estimate,
     opening_block,
 )
@@ -88,6 +90,7 @@ async def test_user_cut_replaces_the_history_before_the_latest_user_message(
     assert request["stream"] is False
     assert request[field][:2] == first.body[field][:1] + [reply]
     assert text_content(request[field][2]).startswith(INSTRUCTION_START)
+    assert UNFINISHED not in text_content(request[field][2])
     opening = opening_block(second.records, second.chain)
     assert opening.startswith('<openviking-context source="gateway-session-start">')
     text = (
@@ -147,9 +150,11 @@ async def test_continuation_cut_keeps_thinking_and_delivers_the_cut_part_at_once
     assert request["messages"][:3] == [*messages, call, result]
     assert request["max_tokens"] == policy["summary_max_tokens"] + 2000
     assert request["thinking"] == thinking
+    # The turn is unfinished, so neither the summary nor its reader may treat it as answered.
+    assert text_content(request["messages"][3]).endswith(UNFINISHED)
     assert [m["role"] for m in second.body["messages"]] == ["user"]
     assert second.body["messages"][0]["content"].startswith(
-        '<openviking-context source="gateway-compaction">'
+        '<openviking-context source="gateway-compaction">\n' + HEADER + " " + IN_PROGRESS
     )
     # The replaced part is saved before the turn ends, so the model can search it now.
     worker = await worker_for(store, encryption, credential, viking)

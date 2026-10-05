@@ -16,7 +16,6 @@ from .capture_store import Document
 from .client import VikingError
 from .compaction import (
     BACKOFF_SECONDS,
-    INSTRUCTION,
     active_cut,
     apply_cut,
     cut_hint,
@@ -24,6 +23,7 @@ from .compaction import (
     estimate,
     opening_block,
     replacement_text,
+    summary_instruction,
     window_size,
 )
 from .models import Policy
@@ -607,12 +607,14 @@ class MemoryKernel:
         body, kept = self.assembled(request), request.body[adapter.field][cut + 1 :]
         messages = body[adapter.field]
         span = messages[: len(messages) - len(kept)]
+        # A continuation is cut in the middle of the turn, before the model answered.
+        in_progress = request.kind == "continuation"
         started = time.monotonic()
         try:
             # Messages after the cut are new client input that hidden history never expands.
             if messages[len(span) :] != kept:
                 raise SummaryError("cut_not_found")
-            instruction = INSTRUCTION.format(tokens=policy.summary_max_tokens)
+            instruction = summary_instruction(policy.summary_max_tokens, in_progress)
             response = await summarize(
                 request,
                 adapter.summary_request(body, span, instruction, policy.summary_max_tokens),
@@ -628,11 +630,12 @@ class MemoryKernel:
             await self.compaction_failed(request, "summary_failed")
             return
         anchor = request.capture_chain[cut]
-        if policy.capture and request.kind == "continuation":
+        if policy.capture and in_progress:
             # First, so the hint names the session that receives the part being cut.
             await CapturePipeline(self.store.capture).confirm_cut(request, anchor)
         hint = cut_hint(request, credential["user_id"], policy)
-        text = replacement_text(summary, hint, opening_block(request.records, request.chain))
+        opening = opening_block(request.records, request.chain)
+        text = replacement_text(summary, hint, opening, in_progress)
         # A concurrent request may have written this cut first; its text wins.
         record = await self.store.replay.put(
             request.scope,
