@@ -56,7 +56,7 @@ const enums = {
   },
   toolSkipReason: {
     tools_require_full_history:
-      'Responses tools need complete input history with store disabled',
+      'Responses requests must send the full conversation and set store: false',
     upstream_tools_disabled:
       'OpenViking tools are turned off for this upstream',
     tools_multiple_choices: 'The request asked for several choices (n > 1)',
@@ -131,10 +131,17 @@ const enums = {
         'Wait longer for the summary or start summarizing earlier in the profile, and check how quickly OpenViking writes summaries.',
     },
     hidden_reply_without_anchor: {
-      label: 'No reply to replay',
+      label: 'No usable model reply',
       explanation:
-        'The model used tools but returned no visible reply, so there is no reply to attach the hidden history to.',
-      action: 'Send a follow-up message to continue the conversation.',
+        'The model used OpenViking tools but returned no content to continue the conversation with. The next request cannot reuse those tool results.',
+      action: 'Retry the question or start a new conversation.',
+    },
+    hidden_tool_history_unavailable: {
+      label: 'Tool history unavailable',
+      explanation:
+        'This Claude conversation used OpenViking tools, but the current request cannot use them. The gateway removed earlier thinking and continues sending the conversation text.',
+      action:
+        'Check why tools were skipped, restore the original settings or start a new conversation.',
     },
     hidden_tool_loop_failed: {
       label: 'OpenViking tools failed',

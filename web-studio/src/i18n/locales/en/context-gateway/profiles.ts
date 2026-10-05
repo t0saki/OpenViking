@@ -162,7 +162,7 @@ const profiles = {
   tools: {
     title: 'OpenViking tools',
     description:
-      'Let the model search and read OpenViking while it answers. Calls run inside the gateway and are invisible to the client. Supports Chat Completions, full-history Responses and Anthropic Messages.',
+      'Let the model search and read OpenViking while it answers. The client does not need to execute these calls. Supports Chat Completions, Responses and Anthropic Messages with full conversation history.',
     available: {
       label: 'Tools',
       description: 'The upstream must allow OpenViking tools as well.',

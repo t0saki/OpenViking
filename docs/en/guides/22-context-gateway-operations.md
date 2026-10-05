@@ -430,17 +430,17 @@ The expanded row shows the reason, for example that OpenViking rejected the key 
 
 ## OpenViking tools
 
-With OpenViking tools on, the model can search and read OpenViking while it answers. The gateway adds the tools to the request, runs the model's tool calls itself against OpenViking as the key's user, returns the results to the model, and streams text and thinking as they arrive while hiding its own tool calls. The client sees one ordinary reply: one completion ID, one final event and token usage summed over all the model calls.
+With OpenViking tools on, the model can search and read the user's accessible OpenViking data while answering. The gateway runs the tools, and the client continues receiving the answer until the reply ends. Reported token usage includes all model calls made during that reply.
 
 Tools support streaming and nonstreaming requests in all three protocols:
 
 | Protocol | Client requirements |
 | --- | --- |
 | Chat Completions | Send the full `messages` history. |
-| Responses | Use `store: false` and full `input` history; pass the complete visible `output` array back on the next request, including reasoning and client tool calls. Requests with `previous_response_id`, `conversation` or `background` continue to pass through without gateway tools. `item_reference` cannot reconstruct full history. |
+| Responses | Use `store: false` and full `input` history; pass the entire returned `output` array back on the next request, including reasoning and client tool calls. Requests with `previous_response_id`, `conversation` or `background` continue to pass through without gateway tools. `item_reference` cannot reconstruct full history. |
 | Anthropic Messages | Send the full `messages` history and keep thinking/signature blocks intact. Token-count requests get the same tool definitions but do not execute tools. |
 
-If the model calls both an OpenViking tool and a client tool in one reply, the gateway runs its own call and returns the client's call. The next request restores the hidden call and result before continuing. Responses supports client function and custom tools. Anthropic places both sets of tool results in the user message immediately after the original assistant call. Native Claude signature validation and native OpenAI reasoning-encryption validation still need provider acceptance testing; compatible-provider tests do not establish either.
+If a reply calls both OpenViking and client tools, the gateway handles the OpenViking calls. The client runs its own tools and returns their results as usual. Responses supports client function and custom tools; Anthropic Messages supports client tool_use calls.
 
 This is meant for chat apps and API apps that cannot connect to OpenViking's MCP server. Clients that support MCP or have a plugin, such as Claude Code and Codex, are better served by those, where tool calls are visible.
 
@@ -481,9 +481,11 @@ The limits sit under **Advanced settings** in the profile's **OpenViking tools**
 | Total time | `tool_total_seconds` | 120 s | up to 600 s | The request fails with 504 "Hidden tool request timed out". |
 | Token budget | `tool_total_tokens` | 100,000 | 1,024–1,000,000 | Further tool calls are refused and the model answers with what it has. This is not a billing cap; the final answer can exceed it. |
 
-The token budget counts only gateway-added calls/results and hidden-round output, not the client history, schemas or images. The gateway preserves `max_tokens`, `max_completion_tokens` and `max_output_tokens`. At the limit it keeps the tool definitions, disables calls using the protocol’s `tool_choice` and allows a final answer.
+The token budget covers the extra calls, results and subsequent model output from using OpenViking tools. Existing conversation history, tool definitions and images do not count. The gateway preserves the client's answer-length limit (`max_tokens`, `max_completion_tokens` or `max_output_tokens`). Once the budget is spent, the model finishes its answer using the results already available.
 
-A failing tool call goes back to the model as an error result. If the tool loop itself fails, for example because the provider rejects a follow-up call, the client receives an error (streaming clients get an error event of type `gateway_tool_error`) and the request is flagged **OpenViking tools failed** (`hidden_tool_loop_failed`). If one provider keeps failing this way, turn off **Allow OpenViking tools** on its upstream. A retried tool call reuses the first call's result, and an interrupted write is never repeated automatically.
+When an individual tool call fails, the model receives an error result and can continue answering. If the reply itself fails, for example because the provider rejects a follow-up model request, the client receives an error and the request log shows **OpenViking tools failed** (`hidden_tool_loop_failed`). Streaming Responses requests end with `response.failed`; Chat Completions and Anthropic Messages report `gateway_tool_error`.
+
+If an upstream keeps failing, turn off its **Allow OpenViking tools** setting. Claude conversations that have already used these tools may also show **Tool history unavailable** (`hidden_tool_history_unavailable`): earlier thinking can no longer be used and has been removed. Check the tool skip reason in the request detail, then restore the original settings or start a new conversation. A retried tool call reuses the first call's result, and an interrupted write is never repeated automatically.
 
 ## Long conversations
 
@@ -772,5 +774,6 @@ The **Requests** and **Overview** tabs flag requests the gateway could not fully
 | OpenViking plugin in use (`plugin_present`) | An OpenViking plugin was detected; gateway memory is off for this conversation. | Expected when a plugin is in use. Use either the plugin or the gateway for that client. |
 | Cache parameters changed (`ark_cache_parameters_changed`) | On Ark, cache-relevant parameters differ from the conversation's first request; Ark's cache probably missed. | Keep model, thinking, sampling, system prompt and tools stable within a conversation. |
 | Summary not ready (`archive_wait_timeout`) | The conversation was near the context window and its summary was not ready in time; the full history was sent. | See [Long conversations](#long-conversations). |
-| OpenViking tools failed (`hidden_tool_loop_failed`) | The OpenViking tool loop failed and the client received an error. | See [OpenViking tools](#openviking-tools). |
+| Tool history unavailable (`hidden_tool_history_unavailable`) | A Claude conversation previously used OpenViking tools, but this request cannot use them, so earlier thinking has been removed. | Check the tool skip reason in the request detail, restore the original settings or start a new conversation. |
+| OpenViking tools failed (`hidden_tool_loop_failed`) | The model could not finish answering while using OpenViking tools, and the client received an error. | See [OpenViking tools](#openviking-tools). |
 | Reply not saved (`capture_parse_failure`) | A streamed reply could not be parsed, so this reply was not saved. The client was not affected. | Nothing; it is informational. |

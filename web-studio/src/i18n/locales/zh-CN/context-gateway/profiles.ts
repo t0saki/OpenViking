@@ -151,7 +151,7 @@ const profiles = {
   tools: {
     title: 'OpenViking 工具',
     description:
-      '让模型在回答时检索和读取 OpenViking。工具调用在网关内部完成，客户端看不到。支持 Chat Completions、完整历史的 Responses 和 Anthropic Messages。',
+      '让模型在回答时检索和读取 OpenViking，客户端无需执行这些调用。支持 Chat Completions、Responses 和 Anthropic Messages；客户端须回传完整对话。',
     available: {
       label: '工具',
       description: '上游也需要允许使用 OpenViking 工具。',

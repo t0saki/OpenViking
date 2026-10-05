@@ -15,6 +15,7 @@ export const DEGRADATIONS = [
   'ark_cache_parameters_changed',
   'archive_wait_timeout',
   'hidden_tool_loop_failed',
+  'hidden_tool_history_unavailable',
   'hidden_reply_without_anchor',
   'capture_parse_failure',
 ] as const

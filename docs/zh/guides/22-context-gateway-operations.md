@@ -430,17 +430,17 @@ server {
 
 ## OpenViking 工具
 
-开启 OpenViking 工具后，模型可以在回答时搜索和读取 OpenViking。网关把工具加进请求，以密钥所属用户的身份对 OpenViking 执行模型发起的工具调用，把结果交还给模型，文本和思考内容随到随流式返回，隐藏网关自己的工具调用。客户端看到的是一次普通回复：一个 completion ID、一个结束事件，token 用量是所有模型调用的总和。
+开启 OpenViking 工具后，模型可以在回答过程中检索和读取用户有权访问的 OpenViking 数据。工具调用由网关执行，客户端会持续收到回答，直到本次回复结束。显示的 token 用量包含期间所有模型调用。
 
 三种协议都支持流式和非流式请求：
 
 | 协议 | 客户端要求 |
 | --- | --- |
 | Chat Completions | 回传完整 `messages` 历史。 |
-| Responses | 使用 `store: false` 和完整 `input` 历史；下一轮回传完整可见 `output` 数组，包括 reasoning 和客户端工具调用。带 `previous_response_id`、`conversation` 或 `background` 的请求继续普通转发，不提供网关工具；`item_reference` 无法还原完整历史。 |
+| Responses | 使用 `store: false` 和完整 `input` 历史；下一轮回传本轮返回的全部 `output` 内容，包括 reasoning 和客户端工具调用。带 `previous_response_id`、`conversation` 或 `background` 的请求继续普通转发，不提供网关工具；`item_reference` 无法还原完整历史。 |
 | Anthropic Messages | 回传完整 `messages` 历史，保留 thinking/signature 块。计数请求使用相同工具定义，但不执行工具。 |
 
-模型同时调用 OpenViking 和客户端工具时，网关先执行自己的调用，再把客户端调用交回客户端。下一次请求会还原隐藏调用与结果后继续。Responses 支持客户端 function 和 custom 工具；Anthropic 将两方工具结果放进紧随原始助手调用的同一条用户消息。原生 Claude 签名校验和原生 OpenAI reasoning 加密内容仍待真实接口验收，兼容服务商测试不能替代这两项。
+模型在同一条回复中同时调用 OpenViking 和客户端工具时，网关会处理 OpenViking 调用，客户端照常执行自己的工具并回传结果。Responses 支持客户端的 function 和 custom 工具，Anthropic Messages 支持客户端的 tool_use 调用。
 
 这项功能面向无法连接 OpenViking MCP 服务器的聊天应用和 API 应用。支持 MCP 或有插件的客户端，例如 Claude Code 和 Codex，用 MCP 或插件更合适，因为工具调用在那里看得见。
 
@@ -481,9 +481,11 @@ server {
 | 总时长 | `tool_total_seconds` | 120 秒 | 最多 600 秒 | 请求失败，返回 504 "Hidden tool request timed out"。 |
 | Token 预算 | `tool_total_tokens` | 100,000 | 1,024–1,000,000 | 拒绝后续的工具调用，模型用已有的信息回答。这不是计费上限，最终回答可能超出它。 |
 
-Token 预算只计算网关新增的调用、结果和隐藏续轮输出，客户端历史、工具定义和图片不计入。网关保留客户端的 `max_tokens`、`max_completion_tokens` 和 `max_output_tokens`。达到上限后保留工具定义，按对应协议的 `tool_choice` 格式禁用调用，并允许最后一轮生成答案。
+Token 预算用于模型使用 OpenViking 工具时新增的调用、结果和后续生成内容，客户端已有的对话、工具定义和图片不计入。网关保留客户端设置的回答长度上限（`max_tokens`、`max_completion_tokens` 或 `max_output_tokens`）。预算用完后，模型会利用已有结果完成回答。
 
-失败的工具调用会作为错误结果交还给模型。如果工具循环本身失败，例如服务商拒绝了后续调用，客户端会收到错误（流式客户端收到类型为 `gateway_tool_error` 的错误事件），这个请求被标记为 **OpenViking 工具调用失败**（`hidden_tool_loop_failed`）。如果某个服务商反复这样失败，就在它的上游上关闭**允许 OpenViking 工具**。重试的工具调用会复用第一次调用的结果，中断的写入操作不会自动重做。
+单次工具调用失败时，模型会收到错误结果，并可据此继续回答。如果服务商拒绝了后续模型请求等问题导致整个回答失败，客户端会收到错误，请求日志中会显示 **OpenViking 工具调用失败**（`hidden_tool_loop_failed`）。流式 Responses 请求以 `response.failed` 事件结束；Chat Completions 和 Anthropic Messages 返回 `gateway_tool_error` 错误。
+
+如果某个上游反复失败，可以关闭它的**允许 OpenViking 工具**。已使用过这些工具的 Claude 对话可能同时出现 **工具历史无法继续使用**（`hidden_tool_history_unavailable`）：之前的思考内容无法继续使用，网关已将其去掉。可根据请求详情中的工具停用原因恢复原设置，或开始一段新对话。重试的工具调用会复用第一次调用的结果，中断的写入操作不会自动重做。
 
 ## 长对话
 
@@ -772,5 +774,6 @@ OpenViking Server 无法使用网关时，上下文网关页面会显示一张�
 | 检测到 OpenViking 插件（`plugin_present`） | 检测到了 OpenViking 插件，这段对话不再使用网关记忆。 | 使用插件时出现这一项是正常的。同一个客户端在插件和网关之间二选一。 |
 | 缓存参数有变化（`ark_cache_parameters_changed`） | 在方舟上，影响缓存的参数与对话的第一个请求不同，方舟的缓存很可能没有命中。 | 在同一段对话里保持模型、思考模式、采样参数、系统提示词和工具不变。 |
 | 摘要未就绪（`archive_wait_timeout`） | 对话已经接近上下文窗口，但摘要没有及时就绪，于是发送了完整历史。 | 见[长对话](#长对话)。 |
-| OpenViking 工具调用失败（`hidden_tool_loop_failed`） | OpenViking 工具循环失败，客户端收到了错误。 | 见 [OpenViking 工具](#openviking-工具)。 |
+| 工具历史无法继续使用（`hidden_tool_history_unavailable`） | Claude 对话曾使用 OpenViking 工具，但当前请求无法使用这些工具，之前的思考内容已被去掉。 | 查看请求详情中的工具停用原因，恢复原设置，或开始一段新对话。 |
+| OpenViking 工具调用失败（`hidden_tool_loop_failed`） | 模型使用 OpenViking 工具时未能完成回答，客户端收到了错误。 | 见 [OpenViking 工具](#openviking-工具)。 |
 | 回复未保存（`capture_parse_failure`） | 流式回复无法解析，这条回复没有保存。客户端不受影响。 | 无需处理，仅供了解。 |

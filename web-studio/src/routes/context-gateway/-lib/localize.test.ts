@@ -45,7 +45,7 @@ describe('enum labels', () => {
     expect(kindLabel(t, 'brand_new_kind')).toBe('brand_new_kind')
     expect(protocolLabel(t, 'chat')).toBe('Chat Completions')
     expect(toolSkipReasonLabel(t, 'tools_require_full_history')).toContain(
-      'complete input history',
+      'full conversation',
     )
   })
 

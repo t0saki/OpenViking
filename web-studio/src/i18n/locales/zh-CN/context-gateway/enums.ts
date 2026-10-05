@@ -54,7 +54,8 @@ const enums = {
     recall_timeout: '召回超时',
   },
   toolSkipReason: {
-    tools_require_full_history: 'Responses 工具需要完整 input 历史并关闭 store',
+    tools_require_full_history:
+      'Responses 请求需回传完整对话，并设置 store: false',
     upstream_tools_disabled: '这个上游关闭了 OpenViking 工具',
     tools_multiple_choices: '请求要求返回多个候选结果（n > 1）',
     tools_structured_output: '请求要求结构化输出',
@@ -126,10 +127,16 @@ const enums = {
         '在上下文配置里延长等待摘要的时间，或更早开始摘要，并检查 OpenViking 生成摘要的速度。',
     },
     hidden_reply_without_anchor: {
-      label: '没有可重放的回复',
+      label: '模型未返回回答',
       explanation:
-        '模型调用了工具，但没有返回可见回复，隐藏历史无法关联到本轮回复。',
-      action: '发送一条后续消息继续对话。',
+        '模型使用 OpenViking 工具后没有返回可用于继续对话的内容，下一轮无法沿用这次工具调用的结果。',
+      action: '重试本次提问，或开始一段新对话。',
+    },
+    hidden_tool_history_unavailable: {
+      label: '工具历史无法继续使用',
+      explanation:
+        '这段 Claude 对话用过 OpenViking 工具，但当前请求无法使用这些工具。网关已去掉之前的思考内容，继续发送对话文本。',
+      action: '查看本次请求的工具停用原因，恢复原设置，或开始一段新对话。',
     },
     hidden_tool_loop_failed: {
       label: 'OpenViking 工具调用失败',
