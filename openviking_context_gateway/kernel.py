@@ -80,6 +80,8 @@ class Prepared:
     observation: Document = field(default_factory=Document)
     capture_target: str = ""
     tools_active: bool = False
+    # Definitions and hidden history replay, but the tool loop refuses every gateway call.
+    tools_closed: bool = False
     hidden_history_unavailable: bool = False
     upstream: dict = field(default_factory=dict)
     # The estimated current context and the window it is measured against.
@@ -208,11 +210,14 @@ class MemoryKernel:
                 records.update(await self.store.replay.read(scope, sid, body_chain))
         upstream = next((u for u in upstreams if u["id"] == root["upstream_id"]), upstream)
         policy = Policy.model_validate(root["policy"])
-        kind, anchor = classify(body, headers, messages, counting)
+        kind, anchor = classify(body, headers, messages)
         disabled = (K.DISABLED, "") in records
         if plugin and not disabled:
             await self.store.replay.put(scope, sid, K.DISABLED, "", {"reason": "plugin_present"})
             disabled = True
+        # A token count gets gateway tools exactly when the request it measures would.
+        owner = not disabled and kind in {"user", "continuation"}
+        kind = "count" if counting else kind
         field = tool_protocol(protocol).field
         result = {**body, field: [dict(m) for m in sent]}
         prepared = Prepared(
@@ -246,7 +251,7 @@ class MemoryKernel:
             },
         )
         CapturePipeline.metrics(prepared, policy)
-        self.configure_tools(prepared, policy)
+        self.configure_tools(prepared, policy, owner)
         self.replay(prepared)
         if not disabled and policy.capture and kind == "user" and anchor >= 0:
             await CapturePipeline(self.store.capture).confirm(prepared, credential, policy)
@@ -313,7 +318,7 @@ class MemoryKernel:
         return root
 
     @staticmethod
-    def configure_tools(request, policy):
+    def configure_tools(request, policy, owner):
         tools = request.root["tools"]
         request.metrics["tools_tokens"] = 0
         adapter = tool_protocol(request.protocol)
@@ -323,20 +328,19 @@ class MemoryKernel:
             collision = any(
                 t.get("function", t).get("name") in names for t in request.original.get("tools", [])
             )
+            hidden = any((K.HIDDEN, anchor) in request.records for anchor in request.body_chain)
             if reason or collision:
                 request.metrics["tool_skip_reason"] = reason or "tool_name_collision"
-                if any((K.HIDDEN, anchor) in request.records for anchor in request.body_chain):
-                    request.hidden_history_unavailable = True
-            else:
+                request.hidden_history_unavailable = hidden
+            elif owner or hidden:
+                # Only the conversation's own turns get gateway tools. Others that resend
+                # history using them still replay it byte for byte, for provider caches and
+                # thinking signatures, but the tool loop refuses their calls.
                 adapter.add_tools(request.body, tools)
-                request.tools_active = True
+                request.tools_active, request.tools_closed = True, not owner
                 request.metrics["tools_tokens"] = token_estimate(
                     orjson.dumps(adapter.wire_tools(tools)).decode()
                 )
-                if request.kind != "count" and (
-                    request.disabled or request.kind not in {"user", "continuation"}
-                ):
-                    adapter.disable_tools(request.body)
         elif policy.gateway_tools:
             request.metrics["tool_skip_reason"] = (
                 tool_block_reason(request.original, request.protocol, request.upstream)

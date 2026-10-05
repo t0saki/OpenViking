@@ -301,6 +301,7 @@ async def test_notices_stream_around_each_gateway_call():
         protocol="chat",
         root={"policy": {"tool_total_tokens": 1000}},
         metrics={},
+        tools_closed=False,
     )
     executor = SimpleNamespace(allowed={"openviking_search"}, execute=execute)
     loop = HiddenToolLoop(prepared, executor, None, ResponseCapture("chat"))
@@ -324,7 +325,7 @@ async def test_notices_stream_around_each_gateway_call():
     assert seen == [deltas[0], deltas[2]]
     assert loop.adapter.visible[0]["content"] == "".join(deltas)
     # The model receives the real results, never the notices.
-    assert "OpenViking" not in orjson.dumps(loop.body["messages"]).decode()
+    assert "> OpenViking" not in orjson.dumps(loop.body["messages"]).decode()
 
 
 async def test_notices_off_leave_the_reply_unchanged():
@@ -336,6 +337,7 @@ async def test_notices_off_leave_the_reply_unchanged():
         protocol="chat",
         root={"policy": {"show_tool_calls": False}},
         metrics={},
+        tools_closed=False,
     )
     executor = SimpleNamespace(allowed={"openviking_search"}, execute=execute)
     loop = HiddenToolLoop(prepared, executor, None, ResponseCapture("chat"))

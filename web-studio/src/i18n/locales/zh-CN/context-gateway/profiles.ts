@@ -197,7 +197,8 @@ const profiles = {
     },
     maxRounds: {
       label: '每次请求的工具轮数',
-      description: '达到这个轮数后，模型必须直接回答。',
+      description:
+        '达到这个轮数后，网关拒绝后续的 OpenViking 调用，模型用已有结果和客户端自己的工具继续。',
     },
     timeoutSeconds: {
       label: '单次调用超时',
@@ -214,7 +215,7 @@ const profiles = {
     totalTokens: {
       label: 'Token 预算',
       description:
-        '一次请求中，工具调用和结果最多增加的 Token 数（估算值）。用完后，模型基于已有结果回答。',
+        '一次请求中，工具调用和结果最多增加的 Token 数（估算值）。用完后，网关拒绝后续的 OpenViking 调用，模型用已有结果和客户端自己的工具继续。',
     },
   },
 }

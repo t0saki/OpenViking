@@ -8,6 +8,7 @@ from aiohttp import web
 from conftest import MCP_TOOLS
 
 from openviking_context_gateway.protocols import normalize
+from openviking_context_gateway.tool_loop import REFUSED
 
 
 @pytest.mark.parametrize(
@@ -444,10 +445,19 @@ async def test_tool_capability_gate_and_frozen_conflict(running_gateway, extra):
     assert not orjson.loads(seen[-1][1]).get("tools")
 
 
-async def test_tool_round_limit_disables_without_removing_definitions(running_gateway):
+CLIENT_TOOLS = [
+    {"type": "function", "function": {"name": "client_weather", "parameters": {"type": "object"}}}
+]
+
+
+@pytest.mark.parametrize("stubborn", [False, True])
+async def test_tool_round_limit_refuses_gateway_calls_but_keeps_client_tools(
+    running_gateway, stubborn
+):
     app, client, admin, key, _, _ = running_gateway
     await enable_tools(client, admin, tool_max_rounds=1)
     requests, mcp_calls = [], []
+    weather = tool_call("client_weather", "c-1", {"city": "Paris"})
 
     async def backend(request):
         if request.path == "/mcp":
@@ -455,10 +465,11 @@ async def test_tool_round_limit_disables_without_removing_definitions(running_ga
             return web.json_response({"id": 1, "result": {"content": []}})
         if request.path == "/v1/chat/completions":
             requests.append(await request.json())
+            number = len(requests)
+            call = weather if number == 3 and not stubborn else tool_call(identifier=f"g-{number}")
             return web.json_response(
                 completion(
-                    {"role": "assistant", "content": None, "tool_calls": [tool_call()]},
-                    "tool_calls",
+                    {"role": "assistant", "content": None, "tool_calls": [call]}, "tool_calls"
                 )
             )
         return None
@@ -467,12 +478,49 @@ async def test_tool_round_limit_disables_without_removing_definitions(running_ga
     response = await client.post(
         "/v1/chat/completions",
         headers={"Authorization": "Bearer " + key["key"], "X-OpenViking-Session": "tools"},
-        json={"model": "model", "messages": [{"role": "user", "content": "find blue"}]},
+        json={
+            "model": "model",
+            "messages": [{"role": "user", "content": "find blue"}],
+            "tools": CLIENT_TOOLS,
+            "tool_choice": "auto",
+        },
     )
-    assert response.status_code == 502
-    assert len(requests) == 2 and len(mcp_calls) == 1
-    assert requests[1]["tool_choice"] == "none"
-    assert requests[0]["tools"] == requests[1]["tools"]
+    # Past the limit a gateway call is refused, and the client's tools stay callable.
+    assert len(requests) == 3 and len(mcp_calls) == 1
+    assert requests[2]["messages"][-1]["content"] == REFUSED
+    assert all(r["tool_choice"] == "auto" and r["tools"] == requests[0]["tools"] for r in requests)
+    if stubborn:
+        # A model that calls gateway tools again after a refusal cannot loop.
+        assert response.status_code == 502
+    else:
+        assert response.status_code == 200, response.text
+        message = response.json()["choices"][0]["message"]
+        assert message["tool_calls"] == [weather] and "— skipped" in message["content"]
+
+
+@pytest.mark.parametrize(
+    "header", [{"X-Claude-Code-Agent-Id": "child"}, {"X-OpenViking-Plugin": "1"}]
+)
+async def test_requests_without_gateway_tools_pass_client_tools_through(running_gateway, header):
+    _, client, admin, key, seen, _ = running_gateway
+    await enable_tools(client, admin)
+    headers = {"Authorization": "Bearer " + key["key"], "X-OpenViking-Session": "parent"}
+    body = {
+        "model": "model",
+        "messages": [{"role": "user", "content": "hello"}],
+        "tools": CLIENT_TOOLS,
+        "tool_choice": "auto",
+    }
+    response = await client.post("/v1/chat/completions", headers=headers, json=body)
+    assert response.status_code == 200, response.text
+    assert len(orjson.loads(seen[-1][1])["tools"]) == len(CLIENT_TOOLS) + len(MCP_TOOLS)
+    # A sub-agent, or a conversation that now has an OpenViking plugin, never ran
+    # gateway tools: it gets none, and its own tools and tool choice stay as sent.
+    body["messages"] = [{"role": "user", "content": "explore the repository"}]
+    response = await client.post("/v1/chat/completions", headers={**headers, **header}, json=body)
+    assert response.status_code == 200, response.text
+    forwarded = orjson.loads(seen[-1][1])
+    assert forwarded["tools"] == CLIENT_TOOLS and forwarded["tool_choice"] == "auto"
 
 
 @pytest.mark.parametrize("vendor", ["ark", "byteplus"])
@@ -933,8 +981,7 @@ async def test_tool_budget_finishes_after_results_without_usage(running_gateway,
     )
     assert response.status_code == 200 and "gateway_tool_error" not in response.text
     assert len(calls) == 1 and len(requests) == 2
-    assert requests[1]["tool_choice"] == "none"
-    assert "max_tokens" not in requests[1]
+    assert "tool_choice" not in requests[1] and "max_tokens" not in requests[1]
     logs = (await client.get("/admin/logs", headers=admin)).json()
     assert logs[0]["tool_stop_reason"] == "token_budget"
 

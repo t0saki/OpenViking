@@ -226,10 +226,8 @@ def is_user(message):
     )
 
 
-def classify(body: dict, headers: dict, messages: list[dict], counting=False) -> tuple[str, int]:
+def classify(body: dict, headers: dict, messages: list[dict]) -> tuple[str, int]:
     anchor = next((i for i in range(len(messages) - 1, -1, -1) if is_user(messages[i])), -1)
-    if counting:
-        return "count", anchor
     request_class = headers.get("x-claude-code-request-class", "")
     if request_class in {"subagent", "workflow"}:
         return "subagent", anchor

@@ -469,7 +469,7 @@ async def test_native_hidden_rounds_exact_replay(running_gateway, protocol, stre
 
 @pytest.mark.parametrize("protocol", ["responses", "anthropic"])
 @pytest.mark.parametrize("streaming", [False, True])
-async def test_native_budget_finishes_without_changing_output_limit(
+async def test_native_budget_keeps_client_tools_and_output_limit(
     running_gateway, protocol, streaming
 ):
     app, client, admin, key, _, _ = running_gateway
@@ -486,7 +486,7 @@ async def test_native_budget_finishes_without_changing_output_limit(
             return None
         requests.append(await request.json())
         number = len(requests)
-        value = native_response(protocol, number, owned=number == 1)
+        value = native_response(protocol, number, owned=number == 1, mixed=number == 2)
         return await wire_response(request, protocol, value, streaming)
 
     app.state.test_backend["handler"] = backend
@@ -495,14 +495,66 @@ async def test_native_budget_finishes_without_changing_output_limit(
         PATHS[protocol], headers={"Authorization": "Bearer " + key["key"]}, json=body
     )
     assert response.status_code == 200 and "gateway_tool_error" not in response.text
-    visible_response(protocol, response, streaming)
+    visible = visible_response(protocol, response, streaming)
     assert len(requests) == 2 and len(calls) == 1
-    assert requests[1]["tool_choice"] == ({"type": "none"} if protocol == "anthropic" else "none")
+    # A spent budget leaves the client's tools callable; their call is handed off.
+    assert requests[1].get("tool_choice") == body.get("tool_choice")
+    shown = visible["output"] if protocol == "responses" else visible["content"]
+    assert shown[-1]["name"] == "shell"
     limit = "max_tokens" if protocol == "anthropic" else "max_output_tokens"
     assert requests[1][limit] == body[limit]
     assert requests[1]["tools"] == requests[0]["tools"]
     logs = (await client.get("/admin/logs", headers=admin)).json()
     assert logs[0]["tool_stop_reason"] == "token_budget"
+
+
+@pytest.mark.parametrize("protocol", ["responses", "anthropic"])
+async def test_subagent_resending_tool_history_replays_it_but_cannot_call(
+    running_gateway, protocol
+):
+    app, client, admin, key, _, _ = running_gateway
+    await enable_tools(client, admin)
+    requests, calls = [], []
+
+    async def backend(request):
+        if request.path == "/mcp":
+            calls.append(await request.json())
+            return web.json_response({"id": 1, "result": {"content": []}})
+        if request.path != PATHS[protocol]:
+            return None
+        requests.append(await request.json())
+        number = len(requests)
+        value = native_response(protocol, number, owned=number != 2, mixed=number == 3)
+        return await wire_response(request, protocol, value, False)
+
+    app.state.test_backend["handler"] = backend
+    body = request_body(protocol, False)
+    headers = {"Authorization": "Bearer " + key["key"], "X-OpenViking-Session": "fork"}
+    response = await client.post(PATHS[protocol], headers=headers, json=body)
+    assert response.status_code == 200 and len(requests) == 2 and len(calls) == 1
+    field = "input" if protocol == "responses" else "messages"
+    visible = response.json()
+    body[field].extend(
+        visible["output"]
+        if protocol == "responses"
+        else [{"role": "assistant", "content": visible["content"]}]
+    )
+    body[field].append({"role": "user", "content": "Explore"})
+    # A forked sub-agent resends the main history, including the hidden tool round.
+    response = await client.post(
+        PATHS[protocol], headers={**headers, "X-Claude-Code-Agent-Id": "child"}, json=body
+    )
+    assert response.status_code == 200, response.text
+    replay = requests[2]
+    assert replay["tools"] == requests[0]["tools"]
+    assert replay.get("tool_choice") == body.get("tool_choice")
+    assert replay[field][: len(requests[1][field])] == requests[1][field]
+    # Its gateway call is refused, not run, and its client call is handed off.
+    assert len(requests) == 3 and len(calls) == 1
+    visible = response.json()
+    shown = visible["output"] if protocol == "responses" else visible["content"]
+    assert shown[-1]["name"] == "shell" and "— skipped" in response.text
+    assert "gateway-3" not in response.text
 
 
 @pytest.mark.parametrize("protocol", ["responses", "anthropic"])
@@ -649,6 +701,12 @@ async def test_anthropic_count_tokens_uses_same_prompt_without_a_tool_loop(runni
     response = await client.post("/v1/messages/count_tokens", headers=header, json=body)
     assert response.json() == {"input_tokens": 20}
     assert orjson.loads(seen[-1][1]) == orjson.loads(seen[-2][1])
+    # A sub-agent's count matches its own request, which has no gateway tools.
+    child = {**header, "X-Claude-Code-Agent-Id": "child"}
+    for path in ("/v1/messages", "/v1/messages/count_tokens"):
+        assert (await client.post(path, headers=child, json=body)).status_code == 200
+    assert orjson.loads(seen[-1][1]) == orjson.loads(seen[-2][1])
+    assert orjson.loads(seen[-1][1])["tools"] == body["tools"]
 
 
 @pytest.mark.parametrize(

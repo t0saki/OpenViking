@@ -472,7 +472,7 @@ To turn the tools on, enable **OpenViking tools** in a context profile. The **To
 > OpenViking find: "release date" — done
 ```
 
-The notice names the tool and, where available, what it works on: the search query, the URI read, listed or written, or the file or skill being imported. In a streaming reply it appears as soon as the call starts, so users can see that something is happening during a slow import; a nonstreaming reply gets the same lines in the final message. The outcome is added when the call ends: `done`; `failed` when the call returned an error; `skipped` when the token budget was already spent and the gateway did not run the call. Each notice is a paragraph of its own. In Chat Completions the notices are part of the reply text. In Anthropic Messages the notices for one round of calls share one text block, and in Responses they share one assistant message. The model never sees these lines; it gets the actual calls and results. The gateway does not save the notices to OpenViking either. To hide them, turn off **Show tool calls** in the profile's **OpenViking tools** section, and the reply contains only the model's own output. Like the other tool settings, the change applies to new conversations.
+The notice names the tool and, where available, what it works on: the search query, the URI read, listed or written, or the file or skill being imported. In a streaming reply it appears as soon as the call starts, so users can see that something is happening during a slow import; a nonstreaming reply gets the same lines in the final message. The outcome is added when the call ends: `done`; `failed` when the call returned an error; `skipped` when the gateway refused the call and did not run it, for example because the round limit or the token budget was reached. Each notice is a paragraph of its own. In Chat Completions the notices are part of the reply text. In Anthropic Messages the notices for one round of calls share one text block, and in Responses they share one assistant message. The model never sees these lines; it gets the actual calls and results. The gateway does not save the notices to OpenViking either. To hide them, turn off **Show tool calls** in the profile's **OpenViking tools** section, and the reply contains only the model's own output. Like the other tool settings, the change applies to new conversations.
 
 Whether a conversation gets tools is decided at its first request and kept, so profile changes reach new conversations only. When a request runs without tools, its detail on the Requests tab says why:
 
@@ -489,7 +489,7 @@ Whether a conversation gets tools is decided at its first request and kept, so p
 | `tools_unavailable` | OpenViking could not provide its tool list and no previously loaded list was available. Start a new conversation after connectivity recovers. |
 | `tools_not_selected_at_session_start` | The profile has tools on, but the conversation's first request could not use them (for one of the reasons above), so the conversation has none. |
 
-Housekeeping and sub-agent requests keep the tool definitions but cannot call them, and conversations where an OpenViking plugin was detected get no tools.
+Housekeeping and sub-agent requests, and conversations where an OpenViking plugin was detected, do not get OpenViking tools. When such a request resends history in which the model used them, the gateway still sends the tool definitions so that the history stays valid, but refuses new OpenViking calls. The client's own tools stay available in every request.
 
 **Importing files and skills.** The import tools are available when your OpenViking server provides them and they are selected in the profile. URL imports do not need a shell tool. Local files need one of these upload paths:
 
@@ -502,15 +502,15 @@ The limits sit under **Advanced settings** in the profile's **OpenViking tools**
 
 | Setting | API name | Default | Range | At the limit |
 | --- | --- | --- | --- | --- |
-| Rounds per request | `tool_max_rounds` | 5 | 1–20 | The model must answer without further tool calls. |
+| Rounds per request | `tool_max_rounds` | 5 | 1–20 | Further OpenViking calls are refused; the model continues with the results it has and the client's own tools. |
 | Time limit per call | `tool_timeout_seconds` | 30 s | up to 120 s | The call returns an error to the model. |
 | Result size | `tool_result_bytes` | 65,536 bytes | 1,024–1,048,576 | The result is truncated. |
 | Total time | `tool_total_seconds` | 120 s | up to 600 s | The request fails with 504 "Hidden tool request timed out". |
-| Token budget | `tool_total_tokens` | 100,000 | 1,024–1,000,000 | Further tool calls are refused and the model answers with what it has. This is not a billing cap; the final answer can exceed it. |
+| Token budget | `tool_total_tokens` | 100,000 | 1,024–1,000,000 | Further OpenViking calls are refused; the model continues with the results it has and the client's own tools. This is not a billing cap; the final answer can exceed it. |
 
-The token budget covers the extra calls, results and subsequent model output from using OpenViking tools. Existing conversation history, tool definitions and images do not count. The gateway preserves the client's answer-length limit (`max_tokens`, `max_completion_tokens` or `max_output_tokens`). Once the budget is spent, the model finishes its answer using the results already available.
+The token budget covers the extra calls, results and subsequent model output from using OpenViking tools. Existing conversation history, tool definitions and images do not count. The gateway preserves the client's answer-length limit (`max_tokens`, `max_completion_tokens` or `max_output_tokens`). Once the budget is spent, the gateway refuses further OpenViking calls, and the model continues with the results already available and the client's own tools.
 
-When an individual tool call fails, the model receives an error result and can continue answering. If the reply itself fails, for example because the provider rejects a follow-up model request, the client receives an error and the request log shows **OpenViking tools failed** (`hidden_tool_loop_failed`). Streaming Responses requests end with `response.failed`; Chat Completions and Anthropic Messages report `gateway_tool_error`.
+When an individual tool call fails, the model receives an error result and can continue answering. If the reply itself fails, for example because the provider rejects a follow-up model request or the model keeps calling OpenViking tools after they were refused, the client receives an error and the request log shows **OpenViking tools failed** (`hidden_tool_loop_failed`). Streaming Responses requests end with `response.failed`; Chat Completions and Anthropic Messages report `gateway_tool_error`.
 
 If an upstream keeps failing, turn off its **Allow OpenViking tools** setting. Claude conversations that have already used these tools may also show **Tool history unavailable** (`hidden_tool_history_unavailable`): earlier thinking can no longer be used and has been removed. Check the tool skip reason in the request detail, then restore the original settings or start a new conversation. A retried tool call reuses the first call's result, and an interrupted write is never repeated automatically.
 

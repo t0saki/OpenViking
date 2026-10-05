@@ -17,6 +17,8 @@ from .tool_protocols import hidden_chain, tool_protocol
 from .tool_protocols.common import PREFIX, ToolLoopError, ToolRound, add_usage, notice_tail
 from .windows import ALONE, NEW_CONTEXT, window_number
 
+REFUSED = "OpenViking tools are unavailable for the rest of this request; continue without them."
+
 
 def added_tokens(value):
     # Client history, schemas and images never consume the continuation budget.
@@ -36,7 +38,7 @@ class HiddenToolLoop:
         self.deadline = time.monotonic() + self.policy.get("tool_total_seconds", 120)
         self.transcript, self.usage = [], {}
         self.final, self.hidden, self.window = None, False, None
-        self.rounds, self.token_cost = 0, 0
+        self.rounds, self.token_cost, self.refused = 0, 0, False
         self.round = ToolRound([], [], {}, False)
 
     async def read(self, response):
@@ -94,12 +96,22 @@ class HiddenToolLoop:
         return [self.adapter.encode(e) for e in events] if self.body.get("stream") else []
 
     async def execute(self, calls):
-        """Run gateway-owned calls, yielding the visible notice for each one."""
-        if (
-            self.rounds >= self.policy.get("tool_max_rounds", 5)
+        """Run gateway-owned calls, yielding the visible notice for each one.
+
+        In a closed request, or once rounds or tokens run out, the calls are refused so
+        the model goes on with the client's tools; calling again right after a refused
+        round ends the request.
+        """
+        budget = self.policy.get("tool_total_tokens", 100000)
+        closed = (
+            self.prepared.tools_closed
             or self.adapter.tool_choice(self.body) == "none"
-        ):
+            or self.rounds >= self.policy.get("tool_max_rounds", 5)
+            or self.token_cost >= budget
+        )
+        if closed and self.refused:
             raise ToolLoopError("Model exceeded the hidden tool round limit")
+        self.refused = closed
         if not self.rounds:
             self.token_cost += added_tokens(calls)
         show = self.policy.get("show_tool_calls", True)
@@ -110,18 +122,14 @@ class HiddenToolLoop:
             call["function"]["name"] == NEW_CONTEXT for call in calls
         )
         for call in calls:
-            skipped = self.token_cost >= self.policy.get("tool_total_tokens", 100000)
+            skipped = closed or self.token_cost >= budget
             if show:
                 # The head streams before a slow call runs; its outcome follows.
                 events.extend(self.adapter.notice("\n\n" + notice_head(call)))
                 for event in self.stream(events):
                     yield event
             if skipped:
-                result = {
-                    "role": "tool",
-                    "tool_call_id": call["id"],
-                    "content": "Gateway tool budget reached; answer using the available results.",
-                }
+                result = {"role": "tool", "tool_call_id": call["id"], "content": REFUSED}
             elif crowded:
                 result = {
                     "role": "tool",
@@ -149,10 +157,7 @@ class HiddenToolLoop:
         self.rounds += 1
         self.hidden = True
         self.prepared.metrics.update(hidden_rounds=self.rounds, hidden_added_tokens=self.token_cost)
-        exhausted = self.token_cost >= self.policy.get("tool_total_tokens", 100000)
-        if exhausted or self.rounds >= self.policy.get("tool_max_rounds", 5):
-            self.adapter.disable_tools(self.body)
-        if exhausted:
+        if self.token_cost >= budget:
             self.prepared.metrics["tool_stop_reason"] = "token_budget"
 
     def reset(self, anchor, value):
