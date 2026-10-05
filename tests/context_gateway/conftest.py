@@ -66,7 +66,6 @@ class FakeViking:
         self.preferences = []
         self.entities = []
         self.skills = []
-        self.summary = "Previously deployed to the blue cluster."
 
     async def tools(self, key):
         self.tool_keys.append(key)
@@ -144,9 +143,6 @@ class FakeViking:
 
     async def archive_state(self, key, session, archive, uri=""):
         return self.archive_status
-
-    async def overview(self, key, session, archive):
-        return self.summary
 
 
 @pytest.fixture
@@ -269,8 +265,6 @@ async def running_gateway(tmp_path, monkeypatch):
                 result = await viking.write("synthetic", session, body["messages"])
             elif request.path.endswith("/commit"):
                 result = await viking.commit("synthetic", session, body["keep_recent_count"])
-            elif "/archives/" in request.path:
-                result = {"overview": viking.summary}
             else:
                 status = await viking.capture_status("synthetic", session)
                 result = {

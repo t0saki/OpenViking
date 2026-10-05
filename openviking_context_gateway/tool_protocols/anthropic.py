@@ -6,8 +6,16 @@ import copy
 
 import orjson
 
-from ..protocols import strip_thinking
-from .common import ToolLoopError, ToolProtocol, ToolRound, call, strip_notices
+from ..protocols import strip_thinking, text_content
+from .common import (
+    SUMMARY_HEADROOM,
+    SummaryError,
+    ToolLoopError,
+    ToolProtocol,
+    ToolRound,
+    call,
+    strip_notices,
+)
 
 
 class AnthropicProtocol(ToolProtocol):
@@ -42,6 +50,27 @@ class AnthropicProtocol(ToolProtocol):
     @staticmethod
     def omit_hidden_history(messages):
         return strip_thinking(strip_notices(messages))
+
+    @classmethod
+    def summary_request(cls, body, messages, instruction, max_tokens):
+        request = super().summary_request(body, messages, instruction, max_tokens)
+        thinking = body.get("thinking") or {}
+        # Thinking spends from max_tokens, and a manual budget must stay below it.
+        if thinking.get("type") == "enabled":
+            max_tokens += thinking.get("budget_tokens", 0)
+        elif thinking.get("type") == "adaptive":
+            max_tokens += SUMMARY_HEADROOM
+        request["max_tokens"] = max_tokens
+        return request
+
+    @staticmethod
+    def summary_text(response):
+        content = response.get("content") or []
+        if any(block.get("type") == "tool_use" for block in content):
+            raise SummaryError("summary_tool_call")
+        if response.get("stop_reason") not in {"end_turn", "stop_sequence"}:
+            raise SummaryError("summary_incomplete")
+        return text_content({"content": content})
 
     def __init__(self, body):
         super().__init__(body)

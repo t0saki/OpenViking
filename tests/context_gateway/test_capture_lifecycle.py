@@ -15,12 +15,9 @@ from openviking_context_gateway.protocols import ResponseCapture
 
 
 @pytest.mark.parametrize("terminal", ["completed", "failed"])
-async def test_terminal_archive_without_summary_releases_commits(
-    setup_kernel, credential, policy, terminal
-):
+async def test_terminal_archive_releases_commits(setup_kernel, credential, policy, terminal):
     kernel, store, viking, encryption = setup_kernel
     policy.update(recall=False, commit_tokens=1, keep_recent_messages=0)
-    viking.summary = ""
     viking.archive_status = terminal
     worker = await worker_for(store, encryption, credential, viking)
     for turns in (1, 2, 3):
@@ -38,7 +35,6 @@ async def test_pending_archive_has_bounded_lifetime_and_shared_polling(
 ):
     kernel, store, viking, encryption = setup_kernel
     policy.update(recall=False, commit_tokens=1, keep_recent_messages=0)
-    viking.summary = ""
     p = await prepare(
         kernel, credential, policy, [*history(1), {"role": "user", "content": "next"}]
     )
@@ -66,7 +62,7 @@ async def test_existing_replacement_survives_capture_pause_or_plugin(
     setup_kernel, credential, policy, failure
 ):
     kernel, store, _, _ = setup_kernel
-    policy.update(recall=False, keep_recent_turns=1)
+    policy.update(recall=False)
     messages = [*history(2), {"role": "user", "content": "next"}]
     first = await prepare(kernel, credential, policy, messages)
     await store.replay.put(
@@ -74,7 +70,7 @@ async def test_existing_replacement_survives_capture_pause_or_plugin(
         first.session,
         "replacement",
         first.chain[1],
-        {"text": "[OpenViking Session Context]\nverified summary"},
+        {"source": "compaction", "text": "verified summary", "tokens": 4},
     )
     if failure:
         await update_capture(
@@ -87,43 +83,6 @@ async def test_existing_replacement_survives_capture_pause_or_plugin(
     again = await prepare(kernel, credential, policy, messages)
     assert "verified summary" in again.body["messages"][0]["content"]
     assert messages[0] not in again.body["messages"]
-
-
-@pytest.mark.parametrize("capture", [True, False])
-async def test_high_usage_without_archive_returns_immediately(
-    setup_kernel, credential, policy, capture
-):
-    kernel, _, _, _ = setup_kernel
-    policy.update(recall=False, capture=capture, context_window=2000, archive_wait_seconds=30)
-    messages = [*history(1), {"role": "user", "content": "next"}]
-    p = await prepare(kernel, credential, policy, messages)
-    await kernel.completed(p, credential, ResponseCapture("chat", usage={"input_tokens": 1900}))
-    result = await asyncio.wait_for(prepare(kernel, credential, policy, messages), 0.5)
-    assert result.body["messages"] == messages
-    assert result.metrics.get("degradation") != "archive_wait_timeout"
-
-
-async def test_emergency_wait_only_for_known_pending_archive(
-    setup_kernel, credential, policy, monkeypatch
-):
-    kernel, store, viking, _ = setup_kernel
-    policy.update(recall=False, context_window=2000, archive_wait_seconds=0.05, keep_recent_turns=1)
-    viking.summary = ""
-    messages = [*history(1), {"role": "user", "content": "next"}]
-    p = await prepare(kernel, credential, policy, messages)
-    await kernel.completed(p, credential, ResponseCapture("chat", usage={"input_tokens": 1900}))
-    archive = {
-        "status": "pending",
-        "boundary": p.chain[1],
-        "archive_id": "archive_001",
-        "created": time.time(),
-    }
-    await update_capture(store, p, archive=archive, tokens=policy["takeover_tokens"])
-    waited = await prepare(kernel, credential, policy, messages)
-    assert waited.metrics["degradation"] == "archive_wait_timeout"
-    await update_capture(store, p, archive={**archive, "status": "failed"})
-    failed = await asyncio.wait_for(prepare(kernel, credential, policy, messages), 0.5)
-    assert "degradation" not in failed.metrics
 
 
 @pytest.mark.parametrize("change", ["edit", "compact"])
@@ -269,7 +228,7 @@ async def test_delivery_reconciles_lost_ack_and_partial_batch(
     setup_kernel, credential, policy, partial_batch
 ):
     kernel, store, viking, encryption = setup_kernel
-    policy.update(recall=False, commit_tokens=1000000, takeover=False)
+    policy.update(recall=False, commit_tokens=1000000)
     assistants = 205 if partial_batch else 1
     messages = [
         {"role": "user", "content": "start"},
@@ -307,6 +266,7 @@ async def test_lost_commit_response_is_resolved_before_new_messages(
 ):
     kernel, store, viking, encryption = setup_kernel
     policy.update(recall=False, commit_tokens=1, keep_recent_messages=0)
+    viking.archive_status = "completed"
     p = await prepare(
         kernel, credential, policy, [*history(1), {"role": "user", "content": "next"}]
     )
@@ -380,7 +340,7 @@ async def test_tool_continuations_replace_pending_tail_without_reset(
     setup_kernel, credential, policy
 ):
     kernel, store, viking, encryption = setup_kernel
-    policy.update(recall=False, takeover=False, commit_tokens=1000000)
+    policy.update(recall=False, commit_tokens=1000000)
     messages = [*history(1), {"role": "user", "content": "Read both files"}]
 
     async def prepare_response():
@@ -440,7 +400,7 @@ async def test_worker_merge_preserves_rotated_credential_and_request_fields(
     setup_kernel, credential, policy
 ):
     kernel, store, viking, encryption = setup_kernel
-    policy.update(recall=False, takeover=False, commit_tokens=1000000)
+    policy.update(recall=False, commit_tokens=1000000)
     messages = [*history(1), {"role": "user", "content": "Next"}]
     first = await prepare(kernel, credential, policy, messages)
     worker = await worker_for(store, encryption, credential, viking)

@@ -462,36 +462,10 @@ async def test_lease_is_exclusive_and_old_owner_cannot_ack(setup_kernel):
     assert await store.capture.claim() is None
 
 
-async def test_archive_replacement_is_immutable(setup_kernel, credential, policy):
-    kernel, store, viking, _ = setup_kernel
-    policy["keep_recent_turns"] = 1
-    body = {
-        "messages": [
-            {"role": "user", "content": "How do I deploy?"},
-            {"role": "assistant", "content": "Blue cluster"},
-            {"role": "user", "content": "What next?"},
-        ]
-    }
-    one = await prepare(kernel, body, credential, policy)
-    await store.replay.put(
-        one.scope,
-        one.session,
-        "replacement",
-        one.chain[1],
-        {"text": "[OpenViking Session Context]\nverified summary"},
-    )
-    two = await prepare(kernel, body, credential, policy)
-    assert two.body["messages"][0]["content"].startswith("[OpenViking Session Context]")
-    await store.replay.put(
-        one.scope, one.session, "replacement", one.chain[1], {"text": "Changed summary"}
-    )
-    three = await prepare(kernel, body, credential, policy)
-    assert two.body == three.body
-
-
-async def test_archive_summary_keeps_the_gateway_note(setup_kernel, credential, policy):
+async def test_cut_records_are_shared_immutable_and_ignore_takeovers(
+    setup_kernel, credential, policy
+):
     kernel, store, _, _ = setup_kernel
-    policy.update(keep_recent_turns=1, gateway_tools=True)
     body = {
         "messages": [
             {"role": "user", "content": "How do I deploy?"},
@@ -500,21 +474,21 @@ async def test_archive_summary_keeps_the_gateway_note(setup_kernel, credential, 
         ]
     }
     one = await prepare(kernel, body, credential, policy)
+    # A Working Memory takeover record has no source and never cuts the history.
     await store.replay.put(
-        one.scope,
-        one.session,
-        "replacement",
-        one.chain[1],
-        {"text": "[OpenViking Session Context]\nverified summary"},
+        one.scope, one.session, "replacement", one.chain[1], {"text": "Old takeover"}
     )
-    two = await prepare(kernel, body, credential, policy)
-    # The summary replaces the first message and its note, so it carries the note itself.
-    summary = two.body["messages"][0]["content"]
-    assert summary == "[OpenViking Session Context]\nverified summary\n\n" + NOTE + (
-        "\n</openviking-context>"
+    assert (await prepare(kernel, body, credential, policy)).body == one.body
+    cut = {"source": "compaction", "text": "verified summary", "tokens": 4}
+    await store.replay.put(one.scope, "other", "replacement", one.chain[0], cut)
+    two = await prepare(kernel, body, credential, policy, session="fork")
+    assert two.body["messages"][0] == {"role": "user", "content": "verified summary"}
+    assert two.body["messages"][1:] == one.body["messages"][1:]
+    assert two.metrics["compaction_applied"] == one.chain[0]
+    await store.replay.put(
+        one.scope, one.session, "replacement", one.chain[0], {**cut, "text": "Changed"}
     )
-    assert "openviking_search" in str(two.body["tools"])
-    assert two.body == (await prepare(kernel, body, credential, policy)).body
+    assert (await prepare(kernel, body, credential, policy)).body == two.body
 
 
 async def test_encryption_and_whole_session_expiry(setup_kernel):
@@ -658,27 +632,6 @@ async def test_known_missing_record_drops_old_thinking(setup_kernel, credential,
     second = await prepare(kernel, body, credential, policy, "anthropic")
     assert second.metrics["degradation"] == "missing_injection_record"
     assert all(block["type"] != "thinking" for block in second.body["messages"][1]["content"])
-
-
-async def test_large_body_does_not_trigger_placeholder_archive(setup_kernel, credential, policy):
-    kernel, store, viking, _ = setup_kernel
-    policy.update(context_window=1024, archive_wait_seconds=0, keep_recent_turns=1, recall=False)
-    viking.summary = ""
-    body = {
-        "model": "test",
-        "messages": [
-            {"role": "user", "content": "Large old history " * 1000},
-            {"role": "assistant", "content": "answer"},
-            {"role": "user", "content": "Keep going"},
-        ],
-    }
-    first = await prepare(kernel, body, credential, policy)
-    assert first.body == body and "degradation" not in first.metrics
-    await kernel.completed(first, credential, ResponseCapture("chat", usage={"input_tokens": 1000}))
-    second = await prepare(kernel, body, credential, policy)
-    assert "degradation" not in second.metrics
-    assert second.body == body
-    assert not await replay_records(store, first, "replacement")
 
 
 def test_tool_input_whitespace_is_significant():

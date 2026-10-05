@@ -3,7 +3,6 @@
 """OpenViking HTTP adapter. No imports from the server/service implementation."""
 
 import asyncio
-import re
 import time
 from urllib.parse import urlencode
 
@@ -99,6 +98,8 @@ class VikingClient:
                         "message_count_threshold": 0,
                         "idle_timeout_seconds": 0,
                     },
+                    # Commits only feed memory extraction; the gateway writes its own summaries.
+                    "memory_policy": {"working_memory": {"enabled": False}},
                 },
             )
         except VikingError as error:
@@ -113,14 +114,6 @@ class VikingClient:
             {"keep_recent_count": keep},
             timeout=45,
         )
-
-    async def overview(self, key, session, archive):
-        if not re.fullmatch(r"[\w-]+", archive):
-            raise VikingError("invalid_archive_id")
-        result = await self.request(
-            "GET", f"/api/v1/sessions/{session}/archives/{archive}", key, timeout=5
-        )
-        return result.get("overview", "")
 
     async def read_content(self, key, uri):
         try:

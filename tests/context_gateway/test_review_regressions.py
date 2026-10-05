@@ -41,10 +41,14 @@ async def worker_for(store, encryption, credential, viking):
     return CaptureWorker(store, management, viking)
 
 
+async def never_summarize(prepared, body):
+    pytest.fail("No compaction was due")
+
+
 @pytest.mark.parametrize("turns", [0, 4])
-async def test_screenshot_never_causes_emergency_wait(setup_kernel, credential, policy, turns):
+async def test_screenshot_does_not_trigger_compaction(setup_kernel, credential, policy, turns):
     kernel, _, _, _ = setup_kernel
-    policy.update(recall=False, context_window=128000, archive_wait_seconds=30)
+    policy.update(recall=False, context_window=128000)
     messages = [
         *history(turns),
         {
@@ -64,34 +68,49 @@ async def test_screenshot_never_causes_emergency_wait(setup_kernel, credential, 
             credential,
             {"id": "upstream"},
             policy,
+            summarize=never_summarize,
         ),
         2,
     )
     assert result.body == body
     assert "degradation" not in result.metrics
+    # Base64 media counts like an image, not like its text length.
+    assert result.context_tokens < 4000 and result.context_window == 128000
 
 
-async def test_emergency_usage_matches_model_and_configured_window(
-    setup_kernel, credential, policy
+@pytest.mark.parametrize(
+    "model,window", [("small", 2000), ("alias", 2000), ("large", 1000000), ("unknown", 1000000)]
+)
+async def test_context_window_follows_the_resolved_model(
+    setup_kernel, credential, policy, model, window
 ):
     kernel, store, _, _ = setup_kernel
-    policy.update(recall=False, archive_wait_seconds=0)
-    upstream = {"id": "upstream", "context_windows": {"small": 2000, "large": 1000000}}
+    policy.update(recall=False)
+    upstream = {
+        "id": "upstream",
+        "aliases": {"alias": "small"},
+        "context_windows": {"small": 2000, "large": 1000000},
+    }
     headers = {"x-openviking-session": "model-window"}
-    body = {"model": "small", "messages": [{"role": "user", "content": "hello"}]}
+    body = {"model": model, "messages": [{"role": "user", "content": "hello"}]}
     first = await kernel.prepare(body, "chat", headers, credential, upstream, policy)
-    await kernel.completed(first, credential, ResponseCapture("chat", usage={"input_tokens": 1950}))
-    small = await kernel.prepare(body, "chat", headers, credential, upstream, policy)
-    assert "degradation" not in small.metrics  # No archive is being generated.
-    large = await kernel.prepare(
-        {**body, "model": "large"}, "chat", headers, credential, upstream, policy
+    reply = {"role": "assistant", "content": "hi"}
+    await kernel.completed(
+        first, credential, ResponseCapture("chat", reply, usage={"input_tokens": 1950})
     )
-    assert "degradation" not in large.metrics
-    unknown = await kernel.prepare(
-        {**body, "model": "unknown"}, "chat", headers, credential, upstream, policy
+    body["messages"] += [reply, {"role": "user", "content": "more"}]
+    calls = []
+
+    async def summarize(prepared, request):
+        calls.append(request)
+        return {"choices": [{"message": {"content": "Earlier: hello"}, "finish_reason": "stop"}]}
+
+    second = await kernel.prepare(
+        body, "chat", headers, credential, upstream, policy, summarize=summarize
     )
-    assert "degradation" not in unknown.metrics
-    assert not await replay_records(store, first, "replacement")
+    assert second.context_window == window and second.metrics["context_tokens"] > 1950
+    assert len(calls) == (window == 2000)
+    assert bool(await replay_records(store, second, "replacement")) == (window == 2000)
 
 
 async def test_system_tokens_do_not_trigger_commits(setup_kernel, credential, policy):
@@ -118,10 +137,9 @@ async def test_system_tokens_do_not_trigger_commits(setup_kernel, credential, po
     assert viking.commits == []
 
 
-async def test_pending_overview_blocks_repeated_commit(setup_kernel, credential, policy):
+async def test_pending_archive_blocks_repeated_commit(setup_kernel, credential, policy):
     kernel, store, viking, encryption = setup_kernel
     policy.update(recall=False, commit_tokens=1, keep_recent_messages=0)
-    viking.summary = ""
     worker = await worker_for(store, encryption, credential, viking)
     for turn in range(1, 4):
         await prepare(
@@ -315,21 +333,18 @@ async def test_conditional_budget_is_atomic_across_stores(setup_kernel, credenti
         }
 
     viking.recall = recall
+    # The budget is per context window, so the branches share their first message.
+    branches = [[*history(1), {"role": "user", "content": f"Question {i}"}] for i in range(12)]
     await asyncio.gather(
         *(
-            prepare(
-                kernel if i % 2 else other,
-                credential,
-                policy,
-                [{"role": "user", "content": f"Question {i}"}],
-            )
-            for i in range(12)
+            prepare(kernel if i % 2 else other, credential, policy, messages)
+            for i, messages in enumerate(branches)
         )
     )
     from openviking_context_gateway.protocols import prefix_chain
     from openviking_context_gateway.storage import digest
 
-    anchors = [prefix_chain([{"role": "user", "content": f"Question {i}"}])[0] for i in range(12)]
+    anchors = [prefix_chain(messages)[-1] for messages in branches]
     records = await store.replay.read(digest("tenant\0alice\0chat"), digest("review"), anchors)
     assert 0 < sum(value["tokens"] for value in records.values()) <= 160
     other.store.close()

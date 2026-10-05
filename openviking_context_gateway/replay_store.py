@@ -8,7 +8,8 @@ import orjson
 
 from .records import RecordKind as K
 
-SHARED = {K.INJECTION, K.HIDDEN}
+# Records that rewrite a history prefix belong to every session sharing that prefix.
+SHARED = {K.INJECTION, K.HIDDEN, K.REPLACEMENT}
 
 
 class ReplayStore(Protocol):

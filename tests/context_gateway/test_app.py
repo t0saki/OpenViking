@@ -108,7 +108,7 @@ async def test_recorded_client_disabled_passthrough(running_gateway, client_name
     await client.put(
         "/admin/policies/off",
         headers=admin,
-        json={"name": "Off", "recall": False, "capture": False, "takeover": False},
+        json={"name": "Off", "recall": False, "capture": False, "compaction": False},
     )
     minted = await client.post(
         "/admin/keys",
@@ -138,7 +138,7 @@ async def test_raw_passthrough_errors_sse_and_large_numbers(running_gateway):
     await client.put(
         "/admin/policies/off",
         headers=admin,
-        json={"name": "Off", "recall": False, "capture": False, "takeover": False},
+        json={"name": "Off", "recall": False, "capture": False, "compaction": False},
     )
     raw = b'{ "model":"model", "messages":[{"role":"user","content":"hi"}], "arg":922337203685477580922 }'
     response = await client.post("/v1/chat/completions", headers=headers, content=raw)
@@ -201,7 +201,13 @@ async def enable_tools(client, admin, **policy):
     response = await client.put(
         "/admin/policies/default",
         headers=admin,
-        json={"name": "Tools", "gateway_tools": True, "recall": False, "takeover": False, **policy},
+        json={
+            "name": "Tools",
+            "gateway_tools": True,
+            "recall": False,
+            "compaction": False,
+            **policy,
+        },
     )
     assert response.status_code == 200, response.text
 
@@ -1085,6 +1091,10 @@ async def test_profiles_with_retired_tool_fields_still_save(running_gateway):
             "gateway_tools": True,
             "allow_write_tools": True,
             "tool_allowlist": ["search"],
+            "takeover": True,
+            "takeover_tokens": 30000,
+            "keep_recent_turns": 3,
+            "archive_wait_seconds": 30,
             "id": "old",
             "revision": 3,
         },
@@ -1092,4 +1102,7 @@ async def test_profiles_with_retired_tool_fields_still_save(running_gateway):
     assert response.status_code == 200, response.text
     saved = response.json()
     assert saved["gateway_tools"] and saved["disabled_tools"] == []
-    assert not {"allow_write_tools", "tool_allowlist"} & saved.keys()
+    assert (
+        not {"allow_write_tools", "tool_allowlist", "takeover", "keep_recent_turns"} & saved.keys()
+    )
+    assert saved["compaction"] and saved["summary_max_tokens"] == 8000

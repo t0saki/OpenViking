@@ -22,12 +22,22 @@ StreamEvent = dict | None
 # One rendered notice line, with the blank lines that separate it. Capture
 # strips exactly these lines, so this pattern must follow notice_head/tail.
 NOTICE = re.compile(r"^> OpenViking \w+(?:: [^\n]+)? — (?:done|failed|skipped)$\n*", re.M)
+# Reasoning counts against these output caps, so a summary needs room beyond its own text.
+SUMMARY_HEADROOM = 16000
 
 
 class ToolLoopError(Exception):
     def __init__(self, reason, status=502, content=None, headers=None):
         super().__init__(reason)
         self.status, self.content, self.headers = status, content, headers or {}
+
+
+class SummaryError(Exception):
+    """A summary request that produced no usable summary; ``reason`` becomes a metric."""
+
+    def __init__(self, reason):
+        super().__init__(reason)
+        self.reason = reason
 
 
 def merge_delta(target, delta):
@@ -161,6 +171,26 @@ class ToolProtocol(ABC):
     def omit_hidden_history(messages: list[dict]) -> list[dict]:
         """Drop what cannot be used without the omitted tool history."""
         return strip_notices(messages)
+
+    @classmethod
+    def summary_request(
+        cls, body: dict, messages: list[dict], instruction: str, max_tokens: int
+    ) -> dict:
+        """Ask for a summary of ``messages`` without streaming.
+
+        System, tools and reasoning settings stay as the client sent them, so
+        the upstream can reuse its cached prefix.
+        """
+        return {
+            **body,
+            cls.field: [*messages, {"role": "user", "content": instruction}],
+            "stream": False,
+        }
+
+    @staticmethod
+    @abstractmethod
+    def summary_text(response: dict) -> str:
+        """Return the reply's text; raise SummaryError for tool calls or a cut-off reply."""
 
     def begin(self) -> None:
         self.output, self.calls, self.usage, self.envelope = [], [], {}, {}

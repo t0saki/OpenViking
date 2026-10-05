@@ -12,7 +12,9 @@ from openviking_context_gateway.capture import CaptureWorker
 from openviking_context_gateway.capture_store import Document, LeaseLost
 from openviking_context_gateway.kernel import MemoryKernel
 from openviking_context_gateway.models import Policy
+from openviking_context_gateway.protocols import ResponseCapture
 from openviking_context_gateway.records import RecordKind as K
+from openviking_context_gateway.replay_store import SHARED
 from openviking_context_gateway.storage import ManagementStore, digest
 
 
@@ -28,7 +30,7 @@ class KVReplay:
         }
 
     async def put(self, scope, session, kind, anchor, value):
-        owner = "*" if kind in {K.INJECTION, K.HIDDEN} else session
+        owner = "*" if kind in SHARED else session
         return copy.deepcopy(
             self.values.setdefault((scope, owner, kind, anchor), copy.deepcopy(value))
         )
@@ -119,13 +121,29 @@ async def test_kernel_and_capture_work_with_kv_ports(credential, protocol):
             pass
 
     worker = CaptureWorker(ports, Management(), viking)
-    policy = Policy(commit_tokens=1, keep_recent_messages=0).model_dump()
+    policy = Policy(commit_tokens=1, keep_recent_messages=0, context_window=1024).model_dump()
     field = "input" if protocol == "responses" else "messages"
     messages = [
         {"role": "user", "content": "How do I deploy?"},
         {"role": "assistant", "content": "Blue cluster"},
         {"role": "user", "content": "What next?"},
     ]
+    summary = {
+        "chat": {"choices": [{"message": {"content": "Deploy blue"}, "finish_reason": "stop"}]},
+        "anthropic": {
+            "content": [{"type": "text", "text": "Deploy blue"}],
+            "stop_reason": "end_turn",
+        },
+        "responses": {
+            "status": "completed",
+            "output": [
+                {"type": "message", "content": [{"type": "output_text", "text": "Deploy blue"}]}
+            ],
+        },
+    }[protocol]
+
+    async def summarize(prepared, body):
+        return summary
 
     async def prepare(session="client"):
         return await kernel.prepare(
@@ -135,18 +153,30 @@ async def test_kernel_and_capture_work_with_kv_ports(credential, protocol):
             credential,
             {"id": "upstream"},
             policy,
+            summarize=summarize,
         )
 
     p = await prepare()
     assert await worker.once()  # append and commit
-    assert await worker.once()  # observe the archive
-    assert len(viking.commits) == 1
+    await kernel.completed(
+        p,
+        credential,
+        ResponseCapture(
+            protocol, {"role": "assistant", "content": "Ok"}, usage={"input_tokens": 1000}
+        ),
+    )
+    messages += [{"role": "assistant", "content": "Ok"}, {"role": "user", "content": "And then?"}]
+    compacted = await prepare()
+    assert compacted.metrics["compaction_tokens"] > 0
+    # Another kernel and another session sharing the prefix replay the same cut.
     kernel = MemoryKernel(ports, viking)
-    again = await prepare()
-    assert again.capture_target == p.capture_target
     fork = await prepare("fork")
+    assert fork.body[field][0]["content"].startswith(
+        '<openviking-context source="gateway-compaction">'
+    )
+    assert fork.body[field][1:] == compacted.body[field][1:]
     assert fork.capture_target != p.capture_target
-    await worker.once()
+    assert await worker.once() and await worker.once()
     assert len(set(viking.write_sessions)) == 2
     assert set(K) == {K.ROOT, K.INJECTION, K.DISABLED, K.HIDDEN, K.REPLACEMENT}
 

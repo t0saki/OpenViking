@@ -712,9 +712,7 @@ async def test_native_text_streams_before_round_finishes_and_cancel_closes(proto
 async def test_native_replay_survives_restart_edits_and_archive_boundary(
     setup_kernel, credential, policy, protocol
 ):
-    from openviking_context_gateway.blocks import block as context_block
-    from openviking_context_gateway.blocks import gateway_note
-    from openviking_context_gateway.models import Policy
+    from openviking_context_gateway.compaction import apply_cut
     from openviking_context_gateway.storage import SQLiteKernelStore
     from openviking_context_gateway.tool_protocols import hidden_chain, replay_hidden
 
@@ -753,19 +751,16 @@ async def test_native_replay_survives_restart_edits_and_archive_boundary(
                 block["text"] = "edited answer"
         branch = await kernel.prepare(edited, protocol, header, credential, {"id": "u"}, policy)
         assert branch.body[field] == [first.body[field][0], *edited[field][1:]]
-        # The archived anchor is the endpoint of the visible span, never a
-        # native hidden transcript index. An old record cannot expand the summary.
+        # The cut anchor is the endpoint of the visible span, never a native
+        # hidden transcript index. An old record cannot expand the summary.
         restored.body[field] = copy.deepcopy(body[field])
         restored.body_chain = hidden_chain(body[field], protocol)
-        restored.records["replacement", anchor] = {"text": "Archived context"}
-        archive_policy = Policy(keep_recent_turns=1)
-        assert kernel.replace_archive(restored, archive_policy)
+        restored.records["replacement", anchor] = {"source": "compaction", "text": "Archived"}
+        apply_cut(restored)
         replay = replay_hidden(
             restored.body[field], restored.body_chain, restored.records, protocol
         )
-        note = gateway_note(archive_policy, restored.root["tools"])
-        summary = "Archived context\n\n" + context_block("gateway-session-start", note)
-        assert replay == [{"role": "user", "content": summary}, body[field][-1]]
+        assert replay == [{"role": "user", "content": "Archived"}, body[field][-1]]
     finally:
         reopened.close()
         kernel.store = store
@@ -807,7 +802,7 @@ async def test_responses_notice_removal_follows_injection_replay_and_archive_cut
     from openviking_context_gateway.tool_protocols import hidden_chain
 
     kernel, store, viking, _ = setup_kernel
-    policy.update(gateway_tools=True, capture=False, keep_recent_turns=1)
+    policy.update(gateway_tools=True, capture=False)
     header = {"x-openviking-session": "notice-order"}
     upstream = {"id": "u"}
     body = {"store": False, "input": [{"role": "user", "content": "Deploy to blue?"}]}
@@ -836,7 +831,11 @@ async def test_responses_notice_removal_follows_injection_replay_and_archive_cut
     )
     if archive:
         await store.replay.put(
-            first.scope, first.session, "replacement", anchor, {"text": "Archived deployment."}
+            first.scope,
+            first.session,
+            "replacement",
+            anchor,
+            {"source": "compaction", "text": "Archived deployment.", "tokens": 5},
         )
     viking.entries.append({"uri": "viking://user/alice/memories/next.md", "text": "Then verify."})
     upstream["allow_gateway_tools"] = False

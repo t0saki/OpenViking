@@ -5,8 +5,16 @@
 import copy
 import uuid
 
-from ..protocols import messages_of
-from .common import PREFIX, ToolLoopError, ToolProtocol, ToolRound, call
+from ..protocols import messages_of, text_content
+from .common import (
+    PREFIX,
+    SUMMARY_HEADROOM,
+    SummaryError,
+    ToolLoopError,
+    ToolProtocol,
+    ToolRound,
+    call,
+)
 
 CLIENT_CALLS = {"function_call", "custom_tool_call"}
 
@@ -31,6 +39,23 @@ class ResponsesProtocol(ToolProtocol):
         body["include"] = list(
             dict.fromkeys([*body.get("include", []), "reasoning.encrypted_content"])
         )
+
+    @classmethod
+    def summary_request(cls, body, messages, instruction, max_tokens):
+        request = super().summary_request(body, messages, instruction, max_tokens)
+        request["max_output_tokens"] = max_tokens + (
+            SUMMARY_HEADROOM if body.get("reasoning") else 0
+        )
+        return request
+
+    @staticmethod
+    def summary_text(response):
+        output = response.get("output") or []
+        if any(item.get("type") in CLIENT_CALLS for item in output):
+            raise SummaryError("summary_tool_call")
+        if response.get("status") != "completed":
+            raise SummaryError("summary_incomplete")
+        return "\n".join(text_content(item) for item in output if item.get("type") == "message")
 
     def __init__(self, body):
         super().__init__(body)

@@ -19,6 +19,7 @@ from .protocols import ResponseCapture, SSEDecoder, enhanced_supported, parse_bo
 from .storage import digest
 from .tool_executor import ToolExecutor
 from .tool_loop import HiddenToolLoop, ToolLoopError
+from .tool_protocols.common import SummaryError
 from .vendors import ARK_PATHS, ARK_VENDORS, apply_vendor, ark_url
 
 logger = logging.getLogger(__name__)
@@ -92,6 +93,11 @@ def upstream_headers(upstream, incoming):
     return headers
 
 
+def check_coding_plan(upstream):
+    if upstream.get("coding_plan") and not upstream.get("allow_coding_plan"):
+        raise HTTPException(403, "Coding Plan upstreams are disabled; configure a model API key")
+
+
 def matches(upstream, protocol, model):
     return (
         upstream.get("enabled", True)
@@ -138,9 +144,7 @@ class ProxyRequest:
         await self.prepare()
         if self.body != original:
             self.raw = await asyncio.to_thread(orjson.dumps, self.body)
-        self.target = upstream_url(self.upstream, self.path)
-        if self.request.url.query:
-            self.target += "?" + self.request.url.query
+        self.target = self.url(self.upstream)
         self.headers = upstream_headers(self.upstream, self.request.headers)
         if self.raw:
             self.headers.setdefault("content-type", "application/json")
@@ -226,24 +230,53 @@ class ProxyRequest:
                 policy,
                 self.path.endswith("count_tokens"),
                 self.candidates,
+                self.summarize,
             )
             self.metrics.update(metrics)
             if self.prepared:
                 self.upstream = self.prepared.upstream
         elif self.raw and self.body is None:
             self.metrics["degradation"] = "unsafe_json"
-        if self.upstream.get("coding_plan") and not self.upstream.get("allow_coding_plan"):
-            raise HTTPException(
-                403, "Coding Plan upstreams are disabled; configure a model API key"
-            )
+        check_coding_plan(self.upstream)
         if self.body:
-            self.body = await apply_vendor(self.body, self.upstream, self.prepared, self.store)
-            mapped = self.upstream.get("aliases", {}).get(self.model)
-            if mapped:
-                self.body = {**self.body, "model": mapped}
+            self.body = await self.outgoing(self.body, self.upstream, self.prepared)
             if self.prepared:
                 self.prepared.body = self.body
                 self.metrics.update(self.prepared.metrics)
+
+    def url(self, upstream):
+        target = upstream_url(upstream, self.path)
+        return target + "?" + self.request.url.query if self.request.url.query else target
+
+    async def outgoing(self, body, upstream, prepared):
+        """Vendor fields and the model alias, for the client request and its summary."""
+        body = await apply_vendor(body, upstream, prepared, self.store)
+        mapped = upstream.get("aliases", {}).get(self.model)
+        return {**body, "model": mapped} if mapped else body
+
+    async def summarize(self, prepared, body):
+        """Send the kernel's summary request to the session's upstream and parse the reply."""
+        upstream = prepared.upstream
+        try:
+            check_coding_plan(upstream)
+            headers = upstream_headers(upstream, self.request.headers)
+        except HTTPException as error:
+            raise SummaryError(f"summary_http_{error.status_code}") from error
+        headers.setdefault("content-type", "application/json")
+        body = await self.outgoing(body, upstream, prepared)
+        try:
+            async with self.app.state.http.post(
+                self.url(upstream),
+                data=orjson.dumps(body),
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=self.config.upstream_timeout_seconds),
+                allow_redirects=False,
+            ) as response:
+                if response.status >= 300:
+                    raise SummaryError(f"summary_http_{response.status}")
+                return orjson.loads(await response.read())
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as error:
+            raise SummaryError("summary_unavailable") from error
 
     async def finish(self):
         self.metrics.update(self.capture.usage or {})

@@ -4,8 +4,16 @@
 
 import copy
 
-from ..protocols import prefix_chain
-from .common import ToolLoopError, ToolProtocol, ToolRound, merge_delta, sse
+from ..protocols import prefix_chain, text_content
+from .common import (
+    SUMMARY_HEADROOM,
+    SummaryError,
+    ToolLoopError,
+    ToolProtocol,
+    ToolRound,
+    merge_delta,
+    sse,
+)
 
 
 class ChatProtocol(ToolProtocol):
@@ -36,6 +44,24 @@ class ChatProtocol(ToolProtocol):
                 }
             canonical.append(message)
         return prefix_chain(canonical)
+
+    @classmethod
+    def summary_request(cls, body, messages, instruction, max_tokens):
+        request = super().summary_request(body, messages, instruction, max_tokens)
+        request.pop("stream_options", None)
+        cap = "max_completion_tokens" if "max_completion_tokens" in body else "max_tokens"
+        request[cap] = max_tokens + (SUMMARY_HEADROOM if body.get("reasoning_effort") else 0)
+        return request
+
+    @staticmethod
+    def summary_text(response):
+        choice = (response.get("choices") or [{}])[0]
+        message = choice.get("message") or {}
+        if message.get("tool_calls"):
+            raise SummaryError("summary_tool_call")
+        if choice.get("finish_reason") != "stop":
+            raise SummaryError("summary_incomplete")
+        return text_content(message)
 
     def __init__(self, body):
         super().__init__(body)

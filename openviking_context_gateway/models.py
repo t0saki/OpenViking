@@ -30,12 +30,11 @@ class Policy(BaseModel):
     commit_tokens: int = Field(default=20000, ge=1)
     keep_recent_messages: int = Field(default=10, ge=0, le=1000)
     idle_seconds: float = Field(default=600, ge=1)
-    takeover: bool = True
-    takeover_tokens: int = Field(default=30000, ge=1)
-    keep_recent_turns: int = Field(default=3, ge=1, le=100)
-    # Optional fallback for deployments serving one known model.
+    compaction: bool = True
+    compaction_threshold: float = Field(default=0.9, ge=0.5, le=0.98)
+    summary_max_tokens: int = Field(default=8000, ge=1000, le=32000)
+    # Fallback when the upstream lists no window for the model; 1M is assumed when unset.
     context_window: int | None = Field(default=None, ge=1024)
-    archive_wait_seconds: float = Field(default=30, ge=0, le=60)
     gateway_tools: bool = False
     disabled_tools: list[str] = Field(default_factory=list)
     tool_max_rounds: int = Field(default=5, ge=1, le=20)
@@ -50,7 +49,16 @@ class Policy(BaseModel):
     def migrate(cls, value):
         """Drop storage metadata and retired fields that saved policies may still carry."""
         if isinstance(value, dict):
-            obsolete = {"allow_write_tools", "tool_allowlist", "id", "revision"}
+            obsolete = {
+                "allow_write_tools",
+                "tool_allowlist",
+                "takeover",
+                "takeover_tokens",
+                "keep_recent_turns",
+                "archive_wait_seconds",
+                "id",
+                "revision",
+            }
             return {key: item for key, item in value.items() if key not in obsolete}
         return value
 

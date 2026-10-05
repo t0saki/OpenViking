@@ -1,6 +1,6 @@
 # Copyright (c) 2026 Beijing Volcano Engine Technology Co., Ltd.
 # SPDX-License-Identifier: AGPL-3.0
-"""Framework-independent recall, immutable replay and capture orchestration."""
+"""Framework-independent recall, immutable replay, compaction and capture orchestration."""
 
 import asyncio
 import logging
@@ -10,11 +10,21 @@ from dataclasses import dataclass, field
 
 import orjson
 
-from .archives import POLL_SECONDS
-from .blocks import block, gateway_note, token_estimate
-from .capture import CapturePipeline
+from .blocks import block, gateway_note, history_hint, token_estimate
+from .capture import CapturePipeline, lineage
 from .capture_store import Document
 from .client import VikingError
+from .compaction import (
+    BACKOFF_SECONDS,
+    INSTRUCTION,
+    active_cut,
+    apply_cut,
+    cut_point,
+    estimate,
+    opening_block,
+    replacement_text,
+    window_size,
+)
 from .models import Policy
 from .profile import build_profile
 from .protocols import (
@@ -35,6 +45,7 @@ from .state_store import get_state
 from .storage import KernelStore, digest
 from .tool_catalog import TOOL_VERSION, select_tools, tool_block_reason
 from .tool_protocols import hidden_chain, replay_hidden, tool_protocol
+from .tool_protocols.common import SummaryError
 from .vendors import parameter_fingerprint
 
 logger = logging.getLogger(__name__)
@@ -65,6 +76,9 @@ class Prepared:
     tools_active: bool = False
     hidden_history_unavailable: bool = False
     upstream: dict = field(default_factory=dict)
+    # The estimated current context and the window it is measured against.
+    context_tokens: int = 0
+    context_window: int = 0
 
 
 class MemoryKernel:
@@ -125,8 +139,18 @@ class MemoryKernel:
         return scope, sid, anonymous, chain, body_chain
 
     async def prepare(
-        self, body, protocol, headers, credential, upstream, policy, counting=False, upstreams=()
+        self,
+        body,
+        protocol,
+        headers,
+        credential,
+        upstream,
+        policy,
+        counting=False,
+        upstreams=(),
+        summarize=None,
     ):
+        """Build the upstream body; ``summarize(prepared, body)`` sends a summary request."""
         messages = messages_of(body, protocol)
         if not isinstance(messages, list) or not all(isinstance(m, dict) for m in messages):
             raise ValueError("invalid message list")
@@ -199,16 +223,17 @@ class MemoryKernel:
                 await self.recall(prepared, credential, policy)
             if policy.capture and kind == "user" and anchor >= 0:
                 await CapturePipeline(self.store.capture).confirm(prepared, credential, policy)
-        await self.takeover(prepared, policy)
-        if prepared.tools_active:
-            result[field] = replay_hidden(result[field], prepared.body_chain, records, protocol)
-            if prepared.strip_replayed_thinking:
-                result[field] = strip_thinking(result[field])
-        elif prepared.hidden_history_unavailable:
-            cleaned = tool_protocol(protocol).omit_hidden_history(result[field])
-            if cleaned != result[field]:
-                result[field] = cleaned
-                prepared.metrics.setdefault("degradation", "hidden_tool_history_unavailable")
+        before = list(result[field]), prepared.body_chain
+        self.assemble(prepared)
+        if kind in {"user", "continuation"}:
+            await self.measure(prepared, policy)
+            if (
+                summarize
+                and policy.compaction
+                and not disabled
+                and prepared.context_tokens >= policy.compaction_threshold * prepared.context_window
+            ):
+                await self.compact(prepared, credential, policy, summarize, before)
         if isinstance(body.get("input"), str) and result.get("input") == messages:
             result["input"] = body["input"]
         return prepared
@@ -289,13 +314,15 @@ class MemoryKernel:
         messages = request.body[field]
         missing = False
         sent = set(request.observation.value.get("sent", []))
+        # A cut removes the messages up to it, together with any lost injection.
+        cut = active_cut(request)
         for index, anchor in enumerate(request.chain):
             decision = request.records.get((K.INJECTION, anchor))
             if decision is not None:
                 if decision["text"]:
                     append_context(messages[index], decision["text"], request.protocol)
                 request.metrics["replay_hits"] += 1
-            elif anchor in sent:
+            elif anchor in sent and index > cut:
                 missing = True
         reason = ""
         if request.upstream["id"] != request.root["upstream_id"]:
@@ -311,9 +338,16 @@ class MemoryKernel:
 
     async def recall(self, request, credential, policy):
         started = time.monotonic()
-        existing = [v for (kind, _), v in request.records.items() if kind == K.INJECTION]
-        used = sum(v.get("tokens", 0) for v in existing)
-        exclude = list(dict.fromkeys(u for v in existing for u in v.get("uris", [])))
+        existing = [
+            (index, request.records[K.INJECTION, anchor])
+            for index, anchor in enumerate(request.chain)
+            if (K.INJECTION, anchor) in request.records
+        ]
+        # The budget is per context window: a cut frees the recall it replaced.
+        cut = active_cut(request)
+        current = [value for index, value in existing if index > cut]
+        used = sum(v.get("tokens", 0) for v in current)
+        exclude = list(dict.fromkeys(u for v in current for u in v.get("uris", [])))
         budget = min(policy.max_tokens, policy.session_max_tokens - used)
         query = clean_text(unwrap_client(text_content(request.messages[request.anchor])))[
             : policy.query_max_chars
@@ -321,7 +355,16 @@ class MemoryKernel:
         decision = {"text": "", "uris": [], "tokens": 0, "reason": "disabled"}
         reserved = False
         if policy.recall and budget >= 64 and len(query) >= 3:
-            budget = await self.reserve_recall(request, policy, used)
+            # The window starts at the cut, or at the history's first user message.
+            if cut >= 0:
+                window = request.capture_chain[cut]
+            else:
+                window = next(
+                    a
+                    for m, a in zip(request.messages, request.capture_chain, strict=True)
+                    if is_user(m)
+                )
+            budget = await self.reserve_recall(request, policy, used, window)
             reserved = budget > 0
         tools = request.root["tools"]
         lead = "Relevant memory from OpenViking."
@@ -358,10 +401,14 @@ class MemoryKernel:
                 return ""
             profile = await build_profile(self.viking, credential["openviking_key"], policy, tools)
             request.metrics["profile_reason"] = profile["reason"]
+            # After client-side compaction, the capture document still names the earlier sessions.
+            hint = history_hint(
+                credential["user_id"], lineage(request.capture.value), tools, policy.capture
+            )
             return block(
                 "gateway-session-start",
                 "\n\n".join(
-                    part for part in (gateway_note(policy, tools), profile["text"]) if part
+                    part for part in (gateway_note(policy, tools), hint, profile["text"]) if part
                 ),
             )
 
@@ -384,16 +431,19 @@ class MemoryKernel:
             recall_reason=decision["reason"],
         )
 
-    async def reserve_recall(self, request, policy, used):
+    async def reserve_recall(self, request, policy, used, window):
         """Reserve a bounded allowance before recall; only this document uses CAS.
 
         A crash can leave a conservative reservation, never overspend the cap.
         Competing requests for the same anchor share its reservation and the
-        immutable decision; settling it twice cannot refund twice.
+        immutable decision; settling it twice cannot refund twice. A ledger for
+        another context window starts over from the records in this one.
         """
         anchor, old = request.chain[request.anchor], request.observation
         while True:
-            ledger = old.value.get("recall", {"spent": used, "pending": {}})
+            ledger = old.value.get("recall", {})
+            if ledger.get("window") != window:
+                ledger = {"window": window, "spent": used, "pending": {}}
             if anchor in ledger["pending"]:
                 request.observation = old
                 return ledger["pending"][anchor]
@@ -403,6 +453,7 @@ class MemoryKernel:
             value = {
                 **old.value,
                 "recall": {
+                    "window": window,
                     "spent": ledger["spent"] + budget,
                     "pending": {**ledger["pending"], anchor: budget},
                 },
@@ -420,7 +471,11 @@ class MemoryKernel:
             reserved = pending.pop(anchor)
             value = {
                 **old.value,
-                "recall": {"spent": ledger["spent"] - reserved + tokens, "pending": pending},
+                "recall": {
+                    **ledger,
+                    "spent": ledger["spent"] - reserved + tokens,
+                    "pending": pending,
+                },
             }
             if await self.store.state.swap(request.scope, request.session, old, value):
                 request.observation = Document(value, old.version + 1)
@@ -434,44 +489,41 @@ class MemoryKernel:
             for (k, a), v in request.records.items()
             if k == K.INJECTION and v.get("text") and a in chain
         ]
-        usage = {
-            **(response.context_usage or response.usage or {}),
-            "model": request.body.get("model", ""),
-            "upstream_id": request.upstream.get("id"),
-            "time": time.time(),
-        }
-        old = request.observation
-        while True:
-            value = dict(old.value)
-            if response.usage and usage["time"] >= old.value.get("usage", {}).get("time", 0):
-                value["usage"] = usage
-            if sent:
-                value["sent"] = list(dict.fromkeys([*old.value.get("sent", []), *sent]))
-            if value == old.value:
-                break
-            if await self.store.state.swap(request.scope, request.session, old, value):
-                break
-            old = await get_state(self.store.state, request.scope, request.session)
-        if (
-            request.anonymous
-            and response.complete
-            and response.message
-            and request.kind in {"user", "continuation"}
-        ):
+        endpoint = ""
+        if response.message and request.kind in {"user", "continuation"}:
             returned = [*request.messages, *(response.output_items or [response.message])]
             endpoint = (await asyncio.to_thread(hidden_chain, returned, request.protocol))[-1]
-            if endpoint:
-                key = "prefix:" + endpoint
+        # The next request measures its context from this usage while the reply stays in it.
+        usage = {
+            **(response.context_usage or response.usage or {}),
+            "anchor": endpoint,
+            "time": time.time(),
+        }
+
+        def observe(value):
+            if (
+                response.usage
+                and endpoint
+                and usage["time"] >= value.get("usage", {}).get("time", 0)
+            ):
+                value["usage"] = usage
+            if sent:
+                value["sent"] = list(dict.fromkeys([*value.get("sent", []), *sent]))
+            return value
+
+        await self.update_observation(request, observe)
+        if request.anonymous and response.complete and endpoint:
+            key = "prefix:" + endpoint
+            old = await get_state(self.store.state, request.scope, key)
+            while True:
+                owners = old.value.get("owners", [])
+                if request.session in owners or len(owners) >= 2:
+                    break
+                if await self.store.state.swap(
+                    request.scope, key, old, {"owners": [*owners, request.session]}
+                ):
+                    break
                 old = await get_state(self.store.state, request.scope, key)
-                while True:
-                    owners = old.value.get("owners", [])
-                    if request.session in owners or len(owners) >= 2:
-                        break
-                    if await self.store.state.swap(
-                        request.scope, key, old, {"owners": [*owners, request.session]}
-                    ):
-                        break
-                    old = await get_state(self.store.state, request.scope, key)
         if (
             request.disabled
             or request.kind not in {"user", "continuation"}
@@ -484,73 +536,117 @@ class MemoryKernel:
         if policy.capture:
             await CapturePipeline(self.store.capture).stage(request, response, policy)
 
-    async def takeover(self, request, policy):
-        if self.replace_archive(request, policy):
-            return
-        usage = request.observation.value.get("usage", {})
-        model = request.body.get("model", "")
-        resolved = request.upstream.get("aliases", {}).get(model, model)
-        window = request.upstream.get("context_windows", {}).get(resolved, policy.context_window)
-        archive = request.capture.value.get("archive")
-        if not (
-            policy.takeover
-            and policy.capture
-            and not request.disabled
-            and window
-            and archive
-            and archive["status"] == "pending"
-            and not request.capture.value.get("error")
-            and request.capture.value.get("tokens", 0) >= policy.takeover_tokens
-            and self.eligible(request, archive["boundary"], policy)
-            and usage.get("model") in {model, resolved}
-            and usage.get("upstream_id") == request.upstream.get("id")
-            and usage.get("input_tokens", 0) + usage.get("output_tokens", 0) >= window * 0.9
-        ):
-            return
-        deadline = time.monotonic() + policy.archive_wait_seconds
-        while time.monotonic() < deadline:
-            await asyncio.sleep(min(POLL_SECONDS, deadline - time.monotonic()))
-            request.records, _, request.capture = await self.store.load(
-                request.scope, request.session, ["", *request.chain, *request.capture_chain]
-            )
-            if self.replace_archive(request, policy):
-                return
-            current = request.capture.value.get("archive")
-            if not current or current["status"] != "pending" or request.capture.value.get("error"):
-                return
-        request.metrics["degradation"] = "archive_wait_timeout"
-
     @staticmethod
-    def eligible(request, anchor, policy):
-        if anchor not in request.capture_chain:
-            return False
-        index = request.capture_chain.index(anchor)
-        return sum(is_user(m) for m in request.messages[index + 1 :]) >= policy.keep_recent_turns
+    def assemble(request):
+        """Apply the latest cut, then expand or drop hidden tool history."""
+        apply_cut(request)
+        adapter = tool_protocol(request.protocol)
+        messages = request.body[adapter.field]
+        if request.tools_active:
+            messages = replay_hidden(
+                messages, request.body_chain, request.records, request.protocol
+            )
+            if request.strip_replayed_thinking:
+                messages = strip_thinking(messages)
+        elif request.hidden_history_unavailable:
+            cleaned = adapter.omit_hidden_history(messages)
+            if cleaned != messages:
+                messages = cleaned
+                request.metrics.setdefault("degradation", "hidden_tool_history_unavailable")
+        request.body[adapter.field] = messages
 
-    def replace_archive(self, request, policy):
-        for index in range(len(request.capture_chain) - 1, -1, -1):
-            anchor = request.capture_chain[index]
-            replacement = request.records.get((K.REPLACEMENT, anchor))
-            if replacement is None or not self.eligible(request, anchor, policy):
-                continue
-            field = tool_protocol(request.protocol).field
-            prefix = [
-                m
-                for m in request.body[field][: index + 1]
-                if m.get("role") in {"system", "developer"}
-            ]
-            # The summary replaces the message that carried the opening note.
-            text = replacement["text"]
-            note = gateway_note(policy, request.root["tools"])
-            if note:
-                text += "\n\n" + block("gateway-session-start", note)
-            request.strip_replayed_thinking = True
-            request.body_chain = [""] * (len(prefix) + 1) + request.body_chain[index + 1 :]
-            request.body[field] = [
-                *prefix,
-                {"role": "user", "content": text},
-                *strip_thinking(request.body[field][index + 1 :]),
-            ]
-            request.metrics["archive_replayed"] = anchor
-            return True
-        return False
+    async def measure(self, request, policy):
+        """Estimate the context: the last reply's usage plus what the client added after it.
+
+        Usage counts only when its reply is still in this history after the latest
+        cut, so usage from subagents, other branches or before a cut is ignored.
+        """
+        usage = request.observation.value.get("usage", {})
+        anchor, chain = usage.get("anchor"), request.capture_chain
+        index = chain.index(anchor) if anchor and anchor in chain else -1
+        if index > active_cut(request):
+            tokens = usage.get("input_tokens", 0) + usage.get("output_tokens", 0)
+            tokens += await asyncio.to_thread(estimate, request.messages[index + 1 :])
+        else:
+            tokens = await asyncio.to_thread(estimate, request.body)
+        request.context_tokens = tokens
+        request.context_window = window_size(request, policy)
+        request.metrics.update(context_tokens=tokens, context_window=request.context_window)
+
+    async def compact(self, request, credential, policy, summarize, before):
+        """Replace the history before a new cut with a model-written summary.
+
+        The summary covers only what the cut replaces, so every branch sharing that
+        prefix can reuse the record. Failures forward the full history and back off.
+        """
+        failed_at = request.observation.value.get("compaction", {}).get("failed_at", 0)
+        cut = cut_point(request)
+        if cut <= active_cut(request) or time.time() - failed_at < BACKOFF_SECONDS:
+            return
+        adapter = tool_protocol(request.protocol)
+        messages, kept = request.body[adapter.field], before[0][cut + 1 :]
+        span = messages[: len(messages) - len(kept)]
+        started = time.monotonic()
+        try:
+            # Messages after the cut are new client input that hidden history never expands.
+            if messages[len(span) :] != kept:
+                raise SummaryError("cut_not_found")
+            instruction = INSTRUCTION.format(tokens=policy.summary_max_tokens)
+            response = await summarize(
+                request,
+                adapter.summary_request(request.body, span, instruction, policy.summary_max_tokens),
+            )
+            summary = adapter.summary_text(response).strip()
+            if not summary:
+                raise SummaryError("summary_empty")
+        except SummaryError as error:
+            await self.compaction_failed(request, error.reason)
+            return
+        except Exception:
+            logger.exception("Context Gateway summary failed")
+            await self.compaction_failed(request, "summary_failed")
+            return
+        capture = request.capture.value
+        # The replaced part is queued for the current session even if none of it arrived yet.
+        sessions = (
+            list(dict.fromkeys([capture["ov_session"], *lineage(capture)])) if capture else []
+        )
+        hint = history_hint(credential["user_id"], sessions, request.root["tools"], policy.capture)
+        text = replacement_text(summary, hint, opening_block(request.records, request.chain))
+        anchor = request.capture_chain[cut]
+        # A concurrent request may have written this cut first; its text wins.
+        record = await self.store.replay.put(
+            request.scope,
+            request.session,
+            K.REPLACEMENT,
+            anchor,
+            {"source": "compaction", "text": text, "tokens": token_estimate(text)},
+        )
+        request.records[K.REPLACEMENT, anchor] = record
+        if policy.capture and request.kind == "continuation":
+            await CapturePipeline(self.store.capture).confirm_cut(request, anchor)
+        request.body[adapter.field], request.body_chain = list(before[0]), before[1]
+        self.assemble(request)
+        request.metrics.update(
+            compaction_tokens=record["tokens"],
+            compaction_ms=round((time.monotonic() - started) * 1000, 2),
+        )
+        # Later readers see the compacted context; the metric keeps the estimate that triggered it.
+        request.context_tokens = await asyncio.to_thread(estimate, request.body)
+
+    async def compaction_failed(self, request, reason):
+        request.metrics["compaction_failed"] = reason
+        failure = {"failed_at": time.time(), "reason": reason}
+        await self.update_observation(request, lambda value: {**value, "compaction": failure})
+
+    async def update_observation(self, request, change):
+        """Apply ``change`` to the session's observation document, retrying on conflicts."""
+        old = request.observation
+        while True:
+            value = change(dict(old.value))
+            if value == old.value:
+                return
+            if await self.store.state.swap(request.scope, request.session, old, value):
+                request.observation = Document(value, old.version + 1)
+                return
+            old = await get_state(self.store.state, request.scope, request.session)
