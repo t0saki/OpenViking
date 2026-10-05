@@ -119,7 +119,7 @@ async def test_kernel_and_capture_work_with_kv_ports(credential, protocol):
             pass
 
     worker = CaptureWorker(ports, Management(), viking)
-    policy = Policy(takeover_tokens=1, keep_recent_turns=1).model_dump()
+    policy = Policy(commit_tokens=1, keep_recent_messages=0).model_dump()
     field = "input" if protocol == "responses" else "messages"
     messages = [
         {"role": "user", "content": "How do I deploy?"},
@@ -139,15 +139,11 @@ async def test_kernel_and_capture_work_with_kv_ports(credential, protocol):
 
     p = await prepare()
     assert await worker.once()  # append and commit
-    assert await worker.once()  # observe and publish summary
+    assert await worker.once()  # observe the archive
+    assert len(viking.commits) == 1
     kernel = MemoryKernel(ports, viking)
     again = await prepare()
-    assert again.body[field][0]["content"].startswith(
-        "[OpenViking Session Context]\nThe OpenViking Context Gateway replaced the earlier part "
-        "of this conversation with this summary.\n\n"
-        + viking.summary
-        + '\n\n<openviking-context source="gateway-session-start">'
-    )
+    assert again.capture_target == p.capture_target
     fork = await prepare("fork")
     assert fork.capture_target != p.capture_target
     await worker.once()

@@ -2,9 +2,11 @@
 # SPDX-License-Identifier: AGPL-3.0
 """One capture document per client session; the mailbox is its only authority.
 
-Requests replace the unconfirmed tail. The sole lease holder advances delivery
-and archives. A changed confirmed prefix starts a new OpenViking session. Replay
-records are independent: a failed capture never invalidates an old replacement.
+Requests replace the unconfirmed tail, and a gateway cut confirms the history
+before it at once. The sole lease holder advances delivery and archives. A
+changed confirmed prefix starts a new OpenViking session that remembers the
+earlier ones. Replay records are independent: a failed capture never
+invalidates an old replacement.
 """
 
 import asyncio
@@ -12,6 +14,7 @@ import copy
 import logging
 import time
 import uuid
+from itertools import pairwise
 
 import async_timeout
 import orjson
@@ -27,9 +30,11 @@ from .tool_protocols.common import NOTICE
 logger = logging.getLogger(__name__)
 MAX_ATTEMPTS = 5
 RECOVERY_SECONDS = 300
+MAX_PREVIOUS = 5
+SOURCE = "context-gateway:"
 
 
-def new_capture(reason=""):
+def new_capture(reason="", old=None):
     return {
         "ov_session": "context-gateway-" + uuid.uuid4().hex,
         "delivered": "",
@@ -38,8 +43,16 @@ def new_capture(reason=""):
         "tokens": 0,
         "archive": None,
         "error": {},
+        "idle": False,
         "reason": reason,
+        "previous": lineage(old or {})[:MAX_PREVIOUS],
     }
+
+
+def lineage(value):
+    """The OpenViking sessions holding this history's saved messages, newest first."""
+    previous = value.get("previous", [])
+    return [value["ov_session"], *previous] if value.get("delivered") else list(previous)
 
 
 def ready_at(state):
@@ -57,7 +70,7 @@ def ready_at(state):
 async def reset_capture(queue, scope, session, reason):
     while True:
         old = await queue.get(scope, session)
-        value = new_capture(reason)
+        value = new_capture(reason, old.value)
         if await queue.swap(scope, session, old, value, None):
             return value
 
@@ -67,26 +80,60 @@ class CapturePipeline:
         self.queue = queue
 
     @staticmethod
-    def turns(messages, chain, start, confirmed, idle_seconds):
-        starts = [i for i, m in enumerate(messages) if i >= start and is_user(m)]
-        stops = starts[1:] + ([len(messages)] if not confirmed else [])
+    def turns(messages, chain, start, stop, confirmed, idle_seconds):
+        """Split messages[start:stop] at real user messages into delivery segments.
+
+        A segment that does not start at a user message continues the turn
+        before it. Its anchor is its last captured message, so the delivered
+        position always has a prefix anchor and a source ID.
+        """
+        bounds = [start, *(i for i in range(start + 1, stop) if is_user(messages[i])), stop]
         turns = []
-        for begin, end in zip(starts, stops, strict=False):
+        for begin, end in pairwise(bounds):
             captured = capture_messages(messages[begin:end], chain[begin:end])
             if captured:
                 turns.append(
                     {
-                        "anchor": chain[end - 1],
+                        "anchor": captured[-1]["source_message_ids"][0].removeprefix(SOURCE),
                         "messages": captured,
+                        "continued": not is_user(messages[begin]),
                         "confirmed": confirmed,
                         "ready": 0 if confirmed else time.time() + idle_seconds,
                     }
                 )
         return turns
 
+    @classmethod
+    def advance(cls, value, messages, chain, user, stop, confirmed, idle_seconds):
+        """Queue messages[:stop] after the delivered and confirmed part of a capture.
+
+        Everything before the user message at ``user`` is confirmed. Confirmed
+        content missing from this history belongs to another branch, and a tail
+        delivered while idle may lack its unanswered tool calls, so either one
+        starts a new OpenViking session that receives the whole history again.
+        Returns the new value and the segments it added.
+        """
+        positions = {a: i for i, a in enumerate(chain) if a}
+        held = [t for t in value["pending"] if t["confirmed"]]
+        ends = [a for a in (value["delivered"], *(t["anchor"] for t in held)) if a]
+        reason = ""
+        if any(a not in positions for a in ends):
+            reason = "history_changed"
+        elif value["delivered"] and value.get("idle") and positions[value["delivered"]] >= user:
+            reason = "continued_after_idle"
+        if reason:
+            value, held, ends = {**value, **new_capture(reason, value)}, [], []
+        start = 1 + max((positions[a] for a in ends), default=-1)
+        split = min(max(start, user), stop)
+        added = [
+            *cls.turns(messages, chain, start, split, True, 0),
+            *cls.turns(messages, chain, split, stop, confirmed, idle_seconds),
+        ]
+        return {**value, "pending": [*held, *added]}, added
+
     async def confirm(self, request, credential, policy):
         old = request.capture
-        positions = {a: i for i, a in enumerate(request.capture_chain) if a}
+        positions = set(request.capture_chain)
         user_anchor = request.capture_chain[request.anchor]
         while True:
             value = old.value or new_capture()
@@ -95,15 +142,19 @@ class CapturePipeline:
                 *[t["anchor"] for t in value["pending"]],
             ]
             if any(a and a not in positions for a in endpoints):
-                value = new_capture("history_changed")
-            value = copy.deepcopy(value)
-            after = positions.get(value["delivered"], -1) + 1
-            pending = await asyncio.to_thread(
-                self.turns, request.messages, request.capture_chain, after, True, 0
+                value = new_capture("history_changed", value)
+            value, _ = await asyncio.to_thread(
+                self.advance,
+                value,
+                request.messages,
+                request.capture_chain,
+                request.anchor,
+                request.anchor,
+                True,
+                0,
             )
             # Reusing a prepared prompt does not generate another queue write.
             value.update(
-                pending=pending,
                 request_anchor=user_anchor,
                 credential_id=credential["id"],
                 account=credential["account"],
@@ -116,6 +167,47 @@ class CapturePipeline:
                 request.capture = Document(value, old.version + (value != old.value))
                 request.capture_target = value["ov_session"]
                 self.metrics(request, policy)
+                return
+            old = await self.queue.get(request.scope, request.session)
+
+    async def confirm_cut(self, request, anchor):
+        """Queue the history up to a gateway cut as confirmed and ready at once.
+
+        The model may search the saved session right after the cut, so delivery
+        does not wait for the turn to end. confirm() covers cuts before a user
+        message; this is for cuts inside a turn.
+        """
+        chain = request.capture_chain
+        if (
+            request.disabled
+            or request.anchor < 0
+            or not anchor
+            or anchor not in chain
+            or not Policy.model_validate(request.root["policy"]).capture
+        ):
+            return
+        old = request.capture
+        while True:
+            if (
+                old.value.get("ov_session") != request.capture_target
+                or old.value.get("request_anchor") != chain[request.anchor]
+            ):
+                return  # A newer request or explicit reset owns the capture document.
+            value, added = await asyncio.to_thread(
+                self.advance,
+                old.value,
+                request.messages,
+                chain,
+                request.anchor,
+                chain.index(anchor) + 1,
+                True,
+                0,
+            )
+            if not added:
+                return  # Everything up to the cut is already delivered or queued.
+            if await self.queue.swap(request.scope, request.session, old, value, ready_at(value)):
+                request.capture = Document(value, old.version + 1)
+                request.capture_target = value["ov_session"]
                 return
             old = await self.queue.get(request.scope, request.session)
 
@@ -134,11 +226,6 @@ class CapturePipeline:
     async def stage(self, request, response, policy):
         messages = [*request.messages, *(response.output_items or [response.message])]
         chain = await asyncio.to_thread(hidden_chain, messages, request.protocol)
-        turns = await asyncio.to_thread(
-            self.turns, messages, chain, request.anchor, False, policy.idle_seconds
-        )
-        if not turns:
-            return
         while True:
             old = await self.queue.get(request.scope, request.session)
             if (
@@ -146,24 +233,20 @@ class CapturePipeline:
                 or old.value.get("request_anchor") != request.capture_chain[request.anchor]
             ):
                 return  # A newer request or explicit reset superseded this response.
-            delivered = old.value.get("delivered", "")
-            # Tool continuations replace the unconfirmed tail in place. Only
-            # extending a turn already delivered after idle needs a new target.
-            if delivered and delivered in chain and chain.index(delivered) >= request.anchor:
-                value = {
-                    **old.value,
-                    **new_capture("continued_after_idle"),
-                    "request_anchor": request.capture_chain[request.anchor],
-                }
-                prior = await asyncio.to_thread(
-                    self.turns, request.messages, request.capture_chain, 0, True, 0
-                )
-                value["pending"] = [*prior, *turns]
-            else:
-                value = {
-                    **old.value,
-                    "pending": [t for t in old.value["pending"] if t["confirmed"]] + turns,
-                }
+            # Tool continuations replace the unconfirmed tail in place, after
+            # anything a cut inside this turn already confirmed.
+            value, added = await asyncio.to_thread(
+                self.advance,
+                old.value,
+                messages,
+                chain,
+                request.anchor,
+                len(messages),
+                False,
+                policy.idle_seconds,
+            )
+            if not added:
+                return
             if await self.queue.swap(request.scope, request.session, old, value, ready_at(value)):
                 return
 
@@ -192,14 +275,11 @@ class CaptureWorker:
             fresh = await self.queue.get(item["scope"], item["session"])
             if fresh.value.get("ov_session") != value["ov_session"]:
                 raise BranchChanged
-            # The writer may only advance through the exact queued prefix it read.
-            delivered = value["delivered"]
+            # The writer may only advance through the queued messages it read.
             pending = fresh.value["pending"]
-            if delivered != previous.value["delivered"]:
-                index = next(
-                    (i for i, turn in enumerate(pending) if turn["anchor"] == delivered), None
-                )
-                if index is None:
+            if value["delivered"] != previous.value["delivered"]:
+                pending = remaining(pending, value["delivered"])
+                if pending is None:
                     # An idle reply was edited while its HTTP write was in flight.
                     await reset_capture(
                         self.queue,
@@ -208,7 +288,6 @@ class CaptureWorker:
                         "history_changed_during_delivery",
                     )
                     raise BranchChanged
-                pending = pending[index + 1 :]
             value = {
                 **fresh.value,
                 **{
@@ -298,7 +377,11 @@ class CaptureWorker:
             messages = [m for m in turn["messages"] if not set(m["source_message_ids"]) <= seen]
             for offset in range(0, len(messages), 100):
                 await self.viking.write(token, session, messages[offset : offset + 100])
-            state["retained"].append({"anchor": turn["anchor"], "count": len(turn["messages"])})
+            count = len(turn["messages"])
+            if turn.get("continued") and state["retained"]:
+                # Commits keep whole turns, so a continuation joins its turn.
+                count += state["retained"].pop()["count"]
+            state["retained"].append({"anchor": turn["anchor"], "count": count})
             state["tokens"] += sum(
                 (len(orjson.dumps(m["parts"])) + 2) // 3 for m in turn["messages"]
             )
@@ -307,40 +390,25 @@ class CaptureWorker:
             state["idle"] = not turn["confirmed"]
             doc = await self.save(item, doc, state)
             state = copy.deepcopy(doc.value)
-        archive = state.get("archive")
-        if archive and archive["status"] not in TERMINAL:
-            state["archive"] = await observe_archive(self.viking, archive, token, session)
+        # Each save may merge a concurrent request, so continue from what it stored.
+        if state.get("archive") and state["archive"]["status"] not in TERMINAL:
+            state["archive"] = await observe_archive(self.viking, state["archive"], token, session)
             doc = await self.save(item, doc, state)
-        takeover = policy.takeover and state["tokens"] >= policy.takeover_tokens
-        archive = state.get("archive")
-        if archive and archive["status"] == "ready" and takeover:
-            await self.replay.put(
-                item["scope"],
-                item["session"],
-                K.REPLACEMENT,
-                archive["boundary"],
-                {
-                    "text": "[OpenViking Session Context]\nThe OpenViking Context Gateway "
-                    "replaced the earlier part of this conversation with this summary.\n\n"
-                    + archive["summary"]
-                },
-            )
+            state = copy.deepcopy(doc.value)
         if state.get("error"):
             state["error"] = {}
             doc = await self.save(item, doc, state)
+            state = copy.deepcopy(doc.value)
             await self.log(item, state, "active", "delivery_recovered")
-        if archive and archive["status"] not in TERMINAL:
+        if state.get("archive") and state["archive"]["status"] not in TERMINAL:
             return
         remote = await self.viking.capture_status(token, session)
-        threshold = policy.takeover_tokens if takeover else policy.commit_tokens
-        if remote["pending_tokens"] < threshold and not state.get("idle"):
+        if remote["pending_tokens"] < policy.commit_tokens and not state.get("idle"):
             return
         retained, keep = 0, 0
         if not state.get("idle"):
             for turn in reversed(state["retained"]):
-                if (takeover and retained >= policy.keep_recent_turns - 1) or (
-                    not takeover and keep >= policy.keep_recent_messages
-                ):
+                if keep >= policy.keep_recent_messages:
                     break
                 retained += 1
                 keep += turn["count"]
@@ -357,7 +425,7 @@ class CaptureWorker:
             "created": time.time(),
         }
         doc = await self.save(item, doc, state)
-        await self.resolve_commit(item, doc, state, token, session)
+        await self.resolve_commit(item, doc, copy.deepcopy(doc.value), token, session)
 
     async def resolve_commit(self, item, doc, state, token, session):
         archive = await self.viking.resolve_commit(token, session, state["archive"])
@@ -371,6 +439,18 @@ class CaptureWorker:
             )
             state["retained"] = state["retained"][end + 1 :]
         return await self.save(item, doc, state)
+
+
+def remaining(pending, delivered):
+    """The queue after a delivered message, trimming a segment re-queued around it."""
+    source = SOURCE + delivered
+    for index, turn in enumerate(pending):
+        ids = [m["source_message_ids"][0] for m in turn["messages"]]
+        if source in ids:
+            rest = turn["messages"][ids.index(source) + 1 :]
+            head = [{**turn, "messages": rest, "continued": True}] if rest else []
+            return head + pending[index + 1 :]
+    return None
 
 
 def capture_messages(messages, chain):
@@ -433,7 +513,7 @@ def capture_messages(messages, chain):
                 {
                     "role": message.get("role", "assistant"),
                     "parts": parts,
-                    "source_message_ids": ["context-gateway:" + anchor],
+                    "source_message_ids": [SOURCE + anchor],
                 }
             )
     return output

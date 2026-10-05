@@ -78,3 +78,29 @@ def gateway_note(policy, tools):
     if policy.capture:
         lines.append("- The gateway saves this conversation to the user's OpenViking memory.")
     return "\n".join(lines)
+
+
+def history_hint(user_id, sessions, tools, capture):
+    """Where the saved earlier parts of this history are and how to search them."""
+    functions = {t["function"]["name"]: t["function"] for t in tools}
+    if not (capture and sessions and {"openviking_grep", "openviking_read"} <= functions.keys()):
+        return ""
+    # OpenViking 0.4.16 reads whole files; newer servers add line offsets.
+    ranged = "offset" in functions["openviking_read"].get("parameters", {}).get("properties", {})
+    read = (
+        "Then call openviking_read on that file with offset and limit to read the lines "
+        "around a match."
+        if ranged
+        else "openviking_read returns a whole file, so read one only when the matching lines "
+        "are not enough."
+    )
+    return "\n".join(
+        [
+            "Earlier parts of this conversation are saved in OpenViking, newest session first:",
+            *(f"- viking://user/{user_id}/sessions/{session}/" for session in sessions),
+            "In each session, messages.jsonl holds the latest messages and "
+            "history/archive_NNN/messages.jsonl the older ones, one JSON message per line. "
+            "To find something, call openviking_grep on a session URI with a specific "
+            "pattern; it lists each matching line with its file and line number. " + read,
+        ]
+    )

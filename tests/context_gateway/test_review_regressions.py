@@ -120,7 +120,7 @@ async def test_system_tokens_do_not_trigger_commits(setup_kernel, credential, po
 
 async def test_pending_overview_blocks_repeated_commit(setup_kernel, credential, policy):
     kernel, store, viking, encryption = setup_kernel
-    policy.update(recall=False, takeover_tokens=1, keep_recent_turns=1)
+    policy.update(recall=False, commit_tokens=1, keep_recent_messages=0)
     viking.summary = ""
     worker = await worker_for(store, encryption, credential, viking)
     for turn in range(1, 4):

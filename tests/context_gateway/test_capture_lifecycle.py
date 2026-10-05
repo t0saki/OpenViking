@@ -19,7 +19,7 @@ async def test_terminal_archive_without_summary_releases_commits(
     setup_kernel, credential, policy, terminal
 ):
     kernel, store, viking, encryption = setup_kernel
-    policy.update(recall=False, takeover_tokens=1, keep_recent_turns=1)
+    policy.update(recall=False, commit_tokens=1, keep_recent_messages=0)
     viking.summary = ""
     viking.archive_status = terminal
     worker = await worker_for(store, encryption, credential, viking)
@@ -37,7 +37,7 @@ async def test_pending_archive_has_bounded_lifetime_and_shared_polling(
     setup_kernel, credential, policy
 ):
     kernel, store, viking, encryption = setup_kernel
-    policy.update(recall=False, takeover_tokens=1, keep_recent_turns=1)
+    policy.update(recall=False, commit_tokens=1, keep_recent_messages=0)
     viking.summary = ""
     p = await prepare(
         kernel, credential, policy, [*history(1), {"role": "user", "content": "next"}]
@@ -162,7 +162,7 @@ async def test_reset_during_delivery_cannot_publish_an_old_archive(
     setup_kernel, credential, policy
 ):
     kernel, store, viking, encryption = setup_kernel
-    policy.update(recall=False, takeover_tokens=1, keep_recent_turns=1)
+    policy.update(recall=False, commit_tokens=1, keep_recent_messages=0)
     first = await prepare(
         kernel, credential, policy, [*history(1), {"role": "user", "content": "next"}]
     )
@@ -264,35 +264,6 @@ async def test_capture_mailboxes_are_independent_and_lease_safe(setup_kernel):
     assert not await store.capture.claim()
 
 
-async def test_archive_publication_retry_does_not_commit_twice(
-    setup_kernel, credential, policy, monkeypatch
-):
-    kernel, store, viking, encryption = setup_kernel
-    policy.update(recall=False, takeover_tokens=1, keep_recent_turns=1)
-    request = await prepare(
-        kernel, credential, policy, [*history(1), {"role": "user", "content": "next"}]
-    )
-    worker = await worker_for(store, encryption, credential, viking)
-    put = store.replay.put
-    interrupted = False
-
-    async def fail_publication(scope, session, kind, anchor, value):
-        nonlocal interrupted
-        if kind == "replacement" and not interrupted:
-            interrupted = True
-            raise RuntimeError("temporary publication outage")
-        return await put(scope, session, kind, anchor, value)
-
-    monkeypatch.setattr(store.replay, "put", fail_publication)
-    await worker.once()  # commit
-    await worker.once()  # observe and try to publish
-    assert interrupted and len(viking.commits) == 1
-    await make_due(store)
-    await worker.once()
-    assert len(viking.commits) == 1
-    assert await replay_records(store, request, "replacement")
-
-
 @pytest.mark.parametrize("partial_batch", [False, True])
 async def test_delivery_reconciles_lost_ack_and_partial_batch(
     setup_kernel, credential, policy, partial_batch
@@ -335,7 +306,7 @@ async def test_lost_commit_response_is_resolved_before_new_messages(
     setup_kernel, credential, policy
 ):
     kernel, store, viking, encryption = setup_kernel
-    policy.update(recall=False, takeover_tokens=1, keep_recent_turns=1)
+    policy.update(recall=False, commit_tokens=1, keep_recent_messages=0)
     p = await prepare(
         kernel, credential, policy, [*history(1), {"role": "user", "content": "next"}]
     )
