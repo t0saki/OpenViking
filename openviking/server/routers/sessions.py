@@ -715,17 +715,6 @@ async def extract_session(
     return Response(status="ok", result=_to_jsonable(result))
 
 
-@router.get("/{session_id}/commit-status")
-async def get_commit_status(
-    session_id: str = Path(..., description="Session ID"),
-    idempotency_key: str = Query(..., min_length=1, max_length=256),
-    _ctx: RequestContext = Depends(get_session_request_context),
-):
-    """Get a durable keyed commit receipt, archive state and completed overview."""
-    session = await get_service().sessions.get(session_id, _ctx, auto_create=False)
-    return Response(status="ok", result=await session.get_commit_status(idempotency_key))
-
-
 @router.post("/{session_id}/messages")
 async def add_message(
     request: AddMessageRequest,
