@@ -219,7 +219,7 @@ const upstreams = {
     gatewayTools: {
       label: 'Allow OpenViking tools',
       description:
-        'Context profiles with OpenViking tools can offer them through this upstream (Chat Completions only). Turning this off also stops them in ongoing conversations.',
+        'Context profiles with OpenViking tools can offer them through this upstream (Chat, full-history Responses and Anthropic Messages). Turning this off also stops them in ongoing conversations.',
     },
     cacheMinTokens: {
       label: 'Minimum cacheable prompt',

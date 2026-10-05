@@ -209,7 +209,7 @@ const upstreams = {
     gatewayTools: {
       label: '允许 OpenViking 工具',
       description:
-        '开启了 OpenViking 工具的上下文配置可以通过这个上游提供工具（仅限 Chat Completions）。关闭后，进行中的对话也会停用这些工具。',
+        '开启了 OpenViking 工具的上下文配置可以通过这个上游提供工具（Chat、完整历史的 Responses 和 Anthropic Messages）。关闭后，进行中的对话也会停用这些工具。',
     },
     cacheMinTokens: {
       label: '最小可缓存长度',

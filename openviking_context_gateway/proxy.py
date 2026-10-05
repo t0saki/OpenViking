@@ -18,7 +18,7 @@ from starlette.background import BackgroundTask
 from .protocols import ResponseCapture, SSEDecoder, enhanced_supported, parse_body
 from .storage import digest
 from .tool_executor import ToolExecutor
-from .tool_loop import ChatToolLoop, ToolLoopError, sse
+from .tool_loop import HiddenToolLoop, ToolLoopError
 from .vendors import ARK_PATHS, apply_vendor, ark_url
 
 logger = logging.getLogger(__name__)
@@ -158,7 +158,12 @@ class ProxyRequest:
             raise HTTPException(502, "Model upstream is unavailable")
         self.metrics.update(status=self.response.status, upstream_id=self.upstream["id"])
         self.capture = ResponseCapture(self.protocol or self.upstream["protocol"])
-        if self.prepared and self.prepared.tools_active and self.response.status < 300:
+        if (
+            self.prepared
+            and self.prepared.tools_active
+            and self.response.status < 300
+            and not self.path.endswith("count_tokens")
+        ):
             return await self.tool_response()
         return await self.observe_response()
 
@@ -284,7 +289,7 @@ class ProxyRequest:
             self.config.public_url,
             self.config.max_body_bytes,
         )
-        loop = ChatToolLoop(prepared, executor, self.store, capture)
+        loop = HiddenToolLoop(prepared, executor, self.store, capture)
         headers = {
             k.lower(): v
             for k, v in filtered_headers(response.headers).items()
@@ -308,8 +313,7 @@ class ProxyRequest:
                 finished = True
             except (ToolLoopError, aiohttp.ClientError) as error:
                 self.metrics["degradation"] = "hidden_tool_loop_failed"
-                yield sse({"error": {"message": str(error), "type": "gateway_tool_error"}})
-                yield b"data: [DONE]\n\n"
+                yield loop.adapter.error(str(error))
             finally:
                 if not finished:
                     capture.complete = False

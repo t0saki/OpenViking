@@ -374,22 +374,22 @@ def capture_messages(messages, chain):
     for message in messages:
         if message.get("role") == "tool":
             results[message.get("tool_call_id")] = message.get("content", "")
-        if message.get("type") == "function_call_output":
+        if message.get("type") in {"function_call_output", "custom_tool_call_output"}:
             results[message.get("call_id")] = message.get("output", "")
         for block in message.get("content", []) if isinstance(message.get("content"), list) else []:
             if isinstance(block, dict) and block.get("type") == "tool_result":
                 results[block.get("tool_use_id")] = block.get("content", "")
     output = []
     for message, anchor in zip(messages, chain, strict=True):
-        if (
-            message.get("role") not in {"user", "assistant"}
-            and message.get("type") != "function_call"
-        ):
+        if message.get("role") not in {"user", "assistant"} and message.get("type") not in {
+            "function_call",
+            "custom_tool_call",
+        }:
             continue
         text = clean_text(unwrap_client(text_content(message)))
         parts = [{"type": "text", "text": text}] if text else []
         calls = list(message.get("tool_calls") or [])
-        if message.get("type") == "function_call":
+        if message.get("type") in {"function_call", "custom_tool_call"}:
             calls.append(message)
         calls.extend(
             b

@@ -27,6 +27,24 @@ test as usual, for example `tests/context_gateway/test_kernel.py::<test_name>`.
 `fixtures/` holds sanitized requests recorded from real clients; see
 [fixtures/README.md](fixtures/README.md) before updating them.
 
+## Hidden tool protocol contracts
+
+`test_native_tools.py` exercises native Responses and Anthropic wire messages through the
+HTTP gateway, including fragmented streams, mixed client tools, budgets, cancellation,
+restart/edit/archive replay and preserved thinking/signature blocks. The existing Chat
+contracts remain in `test_app.py` and `test_tools.py`.
+
+`HiddenToolLoop` owns execution, budgets, durable receipts and usage. The three adapters in
+`tool_protocols` only assemble native output and project client-visible events. No storage
+port or record kind is protocol-specific. A hidden record's `visible_count` makes an entire
+Responses output array one replayable span. Responses requires full input history and
+`store: false`; native reasoning items remain intact. Anthropic joins gateway and client
+results in the user message immediately following the original tool call.
+
+Signatures in these tests are synthetic. A successful compatible-provider run does not
+establish native Claude signature binding or native OpenAI reasoning-encryption support.
+Those remain live acceptance items, and should be reported separately from protocol tests.
+
 ## Live acceptance check
 
 `scripts/context_gateway_acceptance.py` sends a three-turn conversation through a running

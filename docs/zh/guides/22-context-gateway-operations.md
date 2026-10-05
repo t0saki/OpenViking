@@ -348,7 +348,7 @@ server {
 | 召回记忆 | 用每条新的用户消息搜索 OpenViking，把相关内容附加到这条消息上。 | 检索范围：记忆、资源、技能 · 单条消息预算：1,600 token · 单段对话预算：6,000 token · 相关度阈值：0.35 · 超时时间：2 秒 |
 | 保存对话 | 把已完成的轮次写入 OpenViking 会话并提交，供 OpenViking 提取记忆。 | 最新回复等待时长：600 秒 · 提交阈值：20,000 token · 保留最近消息：10 |
 | 长对话 | 对话变长后，用 OpenViking 的摘要替换较早的历史。需要开启保存对话。 | 开始摘要的长度：30,000 token · 保留最近轮数：3 · 等待摘要：30 秒 |
-| OpenViking 工具 | 让模型在回答时搜索和读取 OpenViking。仅支持 Chat Completions，默认关闭。 | 工具：检索、读取、列出目录 · 允许写入工具：关闭 |
+| OpenViking 工具 | 让模型在回答时搜索和读取 OpenViking。支持 Chat Completions、完整历史的 Responses 和 Anthropic Messages，默认关闭。 | 工具：检索、读取、列出目录 · 允许写入工具：关闭 |
 
 召回设置的实际效果：
 
@@ -430,7 +430,17 @@ server {
 
 ## OpenViking 工具
 
-开启 OpenViking 工具后，模型可以在回答时搜索和读取 OpenViking。网关把工具加进请求，以密钥所属用户的身份对 OpenViking 执行模型发起的工具调用，把结果交还给模型，最后只把最终回答流式返回。客户端看到的是一次普通回复：一个 completion ID、一个结束事件，token 用量是所有模型调用的总和。
+开启 OpenViking 工具后，模型可以在回答时搜索和读取 OpenViking。网关把工具加进请求，以密钥所属用户的身份对 OpenViking 执行模型发起的工具调用，把结果交还给模型，文本和思考内容随到随流式返回，隐藏网关自己的工具调用。客户端看到的是一次普通回复：一个 completion ID、一个结束事件，token 用量是所有模型调用的总和。
+
+三种协议都支持流式和非流式请求：
+
+| 协议 | 客户端要求 |
+| --- | --- |
+| Chat Completions | 回传完整 `messages` 历史。 |
+| Responses | 使用 `store: false` 和完整 `input` 历史；下一轮回传完整可见 `output` 数组，包括 reasoning 和客户端工具调用。带 `previous_response_id`、`conversation` 或 `background` 的请求继续普通转发，不提供网关工具；`item_reference` 无法还原完整历史。 |
+| Anthropic Messages | 回传完整 `messages` 历史，保留 thinking/signature 块。计数请求使用相同工具定义，但不执行工具。 |
+
+模型同时调用 OpenViking 和客户端工具时，网关先执行自己的调用，再把客户端调用交回客户端。下一次请求会还原隐藏调用与结果后继续。Responses 支持客户端 function 和 custom 工具；Anthropic 将两方工具结果放进紧随原始助手调用的同一条用户消息。原生 Claude 签名校验和原生 OpenAI reasoning 加密内容仍待真实接口验收，兼容服务商测试不能替代这两项。
 
 这项功能面向无法连接 OpenViking MCP 服务器的聊天应用和 API 应用。支持 MCP 或有插件的客户端，例如 Claude Code 和 Codex，用 MCP 或插件更合适，因为工具调用在那里看得见。
 
@@ -442,11 +452,11 @@ server {
 
 | 原因 | 说明 |
 | --- | --- |
-| `tools_chat_only` | 客户端使用 Anthropic Messages 或 Responses；工具只支持 Chat Completions。 |
+| `tools_require_full_history` | Responses 工具需要 `store: false` 和完整 input 历史，不能使用 `item_reference`。 |
 | `upstream_tools_disabled` | 上游关闭了**允许 OpenViking 工具**。 |
 | `tools_multiple_choices` | 请求要求返回多个候选（`n` 大于 1）。 |
-| `tools_structured_output` | 请求要求结构化输出（`response_format`）。 |
-| `tools_non_function` | 客户端传入了 function 以外类型的工具。 |
+| `tools_structured_output` | 请求要求结构化输出（`response_format`、`text.format` 或 `output_config.format`）。 |
+| `tools_non_function` | Chat Completions 客户端传入了 function 以外类型的工具。 |
 | `tools_forced_choice` | `tool_choice` 为 `required`，或者指定了某个工具。 |
 | `deepseek_reasoning_history_required` | 上游的服务商是 DeepSeek，并且请求没有关闭思考模式。 |
 | `tool_name_collision` | 客户端定义了与某个 `openviking_*` 工具同名的工具。 |
@@ -457,7 +467,7 @@ server {
 **导入文件和技能。** 导入工具需要一种办法把文件送到 OpenViking，所以只有对话的第一个请求满足以下条件之一时才会提供：
 
 - **有 shell 工具**（名称类似 bash、shell、exec_command、terminal 或 run_command 的客户端工具）：导入工具返回一个一次性上传链接，模型再用客户端自己的 shell 工具上传文件，这一步会经过客户端的权限确认。技能目录会先打包成 zip。链接指向 `public_url` 加上 `/context-gateway/uploads`，所以 `public_url` 必须是客户端能访问的地址，代理也要把这个路径转发给网关。没有设置 `public_url` 时，导入会失败并提示 "Set context_gateway.public_url for client uploads"。
-- **有附件**：没有 shell 工具时，模型可以导入用户消息里附带的文件，文件可以是 base64 数据，也可以是附件文本。Open WebUI 通常只发送提取出的文本，这些文本会作为文本文件导入。远程 URL 和服务商的文件 ID 不会被抓取。
+- **有附件**：没有 shell 工具时，模型可以导入用户消息里附带的文件，文件可以是 base64 数据，也可以是附件文本，支持 Responses `input_file` 和 Anthropic `document.source` 内嵌的 `base64`、`text` 数据。Open WebUI 通常只发送提取出的文本，这些文本会作为文本文件导入。远程 URL 和服务商的文件 ID 不会被抓取。
 
 上传大小受 `max_body_bytes` 限制（默认 32 MiB）。
 
@@ -470,6 +480,8 @@ server {
 | 结果大小上限 | `tool_result_bytes` | 65,536 字节 | 1,024–1,048,576 | 结果被截断。 |
 | 总时长 | `tool_total_seconds` | 120 秒 | 最多 600 秒 | 请求失败，返回 504 "Hidden tool request timed out"。 |
 | Token 预算 | `tool_total_tokens` | 100,000 | 1,024–1,000,000 | 拒绝后续的工具调用，模型用已有的信息回答。这不是计费上限，最终回答可能超出它。 |
+
+Token 预算只计算网关新增的调用、结果和隐藏续轮输出，客户端历史、工具定义和图片不计入。网关保留客户端的 `max_tokens`、`max_completion_tokens` 和 `max_output_tokens`。达到上限后保留工具定义，按对应协议的 `tool_choice` 格式禁用调用，并允许最后一轮生成答案。
 
 失败的工具调用会作为错误结果交还给模型。如果工具循环本身失败，例如服务商拒绝了后续调用，客户端会收到错误（流式客户端收到类型为 `gateway_tool_error` 的错误事件），这个请求被标记为 **OpenViking 工具调用失败**（`hidden_tool_loop_failed`）。如果某个服务商反复这样失败，就在它的上游上关闭**允许 OpenViking 工具**。重试的工具调用会复用第一次调用的结果，中断的写入操作不会自动重做。
 
@@ -614,7 +626,7 @@ URL 类设置必须是普通的 `http` 或 `https` 地址，不能包含账号�
 | 保留最近轮数 | `keep_recent_turns` | `3` | 1–100 | 摘要之后按原文发送的轮数。 |
 | 等待摘要 | `archive_wait_seconds` | `30`（秒） | 0–60 | 接近上下文窗口时，等待未就绪摘要的最长时间。 |
 | 默认上下文窗口 | `context_window` | 未设置 | ≥ 1,024 | 上游没有列出该模型时使用的窗口。 |
-| OpenViking 工具 | `gateway_tools` | `false` | | 提供 OpenViking 工具（仅 Chat Completions）。 |
+| OpenViking 工具 | `gateway_tools` | `false` | | 为 Chat、完整历史的 Responses 和 Anthropic Messages 提供 OpenViking 工具。 |
 | 允许写入工具 | `allow_write_tools` | `false` | | 提供任何写入工具之前都必须开启。 |
 | 工具 | `tool_allowlist` | `search`、`read`、`list` | `search`、`read`、`list`、`write`、`add_resource`、`add_skill` | 提供哪些工具，名称为 `openviking_<name>`。 |
 | 每次请求的工具轮数 | `tool_max_rounds` | `5` | 1–20 | 见 [OpenViking 工具](#openviking-工具)。 |

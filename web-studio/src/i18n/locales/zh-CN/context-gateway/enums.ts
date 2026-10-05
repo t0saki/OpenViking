@@ -54,7 +54,7 @@ const enums = {
     recall_timeout: '召回超时',
   },
   toolSkipReason: {
-    tools_chat_only: 'OpenViking 工具只支持 Chat Completions',
+    tools_require_full_history: 'Responses 工具需要完整 input 历史并关闭 store',
     upstream_tools_disabled: '这个上游关闭了 OpenViking 工具',
     tools_multiple_choices: '请求要求返回多个候选结果（n > 1）',
     tools_structured_output: '请求要求结构化输出',
@@ -124,6 +124,12 @@ const enums = {
         '对话已接近模型的上下文窗口，但 OpenViking 的摘要没有及时生成，网关只能发送完整历史，可能超出窗口。',
       action:
         '在上下文配置里延长等待摘要的时间，或更早开始摘要，并检查 OpenViking 生成摘要的速度。',
+    },
+    hidden_reply_without_anchor: {
+      label: '没有可重放的回复',
+      explanation:
+        '模型调用了工具，但没有返回可见回复，隐藏历史无法关联到本轮回复。',
+      action: '发送一条后续消息继续对话。',
     },
     hidden_tool_loop_failed: {
       label: 'OpenViking 工具调用失败',

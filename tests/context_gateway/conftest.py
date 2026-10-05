@@ -1,12 +1,17 @@
 """Standalone gateway tests intentionally need no vector engine or LLM SDK."""
 
 import copy
+import json
 
+import httpx
 import orjson
 import pytest
 import pytest_asyncio
+from aiohttp import web
 from cryptography.fernet import Fernet
 
+from openviking_context_gateway.app import create_app
+from openviking_context_gateway.config import ContextGatewayConfig
 from openviking_context_gateway.kernel import MemoryKernel
 from openviking_context_gateway.models import Policy
 from openviking_context_gateway.storage import SQLiteKernelStore
@@ -144,3 +149,176 @@ async def make_due(store):
         if value.get("archive"):
             value["archive"]["next_check"] = 0
         assert await store.capture.swap(scope, session, old, value, ready_at(value))
+
+
+@pytest_asyncio.fixture
+async def running_gateway(tmp_path, monkeypatch):
+    captured = []
+    writes = []
+    override = {}
+    viking = FakeViking()
+
+    async def backend(request):
+        if override.get("handler"):
+            response = await override["handler"](request)
+            if response is not None:
+                return response
+        raw = await request.read()
+        body = json.loads(raw) if raw else {}
+        if request.path == "/health":
+            key = request.headers.get("X-API-Key")
+            return web.json_response(
+                {
+                    "version": "0.4.16",
+                    "status": "ok",
+                    "auth_mode": "api_key",
+                    "role": "root" if key == "root" else "user",
+                    "account_id": "other" if key == "other" else "tenant",
+                    "user_id": "alice",
+                }
+            )
+        if request.path == "/api/v1/search/search":
+            assert body["mode"] == "context" and "session_id" not in body
+            return web.json_response(
+                {
+                    "status": "ok",
+                    "result": {
+                        "entries": [
+                            {"uri": "viking://user/alice/memories/x", "text": "Memory data"}
+                        ]
+                    },
+                }
+            )
+        if request.path == "/api/v1/sessions":
+            return web.json_response({"status": "ok", "result": {}})
+        if request.path.startswith("/api/v1/sessions/"):
+            session = request.path.split("/")[4]
+            if request.path.endswith("/messages/batch"):
+                writes.append(body)
+                result = await viking.write("synthetic", session, body["messages"])
+            elif request.path.endswith("/commit"):
+                result = await viking.commit("synthetic", session, body["keep_recent_count"])
+            elif "/archives/" in request.path:
+                result = {"overview": viking.summary}
+            else:
+                status = await viking.capture_status("synthetic", session)
+                result = {
+                    "uri": status["next_archive_uri"].split("/history/")[0],
+                    "commit_count": sum(1 for uri in viking.archived if f"/{session}/" in uri),
+                    "pending_tokens": status["pending_tokens"],
+                }
+            return web.json_response({"status": "ok", "result": result})
+        if request.path == "/api/v1/content/read":
+            uri = request.query["uri"]
+            if uri.endswith("/messages.jsonl"):
+                session = uri.split("/sessions/")[1].split("/")[0]
+                content = "\n".join(json.dumps(m) for m in viking.live.get(session, []))
+                return web.json_response({"status": "ok", "result": content})
+            if uri.removesuffix("/.meta.json") in viking.archived:
+                return web.json_response(
+                    {"status": "ok", "result": '{"phase1":{"status":"ready"}}'}
+                )
+            return web.json_response({"status": "error"}, status=404)
+        captured.append((request.path, raw, dict(request.headers)))
+        if body.get("model") == "error":
+            return web.Response(
+                body=b'{"error":{"raw":"provider error"}}',
+                status=429,
+                headers={
+                    "Retry-After": "4",
+                    "X-Should-Retry": "true",
+                    "Request-Id": "upstream-id",
+                    "Content-Type": "application/json",
+                },
+            )
+        if body.get("stream"):
+            response = web.StreamResponse(
+                headers={"Content-Type": "text/event-stream", "Request-Id": "stream-id"}
+            )
+            await response.prepare(request)
+            stream = b'data: {"id":"r-1","choices":[{"delta":{"content":"hello"},"finish_reason":null}]}\r\n\r\ndata: {"choices":[{"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":123,"completion_tokens":1,"prompt_tokens_details":{"cached_tokens":100}}}\n\ndata: [DONE]\n\n'
+            for start in range(0, len(stream), 7):
+                await response.write(stream[start : start + 7])
+            await response.write_eof()
+            return response
+        if "/responses" in request.path:
+            return web.json_response(
+                {
+                    "id": "resp-1",
+                    "object": "response",
+                    "status": "completed",
+                    "output": [
+                        {
+                            "role": "assistant",
+                            "type": "message",
+                            "content": [{"type": "output_text", "text": "hello"}],
+                        }
+                    ],
+                }
+            )
+        if request.path.endswith("count_tokens"):
+            return web.json_response({"input_tokens": 20})
+        if request.path.endswith("messages"):
+            return web.json_response(
+                {
+                    "id": "msg-1",
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "hello"}],
+                    "stop_reason": "end_turn",
+                }
+            )
+        return web.json_response(
+            {
+                "id": "r-1",
+                "choices": [
+                    {"message": {"role": "assistant", "content": "hello"}, "finish_reason": "stop"}
+                ],
+            }
+        )
+
+    server = web.Application()
+    server.router.add_route("*", "/{path:.*}", backend)
+    runner = web.AppRunner(server)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", 0)
+    await site.start()
+    base = f"http://127.0.0.1:{site._server.sockets[0].getsockname()[1]}"
+    monkeypatch.setenv("OPENVIKING_CONTEXT_GATEWAY_ENCRYPTION_KEY", Fernet.generate_key().decode())
+    monkeypatch.setenv("OPENVIKING_CONTEXT_GATEWAY_ADMIN_TOKEN", "admin-" + "x" * 32)
+    config = ContextGatewayConfig(enabled=True, storage_path=str(tmp_path), openviking_url=base)
+    app = create_app(config)
+    app.state.test_backend = override
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://gateway"
+        ) as client:
+            admin = {"Authorization": "Bearer admin-" + "x" * 32, "X-OpenViking-Account": "tenant"}
+            for protocol in ("chat", "anthropic", "responses"):
+                response = await client.put(
+                    f"/admin/upstreams/{protocol}",
+                    headers=admin,
+                    json={
+                        "name": protocol,
+                        "protocol": protocol,
+                        "base_url": base,
+                        "api_key": "model-secret",
+                        "models": ["model", "error"],
+                    },
+                )
+                assert response.status_code == 200, response.text
+            assert (
+                await client.put("/admin/policies/default", headers=admin, json={"name": "Default"})
+            ).status_code == 200
+            minted = await client.post(
+                "/admin/keys",
+                headers=admin,
+                json={
+                    "name": "test",
+                    "openviking_key": "user-key",
+                    "policy_id": "default",
+                    "upstream_ids": ["chat", "anthropic", "responses"],
+                },
+            )
+            assert minted.status_code == 200, minted.text
+            yield app, client, admin, minted.json(), captured, writes
+    await runner.cleanup()

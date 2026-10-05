@@ -348,7 +348,7 @@ Each section has its own switch:
 | Recall memory | Searches OpenViking with each new user message and appends what is relevant to that message. | Sources: memories, resources, skills · Budget per message: 1,600 tokens · Budget per conversation: 6,000 tokens · Relevance threshold: 0.35 · Time limit: 2 s |
 | Save conversations | Writes finished turns to an OpenViking session and commits it, so OpenViking can extract memories. | Save the latest reply after: 600 s · Commit after: 20,000 tokens · Keep recent messages: 10 |
 | Long conversations | Replaces older history with OpenViking's summary once a conversation is long. Needs Save conversations. | Start after: 30,000 tokens · Keep recent turns: 3 · Wait for summary: 30 s |
-| OpenViking tools | Lets the model search and read OpenViking while it answers. Chat Completions only. Off by default. | Tools: Search, Read, List · Allow write tools: off |
+| OpenViking tools | Lets the model search and read OpenViking while it answers. Chat Completions, full-history Responses and Anthropic Messages. Off by default. | Tools: Search, Read, List · Allow write tools: off |
 
 How the recall settings play out:
 
@@ -430,7 +430,17 @@ The expanded row shows the reason, for example that OpenViking rejected the key 
 
 ## OpenViking tools
 
-With OpenViking tools on, the model can search and read OpenViking while it answers. The gateway adds the tools to the request, runs the model's tool calls itself against OpenViking as the key's user, returns the results to the model, and streams only the final answer. The client sees one ordinary reply: one completion ID, one final event and token usage summed over all the model calls.
+With OpenViking tools on, the model can search and read OpenViking while it answers. The gateway adds the tools to the request, runs the model's tool calls itself against OpenViking as the key's user, returns the results to the model, and streams text and thinking as they arrive while hiding its own tool calls. The client sees one ordinary reply: one completion ID, one final event and token usage summed over all the model calls.
+
+Tools support streaming and nonstreaming requests in all three protocols:
+
+| Protocol | Client requirements |
+| --- | --- |
+| Chat Completions | Send the full `messages` history. |
+| Responses | Use `store: false` and full `input` history; pass the complete visible `output` array back on the next request, including reasoning and client tool calls. Requests with `previous_response_id`, `conversation` or `background` continue to pass through without gateway tools. `item_reference` cannot reconstruct full history. |
+| Anthropic Messages | Send the full `messages` history and keep thinking/signature blocks intact. Token-count requests get the same tool definitions but do not execute tools. |
+
+If the model calls both an OpenViking tool and a client tool in one reply, the gateway runs its own call and returns the client's call. The next request restores the hidden call and result before continuing. Responses supports client function and custom tools. Anthropic places both sets of tool results in the user message immediately after the original assistant call. Native Claude signature validation and native OpenAI reasoning-encryption validation still need provider acceptance testing; compatible-provider tests do not establish either.
 
 This is meant for chat apps and API apps that cannot connect to OpenViking's MCP server. Clients that support MCP or have a plugin, such as Claude Code and Codex, are better served by those, where tool calls are visible.
 
@@ -442,11 +452,11 @@ Whether a conversation gets tools is decided at its first request and kept, so p
 
 | Reason | Cause |
 | --- | --- |
-| `tools_chat_only` | The client uses Anthropic Messages or Responses; tools work only with Chat Completions. |
+| `tools_require_full_history` | Responses tools need full input history with `store: false`, without `item_reference`. |
 | `upstream_tools_disabled` | The upstream has **Allow OpenViking tools** off. |
 | `tools_multiple_choices` | The request asks for several choices (`n` greater than 1). |
-| `tools_structured_output` | The request asks for structured output (`response_format`). |
-| `tools_non_function` | The client sent a tool of a type other than function. |
+| `tools_structured_output` | The request asks for structured output (`response_format`, `text.format` or `output_config.format`). |
+| `tools_non_function` | The Chat Completions client sent a tool of a type other than function. |
 | `tools_forced_choice` | `tool_choice` is `required` or names a specific tool. |
 | `deepseek_reasoning_history_required` | The upstream's provider is DeepSeek and the request does not turn thinking off. |
 | `tool_name_collision` | The client defines a tool with one of the `openviking_*` names. |
@@ -457,7 +467,7 @@ Housekeeping and sub-agent requests keep the tool definitions but cannot call th
 **Importing files and skills.** The import tools need a way to get the file to OpenViking, so they are offered only when the conversation's first request has one:
 
 - **A shell tool** (a client tool named like bash, shell, exec_command, terminal or run_command): the import tool returns a one-time upload link, and the model uploads the file with the client's own shell tool, which does go through the client's permission prompt. Skill directories are zipped first. The link points to `public_url` plus `/context-gateway/uploads`, so `public_url` must be an address the client can reach and your proxy must route that path to the gateway. Without `public_url`, imports fail with "Set context_gateway.public_url for client uploads".
-- **An attached file**: without a shell tool, the model can import a file attached to a user message, sent either as base64 file data or as attachment text. Open WebUI usually sends only the extracted text, which is imported as a text file. Remote URLs and provider file IDs are not fetched.
+- **An attached file**: without a shell tool, the model can import a file attached to a user message, sent either as base64 file data or as attachment text. This includes Responses `input_file` and Anthropic `document.source` with embedded `base64` or `text` data. Open WebUI usually sends only the extracted text, which is imported as a text file. Remote URLs and provider file IDs are not fetched.
 
 Uploads are limited to `max_body_bytes` (32 MiB by default).
 
@@ -470,6 +480,8 @@ The limits sit under **Advanced settings** in the profile's **OpenViking tools**
 | Result size | `tool_result_bytes` | 65,536 bytes | 1,024–1,048,576 | The result is truncated. |
 | Total time | `tool_total_seconds` | 120 s | up to 600 s | The request fails with 504 "Hidden tool request timed out". |
 | Token budget | `tool_total_tokens` | 100,000 | 1,024–1,000,000 | Further tool calls are refused and the model answers with what it has. This is not a billing cap; the final answer can exceed it. |
+
+The token budget counts only gateway-added calls/results and hidden-round output, not the client history, schemas or images. The gateway preserves `max_tokens`, `max_completion_tokens` and `max_output_tokens`. At the limit it keeps the tool definitions, disables calls using the protocol’s `tool_choice` and allows a final answer.
 
 A failing tool call goes back to the model as an error result. If the tool loop itself fails, for example because the provider rejects a follow-up call, the client receives an error (streaming clients get an error event of type `gateway_tool_error`) and the request is flagged **OpenViking tools failed** (`hidden_tool_loop_failed`). If one provider keeps failing this way, turn off **Allow OpenViking tools** on its upstream. A retried tool call reuses the first call's result, and an interrupted write is never repeated automatically.
 
@@ -614,7 +626,7 @@ URL settings must be plain `http` or `https` addresses without credentials, quer
 | Keep recent turns | `keep_recent_turns` | `3` | 1–100 | Turns sent word for word after the summary. |
 | Wait for summary | `archive_wait_seconds` | `30` (seconds) | 0–60 | Longest wait for a pending summary near the context window. |
 | Default context window | `context_window` | unset | ≥ 1,024 | Window used when the upstream does not list the model. |
-| OpenViking tools | `gateway_tools` | `false` | | Offer OpenViking tools (Chat Completions only). |
+| OpenViking tools | `gateway_tools` | `false` | | Offer OpenViking tools for Chat, full-history Responses and Anthropic Messages. |
 | Allow write tools | `allow_write_tools` | `false` | | Required before any write tool is offered. |
 | Tools | `tool_allowlist` | `search`, `read`, `list` | `search`, `read`, `list`, `write`, `add_resource`, `add_skill` | The tools offered, as `openviking_<name>`. |
 | Rounds per request | `tool_max_rounds` | `5` | 1–20 | See [OpenViking tools](#openviking-tools). |

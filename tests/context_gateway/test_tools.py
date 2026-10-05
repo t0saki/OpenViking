@@ -11,7 +11,8 @@ from openviking_context_gateway.protocols import ResponseCapture
 from openviking_context_gateway.storage import SQLiteKernelStore
 from openviking_context_gateway.tool_catalog import attachments, hidden_chain, select_tools
 from openviking_context_gateway.tool_executor import ToolExecutor, attachment_bytes
-from openviking_context_gateway.tool_loop import ChatToolLoop, sse
+from openviking_context_gateway.tool_loop import HiddenToolLoop
+from openviking_context_gateway.tool_protocols.common import sse
 from openviking_context_gateway.vendors import ark_url
 
 
@@ -42,7 +43,7 @@ def test_write_tools_require_permission_and_client_capability():
     assert len(select_tools({}, "chat", {}, policy)) == 1
     shell = {"tools": [{"type": "function", "function": {"name": "exec_command"}}]}
     assert len(select_tools(shell, "chat", {}, policy)) == 3
-    assert select_tools(shell, "responses", {}, policy) == []
+    assert len(select_tools({**shell, "store": False}, "responses", {}, policy)) == 3
 
 
 def test_file_bytes_and_extracted_text():
@@ -145,7 +146,11 @@ async def test_hidden_branch_restart_and_archive_mapping(setup_kernel, credentia
     ]
     p = await kernel.prepare({"messages": messages}, "chat", {}, credential, {"id": "u"}, policy)
     await store.replay.put(
-        p.scope, p.session, "hidden", hidden_chain(messages)[-1], {"messages": history}
+        p.scope,
+        p.session,
+        "hidden",
+        hidden_chain(messages)[-1],
+        {"messages": history, "visible_count": 1},
     )
     kernel.store = SQLiteKernelStore(store.path, encryption)
     p = await kernel.prepare(
@@ -196,9 +201,9 @@ async def test_stream_text_precedes_tool_completion_and_cancel_closes():
         close=lambda: closed.append(True),
     )
     prepared = SimpleNamespace(
-        body={"messages": [], "stream": True}, root={"policy": {}}, metrics={}
+        body={"messages": [], "stream": True}, protocol="chat", root={"policy": {}}, metrics={}
     )
-    loop = ChatToolLoop(
+    loop = HiddenToolLoop(
         prepared, SimpleNamespace(allowed={"openviking_search"}), None, ResponseCapture("chat")
     )
     stream = loop.run(response, None)
@@ -310,7 +315,11 @@ async def test_incompatible_tools_keep_visible_history(setup_kernel, credential,
         messages[1],
     ]
     await store.replay.put(
-        first.scope, first.session, "hidden", hidden_chain(messages)[-1], {"messages": transcript}
+        first.scope,
+        first.session,
+        "hidden",
+        hidden_chain(messages)[-1],
+        {"messages": transcript, "visible_count": 1},
     )
     body = {
         "messages": [*messages, {"role": "user", "content": "continue"}],

@@ -1,0 +1,753 @@
+"""Native wire contracts: hidden calls, exact replay and one visible stream."""
+
+import copy
+
+import orjson
+import pytest
+from aiohttp import web
+from test_app import enable_tools
+
+from openviking_context_gateway.protocols import SSEDecoder
+from openviking_context_gateway.tool_protocols.common import sse
+
+PATHS = {"responses": "/v1/responses", "anthropic": "/v1/messages"}
+
+
+def native_response(protocol, number, *, owned=False, mixed=False, custom=False):
+    if protocol == "anthropic":
+        output = [
+            {
+                "type": "thinking",
+                "thinking": f"reason-{number}",
+                "signature": f"opaque-signature-{number}",
+            },
+            {"type": "redacted_thinking", "data": f"opaque-redacted-{number}"},
+            {"type": "text", "text": f"answer-{number}", "citations": []},
+        ]
+        if owned:
+            output.append(
+                {
+                    "type": "tool_use",
+                    "id": f"gateway-{number}",
+                    "name": "openviking_search",
+                    "input": {"query": "blue"},
+                }
+            )
+        if mixed:
+            output.append(
+                {"type": "tool_use", "id": "client-1", "name": "shell", "input": {"command": "pwd"}}
+            )
+        return {
+            "id": f"msg_{number}",
+            "type": "message",
+            "role": "assistant",
+            "model": "model",
+            "content": output,
+            "stop_reason": "tool_use" if owned or mixed else "end_turn",
+            "stop_sequence": None,
+            "usage": {"input_tokens": 110000, "output_tokens": 20, "cache_read_input_tokens": 1000},
+        }
+    output = [
+        {
+            "type": "reasoning",
+            "id": f"rs_{number}",
+            "summary": [],
+            "encrypted_content": f"opaque-encrypted-{number}",
+        },
+        {
+            "type": "message",
+            "role": "assistant",
+            "id": f"msg_{number}",
+            "status": "completed",
+            "content": [{"type": "output_text", "text": f"answer-{number}", "annotations": []}],
+        },
+    ]
+    if owned:
+        output.append(
+            {
+                "type": "function_call",
+                "id": f"fc_{number}",
+                "call_id": f"gateway-{number}",
+                "name": "openviking_search",
+                "arguments": '{"query":"blue"}',
+                "status": "completed",
+            }
+        )
+    if mixed:
+        output.append(
+            {
+                "type": "custom_tool_call" if custom else "function_call",
+                "id": "fc_client",
+                "call_id": "client-1",
+                "name": "shell",
+                "input" if custom else "arguments": "pwd" if custom else '{"command":"pwd"}',
+                "status": "completed",
+            }
+        )
+    return {
+        "id": f"resp_{number}",
+        "object": "response",
+        "model": "model",
+        "status": "completed",
+        "output": output,
+        "usage": {
+            "input_tokens": 110000,
+            "output_tokens": 20,
+            "total_tokens": 110020,
+            "input_tokens_details": {"cached_tokens": 1000},
+        },
+    }
+
+
+def native_events(protocol, value):
+    if protocol == "anthropic":
+        events = [
+            {
+                "type": "message_start",
+                "message": {
+                    **value,
+                    "content": [],
+                    "stop_reason": None,
+                    "usage": {**value["usage"], "output_tokens": 0},
+                },
+            }
+        ]
+        for index, block in enumerate(value["content"]):
+            initial = copy.deepcopy(block)
+            deltas = []
+            for key in ("thinking", "signature", "text"):
+                if key in initial:
+                    text = initial[key]
+                    initial[key] = ""
+                    deltas.extend(
+                        {"type": key + "_delta", key: fragment} for fragment in (text[:3], text[3:])
+                    )
+            if block["type"] == "tool_use":
+                initial["input"] = {}
+                raw = orjson.dumps(block["input"]).decode()
+                deltas.extend(
+                    {"type": "input_json_delta", "partial_json": fragment}
+                    for fragment in (raw[:4], raw[4:])
+                )
+            events.append({"type": "content_block_start", "index": index, "content_block": initial})
+            events.extend(
+                {"type": "content_block_delta", "index": index, "delta": delta} for delta in deltas
+            )
+            events.append({"type": "content_block_stop", "index": index})
+        return [
+            *events,
+            {
+                "type": "message_delta",
+                "delta": {"stop_reason": value["stop_reason"], "stop_sequence": None},
+                "usage": {"output_tokens": value["usage"]["output_tokens"]},
+            },
+            {"type": "message_stop"},
+        ]
+    events = [
+        {"type": event, "response": {**value, "status": "in_progress", "output": []}}
+        for event in ("response.created", "response.in_progress")
+    ]
+    for index, item in enumerate(value["output"]):
+        initial = copy.deepcopy(item)
+        if item["type"] == "function_call":
+            initial["arguments"] = ""
+        if item["type"] == "message":
+            initial["content"] = []
+        events.append(
+            {"type": "response.output_item.added", "output_index": index, "item": initial}
+        )
+        if item["type"] == "message":
+            part = item["content"][0]
+            events.extend(
+                [
+                    {
+                        "type": "response.content_part.added",
+                        "output_index": index,
+                        "item_id": item["id"],
+                        "content_index": 0,
+                        "part": {**part, "text": ""},
+                    },
+                    {
+                        "type": "response.output_text.delta",
+                        "output_index": index,
+                        "item_id": item["id"],
+                        "content_index": 0,
+                        "delta": part["text"],
+                    },
+                    {
+                        "type": "response.output_text.done",
+                        "output_index": index,
+                        "item_id": item["id"],
+                        "content_index": 0,
+                        "text": part["text"],
+                    },
+                    {
+                        "type": "response.content_part.done",
+                        "output_index": index,
+                        "item_id": item["id"],
+                        "content_index": 0,
+                        "part": part,
+                    },
+                ]
+            )
+        if item["type"] == "function_call":
+            for fragment in (item["arguments"][:4], item["arguments"][4:]):
+                events.append(
+                    {
+                        "type": "response.function_call_arguments.delta",
+                        "output_index": index,
+                        "item_id": item["id"],
+                        "delta": fragment,
+                    }
+                )
+            events.append(
+                {
+                    "type": "response.function_call_arguments.done",
+                    "output_index": index,
+                    "item_id": item["id"],
+                    "arguments": item["arguments"],
+                }
+            )
+        events.append({"type": "response.output_item.done", "output_index": index, "item": item})
+    return [*events, {"type": "response.completed", "response": value}]
+
+
+async def wire_response(request, protocol, value, streaming):
+    if not streaming:
+        return web.json_response(value)
+    response = web.StreamResponse(headers={"Content-Type": "text/event-stream"})
+    await response.prepare(request)
+    data = b"".join(
+        b"event: " + e["type"].encode() + b"\n" + sse(e) for e in native_events(protocol, value)
+    )
+    # Deliberately split names, JSON and signature deltas at byte boundaries.
+    for offset in range(0, len(data), 19):
+        await response.write(data[offset : offset + 19])
+    await response.write_eof()
+    return response
+
+
+def request_body(protocol, streaming):
+    messages = [{"role": "user", "content": "Find blue"}]
+    if protocol == "anthropic":
+        return {
+            "model": "model",
+            "messages": messages,
+            "max_tokens": 2048,
+            "stream": streaming,
+            "thinking": {"type": "enabled", "budget_tokens": 1024},
+            "tool_choice": {"type": "auto"},
+            "tools": [
+                {"name": "shell", "description": "Run shell", "input_schema": {"type": "object"}}
+            ],
+        }
+    return {
+        "model": "model",
+        "input": messages,
+        "store": False,
+        "max_output_tokens": 2048,
+        "stream": streaming,
+        "tools": [{"type": "function", "name": "shell", "parameters": {"type": "object"}}],
+    }
+
+
+def visible_response(protocol, response, streaming):
+    if not streaming:
+        return response.json()
+    events = [SSEDecoder.data(f) for f in SSEDecoder().feed(response.content)]
+    assert all(e is not None for e in events)
+    assert b"[DONE]" not in response.content
+    if protocol == "responses":
+        assert [e["sequence_number"] for e in events] == list(range(len(events)))
+        assert sum(e["type"] == "response.created" for e in events) == 1
+        assert sum(e["type"] == "response.in_progress" for e in events) == 1
+        assert sum(e["type"] == "response.completed" for e in events) == 1
+        value = events[-1]["response"]
+        starts = [e for e in events if e["type"] == "response.output_item.added"]
+        assert [e["output_index"] for e in starts] == list(range(len(value["output"])))
+        for e in events:
+            if "output_index" in e:
+                item = value["output"][e["output_index"]]
+                assert e.get("item_id", item["id"]) == item["id"]
+            if "response" in e:
+                assert e["response"]["id"] == value["id"]
+        assert [e["item"] for e in events if e["type"] == "response.output_item.done"] == value[
+            "output"
+        ]
+        return value
+    assert sum(e["type"] == "message_start" for e in events) == 1
+    assert sum(e["type"] == "message_delta" for e in events) == 1
+    assert sum(e["type"] == "message_stop" for e in events) == 1
+    value = copy.deepcopy(events[0]["message"])
+    blocks, arguments = [], {}
+    for e in events:
+        if e["type"] == "content_block_start":
+            assert e["index"] == len(blocks)
+            blocks.append(copy.deepcopy(e["content_block"]))
+        if e["type"] == "content_block_delta":
+            delta, index = e["delta"], e["index"]
+            for key in ("text", "thinking", "signature"):
+                if key in delta:
+                    blocks[index][key] += delta[key]
+            if "partial_json" in delta:
+                arguments[index] = arguments.get(index, "") + delta["partial_json"]
+        if e["type"] == "message_delta":
+            value.update(e["delta"])
+            value["usage"] = e["usage"]
+    for index, raw in arguments.items():
+        blocks[index]["input"] = orjson.loads(raw)
+    value["content"] = blocks
+    return value
+
+
+@pytest.mark.parametrize("protocol", ["responses", "anthropic"])
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize("mixed", [False, True])
+async def test_native_hidden_rounds_exact_replay(running_gateway, protocol, streaming, mixed):
+    app, client, admin, key, _, _ = running_gateway
+    await enable_tools(client, admin)
+    requests, calls, upstream = [], [], []
+
+    async def backend(request):
+        if request.path == "/mcp":
+            calls.append(await request.json())
+            assert request.headers["X-API-Key"] == "user-key"
+            return web.json_response(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "result": {"content": [{"type": "text", "text": "blue"}]},
+                }
+            )
+        if request.path != PATHS[protocol]:
+            return None
+        payload = await request.json()
+        requests.append(copy.deepcopy(payload))
+        number = len(requests)
+        value = native_response(
+            protocol, number, owned=number <= (1 if mixed else 2), mixed=mixed and number == 1
+        )
+        if protocol == "responses":
+            value["tools"] = payload["tools"]
+        upstream.append(value)
+        return await wire_response(request, protocol, value, streaming)
+
+    app.state.test_backend["handler"] = backend
+    body = request_body(protocol, streaming)
+    original = copy.deepcopy(body)
+    # Anonymous clients must also reuse the hidden transcript after a tool handoff.
+    headers = {"Authorization": "Bearer " + key["key"]}
+    response = await client.post(PATHS[protocol], headers=headers, json=body)
+    assert response.status_code == 200, response.text
+    assert "openviking_search" not in response.text and "gateway-" not in response.text
+    visible = visible_response(protocol, response, streaming)
+    rounds = 1 if mixed else 3
+    assert len(requests) == rounds and len(calls) == (1 if mixed else 2)
+    assert visible["usage"]["input_tokens"] == rounds * 110000
+    assert visible["usage"]["output_tokens"] == rounds * 20
+    field = "input" if protocol == "responses" else "messages"
+    output = (
+        visible["output"]
+        if protocol == "responses"
+        else [{"role": "assistant", "content": visible["content"]}]
+    )
+    body[field].extend(output)
+    if mixed:
+        body[field].append(
+            {"type": "function_call_output", "call_id": "client-1", "output": "cwd"}
+            if protocol == "responses"
+            else {
+                "role": "user",
+                "content": [{"type": "tool_result", "tool_use_id": "client-1", "content": "cwd"}],
+            }
+        )
+    else:
+        body[field].append({"role": "user", "content": "Continue"})
+    response = await client.post(PATHS[protocol], headers=headers, json=body)
+    assert response.status_code == 200, response.text
+    replay = requests[-1]
+    assert requests[0]["tools"] == replay["tools"]
+    limit = "max_output_tokens" if protocol == "responses" else "max_tokens"
+    assert all(r[limit] == original[limit] for r in requests)
+    if protocol == "responses":
+        assert all("reasoning.encrypted_content" in r["include"] for r in requests)
+        expected = [*original[field], *upstream[0]["output"]]
+        assert replay[field][: len(expected)] == expected
+        assert replay[field][len(expected)]["call_id"] == "gateway-1"
+        assert replay[field][len(expected)]["type"] == "function_call_output"
+        if not mixed:
+            assert requests[1][field] == replay[field][: len(requests[1][field])]
+            assert requests[2][field] == replay[field][: len(requests[2][field])]
+    else:
+        assert replay[field][1] == {"role": "assistant", "content": upstream[0]["content"]}
+        results = replay[field][2]["content"]
+        assert [b["tool_use_id"] for b in results] == (
+            ["gateway-1", "client-1"] if mixed else ["gateway-1"]
+        )
+        if not mixed:
+            assert requests[1][field] == replay[field][: len(requests[1][field])]
+            assert requests[2][field] == replay[field][: len(requests[2][field])]
+    # Capture remains on the same OV session as the final/client-tool continuation.
+    logs = (await client.get("/admin/logs", headers=admin)).json()
+    assert len({log["session"] for log in logs}) == 1
+
+
+@pytest.mark.parametrize("protocol", ["responses", "anthropic"])
+@pytest.mark.parametrize("streaming", [False, True])
+async def test_native_budget_finishes_without_changing_output_limit(
+    running_gateway, protocol, streaming
+):
+    app, client, admin, key, _, _ = running_gateway
+    await enable_tools(client, admin, tool_total_tokens=1024)
+    requests, calls = [], []
+
+    async def backend(request):
+        if request.path == "/mcp":
+            calls.append(await request.json())
+            return web.json_response(
+                {"id": 1, "result": {"content": [{"type": "text", "text": "large result " * 1500}]}}
+            )
+        if request.path != PATHS[protocol]:
+            return None
+        requests.append(await request.json())
+        number = len(requests)
+        value = native_response(protocol, number, owned=number == 1)
+        return await wire_response(request, protocol, value, streaming)
+
+    app.state.test_backend["handler"] = backend
+    body = request_body(protocol, streaming)
+    response = await client.post(
+        PATHS[protocol], headers={"Authorization": "Bearer " + key["key"]}, json=body
+    )
+    assert response.status_code == 200 and "gateway_tool_error" not in response.text
+    visible_response(protocol, response, streaming)
+    assert len(requests) == 2 and len(calls) == 1
+    assert requests[1]["tool_choice"] == ({"type": "none"} if protocol == "anthropic" else "none")
+    limit = "max_tokens" if protocol == "anthropic" else "max_output_tokens"
+    assert requests[1][limit] == body[limit]
+    assert requests[1]["tools"] == requests[0]["tools"]
+    logs = (await client.get("/admin/logs", headers=admin)).json()
+    assert logs[0]["tool_stop_reason"] == "token_budget"
+
+
+@pytest.mark.parametrize("protocol", ["responses", "anthropic"])
+@pytest.mark.parametrize("failure", ["truncated", "error", "incomplete_call"])
+async def test_native_stream_failure_never_executes_tools(running_gateway, protocol, failure):
+    app, client, admin, key, _, _ = running_gateway
+    await enable_tools(client, admin)
+    calls = []
+
+    async def backend(request):
+        if request.path == "/mcp":
+            calls.append(await request.json())
+            return web.json_response({"id": 1, "result": {"content": []}})
+        if request.path != PATHS[protocol]:
+            return None
+        value = native_response(protocol, 1, owned=True)
+        events = native_events(protocol, value)
+        if failure == "truncated":
+            events.pop()
+        elif failure == "error":
+            events[-1] = {"type": "error", "error": {"message": "upstream failure"}}
+        elif protocol == "responses":
+            events[-1]["type"] = "response.incomplete"
+            events[-1]["response"]["status"] = "incomplete"
+        else:
+            events[-2]["delta"]["stop_reason"] = "max_tokens"
+        return web.Response(body=b"".join(sse(e) for e in events), content_type="text/event-stream")
+
+    app.state.test_backend["handler"] = backend
+    response = await client.post(
+        PATHS[protocol],
+        headers={"Authorization": "Bearer " + key["key"]},
+        json=request_body(protocol, True),
+    )
+    assert response.status_code == 200
+    events = [SSEDecoder.data(f) for f in SSEDecoder().feed(response.content)]
+    assert events[-1]["type"] == "error"
+    assert events[-1]["error"]["type"] == "gateway_tool_error"
+    assert not calls
+    assert not any(e["type"] in {"response.completed", "message_stop"} for e in events)
+    assert b"[DONE]" not in response.content
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+async def test_responses_custom_tool_mixed_handoff(running_gateway, streaming):
+    app, client, admin, key, _, _ = running_gateway
+    await enable_tools(client, admin)
+    requests = []
+
+    async def backend(request):
+        if request.path == "/mcp":
+            return web.json_response({"id": 1, "result": {"content": []}})
+        if request.path != "/v1/responses":
+            return None
+        requests.append(await request.json())
+        return await wire_response(
+            request,
+            "responses",
+            native_response("responses", len(requests), owned=True, mixed=True, custom=True),
+            streaming,
+        )
+
+    app.state.test_backend["handler"] = backend
+    body = request_body("responses", streaming)
+    body["tools"] = [{"type": "custom", "name": "shell", "format": {"type": "text"}}]
+    response = await client.post(
+        "/v1/responses", headers={"Authorization": "Bearer " + key["key"]}, json=body
+    )
+    value = visible_response("responses", response, streaming)
+    assert len(requests) == 1
+    assert value["output"][-1]["type"] == "custom_tool_call"
+    assert value["output"][-1]["input"] == "pwd"
+    assert "openviking_search" not in response.text
+
+
+@pytest.mark.parametrize("protocol", ["responses", "anthropic"])
+async def test_native_incompatible_mode_keeps_only_visible_history(
+    setup_kernel, credential, policy, protocol
+):
+    kernel, store, _, _ = setup_kernel
+    policy.update(gateway_tools=True, recall=False)
+    body = request_body(protocol, False)
+    field = "input" if protocol == "responses" else "messages"
+    header = {"x-openviking-session": "native-tools"}
+    prepared = await kernel.prepare(body, protocol, header, credential, {"id": "u"}, policy)
+    native = native_response(protocol, 1, owned=True)
+    from openviking_context_gateway.tool_catalog import hidden_chain
+
+    output = (
+        native["output"][:-1]
+        if protocol == "responses"
+        else [{"role": "assistant", "content": native["content"][:-1]}]
+    )
+    anchor = hidden_chain([*body[field], *output], protocol)[-1]
+    await store.replay.put(
+        prepared.scope,
+        prepared.session,
+        "hidden",
+        anchor,
+        {
+            "messages": native.get("output")
+            or [{"role": "assistant", "content": native["content"]}],
+            "visible_count": len(output),
+        },
+    )
+    body[field].extend([*output, {"role": "user", "content": "Continue"}])
+    body["tool_choice"] = (
+        "required" if protocol == "responses" else {"type": "tool", "name": "shell"}
+    )
+    downgraded = await kernel.prepare(body, protocol, header, credential, {"id": "u"}, policy)
+    assert not downgraded.tools_active
+    assert "openviking_search" not in orjson.dumps(downgraded.body).decode()
+    if protocol == "anthropic":
+        assert "signature" not in orjson.dumps(downgraded.body).decode()
+    # Re-enabling the compatible mode recovers the original immutable transcript.
+    body["tool_choice"] = "auto" if protocol == "responses" else {"type": "auto"}
+    restored = await kernel.prepare(body, protocol, header, credential, {"id": "u"}, policy)
+    assert (
+        restored.tools_active and "openviking_search" in orjson.dumps(restored.body[field]).decode()
+    )
+
+
+async def test_anthropic_count_tokens_uses_same_prompt_without_a_tool_loop(running_gateway):
+    _, client, admin, key, seen, _ = running_gateway
+    await enable_tools(client, admin)
+    body = request_body("anthropic", False)
+    header = {"Authorization": "Bearer " + key["key"], "X-OpenViking-Session": "count"}
+    response = await client.post("/v1/messages", headers=header, json=body)
+    assert response.status_code == 200
+    response = await client.post("/v1/messages/count_tokens", headers=header, json=body)
+    assert response.json() == {"input_tokens": 20}
+    assert orjson.loads(seen[-1][1]) == orjson.loads(seen[-2][1])
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [{"store": True}, {"previous_response_id": "old"}, {"background": True}, {"conversation": "c"}],
+)
+async def test_hosted_responses_history_remains_passthrough(running_gateway, extra):
+    _, client, admin, key, seen, _ = running_gateway
+    await enable_tools(client, admin)
+    body = {**request_body("responses", False), **extra}
+    response = await client.post(
+        "/v1/responses", headers={"Authorization": "Bearer " + key["key"]}, json=body
+    )
+    assert response.status_code == 200
+    assert orjson.loads(seen[-1][1]) == body
+
+
+@pytest.mark.parametrize("protocol", ["responses", "anthropic"])
+async def test_native_text_streams_before_round_finishes_and_cancel_closes(protocol):
+    import asyncio
+    from types import SimpleNamespace
+
+    from openviking_context_gateway.protocols import ResponseCapture
+    from openviking_context_gateway.tool_loop import HiddenToolLoop
+
+    value = native_response(protocol, 1, owned=True)
+    events = native_events(protocol, value)
+    closed = []
+    pending = asyncio.Event()
+
+    class Content:
+        async def iter_any(self):
+            for event in events:
+                yield sse(event)
+                if event["type"] in {"response.output_text.delta", "content_block_delta"}:
+                    await pending.wait()
+                    pytest.fail("Cancellation must stop reading the upstream")
+
+    response = SimpleNamespace(
+        status=200,
+        headers={"content-type": "text/event-stream"},
+        content=Content(),
+        close=lambda: closed.append(True),
+    )
+    prepared = SimpleNamespace(
+        body=request_body(protocol, True), protocol=protocol, root={"policy": {}}, metrics={}
+    )
+    loop = HiddenToolLoop(
+        prepared, SimpleNamespace(allowed={"openviking_search"}), None, ResponseCapture(protocol)
+    )
+    stream = loop.run(response, None)
+    while True:
+        chunk = await asyncio.wait_for(stream.__anext__(), 0.5)
+        if b'"delta"' in chunk:
+            break
+    await stream.aclose()
+    assert closed and not loop.capture.complete
+
+
+@pytest.mark.parametrize("protocol", ["responses", "anthropic"])
+async def test_native_replay_survives_restart_edits_and_archive_boundary(
+    setup_kernel, credential, policy, protocol
+):
+    from openviking_context_gateway.models import Policy
+    from openviking_context_gateway.storage import SQLiteKernelStore
+    from openviking_context_gateway.tool_catalog import hidden_chain, replay_hidden
+
+    kernel, store, _, encryption = setup_kernel
+    policy.update(gateway_tools=True, recall=False)
+    body = request_body(protocol, False)
+    field = "input" if protocol == "responses" else "messages"
+    native = native_response(protocol, 1, owned=True)
+    output = (
+        native["output"][:-1]
+        if protocol == "responses"
+        else [{"role": "assistant", "content": native["content"][:-1]}]
+    )
+    history = native.get("output") or [{"role": "assistant", "content": native["content"]}]
+    header = {"x-openviking-session": "native-restart"}
+    first = await kernel.prepare(body, protocol, header, credential, {"id": "u"}, policy)
+    body[field].extend(output)
+    anchor = hidden_chain(body[field], protocol)[-1]
+    await store.replay.put(
+        first.scope,
+        first.session,
+        "hidden",
+        anchor,
+        {"messages": history, "visible_count": len(output)},
+    )
+    reopened = SQLiteKernelStore(store.path, encryption)
+    kernel.store = reopened
+    try:
+        body[field].append({"role": "user", "content": "Follow up"})
+        restored = await kernel.prepare(body, protocol, header, credential, {"id": "u"}, policy)
+        assert restored.body[field][1 : 1 + len(history)] == history
+        edited = copy.deepcopy(body)
+        target = edited[field][-2]
+        for block in target.get("content", []):
+            if block.get("type") in {"text", "output_text"}:
+                block["text"] = "edited answer"
+        branch = await kernel.prepare(edited, protocol, header, credential, {"id": "u"}, policy)
+        assert branch.body[field] == edited[field]
+        # The archived anchor is the endpoint of the visible span, never a
+        # native hidden transcript index. An old record cannot expand the summary.
+        restored.body[field] = copy.deepcopy(body[field])
+        restored.body_chain = hidden_chain(body[field], protocol)
+        restored.records["replacement", anchor] = {"text": "Archived context"}
+        assert kernel.replace_archive(restored, Policy(keep_recent_turns=1))
+        replay = replay_hidden(
+            restored.body[field], restored.body_chain, restored.records, protocol
+        )
+        assert replay == [{"role": "user", "content": "Archived context"}, body[field][-1]]
+    finally:
+        reopened.close()
+        kernel.store = store
+
+
+def test_custom_responses_tools_are_captured_as_complete_pairs():
+    from openviking_context_gateway.capture import capture_messages
+    from openviking_context_gateway.protocols import prefix_chain
+
+    messages = [
+        {"role": "user", "content": "check the directory"},
+        {
+            "type": "custom_tool_call",
+            "id": "ct-1",
+            "call_id": "c-1",
+            "name": "shell",
+            "input": "pwd",
+        },
+        {"type": "custom_tool_call_output", "call_id": "c-1", "output": "/work/project"},
+    ]
+    captured = capture_messages(messages, prefix_chain(messages))
+    assert captured[1]["parts"] == [
+        {
+            "type": "tool",
+            "tool_id": "c-1",
+            "tool_name": "shell",
+            "tool_input": {"raw": "pwd"},
+            "tool_status": "completed",
+            "tool_output": "/work/project",
+        }
+    ]
+
+
+@pytest.mark.parametrize("protocol", ["responses", "anthropic"])
+async def test_hidden_round_with_no_visible_anchor_does_not_write_a_root_record(
+    setup_kernel, credential, policy, protocol
+):
+    from types import SimpleNamespace
+
+    from openviking_context_gateway.protocols import ResponseCapture
+    from openviking_context_gateway.tool_loop import HiddenToolLoop
+
+    kernel, store, _, _ = setup_kernel
+    policy.update(gateway_tools=True, recall=False)
+    prepared = await kernel.prepare(
+        request_body(protocol, False), protocol, {}, credential, {"id": "u"}, policy
+    )
+    loop = HiddenToolLoop(
+        prepared, SimpleNamespace(allowed={"openviking_search"}), store, ResponseCapture(protocol)
+    )
+    loop.hidden = True
+    value = native_response(protocol, 1)
+    value["output" if protocol == "responses" else "content"] = []
+    loop.adapter.begin()
+    loop.adapter.load(value)
+    loop.adapter.end()
+    await loop.persist()
+    assert ("hidden", "") not in await store.replay.read(prepared.scope, prepared.session, [""])
+    assert prepared.metrics["degradation"] == "hidden_reply_without_anchor"
+
+
+@pytest.mark.parametrize("protocol", ["responses", "anthropic"])
+def test_native_file_attachments_preserve_bytes(protocol):
+    from openviking_context_gateway.tool_catalog import attachments
+    from openviking_context_gateway.tool_executor import attachment_bytes
+
+    part = (
+        {"type": "input_file", "filename": "note.txt", "file_data": "aGVsbG8="}
+        if protocol == "responses"
+        else {
+            "type": "document",
+            "title": "note.txt",
+            "source": {"type": "base64", "media_type": "text/plain", "data": "aGVsbG8="},
+        }
+    )
+    body = {
+        "input" if protocol == "responses" else "messages": [{"role": "user", "content": [part]}]
+    }
+    assert attachment_bytes(attachments(body)[0], 100) == ("note.txt", b"hello")

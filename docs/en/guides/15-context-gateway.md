@@ -78,6 +78,8 @@ The client never sees this block. It is not part of the reply, and the client's 
 
 **Long conversations.** Once about 30,000 tokens of a conversation have been saved, the gateway lets OpenViking archive the older part and write a summary of it. From then on the model receives that summary plus the latest three turns word for word, instead of the full history, so the conversation does not run into the model's context window. The prompt changes once at each archive point, which costs one provider cache miss there. See [Long conversations](22-context-gateway-operations.md#long-conversations) for the details.
 
+**OpenViking tools.** A context profile can also let the model search and read OpenViking while answering. This works with Chat Completions, full-history Responses and Anthropic Messages, with streaming or nonstreaming replies. It is off by default; see [OpenViking tools](22-context-gateway-operations.md#openviking-tools) for setup and client requirements.
+
 All of these numbers come from the key's **context profile**, where you can change budgets and timing or turn each feature off.
 
 ## Quick start

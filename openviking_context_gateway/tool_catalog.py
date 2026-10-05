@@ -8,6 +8,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from .protocols import enhanced_supported, messages_of, prefix_chain
 from .records import RecordKind as K
 
 TOOL_VERSION = 1
@@ -97,7 +98,7 @@ def has_shell(body):
 
 def attachments(body):
     output = []
-    for message in body.get("messages", []):
+    for message in messages_of(body, "responses" if "input" in body else "chat"):
         if message.get("role") not in {"user", "system"}:
             continue
         content = message.get("content", [])
@@ -105,6 +106,22 @@ def attachments(body):
             for part in content:
                 if isinstance(part, dict) and part.get("type") in {"file", "input_file"}:
                     output.append(part.get("file", part))
+                elif isinstance(part, dict) and part.get("type") == "document":
+                    source = part.get("source", {})
+                    if source.get("type") == "base64":
+                        output.append(
+                            {
+                                "filename": part.get("title", "attachment.pdf"),
+                                "file_data": source.get("data", ""),
+                            }
+                        )
+                    elif source.get("type") == "text":
+                        output.append(
+                            {
+                                "filename": part.get("title", "attachment.txt"),
+                                "text": source.get("data", ""),
+                            }
+                        )
         # Open WebUI can send extracted documents as source tags instead of bytes.
         # Only marked source text is importable, never arbitrary conversation text.
         texts = (
@@ -131,24 +148,58 @@ def attachments(body):
 
 
 def tool_block_reason(body, protocol, upstream):
-    if protocol != "chat":
-        return "tools_chat_only"
+    if not enhanced_supported(body, protocol):
+        return "tools_require_full_history"
     if not upstream.get("allow_gateway_tools", True):
         return "upstream_tools_disabled"
     if body.get("n", 1) != 1:
         return "tools_multiple_choices"
-    if (body.get("response_format") or {}).get("type", "text") != "text":
+    output_format = (
+        body.get("response_format")
+        or body.get("text", {}).get("format")
+        or body.get("output_config", {}).get("format")
+        or {}
+    )
+    if output_format.get("type", "text") != "text":
         return "tools_structured_output"
-    if any(t.get("type", "function") != "function" for t in body.get("tools", [])):
+    if protocol == "chat" and any(
+        t.get("type", "function") != "function" for t in body.get("tools", [])
+    ):
         return "tools_non_function"
+    if protocol == "responses" and any(
+        m.get("type") == "item_reference" for m in messages_of(body, protocol)
+    ):
+        return "tools_require_full_history"
     choice = body.get("tool_choice", "auto")
-    if choice == "required" or isinstance(choice, dict):
+    if protocol == "anthropic" and isinstance(choice, dict):
+        choice = choice.get("type")
+    if choice not in ("auto", "none"):
         return "tools_forced_choice"
     if upstream.get("vendor") == "deepseek":
         thinking = body.get("thinking") or {}
         if thinking.get("type") != "disabled":
             return "deepseek_reasoning_history_required"
     return ""
+
+
+def wire_tools(tools, protocol):
+    """The frozen catalogue is shared; only the wire schema varies."""
+    if protocol == "chat":
+        return tools
+    if protocol == "responses":
+        return [{"type": "function", **t["function"], "strict": False} for t in tools]
+    return [
+        {
+            "name": t["function"]["name"],
+            "description": t["function"]["description"],
+            "input_schema": t["function"]["parameters"],
+        }
+        for t in tools
+    ]
+
+
+def disable_tools(body, protocol):
+    body["tool_choice"] = {"type": "none"} if protocol == "anthropic" else "none"
 
 
 def select_tools(body, protocol, upstream, policy):
@@ -175,25 +226,29 @@ def select_tools(body, protocol, upstream, policy):
     return selected
 
 
-def replay_hidden(messages, chain, records):
+def replay_hidden(messages, chain, records, protocol="chat"):
     """Expand a client-visible assistant reply into the exact upstream sequence.
 
     The endpoint hash includes the visible reply. Regenerated/edited replies are
     separate immutable branches even when they share a user-message anchor.
     """
-    result = []
-    for message, anchor in zip(messages, chain, strict=True):
+    result, offsets = [], []
+    for index, (message, anchor) in enumerate(zip(messages, chain, strict=True)):
+        offsets.append(len(result))
+        result.append(message)
         record = records.get((K.HIDDEN, anchor))
-        if record and message.get("role") == "assistant":
-            result.extend(record["messages"])
-        else:
-            result.append(message)
+        if record:
+            count = record["visible_count"]
+            if 0 < count <= index + 1:
+                result[offsets[index + 1 - count] :] = record["messages"]
+    if protocol == "anthropic":
+        result = merge_tool_results(result)
     return result
 
 
-def hidden_chain(messages):
-    from .protocols import prefix_chain
-
+def hidden_chain(messages, protocol="chat"):
+    if protocol != "chat":
+        return prefix_chain(messages)
     # Chat frontends often omit reasoning/vendor metadata when returning a
     # message. Match the visible content and calls, retaining the original full
     # assistant objects inside the encrypted hidden record.
@@ -207,3 +262,21 @@ def hidden_chain(messages):
             }
         canonical.append(message)
     return prefix_chain(canonical)
+
+
+def merge_tool_results(messages):
+    """Mixed calls must receive all results in the immediately following user message."""
+    result = []
+    for message in messages:
+        prior = result[-1] if result else {}
+        if (
+            prior.get("role") == message.get("role") == "user"
+            and isinstance(prior.get("content"), list)
+            and isinstance(message.get("content"), list)
+            and all(b.get("type") == "tool_result" for b in prior["content"])
+            and any(b.get("type") == "tool_result" for b in message["content"])
+        ):
+            result[-1] = {**prior, **message, "content": [*prior["content"], *message["content"]]}
+        else:
+            result.append(message)
+    return result

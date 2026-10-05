@@ -80,6 +80,8 @@ viking://user/alice/memories/events/release-planning.md
 
 以上数字都来自密钥使用的**上下文配置**。你可以在其中调整预算和时间，也可以分别关闭每项功能。
 
+**OpenViking 工具。** 上下文配置还可以允许模型在回答时主动搜索和读取 OpenViking。支持 Chat Completions、完整历史的 Responses 和 Anthropic Messages，包括流式和非流式回复，默认关闭。启用方法和客户端要求见 [OpenViking 工具](22-context-gateway-operations.md#openviking-工具)。
+
 ## 快速开始
 
 下面的流程在一台机器上运行 OpenViking Server、网关和测试客户端。你需要：

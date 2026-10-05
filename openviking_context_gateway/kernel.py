@@ -32,10 +32,12 @@ from .state_store import get_state
 from .storage import KernelStore, digest
 from .tool_catalog import (
     TOOL_VERSION,
+    disable_tools,
     hidden_chain,
     replay_hidden,
     select_tools,
     tool_block_reason,
+    wire_tools,
 )
 from .vendors import parameter_fingerprint
 
@@ -132,7 +134,12 @@ class MemoryKernel:
             endpoints = [
                 a
                 for a, m in zip(body_chain, messages, strict=True)
-                if a and m.get("role") == "assistant"
+                if a
+                and (
+                    m.get("role") == "assistant"
+                    or protocol == "responses"
+                    and m.get("type") in {"reasoning", "function_call", "custom_tool_call"}
+                )
             ]
             owners = (
                 await self.store.state.read(scope, ["prefix:" + a for a in endpoints])
@@ -225,10 +232,10 @@ class MemoryKernel:
             if policy.capture and kind == "user" and anchor >= 0:
                 await CapturePipeline(self.store.capture).confirm(prepared, credential, policy)
         await self.takeover(prepared, policy)
-        if protocol == "chat" and prepared.tools_active:
-            result["messages"] = replay_hidden(result["messages"], prepared.body_chain, records)
+        if prepared.tools_active:
+            result[field] = replay_hidden(result[field], prepared.body_chain, records, protocol)
             if prepared.strip_replayed_thinking:
-                result["messages"] = strip_thinking(result["messages"])
+                result[field] = strip_thinking(result[field])
         if isinstance(body.get("input"), str) and result.get("input") == messages:
             result["input"] = body["input"]
         return prepared
@@ -265,16 +272,28 @@ class MemoryKernel:
             reason = tool_block_reason(request.original, request.protocol, request.upstream)
             names = {t["function"]["name"] for t in tools}
             collision = any(
-                t.get("function", {}).get("name") in names
-                for t in request.original.get("tools", [])
+                t.get("function", t).get("name") in names for t in request.original.get("tools", [])
             )
             if reason or collision:
                 request.metrics["tool_skip_reason"] = reason or "tool_name_collision"
+                if request.protocol == "anthropic":
+                    request.body["messages"] = strip_thinking(request.body["messages"])
             else:
-                request.body["tools"] = [*request.original.get("tools", []), *tools]
+                request.body["tools"] = [
+                    *request.original.get("tools", []),
+                    *wire_tools(tools, request.protocol),
+                ]
                 request.tools_active = True
-                if request.disabled or request.kind not in {"user", "continuation"}:
-                    request.body["tool_choice"] = "none"
+                if request.protocol == "responses":
+                    request.body["include"] = list(
+                        dict.fromkeys(
+                            [*request.original.get("include", []), "reasoning.encrypted_content"]
+                        )
+                    )
+                if request.kind != "count" and (
+                    request.disabled or request.kind not in {"user", "continuation"}
+                ):
+                    disable_tools(request.body, request.protocol)
         elif policy.gateway_tools:
             request.metrics["tool_skip_reason"] = (
                 tool_block_reason(request.original, request.protocol, request.upstream)
@@ -302,6 +321,7 @@ class MemoryKernel:
             reason = "missing_injection_record"
         if reason:
             request.body[field] = strip_thinking(messages)
+            request.strip_replayed_thinking = True
             request.metrics["degradation"] = reason
         if request.disabled:
             request.metrics["degradation"] = "plugin_present"

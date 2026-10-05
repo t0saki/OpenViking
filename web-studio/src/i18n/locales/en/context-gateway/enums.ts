@@ -55,7 +55,8 @@ const enums = {
     recall_timeout: 'Recall timed out',
   },
   toolSkipReason: {
-    tools_chat_only: 'OpenViking tools work with Chat Completions only',
+    tools_require_full_history:
+      'Responses tools need complete input history with store disabled',
     upstream_tools_disabled:
       'OpenViking tools are turned off for this upstream',
     tools_multiple_choices: 'The request asked for several choices (n > 1)',
@@ -128,6 +129,12 @@ const enums = {
         "The conversation was close to the model's context window, but OpenViking's summary wasn't ready in time, so the full history was sent and may not fit.",
       action:
         'Wait longer for the summary or start summarizing earlier in the profile, and check how quickly OpenViking writes summaries.',
+    },
+    hidden_reply_without_anchor: {
+      label: 'No reply to replay',
+      explanation:
+        'The model used tools but returned no visible reply, so there is no reply to attach the hidden history to.',
+      action: 'Send a follow-up message to continue the conversation.',
     },
     hidden_tool_loop_failed: {
       label: 'OpenViking tools failed',
