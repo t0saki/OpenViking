@@ -371,7 +371,7 @@ async def test_native_hidden_rounds_exact_replay(running_gateway, protocol, stre
     assert all(r[limit] == original[limit] for r in requests)
     if protocol == "responses":
         assert all("reasoning.encrypted_content" in r["include"] for r in requests)
-        expected = [*original[field], *upstream[0]["output"]]
+        expected = [*requests[0][field], *upstream[0]["output"]]
         assert replay[field][: len(expected)] == expected
         assert replay[field][len(expected)]["call_id"] == "gateway-1"
         assert replay[field][len(expected)]["type"] == "function_call_output"
@@ -550,7 +550,9 @@ async def test_native_incompatible_mode_keeps_only_visible_history(
     )
     downgraded = await kernel.prepare(body, protocol, header, credential, {"id": "u"}, policy)
     assert not downgraded.tools_active
-    assert "openviking_search" not in orjson.dumps(downgraded.body).decode()
+    # The opening note names the tools; no definition or hidden call may follow it.
+    rest = {**downgraded.body, field: downgraded.body[field][1:]}
+    assert "openviking_search" not in orjson.dumps(rest).decode()
     if protocol == "anthropic":
         assert "signature" not in orjson.dumps(downgraded.body).decode()
         assert downgraded.metrics["degradation"] == "hidden_tool_history_unavailable"
@@ -635,6 +637,7 @@ async def test_native_text_streams_before_round_finishes_and_cancel_closes(proto
 async def test_native_replay_survives_restart_edits_and_archive_boundary(
     setup_kernel, credential, policy, protocol
 ):
+    from openviking_context_gateway.kernel import gateway_note
     from openviking_context_gateway.models import Policy
     from openviking_context_gateway.storage import SQLiteKernelStore
     from openviking_context_gateway.tool_protocols import hidden_chain, replay_hidden
@@ -673,17 +676,20 @@ async def test_native_replay_survives_restart_edits_and_archive_boundary(
             if block.get("type") in {"text", "output_text"}:
                 block["text"] = "edited answer"
         branch = await kernel.prepare(edited, protocol, header, credential, {"id": "u"}, policy)
-        assert branch.body[field] == edited[field]
+        assert branch.body[field] == [first.body[field][0], *edited[field][1:]]
         # The archived anchor is the endpoint of the visible span, never a
         # native hidden transcript index. An old record cannot expand the summary.
         restored.body[field] = copy.deepcopy(body[field])
         restored.body_chain = hidden_chain(body[field], protocol)
         restored.records["replacement", anchor] = {"text": "Archived context"}
-        assert kernel.replace_archive(restored, Policy(keep_recent_turns=1))
+        archive_policy = Policy(keep_recent_turns=1)
+        assert kernel.replace_archive(restored, archive_policy)
         replay = replay_hidden(
             restored.body[field], restored.body_chain, restored.records, protocol
         )
-        assert replay == [{"role": "user", "content": "Archived context"}, body[field][-1]]
+        note = gateway_note(archive_policy, restored.root["tools"])
+        summary = "Archived context\n\n<openviking-context>\n" + note + "\n</openviking-context>"
+        assert replay == [{"role": "user", "content": summary}, body[field][-1]]
     finally:
         reopened.close()
         kernel.store = store
@@ -801,7 +807,7 @@ async def test_anthropic_blocked_tools_preserve_client_thinking(
     for _ in range(2):
         result = await kernel.prepare(body, "anthropic", header, credential, upstream, policy)
         assert not result.tools_active
-        assert result.body["messages"] == body["messages"]
+        assert result.body["messages"] == [prepared.body["messages"][0], *body["messages"][1:]]
         assert result.metrics.get("degradation") != "hidden_tool_history_unavailable"
 
 
@@ -927,4 +933,4 @@ async def test_admin_disabling_anthropic_tools_preserves_history_and_logs(
         assert "signature" not in orjson.dumps(requests[-1]["messages"]).decode()
     else:
         assert not logs[0].get("degradation")
-        assert requests[-1]["messages"] == body["messages"]
+        assert requests[-1]["messages"] == [requests[0]["messages"][0], *body["messages"][1:]]

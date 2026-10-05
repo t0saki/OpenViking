@@ -177,13 +177,16 @@ async def test_hidden_branch_restart_and_archive_mapping(setup_kernel, credentia
     p = await kernel.prepare({"messages": raw}, "chat", {}, credential, {"id": "u"}, policy)
     p.body["messages"] = copy.deepcopy(raw)
     p.body_chain = hidden_chain(raw, "chat")
+    from openviking_context_gateway.kernel import gateway_note
     from openviking_context_gateway.models import Policy
     from openviking_context_gateway.tool_protocols import replay_hidden
 
     p.records["replacement", p.chain[2]] = {"text": "summary"}
     assert kernel.replace_archive(p, Policy(keep_recent_turns=1))
     p.body["messages"] = replay_hidden(p.body["messages"], p.body_chain, p.records, "chat")
-    assert p.body["messages"] == [raw[0], {"role": "user", "content": "summary"}, *raw[3:]]
+    note = gateway_note(Policy(keep_recent_turns=1), p.root["tools"])
+    summary = "summary\n\n<openviking-context>\n" + note + "\n</openviking-context>"
+    assert p.body["messages"] == [raw[0], {"role": "user", "content": summary}, *raw[3:]]
 
 
 async def test_stream_text_precedes_tool_completion_and_cancel_closes():
@@ -350,5 +353,8 @@ async def test_incompatible_tools_keep_visible_history(setup_kernel, credential,
     }
     prepared = await kernel.prepare(body, "chat", headers, credential, {"id": "u"}, policy)
     assert not prepared.tools_active
-    assert prepared.body == body
+    # Only the opening note joins the new user turn; the visible history is untouched.
+    assert prepared.body["messages"][:-1] == messages
+    assert prepared.body["messages"][-1]["content"].startswith("continue\n\n<openviking-context>")
+    assert prepared.body["response_format"] == body["response_format"]
     assert all(not message.get("tool_calls") for message in prepared.body["messages"])

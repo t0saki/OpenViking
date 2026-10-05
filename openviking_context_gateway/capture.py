@@ -318,7 +318,11 @@ class CaptureWorker:
                 item["session"],
                 K.REPLACEMENT,
                 archive["boundary"],
-                {"text": "[OpenViking Session Context]\n" + archive["summary"]},
+                {
+                    "text": "[OpenViking Session Context]\nThe OpenViking Context Gateway "
+                    "replaced the earlier part of this conversation with this summary.\n\n"
+                    + archive["summary"]
+                },
             )
         if state.get("error"):
             state["error"] = {}

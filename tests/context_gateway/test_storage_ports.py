@@ -142,7 +142,10 @@ async def test_kernel_and_capture_work_with_kv_ports(credential, protocol):
     assert await worker.once()  # observe and publish summary
     kernel = MemoryKernel(ports, viking)
     again = await prepare()
-    assert again.body[field][0]["content"].startswith("[OpenViking Session Context]")
+    assert again.body[field][0]["content"].startswith(
+        "[OpenViking Session Context]\nThe OpenViking Context Gateway replaced the earlier part "
+        "of this conversation with this summary.\n\n" + viking.summary + "\n\n<openviking-context>"
+    )
     fork = await prepare("fork")
     assert fork.capture_target != p.capture_target
     await worker.once()
