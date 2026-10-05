@@ -431,8 +431,8 @@ async def test_native_budget_finishes_without_changing_output_limit(
 
 
 @pytest.mark.parametrize("protocol", ["responses", "anthropic"])
-@pytest.mark.parametrize("failure", ["truncated", "error", "incomplete_call"])
-async def test_native_stream_failure_never_executes_tools(running_gateway, protocol, failure):
+@pytest.mark.parametrize("failure", ["truncated", "error", "incomplete_call", "continuation"])
+async def test_native_stream_failure_uses_protocol_terminal(running_gateway, protocol, failure):
     app, client, admin, key, _, _ = running_gateway
     await enable_tools(client, admin)
     calls = []
@@ -443,16 +443,18 @@ async def test_native_stream_failure_never_executes_tools(running_gateway, proto
             return web.json_response({"id": 1, "result": {"content": []}})
         if request.path != PATHS[protocol]:
             return None
+        if failure == "continuation" and calls:
+            return web.json_response({"error": "unavailable"}, status=503)
         value = native_response(protocol, 1, owned=True)
         events = native_events(protocol, value)
         if failure == "truncated":
             events.pop()
         elif failure == "error":
             events[-1] = {"type": "error", "error": {"message": "upstream failure"}}
-        elif protocol == "responses":
+        elif failure == "incomplete_call" and protocol == "responses":
             events[-1]["type"] = "response.incomplete"
             events[-1]["response"]["status"] = "incomplete"
-        else:
+        elif failure == "incomplete_call":
             events[-2]["delta"]["stop_reason"] = "max_tokens"
         return web.Response(body=b"".join(sse(e) for e in events), content_type="text/event-stream")
 
@@ -464,9 +466,18 @@ async def test_native_stream_failure_never_executes_tools(running_gateway, proto
     )
     assert response.status_code == 200
     events = [SSEDecoder.data(f) for f in SSEDecoder().feed(response.content)]
-    assert events[-1]["type"] == "error"
-    assert events[-1]["error"]["type"] == "gateway_tool_error"
-    assert not calls
+    if protocol == "responses":
+        assert events[-1]["type"] == "response.failed"
+        failed = events[-1]["response"]
+        assert failed["status"] == "failed"
+        assert failed["error"]["code"] == "server_error"
+        assert failed["id"] == events[0]["response"]["id"]
+        assert [e["sequence_number"] for e in events] == list(range(len(events)))
+        assert not any(item["type"] == "function_call" for item in failed["output"])
+    else:
+        assert events[-1]["type"] == "error"
+        assert events[-1]["error"]["type"] == "gateway_tool_error"
+    assert len(calls) == (1 if failure == "continuation" else 0)
     assert not any(e["type"] in {"response.completed", "message_stop"} for e in events)
     assert b"[DONE]" not in response.content
 
@@ -542,6 +553,7 @@ async def test_native_incompatible_mode_keeps_only_visible_history(
     assert "openviking_search" not in orjson.dumps(downgraded.body).decode()
     if protocol == "anthropic":
         assert "signature" not in orjson.dumps(downgraded.body).decode()
+        assert downgraded.metrics["degradation"] == "hidden_tool_history_unavailable"
     # Re-enabling the compatible mode recovers the original immutable transcript.
     body["tool_choice"] = "auto" if protocol == "responses" else {"type": "auto"}
     restored = await kernel.prepare(body, protocol, header, credential, {"id": "u"}, policy)
@@ -751,3 +763,93 @@ def test_native_file_attachments_preserve_bytes(protocol):
         "input" if protocol == "responses" else "messages": [{"role": "user", "content": [part]}]
     }
     assert attachment_bytes(attachments(body)[0], 100) == ("note.txt", b"hello")
+
+
+@pytest.mark.parametrize("blocked", ["disabled", "forced", "collision"])
+async def test_anthropic_blocked_tools_preserve_client_thinking(
+    setup_kernel, credential, policy, blocked
+):
+    kernel, store, _, _ = setup_kernel
+    policy.update(gateway_tools=True, recall=False, capture=False)
+    body = request_body("anthropic", False)
+    header, upstream = {"x-openviking-session": "client-tools"}, {"id": "u"}
+    prepared = await kernel.prepare(body, "anthropic", header, credential, upstream, policy)
+    # A hidden round on another branch must not invalidate this request's signatures.
+    await store.replay.put(
+        prepared.scope,
+        prepared.session,
+        "hidden",
+        "another-branch",
+        {"messages": [], "visible_count": 1},
+    )
+    reply = native_response("anthropic", 1, mixed=True)
+    body["messages"].extend(
+        [
+            {"role": "assistant", "content": reply["content"]},
+            {
+                "role": "user",
+                "content": [{"type": "tool_result", "tool_use_id": "client-1", "content": "/work"}],
+            },
+        ]
+    )
+    if blocked == "disabled":
+        upstream["allow_gateway_tools"] = False
+    elif blocked == "forced":
+        body["tool_choice"] = {"type": "tool", "name": "shell"}
+    else:
+        body["tools"].append({"name": "openviking_search", "input_schema": {"type": "object"}})
+    for _ in range(2):
+        result = await kernel.prepare(body, "anthropic", header, credential, upstream, policy)
+        assert not result.tools_active
+        assert result.body["messages"] == body["messages"]
+        assert result.metrics.get("degradation") != "hidden_tool_history_unavailable"
+
+
+@pytest.mark.parametrize("arguments", [None, "", "{}", "{broken"])
+async def test_anthropic_stream_no_argument_tool(running_gateway, arguments):
+    app, client, admin, key, _, _ = running_gateway
+    await enable_tools(client, admin)
+    requests, calls = [], []
+
+    async def backend(request):
+        if request.path == "/mcp":
+            calls.append(await request.json())
+            return web.json_response({"id": 1, "result": {"content": []}})
+        if request.path != "/v1/messages":
+            return None
+        requests.append(await request.json())
+        value = native_response("anthropic", len(requests), owned=len(requests) == 1)
+        if len(requests) > 1:
+            return await wire_response(request, "anthropic", value, True)
+        value["content"][-1].update(name="openviking_list", input={})
+        events = native_events("anthropic", value)
+        events = [e for e in events if e.get("delta", {}).get("type") != "input_json_delta"]
+        if arguments is not None:
+            index = len(value["content"]) - 1
+            position = next(
+                i
+                for i, e in enumerate(events)
+                if e["type"] == "content_block_stop" and e["index"] == index
+            )
+            events.insert(
+                position,
+                {
+                    "type": "content_block_delta",
+                    "index": index,
+                    "delta": {"type": "input_json_delta", "partial_json": arguments},
+                },
+            )
+        return web.Response(body=b"".join(sse(e) for e in events), content_type="text/event-stream")
+
+    app.state.test_backend["handler"] = backend
+    response = await client.post(
+        "/v1/messages",
+        headers={"Authorization": "Bearer " + key["key"]},
+        json=request_body("anthropic", True),
+    )
+    if arguments == "{broken":
+        assert "gateway_tool_error" in response.text and not calls
+    else:
+        visible_response("anthropic", response, True)
+        assert len(requests) == 2 and len(calls) == 1
+        assert requests[1]["messages"][-2]["content"][-1]["input"] == {}

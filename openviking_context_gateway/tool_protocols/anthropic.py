@@ -57,8 +57,9 @@ class AnthropicProtocol(ToolProtocol):
         elif kind == "content_block_stop":
             index = value["index"]
             self.closed.add(index)
-            if index in self.arguments:
-                self.blocks[index]["input"] = orjson.loads(self.arguments[index])
+            arguments = self.arguments.get(index, "")
+            if arguments:
+                self.blocks[index]["input"] = orjson.loads(arguments)
             if index in self.indices:
                 return [{**value, "index": self.indices[index]}]
         elif kind == "message_delta":

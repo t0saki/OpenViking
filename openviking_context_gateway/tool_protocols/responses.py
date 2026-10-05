@@ -130,3 +130,19 @@ class ResponsesProtocol(ToolProtocol):
 
     def terminal(self, final):
         return [self.encode({"type": "response." + self.finish, "response": final})]
+
+    def error(self, message):
+        return self.encode(
+            {
+                "type": "response.failed",
+                "response": {
+                    **self.envelope,
+                    "object": "response",
+                    "model": self.body.get("model"),
+                    "status": "failed",
+                    "error": {"code": "server_error", "message": message},
+                    "incomplete_details": None,
+                    "output": self.visible,
+                },
+            }
+        )

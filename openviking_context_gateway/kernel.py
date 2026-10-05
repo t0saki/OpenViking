@@ -276,8 +276,11 @@ class MemoryKernel:
             )
             if reason or collision:
                 request.metrics["tool_skip_reason"] = reason or "tool_name_collision"
-                if request.protocol == "anthropic":
+                if request.protocol == "anthropic" and any(
+                    (K.HIDDEN, anchor) in request.records for anchor in request.body_chain
+                ):
                     request.body["messages"] = strip_thinking(request.body["messages"])
+                    request.metrics["degradation"] = "hidden_tool_history_unavailable"
             else:
                 request.body["tools"] = [
                     *request.original.get("tools", []),
