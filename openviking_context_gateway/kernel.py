@@ -30,6 +30,7 @@ from .models import Policy
 from .profile import build_profile
 from .protocols import (
     append_context,
+    assistant_texts,
     classify,
     clean_text,
     is_user,
@@ -39,6 +40,7 @@ from .protocols import (
     session_id,
     strip_thinking,
     text_content,
+    unsigned_thinking,
     unwrap_client,
 )
 from .records import RecordKind as K
@@ -51,6 +53,8 @@ from .vendors import parameter_fingerprint
 from .windows import remind, status_line
 
 logger = logging.getLogger(__name__)
+# State keys for unsigned thinking the gateway relayed, by digest of its text.
+THINKING = "thinking:"
 
 
 @dataclass
@@ -101,7 +105,28 @@ class MemoryKernel:
             logger.exception("Context Gateway preparation failed")
             return self.degraded_body(body, protocol), None, {"degradation": "memory_store_failure"}
 
-    async def identity(self, messages, protocol, headers, credential, tools):
+    async def sent_history(self, scope, messages, protocol):
+        """The history as the gateway relayed it: thinking a client resent as text is dropped.
+
+        Some providers return thinking without a signature, and clients such as pi
+        resend it as a text block. Anchors drop thinking, so that text would keep
+        every reply from matching its anchors in the next request.
+        """
+        if protocol != "anthropic":
+            return messages
+        texts = {id(b): THINKING + digest(b["text"]) for m in messages for b in assistant_texts(m)}
+        known = await self.store.state.read(scope, list(set(texts.values()))) if texts else {}
+        if not known:
+            return messages
+        dropped = {block for block, key in texts.items() if key in known}
+        return [
+            {**m, "content": [b for b in m["content"] if id(b) not in dropped]}
+            if assistant_texts(m)
+            else m
+            for m in messages
+        ]
+
+    async def identity(self, scope, messages, protocol, headers, tools):
         sid = session_id(headers)
         needs_hidden = tool_protocol(protocol).canonicalizes_history and (sid is None or tools)
 
@@ -114,7 +139,6 @@ class MemoryKernel:
             chain, body_chain = await asyncio.to_thread(chains)
         else:
             chain, body_chain = chains()
-        scope = digest(credential["account"] + "\0" + credential["user_id"] + "\0" + protocol)
         anonymous = sid is None
         if anonymous:
             endpoints = [
@@ -138,7 +162,7 @@ class MemoryKernel:
                     sid = match.value["owners"][0] if len(match.value["owners"]) == 1 else None
                     break
             sid = sid or "anonymous-" + uuid.uuid4().hex
-        return scope, sid, anonymous, chain, body_chain
+        return sid, anonymous, chain, body_chain
 
     async def prepare(
         self,
@@ -153,14 +177,18 @@ class MemoryKernel:
         summarize=None,
     ):
         """Build the upstream body; ``summarize(prepared, body)`` sends a summary request."""
-        messages = messages_of(body, protocol)
-        if not isinstance(messages, list) or not all(isinstance(m, dict) for m in messages):
+        sent = messages_of(body, protocol)
+        if not isinstance(sent, list) or not all(isinstance(m, dict) for m in sent):
             raise ValueError("invalid message list")
-        scope, sid, anonymous, chain, body_chain = await self.identity(
+        scope = digest(credential["account"] + "\0" + credential["user_id"] + "\0" + protocol)
+        # Anchors, capture and recall read the history as the gateway relayed it;
+        # the upstream still gets exactly what the client sent.
+        messages = await self.sent_history(scope, sent, protocol)
+        sid, anonymous, chain, body_chain = await self.identity(
+            scope,
             messages,
             protocol,
             headers,
-            credential,
             (policy.get("gateway_tools", False) or policy.get("capture", True)),
         )
         records, observations, capture = await self.store.load(
@@ -186,7 +214,7 @@ class MemoryKernel:
             await self.store.replay.put(scope, sid, K.DISABLED, "", {"reason": "plugin_present"})
             disabled = True
         field = tool_protocol(protocol).field
-        result = {**body, field: [dict(m) for m in messages]}
+        result = {**body, field: [dict(m) for m in sent]}
         prepared = Prepared(
             result,
             body,
@@ -242,7 +270,7 @@ class MemoryKernel:
                 await self.recall(prepared, credential, policy)
             await remind(self.store, prepared, policy)
         self.assemble(prepared)
-        if isinstance(body.get("input"), str) and result.get("input") == messages:
+        if isinstance(body.get("input"), str) and result.get("input") == sent:
             result["input"] = body["input"]
         return prepared
 
@@ -496,6 +524,10 @@ class MemoryKernel:
             old = await get_state(self.store.state, request.scope, request.session)
 
     async def completed(self, request, credential, response):
+        if request.protocol == "anthropic" and response.message:
+            # First, so the client's next request can already be matched.
+            for text in unsigned_thinking(response.message):
+                await self.store.state.swap(request.scope, THINKING + digest(text), Document(), {})
         chain = set(request.chain)
         sent = [
             a

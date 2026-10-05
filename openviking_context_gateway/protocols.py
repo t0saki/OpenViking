@@ -321,6 +321,28 @@ def strip_thinking(messages: list[dict]) -> list[dict]:
     return result
 
 
+def unsigned_thinking(message: dict) -> list[str]:
+    """Thinking returned without a signature, as DeepSeek through Ark does."""
+    content = message.get("content")
+    return [
+        block["thinking"]
+        for block in (content if isinstance(content, list) else [])
+        if isinstance(block, dict)
+        and block.get("type") == "thinking"
+        and not block.get("signature")
+        and isinstance(block.get("thinking"), str)
+        and block["thinking"].strip()
+    ]
+
+
+def assistant_texts(message: dict) -> list[dict]:
+    """The text blocks of an assistant message with block content."""
+    content = message.get("content")
+    if message.get("role") != "assistant" or not isinstance(content, list):
+        return []
+    return [b for b in content if isinstance(b, dict) and b.get("type") == "text" and b.get("text")]
+
+
 def enhanced_supported(body, protocol):
     return protocol != "responses" or (
         body.get("store") is False

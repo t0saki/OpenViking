@@ -11,7 +11,9 @@ from test_review_regressions import history, prepare, worker_for
 from openviking_context_gateway.capture import reset_capture
 from openviking_context_gateway.capture_store import Document
 from openviking_context_gateway.client import VikingClient, VikingError
+from openviking_context_gateway.kernel import THINKING
 from openviking_context_gateway.protocols import ResponseCapture
+from openviking_context_gateway.storage import digest
 
 
 @pytest.mark.parametrize("terminal", ["completed", "failed"])
@@ -173,6 +175,60 @@ async def test_anonymous_continuation_reuses_observed_reply_only(setup_kernel, c
     ambiguous = await anonymous([*opening, visible, {"role": "user", "content": "different"}])
     assert ambiguous.session not in {first.session, independent.session}
     assert ambiguous.capture_target != first.capture_target
+
+
+@pytest.mark.parametrize("resent", ["text", "dropped", "thinking"])
+async def test_unsigned_thinking_resent_in_any_form_matches_the_reply(
+    setup_kernel, credential, policy, resent
+):
+    kernel, _, _, _ = setup_kernel
+    policy.update(recall=False)
+
+    async def anonymous(messages):
+        return await kernel.prepare(
+            {"messages": messages}, "anthropic", {}, credential, {"id": "upstream"}, policy
+        )
+
+    opening = [{"role": "user", "content": "Check the deploy, unsigned"}]
+    first = await anonymous(opening)
+    thinking = {"type": "thinking", "thinking": "Look at the blue cluster first."}
+    reply = {"role": "assistant", "content": [thinking, {"type": "text", "text": "Blue is up."}]}
+    await kernel.completed(first, credential, ResponseCapture("anthropic", reply, complete=True))
+    # Clients such as pi turn unsigned thinking into text; others drop or keep it.
+    resend = {
+        "text": [{"type": "text", "text": thinking["thinking"]}],
+        "dropped": [],
+        "thinking": [thinking],
+    }[resent]
+    visible = {"role": "assistant", "content": [*resend, {"type": "text", "text": "Blue is up."}]}
+    continued = await anonymous([*opening, visible, {"role": "user", "content": "And green?"}])
+    assert continued.session == first.session
+    assert continued.capture_target == first.capture_target
+    assert continued.metrics["capture_reason"] == ""
+    # The upstream still gets the history exactly as the client sent it.
+    assert continued.body["messages"][1] == visible
+
+
+async def test_signed_thinking_text_is_not_mistaken_for_a_resent_block(
+    setup_kernel, credential, policy
+):
+    kernel, store, _, _ = setup_kernel
+    policy.update(recall=False)
+    signed = {"type": "thinking", "thinking": "Same words", "signature": "sig"}
+    reply = {"role": "assistant", "content": [signed, {"type": "text", "text": "Done."}]}
+    first = await kernel.prepare(
+        {"messages": [{"role": "user", "content": "Go"}]},
+        "anthropic",
+        {"x-openviking-session": "signed"},
+        credential,
+        {"id": "upstream"},
+        policy,
+    )
+    await kernel.completed(first, credential, ResponseCapture("anthropic", reply, complete=True))
+    assert not await store.state.read(first.scope, [THINKING + digest("Same words")])
+    said = {"role": "assistant", "content": [{"type": "text", "text": "Same words"}]}
+    history = [{"role": "user", "content": "Go"}, said]
+    assert await kernel.sent_history(first.scope, history, "anthropic") == history
 
 
 @pytest.mark.parametrize(
