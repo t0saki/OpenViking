@@ -278,7 +278,7 @@ async def test_capture_mailboxes_are_independent_and_lease_safe(setup_kernel):
 
 
 @pytest.mark.parametrize("partial_batch", [False, True])
-async def test_delivery_reconciles_lost_ack_and_partial_batch(
+async def test_failed_delivery_sends_the_turn_again(
     setup_kernel, credential, policy, partial_batch
 ):
     kernel, store, viking, encryption = setup_kernel
@@ -308,16 +308,14 @@ async def test_delivery_reconciles_lost_ack_and_partial_batch(
     await worker.once()
     await make_due(store)
     await worker.once()
-    ids = [sid for batch in viking.writes for m in batch for sid in m["source_message_ids"]]
-    assert len(ids) == len(set(ids)) == assistants + 1
+    ids = {sid for batch in viking.writes for m in batch for sid in m["source_message_ids"]}
+    assert len(ids) == assistants + 1
     state = (await store.capture.get(p.scope, p.session)).value
     assert not state["error"] and not state["pending"]
     assert state["retained"] == [{"anchor": p.chain[-2], "count": assistants + 1}]
 
 
-async def test_lost_commit_response_is_resolved_before_new_messages(
-    setup_kernel, credential, policy
-):
+async def test_failed_commit_is_retried_with_later_messages(setup_kernel, credential, policy):
     kernel, store, viking, encryption = setup_kernel
     policy.update(recall=False, commit_tokens=1, keep_recent_messages=0)
     viking.archive_status = "completed"
@@ -327,23 +325,19 @@ async def test_lost_commit_response_is_resolved_before_new_messages(
     worker = await worker_for(store, encryption, credential, viking)
     commit = viking.commit
 
-    async def interrupted(*args):
-        await commit(*args)
-        raise VikingError("response_lost_after_commit")
+    async def unavailable(*args):
+        raise VikingError("commit_unavailable")
 
-    viking.commit = interrupted
+    viking.commit = unavailable
     await worker.once()
-    assert len(viking.commits) == 1
-    old = (await store.capture.get(p.scope, p.session)).value
-    assert old["archive"]["status"] == "committing"
+    state = (await store.capture.get(p.scope, p.session)).value
+    assert state["error"]["reason"] == "commit_unavailable" and not state["archive"]
     await prepare(kernel, credential, policy, [*history(2), {"role": "user", "content": "next"}])
     viking.commit = commit
     await make_due(store)
     await worker.once()
-    assert len(viking.commits) == 2
     assert [[m["parts"][0]["text"] for m in batch] for batch in viking.archived.values()] == [
-        ["Question 0", "Answer 0"],
-        ["Question 1", "Answer 1"],
+        ["Question 0", "Answer 0", "Question 1", "Answer 1"]
     ]
 
 

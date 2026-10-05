@@ -45,7 +45,6 @@ const enums = {
     manual_reset: '管理员已手动重新同步',
     delivery_recovered: '保存已恢复正常',
     delivery_failed: '保存到 OpenViking 失败',
-    archive_commit_not_created: 'OpenViking 没有生成归档',
     invalid_archive_id: 'OpenViking 返回了无法识别的归档',
   },
   recallReason: {

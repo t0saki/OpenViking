@@ -46,7 +46,6 @@ const enums = {
     manual_reset: 'Resynced by an administrator',
     delivery_recovered: 'Saving works again',
     delivery_failed: 'Saving to OpenViking failed',
-    archive_commit_not_created: "OpenViking didn't create an archive",
     invalid_archive_id: 'OpenViking returned an unexpected archive',
   },
   recallReason: {

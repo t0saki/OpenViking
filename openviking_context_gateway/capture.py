@@ -59,8 +59,6 @@ def ready_at(state):
     if state.get("error"):
         return state["error"]["retry_at"]
     archive = state.get("archive")
-    if archive and archive["status"] == "committing":
-        return archive.get("next_check", 0)
     times = [turn["ready"] for turn in state.get("pending", [])[:1]]
     if archive and archive["status"] not in TERMINAL:
         times.append(archive.get("next_check", 0))
@@ -366,20 +364,12 @@ class CaptureWorker:
         if state.get("error"):
             await self.viking.health(token)
         await self.viking.create_session(token, session)
-        if state.get("archive") and state["archive"]["status"] == "committing":
-            doc = await self.resolve_commit(item, doc, state, token, session)
-            state = copy.deepcopy(doc.value)
-            if state["archive"]["status"] == "committing":
-                return
-        # Source IDs are provenance, not a server idempotency key. Read the live
-        # tail before retrying delivery, including after a lease-holder crash.
-        remote = await self.viking.capture_status(token, session)
-        seen = {s for m in remote["messages"] for s in m.get("source_message_ids", [])}
+        # A write or commit whose response is lost is sent again; the rare
+        # duplicate in OpenViking is accepted.
         while state["pending"] and state["pending"][0]["ready"] <= time.time():
             turn = state["pending"][0]
-            messages = [m for m in turn["messages"] if not set(m["source_message_ids"]) <= seen]
-            for offset in range(0, len(messages), 100):
-                await self.viking.write(token, session, messages[offset : offset + 100])
+            for offset in range(0, len(turn["messages"]), 100):
+                await self.viking.write(token, session, turn["messages"][offset : offset + 100])
             count = len(turn["messages"])
             if turn.get("continued") and state["retained"]:
                 # Commits keep whole turns, so a continuation joins its turn.
@@ -405,8 +395,8 @@ class CaptureWorker:
             await self.log(item, state, "active", "delivery_recovered")
         if state.get("archive") and state["archive"]["status"] not in TERMINAL:
             return
-        remote = await self.viking.capture_status(token, session)
-        if remote["pending_tokens"] < policy.commit_tokens and not state.get("idle"):
+        pending = await self.viking.pending_tokens(token, session)
+        if pending < policy.commit_tokens and not state.get("idle"):
             return
         retained, keep = 0, 0
         if not state.get("idle"):
@@ -418,30 +408,11 @@ class CaptureWorker:
         archived = state["retained"][: len(state["retained"]) - retained]
         if not archived:
             return
-        # Persist the intent before the HTTP call. A retry first checks the
-        # predicted server archive, so a lost response never repeats a commit.
-        state["archive"] = {
-            "status": "committing",
-            "boundary": archived[-1]["anchor"],
-            "keep": keep,
-            "archive_uri": remote["next_archive_uri"],
-            "created": time.time(),
-        }
-        doc = await self.save(item, doc, state)
-        await self.resolve_commit(item, doc, copy.deepcopy(doc.value), token, session)
-
-    async def resolve_commit(self, item, doc, state, token, session):
-        archive = await self.viking.resolve_commit(token, session, state["archive"])
-        state["archive"] = archive
-        state["error"] = {}
-        if archive.get("committed"):
-            end = next(
-                i
-                for i, turn in enumerate(state["retained"])
-                if turn["anchor"] == archive["boundary"]
-            )
-            state["retained"] = state["retained"][end + 1 :]
-        return await self.save(item, doc, state)
+        uri = (await self.viking.commit(token, session, keep)).get("archive_uri")
+        archive = {"status": "pending", "archive_uri": uri, "created": time.time()}
+        state["archive"] = archive if uri else None
+        state["retained"] = state["retained"][len(archived) :]
+        await self.save(item, doc, state)
 
 
 def remaining(pending, written):

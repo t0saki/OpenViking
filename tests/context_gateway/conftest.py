@@ -111,34 +111,17 @@ class FakeViking:
             "pending_tokens": sum(len(orjson.dumps(m["parts"])) // 3 for m in self.live[session])
         }
 
-    async def capture_status(self, key, session):
-        live = self.live.get(session, [])
-        index = sum(1 for a in self.archived if f"/{session}/" in a) + 1
-        return {
-            "messages": copy.deepcopy(live),
-            "pending_tokens": sum(len(orjson.dumps(m["parts"])) // 3 for m in live),
-            "next_archive_uri": f"viking://user/alice/sessions/{session}/history/archive_{index:03d}",
-        }
+    async def pending_tokens(self, key, session):
+        return sum(len(orjson.dumps(m["parts"])) // 3 for m in self.live.get(session, []))
 
     async def commit(self, key, session, keep=0):
         self.commits.append((session, keep))
-        info = await self.capture_status(key, session)
-        uri = info["next_archive_uri"]
+        index = sum(1 for a in self.archived if f"/{session}/" in a) + 1
+        uri = f"viking://user/alice/sessions/{session}/history/archive_{index:03d}"
         messages = self.live.get(session, [])
         self.archived[uri] = messages[:-keep] if keep else messages
         self.live[session] = messages[-keep:] if keep else []
         return {"archive_uri": uri}
-
-    async def resolve_commit(self, key, session, intent):
-        uri = intent["archive_uri"]
-        if uri not in self.archived:
-            uri = (await self.commit(key, session, intent["keep"]))["archive_uri"]
-        return {
-            **intent,
-            "status": "pending",
-            "committed": True,
-            "archive_uri": uri,
-        }
 
     async def archive_state(self, key, uri=""):
         return self.archive_status
@@ -265,23 +248,9 @@ async def running_gateway(tmp_path, monkeypatch):
             elif request.path.endswith("/commit"):
                 result = await viking.commit("synthetic", session, body["keep_recent_count"])
             else:
-                status = await viking.capture_status("synthetic", session)
-                result = {
-                    "uri": status["next_archive_uri"].split("/history/")[0],
-                    "commit_count": sum(1 for uri in viking.archived if f"/{session}/" in uri),
-                    "pending_tokens": status["pending_tokens"],
-                }
+                result = {"pending_tokens": await viking.pending_tokens("synthetic", session)}
             return web.json_response({"status": "ok", "result": result})
         if request.path == "/api/v1/content/read":
-            uri = request.query["uri"]
-            if uri.endswith("/messages.jsonl"):
-                session = uri.split("/sessions/")[1].split("/")[0]
-                content = "\n".join(json.dumps(m) for m in viking.live.get(session, []))
-                return web.json_response({"status": "ok", "result": content})
-            if uri.removesuffix("/.meta.json") in viking.archived:
-                return web.json_response(
-                    {"status": "ok", "result": '{"phase1":{"status":"ready"}}'}
-                )
             return web.json_response({"status": "error"}, status=404)
         captured.append((request.path, raw, dict(request.headers)))
         if body.get("model") == "error":

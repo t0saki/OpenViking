@@ -3,11 +3,9 @@
 """OpenViking HTTP adapter. No imports from the server/service implementation."""
 
 import asyncio
-import time
 from urllib.parse import urlencode
 
 import aiohttp
-import orjson
 from packaging.version import InvalidVersion, Version
 
 from .cache import TTLCache
@@ -125,42 +123,9 @@ class VikingClient:
                 return None
             raise
 
-    async def capture_status(self, key, session):
+    async def pending_tokens(self, key, session):
         info = await self.request("GET", f"/api/v1/sessions/{session}", key)
-        uri = info["uri"].rstrip("/")
-        content = await self.read_content(key, uri + "/messages.jsonl")
-        return {
-            "messages": [
-                orjson.loads(line) for line in (content or "").splitlines() if line.strip()
-            ],
-            "pending_tokens": info.get("pending_tokens", 0),
-            "next_archive_uri": uri + f"/history/archive_{info.get('commit_count', 0) + 1:03d}",
-        }
-
-    async def resolve_commit(self, key, session, intent):
-        """An archive's Phase 1 receipt resolves a lost commit response."""
-        uri = intent["archive_uri"]
-        meta = await self.read_content(key, uri + "/.meta.json")
-        committed = False
-        if meta is None:
-            result = await self.commit(key, session, intent["keep"])
-            uri = result.get("archive_uri", "")
-            if not uri:
-                raise VikingError("archive_commit_not_created")
-            committed = True
-        else:
-            committed = orjson.loads(meta).get("phase1", {}).get("status") == "ready"
-        if not committed:
-            terminal = await self.archive_state(key, uri)
-            if terminal == "failed" or time.time() - intent["created"] >= 900:
-                return {**intent, "status": "failed", "committed": False}
-            return {**intent, "next_check": time.time() + 5}
-        return {
-            **intent,
-            "archive_uri": uri,
-            "status": "pending",
-            "committed": True,
-        }
+        return info.get("pending_tokens", 0)
 
     async def archive_state(self, key, uri):
         for marker, state in ((".done", "completed"), (".failed.json", "failed")):
