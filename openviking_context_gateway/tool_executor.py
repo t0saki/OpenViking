@@ -1,6 +1,6 @@
 # Copyright (c) 2026 Beijing Volcano Engine Technology Co., Ltd.
 # SPDX-License-Identifier: AGPL-3.0
-"""Bounded, user-authenticated MCP calls and signed file upload handoff."""
+"""Bounded, user-authenticated MCP calls, native tools and signed file upload handoff."""
 
 import asyncio
 import base64
@@ -21,6 +21,7 @@ from .protocols import messages_of
 from .state_store import get_state
 from .storage import digest
 from .tool_catalog import PREFIX, TOOL_OVERRIDES
+from .windows import NATIVE_TOOLS
 
 UPLOAD_URL = re.compile(
     r'https?://[^\s<>"\x27`]+/api/v1/resources/temp_upload\?token=[^\s<>"\x27`]+'
@@ -153,7 +154,7 @@ def result_text(result, limit):
 class ToolExecutor:
     def __init__(self, viking, store, prepared, credential, public_url, max_upload_bytes):
         self.viking, self.store, self.request = viking, store, prepared
-        self.key = credential["openviking_key"]
+        self.credential, self.key = credential, credential["openviking_key"]
         self.public_url, self.max_upload_bytes = public_url.rstrip("/"), max_upload_bytes
         self.policy = prepared.root["policy"]
         self.schemas = {
@@ -168,6 +169,14 @@ class ToolExecutor:
         result = {"role": "tool", "tool_call_id": call_id}
         if name not in self.allowed or not call_id:
             return {**result, "content": "Tool is not allowed", "failed": True}
+        native = NATIVE_TOOLS.get(name)
+        if native:
+            # Native tools only change this request's tool loop, so retries need no receipt.
+            try:
+                args = self.arguments(call)
+            except (ValueError, TypeError):
+                return {**result, "content": "Invalid tool arguments", "failed": True}
+            return {**result, **await native.handler(self.request, self.credential, args)}
         # Retries sharing a history and call ID share the claim. A process crash
         # never causes automatic repetition of a potentially committed write.
         anchor = digest(
@@ -198,16 +207,7 @@ class ToolExecutor:
                         if time.time() - claim["time"] > timeout:
                             raise asyncio.TimeoutError
                         await asyncio.sleep(0.05)
-                short = name.removeprefix(PREFIX)
-                args = orjson.loads(call["function"]["arguments"])
-                schema = self.schemas[name]
-                if (
-                    not isinstance(args, dict)
-                    or args.keys() - schema.get("properties", {}).keys()
-                    or set(schema.get("required", [])) - args.keys()
-                ):
-                    raise ValueError("Invalid tool arguments")
-                value = await self._call(short, args)
+                value = await self._call(name.removeprefix(PREFIX), self.arguments(call))
                 content = result_text(value, self.policy.get("tool_result_bytes", 65536))
                 failed = bool(value.get("isError"))
                 await self.store.state.swap(
@@ -224,6 +224,18 @@ class ToolExecutor:
                 scope, receipt_key, receipt, {**claim, "content": content, "failed": True}
             )
         return {**result, "content": content, "failed": True}
+
+    def arguments(self, call):
+        """Decoded arguments with only frozen keys and every required one."""
+        args = orjson.loads(call["function"]["arguments"])
+        schema = self.schemas[call["function"]["name"]]
+        if (
+            not isinstance(args, dict)
+            or args.keys() - schema.get("properties", {}).keys()
+            or set(schema.get("required", [])) - args.keys()
+        ):
+            raise ValueError("Invalid tool arguments")
+        return args
 
     async def _call(self, name, args):
         upload = TOOL_OVERRIDES.get(name, {}).get("attachment", False)

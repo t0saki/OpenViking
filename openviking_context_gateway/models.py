@@ -43,6 +43,10 @@ class Policy(BaseModel):
     tool_total_seconds: float = Field(default=120, gt=0, le=600)
     tool_total_tokens: int = Field(default=100000, ge=1024, le=1000000)
     show_tool_calls: bool = True
+    # Experimental: the model starts fresh context windows itself (needs gateway tools).
+    agent_windows: bool = False
+    window_soft_ratio: float = Field(default=0.7, ge=0.3, le=0.95)
+    window_hard_ratio: float = Field(default=0.85, ge=0.4, le=0.97)
 
     @model_validator(mode="before")
     @classmethod
@@ -61,6 +65,12 @@ class Policy(BaseModel):
             }
             return {key: item for key, item in value.items() if key not in obsolete}
         return value
+
+    @model_validator(mode="after")
+    def check_window_ratios(self):
+        if self.window_soft_ratio >= self.window_hard_ratio:
+            raise ValueError("window_soft_ratio must be below window_hard_ratio")
+        return self
 
 
 class Upstream(BaseModel):

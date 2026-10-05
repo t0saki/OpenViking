@@ -286,14 +286,17 @@ def session_id(headers: dict) -> str | None:
 
 
 def append_context(message: dict, text: str, protocol: str) -> None:
-    content = message.get("content", "")
-    if protocol == "chat" and isinstance(content, str):
-        message["content"] = content + "\n\n" + text
+    """Append text to a user message or tool result; Anthropic results get a trailing block."""
+    tool_output = message.get("type") in {"function_call_output", "custom_tool_call_output"}
+    field = "output" if tool_output else "content"
+    content = message.get(field, "")
+    if (protocol == "chat" or tool_output) and isinstance(content, str):
+        message[field] = content + "\n\n" + text
         return
     kind = "input_text" if protocol == "responses" else "text"
     if isinstance(content, str):
         content = [{"type": kind, "text": content}]
-    message["content"] = [*content, {"type": kind, "text": text}]
+    message[field] = [*content, {"type": kind, "text": text}]
 
 
 def strip_thinking(messages: list[dict]) -> list[dict]:

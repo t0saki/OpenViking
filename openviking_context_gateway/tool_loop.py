@@ -8,11 +8,13 @@ import time
 import async_timeout
 import orjson
 
+from .capture import CapturePipeline
 from .protocols import SSEDecoder, messages_of, usage_of
 from .records import RecordKind as K
 from .tool_catalog import notice_head
 from .tool_protocols import hidden_chain, tool_protocol
 from .tool_protocols.common import PREFIX, ToolLoopError, ToolRound, add_usage, notice_tail
+from .windows import ALONE, NEW_CONTEXT, cut
 
 
 def added_tokens(value):
@@ -32,7 +34,7 @@ class HiddenToolLoop:
         self.policy, self.allowed = prepared.root["policy"], executor.allowed
         self.deadline = time.monotonic() + self.policy.get("tool_total_seconds", 120)
         self.transcript, self.usage = [], {}
-        self.final, self.hidden = None, False
+        self.final, self.hidden, self.window = None, False, None
         self.rounds, self.token_cost = 0, 0
         self.round = ToolRound([], [], {}, False)
 
@@ -76,6 +78,9 @@ class HiddenToolLoop:
         add_usage(self.usage, self.round.usage)
         normalized = usage_of({"usage": self.round.usage})
         self.capture.context_usage = normalized
+        if normalized["input_tokens"]:
+            # The latest round measures the window best; native tools read it here.
+            self.prepared.context_tokens = normalized["input_tokens"] + normalized["output_tokens"]
         if self.rounds:
             self.token_cost += normalized["output_tokens"] or added_tokens(self.round.output)
             self.prepared.metrics["hidden_upstream_calls"] = self.rounds
@@ -98,7 +103,11 @@ class HiddenToolLoop:
             self.token_cost += added_tokens(calls)
         show = self.policy.get("show_tool_calls", True)
         events = self.adapter.open_notice() if show else []
-        results = []
+        results, window = [], None
+        # A new window replaces the whole context, so it cannot share a round.
+        crowded = len(self.round.calls) > 1 and any(
+            call["function"]["name"] == NEW_CONTEXT for call in calls
+        )
         for call in calls:
             skipped = self.token_cost >= self.policy.get("tool_total_tokens", 100000)
             if show:
@@ -112,8 +121,16 @@ class HiddenToolLoop:
                     "tool_call_id": call["id"],
                     "content": "Gateway tool budget reached; answer using the available results.",
                 }
+            elif crowded:
+                result = {
+                    "role": "tool",
+                    "tool_call_id": call["id"],
+                    "content": ALONE,
+                    "failed": True,
+                }
             else:
                 result = await self.executor.execute(call)
+            window = result.pop("cut", window)
             if show:
                 events = self.adapter.notice(notice_tail(result.get("failed", False), skipped))
             results.append(result)
@@ -122,9 +139,12 @@ class HiddenToolLoop:
             events.extend([*self.adapter.notice("\n\n"), *self.adapter.close_notice()])
             for event in self.stream(events):
                 yield event
-        results = self.adapter.results(results)
-        self.transcript.extend(results)
-        self.body[self.adapter.field].extend([*self.round.output, *results])
+        if window:
+            self.reset(*window)
+        else:
+            results = self.adapter.results(results)
+            self.transcript.extend(results)
+            self.body[self.adapter.field].extend([*self.round.output, *results])
         self.rounds += 1
         self.hidden = True
         self.prepared.metrics.update(hidden_rounds=self.rounds, hidden_added_tokens=self.token_cost)
@@ -134,11 +154,27 @@ class HiddenToolLoop:
         if exhausted:
             self.prepared.metrics["tool_stop_reason"] = "token_budget"
 
+    def reset(self, anchor, value):
+        """Continue in the window the model started: the system prefix and its header."""
+        field = self.adapter.field
+        prefix = [m for m in self.body[field] if m.get("role") in {"system", "developer"}]
+        self.body[field] = [*prefix, {"role": "user", "content": value["text"]}]
+        self.transcript, self.window = [], (anchor, value)
+        # Later native calls see the cut the way the next request replays it.
+        self.prepared.records[K.REPLACEMENT, anchor] = value
+        self.prepared.metrics.update(window=cut(self.prepared)[1], window_reset=True)
+
     async def persist(self):
         visible = self.adapter.visible
         anchor = (
             hidden_chain([*self.prepared.messages, *visible], self.protocol)[-1] if visible else ""
         )
+        if self.window:
+            # Put-if-absent: a retry that resets again at this anchor keeps the
+            # first header, and the next request replays it before this transcript.
+            await self.store.replay.put(
+                self.prepared.scope, self.prepared.session, K.REPLACEMENT, *self.window
+            )
         if self.hidden and anchor:
             await self.store.replay.put(
                 self.prepared.scope,
@@ -153,6 +189,8 @@ class HiddenToolLoop:
             )
         elif self.hidden:
             self.prepared.metrics["degradation"] = "hidden_reply_without_anchor"
+        if self.window:
+            await CapturePipeline(self.store.capture).confirm_cut(self.prepared, self.window[0])
         self.final = self.adapter.final(self.usage)
         self.capture.nonstream(self.final)
         if self.round.calls and self.round.tool_handoff:

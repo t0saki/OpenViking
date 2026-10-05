@@ -75,6 +75,13 @@ def gateway_note(policy, tools):
             f"not in the client's tool list{seen} Tool names in their descriptions omit the "
             "openviking_ prefix."
         )
+    if "openviking_new_context" in {t["function"]["name"] for t in tools}:
+        lines.append(
+            "- You manage your own context windows with openviking_new_context and "
+            "openviking_context_remaining. A [context-status] line after each user message "
+            "shows how full the current window is, and a [context-reminder] line follows it or "
+            "a tool result when the window is filling up."
+        )
     if policy.capture:
         lines.append("- The gateway saves this conversation to the user's OpenViking memory.")
     return "\n".join(lines)

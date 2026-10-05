@@ -6,7 +6,7 @@ import asyncio
 import logging
 import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import orjson
 
@@ -47,6 +47,7 @@ from .tool_catalog import TOOL_VERSION, select_tools, tool_block_reason
 from .tool_protocols import hidden_chain, replay_hidden, tool_protocol
 from .tool_protocols.common import SummaryError
 from .vendors import parameter_fingerprint
+from .windows import remind, status_line
 
 logger = logging.getLogger(__name__)
 
@@ -218,22 +219,28 @@ class MemoryKernel:
         CapturePipeline.metrics(prepared, policy)
         self.configure_tools(prepared, policy)
         self.replay(prepared)
-        if not disabled:
-            if kind == "user" and anchor >= 0 and (K.INJECTION, chain[anchor]) not in records:
-                await self.recall(prepared, credential, policy)
-            if policy.capture and kind == "user" and anchor >= 0:
-                await CapturePipeline(self.store.capture).confirm(prepared, credential, policy)
-        before = list(result[field]), prepared.body_chain
-        self.assemble(prepared)
+        if not disabled and policy.capture and kind == "user" and anchor >= 0:
+            await CapturePipeline(self.store.capture).confirm(prepared, credential, policy)
         if kind in {"user", "continuation"}:
-            await self.measure(prepared, policy)
+            prepared.context_window = window_size(prepared, policy)
+            prepared.context_tokens = await self.measure(prepared)
+            prepared.metrics.update(
+                context_tokens=prepared.context_tokens, context_window=prepared.context_window
+            )
             if (
                 summarize
                 and policy.compaction
                 and not disabled
                 and prepared.context_tokens >= policy.compaction_threshold * prepared.context_window
             ):
-                await self.compact(prepared, credential, policy, summarize, before)
+                await self.compact(prepared, credential, policy, summarize)
+        # Recall and window signals come after any new cut, so they describe the
+        # context the model actually gets.
+        if not disabled:
+            if kind == "user" and anchor >= 0 and (K.INJECTION, chain[anchor]) not in records:
+                await self.recall(prepared, credential, policy)
+            await remind(self.store, prepared, policy)
+        self.assemble(prepared)
         if isinstance(body.get("input"), str) and result.get("input") == messages:
             result["input"] = body["input"]
         return prepared
@@ -382,7 +389,7 @@ class MemoryKernel:
                     credential["openviking_key"], query, policy, exclude, budget - overhead
                 )
                 rendered = response.get("rendered") or ""
-                text = block("gateway-recall", lead + "\n" + rendered) if rendered else ""
+                text = lead + "\n" + rendered if rendered else ""
                 return {
                     "text": text,
                     "uris": [
@@ -390,7 +397,7 @@ class MemoryKernel:
                     ]
                     if text
                     else [],
-                    "tokens": token_estimate(text),
+                    "tokens": token_estimate(block("gateway-recall", text)),
                     "reason": "recalled" if text else "empty",
                 }
             except (VikingError, asyncio.TimeoutError) as error:
@@ -413,8 +420,13 @@ class MemoryKernel:
             )
 
         decision, start = await asyncio.gather(retrieve(), opening())
-        # The opening block is immutable with recall but has its own budget.
-        decision["text"] = "\n\n".join(part for part in (start, decision["text"]) if part)
+        status, reminder = status_line(request, policy)
+        recalled = block("gateway-recall", "\n\n".join(p for p in (decision["text"], status) if p))
+        # The opening block is immutable with recall but has its own budget, and
+        # the window status line costs nothing.
+        decision["text"] = "\n\n".join(part for part in (start, recalled) if part)
+        if reminder:
+            decision["reminder"] = reminder
         anchor = request.chain[request.anchor]
         decision = await self.store.replay.put(
             request.scope, request.session, K.INJECTION, anchor, decision
@@ -509,6 +521,8 @@ class MemoryKernel:
                 value["usage"] = usage
             if sent:
                 value["sent"] = list(dict.fromkeys([*value.get("sent", []), *sent]))
+            if request.kind == "user" and usage["time"] >= value.get("user_at", 0):
+                value["user_at"] = usage["time"]
             return value
 
         await self.update_observation(request, observe)
@@ -555,25 +569,29 @@ class MemoryKernel:
                 request.metrics.setdefault("degradation", "hidden_tool_history_unavailable")
         request.body[adapter.field] = messages
 
-    async def measure(self, request, policy):
+    @classmethod
+    def assembled(cls, request):
+        """The body the upstream would get now, without changing the request."""
+        candidate = replace(request, body=dict(request.body), metrics={})
+        cls.assemble(candidate)
+        return candidate.body
+
+    async def measure(self, request):
         """Estimate the context: the last reply's usage plus what the client added after it.
 
         Usage counts only when its reply is still in this history after the latest
         cut, so usage from subagents, other branches or before a cut is ignored.
+        Otherwise the estimate covers the whole body the upstream would get.
         """
         usage = request.observation.value.get("usage", {})
         anchor, chain = usage.get("anchor"), request.capture_chain
         index = chain.index(anchor) if anchor and anchor in chain else -1
         if index > active_cut(request):
             tokens = usage.get("input_tokens", 0) + usage.get("output_tokens", 0)
-            tokens += await asyncio.to_thread(estimate, request.messages[index + 1 :])
-        else:
-            tokens = await asyncio.to_thread(estimate, request.body)
-        request.context_tokens = tokens
-        request.context_window = window_size(request, policy)
-        request.metrics.update(context_tokens=tokens, context_window=request.context_window)
+            return tokens + await asyncio.to_thread(estimate, request.messages[index + 1 :])
+        return await asyncio.to_thread(estimate, self.assembled(request))
 
-    async def compact(self, request, credential, policy, summarize, before):
+    async def compact(self, request, credential, policy, summarize):
         """Replace the history before a new cut with a model-written summary.
 
         The summary covers only what the cut replaces, so every branch sharing that
@@ -584,7 +602,8 @@ class MemoryKernel:
         if cut <= active_cut(request) or time.time() - failed_at < BACKOFF_SECONDS:
             return
         adapter = tool_protocol(request.protocol)
-        messages, kept = request.body[adapter.field], before[0][cut + 1 :]
+        body, kept = self.assembled(request), request.body[adapter.field][cut + 1 :]
+        messages = body[adapter.field]
         span = messages[: len(messages) - len(kept)]
         started = time.monotonic()
         try:
@@ -594,7 +613,7 @@ class MemoryKernel:
             instruction = INSTRUCTION.format(tokens=policy.summary_max_tokens)
             response = await summarize(
                 request,
-                adapter.summary_request(request.body, span, instruction, policy.summary_max_tokens),
+                adapter.summary_request(body, span, instruction, policy.summary_max_tokens),
             )
             summary = adapter.summary_text(response).strip()
             if not summary:
@@ -625,14 +644,12 @@ class MemoryKernel:
         request.records[K.REPLACEMENT, anchor] = record
         if policy.capture and request.kind == "continuation":
             await CapturePipeline(self.store.capture).confirm_cut(request, anchor)
-        request.body[adapter.field], request.body_chain = list(before[0]), before[1]
-        self.assemble(request)
         request.metrics.update(
             compaction_tokens=record["tokens"],
             compaction_ms=round((time.monotonic() - started) * 1000, 2),
         )
         # Later readers see the compacted context; the metric keeps the estimate that triggered it.
-        request.context_tokens = await asyncio.to_thread(estimate, request.body)
+        request.context_tokens = await self.measure(request)
 
     async def compaction_failed(self, request, reason):
         request.metrics["compaction_failed"] = reason

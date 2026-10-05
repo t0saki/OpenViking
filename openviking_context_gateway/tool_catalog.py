@@ -9,6 +9,7 @@ import orjson
 from .protocols import enhanced_supported
 from .tool_protocols import tool_protocol
 from .tool_protocols.common import PREFIX
+from .windows import native_definitions
 
 TOOL_VERSION = 2
 # Only what the gateway adds to MCP: the arguments a notice names, in order of
@@ -66,7 +67,7 @@ def tool_block_reason(body, protocol, upstream):
 
 
 def select_tools(catalog, policy):
-    """Freeze the MCP tools the policy leaves enabled as prefixed function tools."""
+    """Freeze the MCP tools the policy leaves enabled, then any native tools, as functions."""
     disabled = set(policy.get("disabled_tools", []))
     selected = []
     for tool in catalog:
@@ -91,7 +92,7 @@ def select_tools(catalog, policy):
                 },
             }
         )
-    return selected
+    return [*selected, *native_definitions(selected, policy)]
 
 
 def clip(value, limit=80):
