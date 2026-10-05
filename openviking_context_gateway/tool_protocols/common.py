@@ -90,29 +90,29 @@ def notice_head(item):
     attachment = f"attachment {index}" if type(index) is int else ""
     uris = args.get("uris") if isinstance(args.get("uris"), list) else []
     uris = [clip(u) for u in uris if isinstance(u, str) and u.strip()]
-    target = {
-        "search": text("query") and f'"{text("query")}"',
-        "read": uris[0] + (f" (+{len(uris) - 1} more)" if len(uris) > 1 else "") if uris else "",
-        "list": text("uri"),
-        "write": text("uri"),
-        "add_resource": text("path") or attachment,
-        "add_skill": text("path")
-        or text("target_uri")
-        or attachment
-        or ("SKILL.md text" if text("data") else ""),
-    }.get(short, "")
+    from ..tool_catalog import TOOL_OVERRIDES
+
+    target = ""
+    for key in TOOL_OVERRIDES.get(short, {}).get("notice", ()):
+        if key == "attachment_index":
+            target = attachment
+        elif key == "data":
+            target = "SKILL.md text" if text(key) else ""
+        elif key == "uris":
+            target = uris[0] + (f" (+{len(uris) - 1} more)" if len(uris) > 1 else "") if uris else ""
+        elif key == "query":
+            target = f'"{text(key)}"' if text(key) else ""
+        else:
+            target = text(key)
+        if target:
+            break
     return "> OpenViking " + short + (": " + target if target else "")
 
 
-def notice_tail(content, skipped):
+def notice_tail(failed, skipped):
     """The outcome that completes a notice line once the call has run."""
     if skipped:
         return " — skipped"
-    try:
-        value = orjson.loads(content)
-    except (TypeError, ValueError):
-        value = None
-    failed = isinstance(value, dict) and ("error" in value or value.get("isError") is True)
     return " — failed" if failed else " — done"
 
 

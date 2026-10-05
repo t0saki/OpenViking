@@ -26,19 +26,14 @@ export const PROFILE_DEFAULTS: ProfileSettings = {
   context_window: null,
   archive_wait_seconds: 30,
   gateway_tools: false,
-  allow_write_tools: false,
   show_tool_calls: true,
-  tool_allowlist: ['search', 'read', 'list'],
+  disabled_tools: [],
   tool_max_rounds: 5,
   tool_timeout_seconds: 30,
   tool_result_bytes: 65536,
   tool_total_seconds: 120,
   tool_total_tokens: 100000,
 }
-
-export const READ_TOOLS: GatewayTool[] = ['search', 'read', 'list']
-/** Offered only when `allow_write_tools` is on. */
-export const WRITE_TOOLS: GatewayTool[] = ['write', 'add_resource', 'add_skill']
 
 type NumericField = {
   [K in keyof ProfileSettings]: ProfileSettings[K] extends number | null
@@ -86,16 +81,18 @@ export const QUOTA_LIMIT: NumberRule = {
 }
 
 /**
- * Save body for `PUT policies/{id}`: every profile field, with `id` and
- * `revision` stripped and anything the server omitted filled with defaults.
+ * Save body for `PUT policies/{id}`: known profile fields only, with anything
+ * the server omitted filled with defaults.
  */
 export function toProfileSettings(
   profile: Profile | ProfileSettings,
 ): ProfileSettings {
-  const settings: Record<string, unknown> = { ...PROFILE_DEFAULTS, ...profile }
-  delete settings.id
-  delete settings.revision
-  return settings as ProfileSettings
+  return Object.fromEntries(
+    Object.entries(PROFILE_DEFAULTS).map(([field, fallback]) => [
+      field,
+      profile[field as keyof ProfileSettings] ?? fallback,
+    ]),
+  ) as ProfileSettings
 }
 
 /** A copy of `profile` for "Duplicate", named by `name`. */
@@ -133,25 +130,14 @@ export function validateProfile(settings: ProfileSettings): ValidationErrors {
   if (quotas.length > 0 && quotas.every(([, value]) => value === 0)) {
     collect(errors, 'quotas', { key: 'validation.quotasAllZero' })
   }
-  if (settings.gateway_tools && offeredTools(settings).length === 0) {
-    collect(errors, 'tool_allowlist', { key: 'validation.selectOneTool' })
-  }
   return errors
 }
 
 /** OpenViking tools a new conversation can be offered under these settings. */
-export function offeredTools(settings: ProfileSettings): GatewayTool[] {
-  if (!settings.gateway_tools) return []
-  return settings.tool_allowlist.filter(
-    (tool) => settings.allow_write_tools || READ_TOOLS.includes(tool),
-  )
-}
-
-/** One-word summary of tool access for lists: off, read only, or read & write. */
-export function toolAccess(
+export function offeredTools(
   settings: ProfileSettings,
-): 'off' | 'read' | 'readWrite' {
-  const tools = offeredTools(settings)
-  if (tools.length === 0) return 'off'
-  return tools.some((tool) => WRITE_TOOLS.includes(tool)) ? 'readWrite' : 'read'
+  tools: GatewayTool[],
+): GatewayTool[] {
+  if (!settings.gateway_tools) return []
+  return tools.filter((tool) => !settings.disabled_tools.includes(tool.name))
 }

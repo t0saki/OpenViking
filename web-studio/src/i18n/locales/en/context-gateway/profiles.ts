@@ -22,8 +22,8 @@ const profiles = {
   summary: {
     recallOn: 'On · {{tokens}} tokens per message',
     takeoverOn: 'After {{tokens}} tokens',
-    toolsRead: 'Read',
-    toolsReadWrite: 'Read & write',
+    toolsEnabled_one: '{{count}} tool enabled',
+    toolsEnabled_other: '{{count}} tools enabled',
   },
   deleteDialog: {
     title: 'Delete “{{name}}”?',
@@ -74,7 +74,7 @@ const profiles = {
     profileMaxTokens: {
       label: 'Opening context budget',
       description:
-        'Limit the profile and memory and skill catalogs provided at the start. Catalogs require the Read tool. This budget is separate from recall; 0 omits all three.',
+        'Limit the profile and memory and skill catalogs provided at the start. Catalogs require the read tool. This budget is separate from recall; 0 omits all three.',
     },
     sources: {
       label: 'Sources',
@@ -172,48 +172,22 @@ const profiles = {
   tools: {
     title: 'OpenViking tools',
     description:
-      'Let the model search and read OpenViking while it answers. The client does not need to execute these calls. Supports Chat Completions, Responses and Anthropic Messages with full conversation history.',
+      'Let the model use OpenViking tools while it answers. Supports Chat Completions, Responses and Anthropic Messages with full conversation history.',
     available: {
       label: 'Tools',
-      description: 'The upstream must allow OpenViking tools as well.',
+      description:
+        'All tools are selected by default, including tools added in the future. Uncheck any you do not want the model to use. The upstream must allow OpenViking tools as well.',
     },
-    names: {
-      search: {
-        label: 'Search',
-        description: 'Find relevant memories, resources and skills',
-      },
-      read: {
-        label: 'Read',
-        description: 'Read a file by its viking:// address',
-      },
-      list: {
-        label: 'List',
-        description: 'Browse a directory',
-      },
-      write: {
-        label: 'Write',
-        description: 'Save a note the user asks for',
-      },
-      add_resource: {
-        label: 'Import files',
-        description: 'Add a URL, a local file or an attachment as a resource',
-      },
-      add_skill: {
-        label: 'Import skills',
-        description:
-          'Install a skill from text, a repository, a local path or an attachment',
-      },
-    },
-    allowWrite: {
-      label: 'Allow write tools',
-      description: 'Let the model change data in OpenViking.',
-      warning:
-        "The model decides when to call write tools; unless Show tool calls is on, the client doesn't see these calls. Import files and Import skills are offered only when the client can run shell commands or the conversation has an attachment; importing a local file also needs context_gateway.public_url in ov.conf.",
-    },
+    empty: 'Issue a gateway key to load the tool list.',
+    loadFailed: "Couldn't load OpenViking tools",
+    readOnly: 'Read only',
+    modifiesData: 'Modifies data',
+    executionNotice:
+      'The gateway runs selected tools without asking for permission in your client. Tools may change or delete data. With Show tool calls on, notices appear after each call.',
     showCalls: {
       label: 'Show tool calls',
       description:
-        'Add a one-line notice to the reply each time the gateway runs an OpenViking tool, so users can see the call. The model never sees these lines, and they are not saved to OpenViking.',
+        'Add a one-line notice to the reply after each OpenViking tool call. These notices do not ask for permission before a call. The model never sees them, and they are not saved to OpenViking.',
     },
     maxRounds: {
       label: 'Rounds per request',

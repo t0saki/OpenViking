@@ -960,7 +960,7 @@ async def test_anthropic_stream_no_argument_tool(running_gateway, arguments):
         value = native_response("anthropic", len(requests), owned=len(requests) == 1)
         if len(requests) > 1:
             return await wire_response(request, "anthropic", value, True)
-        value["content"][-1].update(name="openviking_list", input={})
+        value["content"][-1].update(name="openviking_health", input={})
         events = native_events("anthropic", value)
         events = [e for e in events if e.get("delta", {}).get("type") != "input_json_delta"]
         if arguments is not None:

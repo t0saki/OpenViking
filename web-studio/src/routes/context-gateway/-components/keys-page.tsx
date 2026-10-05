@@ -89,7 +89,7 @@ export function KeysPage() {
     mutationFn: (key: GatewayKey) => revokeKey(connection, key.id),
     onSuccess: async (_result, key) => {
       toast.success(t('keys.revoke.done', { name: key.name }))
-      await invalidate('keys', 'overview')
+      await invalidate('keys', 'overview', 'tools')
     },
     onError: (error) => toast.error(gatewayErrorMessage(t, error)),
   })

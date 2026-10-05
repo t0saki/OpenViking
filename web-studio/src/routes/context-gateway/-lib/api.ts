@@ -28,13 +28,12 @@ export const QUOTA_BUCKETS = [
 ] as const
 export type QuotaBucket = (typeof QUOTA_BUCKETS)[number]
 
-export type GatewayTool =
-  | 'search'
-  | 'read'
-  | 'list'
-  | 'write'
-  | 'add_resource'
-  | 'add_skill'
+/** A tool from OpenViking MCP, using its original name. */
+export type GatewayTool = {
+  name: string
+  description: string
+  annotations?: { readOnlyHint?: boolean } & Record<string, unknown>
+}
 
 /** Request types in the log, in the order the type filter lists them. */
 export const LOG_KINDS = [
@@ -109,9 +108,8 @@ export type ProfileSettings = {
   context_window: number | null
   archive_wait_seconds: number
   gateway_tools: boolean
-  allow_write_tools: boolean
   show_tool_calls: boolean
-  tool_allowlist: GatewayTool[]
+  disabled_tools: string[]
   tool_max_rounds: number
   tool_timeout_seconds: number
   tool_result_bytes: number
@@ -447,6 +445,10 @@ export const listLogs = (connection: AdminConnection, limit = 200) =>
 
 export const listUpstreams = (connection: AdminConnection) =>
   send<Upstream[]>(connection, 'GET', ['upstreams'])
+
+/** Available MCP tools; empty until this account has a gateway key. */
+export const listTools = (connection: AdminConnection) =>
+  send<GatewayTool[]>(connection, 'GET', ['tools'])
 
 /** Creates or replaces an upstream. Build the body with `toUpstreamInput`. */
 export const saveUpstream = (

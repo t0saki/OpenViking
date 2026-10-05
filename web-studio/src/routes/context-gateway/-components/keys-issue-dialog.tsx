@@ -183,7 +183,7 @@ export function KeysIssueDialog({
     mutationFn: (request: KeyRequest) => issueKey(connection, request),
     onSuccess: async (issued) => {
       onIssued(issued)
-      await invalidate('keys', 'overview')
+      await invalidate('keys', 'overview', 'tools')
     },
     onError: (error) => {
       // A user, profile or upstream changed meanwhile; show the current lists.

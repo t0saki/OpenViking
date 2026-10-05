@@ -9,6 +9,7 @@ import {
   issueKey,
   listKeyUsers,
   listLogs,
+  listTools,
   newObjectId,
   resyncCapture,
   saveUpstream,
@@ -73,6 +74,30 @@ describe('gateway calls', () => {
       query: { limit: 50 },
     })
     expect(request.mock.calls[0][0]).not.toHaveProperty('body')
+  })
+
+  it('loads raw MCP names and optional annotations from the tools endpoint', async () => {
+    const tools = [
+      {
+        name: 'read',
+        description: 'Read a file',
+        annotations: { readOnlyHint: true },
+      },
+      { name: 'future_tool', description: 'A new MCP tool' },
+    ]
+    request.mockResolvedValue(ok(tools))
+    await expect(listTools(connection)).resolves.toEqual(tools)
+    expect(request.mock.calls[0][0]).toMatchObject({
+      method: 'GET',
+      url: '/api/v1/admin/context-gateway/tools',
+    })
+    request.mockResolvedValue(ok([]))
+    await expect(listTools(connection)).resolves.toEqual([])
+    request.mockRejectedValue(failure(503, { detail: 'Tools unavailable' }))
+    await expect(listTools(connection)).rejects.toMatchObject({
+      status: 503,
+      detail: 'Tools unavailable',
+    })
   })
 
   it('addresses resync, key issuance and user data deletion', async () => {

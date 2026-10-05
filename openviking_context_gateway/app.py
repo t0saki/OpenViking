@@ -282,6 +282,21 @@ def create_app(config: ContextGatewayConfig | None = None):
         await management.delete_account(account)
         return {"deleted": True}
 
+    @app.get("/admin/tools")
+    async def list_tools(request: Request):
+        keys = await management.list(admin_account(request), "keys")
+        if not keys:
+            return []
+        catalog = await app.state.viking.tools(keys[0]["openviking_key"])
+        return [
+            {
+                "name": tool["name"],
+                "description": tool.get("description", ""),
+                **({"annotations": tool["annotations"]} if "annotations" in tool else {}),
+            }
+            for tool in catalog
+        ]
+
     @app.get("/admin/{kind}")
     async def list_objects(kind: str, request: Request):
         if kind not in {"upstreams", "policies", "keys"}:

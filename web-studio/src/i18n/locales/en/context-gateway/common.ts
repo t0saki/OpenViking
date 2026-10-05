@@ -135,7 +135,6 @@ const common = {
     selectOneSource: 'Choose at least one source',
     unknownCategory: 'Unknown category “{{name}}”',
     quotasAllZero: 'Set at least one category above 0, or turn the limit off',
-    selectOneTool: 'Choose at least one tool',
     baseUrl:
       'Enter an http:// or https:// URL without credentials, query or fragment',
     subscriptionKey:

@@ -11,6 +11,7 @@ import type { LucideIcon } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '#/components/ui/button'
+import { Badge } from '#/components/ui/badge'
 import { Checkbox } from '#/components/ui/checkbox'
 import { FieldError } from '#/components/ui/field'
 import { Label } from '#/components/ui/label'
@@ -27,10 +28,10 @@ import {
   PROFILE_DEFAULTS,
   PROFILE_LIMITS,
   QUOTA_LIMIT,
-  READ_TOOLS,
-  WRITE_TOOLS,
 } from '../-lib/profile-schema'
+import { useTools } from '../-lib/use-gateway'
 import type { Unit, ValidationErrors } from '../-lib/validation'
+import { ErrorState, LoadingState } from './empty-state'
 import { Notice } from './notice'
 import { NumberInput } from './number-input'
 import { SettingField } from './setting-field'
@@ -95,7 +96,6 @@ const FIELD_COPY: Record<NumericField, `${ProfileSection}.${string}`> = {
 const LIST_FIELD_SECTIONS: Partial<Record<string, ProfileSection>> = {
   context_types: 'recall',
   quotas: 'recall',
-  tool_allowlist: 'tools',
 }
 
 /** Fields under each section's "Advanced settings". */
@@ -189,12 +189,14 @@ function OptionGroup({
   id,
   label,
   description,
+  badge,
   error,
   children,
 }: {
   id: string
   label: string
   description?: string
+  badge?: React.ReactNode
   error?: string
   children: React.ReactNode
 }) {
@@ -223,7 +225,7 @@ function OptionCheckbox({
   label: string
   description?: string
 }) {
-  if (!description) {
+  if (!description && !badge) {
     return (
       <Label className="font-normal">
         <Checkbox
@@ -243,9 +245,14 @@ function OptionCheckbox({
         className="mt-0.5"
         onCheckedChange={(value) => onCheckedChange(Boolean(value))}
       />
-      <span className="grid gap-0.5">
-        <span className="font-medium">{label}</span>
-        <span className="text-xs text-muted-foreground">{description}</span>
+      <span className="grid min-w-0 gap-1">
+        <span className="flex flex-wrap items-center gap-2 font-medium">
+          <span className="break-all">{label}</span>
+          {badge}
+        </span>
+        <span className="text-xs whitespace-pre-wrap text-muted-foreground">
+          {description}
+        </span>
       </span>
     </Label>
   )
@@ -268,6 +275,7 @@ export function ProfileSettingsForm({
   errors,
 }: ProfileSettingsFormProps) {
   const { t, i18n } = useTranslation('contextGateway')
+  const tools = useTools({ enabled: value.gateway_tools })
   const locale = i18n.resolvedLanguage
   // Limits the admin turned off, restored if they turn the limit back on.
   const [lastQuotas, setLastQuotas] = React.useState(value.quotas)
@@ -328,16 +336,29 @@ export function ProfileSettingsForm({
 
   const toolOption = (tool: GatewayTool) => (
     <OptionCheckbox
-      key={tool}
-      checked={value.tool_allowlist.includes(tool)}
-      label={t(`profiles.tools.names.${tool}.label`)}
-      description={t(`profiles.tools.names.${tool}.description`)}
+      key={tool.name}
+      checked={!value.disabled_tools.includes(tool.name)}
+      label={tool.name}
+      description={tool.description}
+      badge={
+        typeof tool.annotations?.readOnlyHint === 'boolean' ? (
+          <Badge variant="secondary">
+            {t(
+              tool.annotations.readOnlyHint
+                ? 'profiles.tools.readOnly'
+                : 'profiles.tools.modifiesData',
+            )}
+          </Badge>
+        ) : undefined
+      }
       onCheckedChange={(checked) =>
         onChange({
-          tool_allowlist: toggleItem(value.tool_allowlist, tool, checked, [
-            ...READ_TOOLS,
-            ...WRITE_TOOLS,
-          ]),
+          disabled_tools: toggleItem(
+            value.disabled_tools,
+            tool.name,
+            !checked,
+            (tools.data ?? []).map((entry) => entry.name),
+          ),
         })
       }
     />
@@ -547,31 +568,29 @@ export function ProfileSettingsForm({
         }
       >
         <OptionGroup
-          id="profile-tool_allowlist"
+          id="profile-disabled_tools"
           label={t('profiles.tools.available.label')}
           description={t('profiles.tools.available.description')}
-          error={message('tool_allowlist')}
         >
-          <div className="grid gap-2 md:grid-cols-3">
-            {READ_TOOLS.map(toolOption)}
-          </div>
+          {tools.isPending ? (
+            <LoadingState className="min-h-24" />
+          ) : tools.isError ? (
+            <ErrorState
+              className="min-h-24"
+              title={t('profiles.tools.loadFailed')}
+              error={tools.error}
+              retrying={tools.isFetching}
+              onRetry={() => void tools.refetch()}
+            />
+          ) : tools.data.length === 0 ? (
+            <Notice>{t('profiles.tools.empty')}</Notice>
+          ) : (
+            <div className="grid gap-2 md:grid-cols-2">
+              {tools.data.map(toolOption)}
+            </div>
+          )}
         </OptionGroup>
-        <ToggleRow
-          id="profile-allow_write_tools"
-          label={t('profiles.tools.allowWrite.label')}
-          description={t('profiles.tools.allowWrite.description')}
-          checked={value.allow_write_tools}
-          onCheckedChange={(allow_write_tools) =>
-            onChange({ allow_write_tools })
-          }
-        >
-          <Notice tone="warning">
-            {t('profiles.tools.allowWrite.warning')}
-          </Notice>
-          <div className="grid gap-2 md:grid-cols-3">
-            {WRITE_TOOLS.map(toolOption)}
-          </div>
-        </ToggleRow>
+        <Notice tone="warning">{t('profiles.tools.executionNotice')}</Notice>
         <ToggleRow
           id="profile-show_tool_calls"
           label={t('profiles.tools.showCalls.label')}

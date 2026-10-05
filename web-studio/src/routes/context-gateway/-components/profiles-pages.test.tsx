@@ -22,7 +22,12 @@ import type * as ReactI18next from 'react-i18next'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type * as Api from '../-lib/api'
-import type { GatewayKey, Profile, ProfileSettings } from '../-lib/api'
+import type {
+  GatewayKey,
+  GatewayTool,
+  Profile,
+  ProfileSettings,
+} from '../-lib/api'
 import { PROFILE_DEFAULTS } from '../-lib/profile-schema'
 import { parseProfileEditorSearch } from '../-lib/search'
 import { ProfilesPage } from './profiles-page'
@@ -31,6 +36,7 @@ import { ProfileEditor } from './profiles-editor'
 const api = vi.hoisted(() => ({
   listProfiles: vi.fn(),
   listKeys: vi.fn(),
+  listTools: vi.fn(),
   saveProfile: vi.fn(),
   deleteProfile: vi.fn(),
 }))
@@ -81,11 +87,30 @@ const coding = {
   context_window: 64000,
   idle_seconds: 30.5,
   gateway_tools: true,
-  allow_write_tools: true,
-  tool_allowlist: ['search', 'write'],
+  disabled_tools: ['read', 'removed_tool'],
   // A field this version of the form does not know about.
-  future_setting: 'keep me',
+  future_setting: 'discard me',
 } as Profile
+
+const tools: GatewayTool[] = [
+  { name: 'find', description: 'Semantic retrieval' },
+  { name: 'search', description: 'Search conversations' },
+  {
+    name: 'read',
+    description: 'Read a file',
+    annotations: { readOnlyHint: true },
+  },
+  {
+    name: 'write',
+    description: 'Write a file',
+    annotations: { readOnlyHint: false },
+  },
+  {
+    name: 'future_tool',
+    description: 'A newly added tool',
+    annotations: { destructiveHint: true },
+  },
+]
 
 const chat: Profile = {
   ...PROFILE_DEFAULTS,
@@ -107,9 +132,14 @@ const key = (id: string, policyId: string): GatewayKey => ({
   created_at: 1_700_000_000,
 })
 
-/** `profile` as the save body: every field, without id and revision. */
+/** `profile` as the save body, without server metadata or unrecognized fields. */
 function settingsOf(profile: Profile): ProfileSettings {
-  const { id: _id, revision: _revision, ...settings } = profile
+  const {
+    id: _id,
+    revision: _revision,
+    future_setting: _future,
+    ...settings
+  } = profile as Profile & { future_setting?: string }
   return settings
 }
 
@@ -162,6 +192,7 @@ beforeEach(() => {
   vi.spyOn(window, 'scrollTo').mockImplementation(() => {})
   api.listProfiles.mockResolvedValue([coding, chat])
   api.listKeys.mockResolvedValue([key('k1', 'p1'), key('k2', 'p1')])
+  api.listTools.mockResolvedValue(tools)
   api.saveProfile.mockImplementation(
     (_connection, id: string, settings: ProfileSettings) =>
       Promise.resolve({ ...settings, id, revision: 1 }),
@@ -187,7 +218,9 @@ describe('profile list', () => {
     ).toBeTruthy()
     // Saving is off, so long conversations are off too.
     expect(codingCard.getAllByText('states.off')).toHaveLength(2)
-    expect(codingCard.getByText('profiles.summary.toolsReadWrite')).toBeTruthy()
+    expect(
+      await codingCard.findByText('profiles.summary.toolsEnabled {"count":4}'),
+    ).toBeTruthy()
     expect(codingCard.getByText('profiles.usedBy {"count":2}')).toBeTruthy()
 
     const chatCard = within(card('Chat'))
@@ -195,6 +228,39 @@ describe('profile list', () => {
       chatCard.getByText('profiles.summary.takeoverOn {"tokens":"30K"}'),
     ).toBeTruthy()
     expect(chatCard.getByText('profiles.unused')).toBeTruthy()
+  })
+
+  it('keeps tool counts unknown until the catalog loads', async () => {
+    let resolveTools!: (value: GatewayTool[]) => void
+    api.listTools.mockReturnValue(
+      new Promise<GatewayTool[]>((resolve) => {
+        resolveTools = resolve
+      }),
+    )
+    renderAt('/context-gateway/profiles')
+    await screen.findByRole('link', { name: 'Coding' })
+    const codingCard = within(card('Coding'))
+    expect(codingCard.getByText('states.on')).toBeTruthy()
+    expect(codingCard.queryByText(/profiles.summary.toolsEnabled/)).toBeNull()
+    resolveTools(tools)
+    expect(
+      await codingCard.findByText('profiles.summary.toolsEnabled {"count":4}'),
+    ).toBeTruthy()
+  })
+
+  it('keeps profiles visible when tools fail to load and retries the catalog', async () => {
+    api.listTools.mockRejectedValueOnce(new Error('Tools unavailable'))
+    renderAt('/context-gateway/profiles')
+    await screen.findByText('profiles.tools.loadFailed')
+    expect(
+      within(card('Coding')).queryByText(/profiles.summary.toolsEnabled/),
+    ).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'actions.retry' }))
+    expect(
+      await within(card('Coding')).findByText(
+        'profiles.summary.toolsEnabled {"count":4}',
+      ),
+    ).toBeTruthy()
   })
 
   it('blocks deleting a profile that keys use and deletes an unused one', async () => {
@@ -264,7 +330,7 @@ describe('profile list', () => {
 })
 
 describe('profile editor', () => {
-  it('sends every stored field back unchanged when only the name changes', async () => {
+  it('sends known stored fields back unchanged when only the name changes', async () => {
     const router = renderAt('/context-gateway/profiles/p1')
     expect((await screen.findByDisplayValue('Coding')).id).toBe('profile-name')
     expect(saveButton().disabled).toBe(true)
@@ -369,40 +435,115 @@ describe('profile editor', () => {
     expect(saveButton().disabled).toBe(true)
   })
 
-  it('offers write tools only after they are allowed', async () => {
+  it('selects every MCP tool by default and saves only unchecked raw names', async () => {
     renderAt('/context-gateway/profiles/p2')
     await screen.findByDisplayValue('Chat')
-    const writeTool = () =>
-      screen.queryByRole('checkbox', {
-        name: /profiles\.tools\.names\.write\.label/,
-      })
-
-    expect(
-      screen.queryByRole('checkbox', {
-        name: /profiles\.tools\.names\.search\.label/,
-      }),
-    ).toBeNull()
+    expect(sectionSwitch('tools').getAttribute('aria-checked')).toBe('false')
+    expect(api.listTools).not.toHaveBeenCalled()
+    expect(screen.queryByRole('checkbox', { name: 'find' })).toBeNull()
     fireEvent.click(sectionSwitch('tools'))
+    await screen.findByRole('checkbox', { name: 'find' })
+    for (const tool of tools) {
+      expect(
+        screen
+          .getByRole('checkbox', { name: tool.name })
+          .getAttribute('aria-checked'),
+      ).toBe('true')
+      expect(screen.getByText(tool.description)).toBeTruthy()
+    }
     expect(
-      screen.getByRole('checkbox', {
-        name: /profiles\.tools\.names\.search\.label/,
-      }),
-    ).toBeTruthy()
-    expect(writeTool()).toBeNull()
-
-    fireEvent.click(
-      screen.getByRole('switch', { name: 'profiles.tools.allowWrite.label' }),
-    )
-    expect(screen.getByText('profiles.tools.allowWrite.warning')).toBeTruthy()
-    fireEvent.click(writeTool()!)
+      screen.queryByRole('switch', { name: 'profiles.tools.allowWrite.label' }),
+    ).toBeNull()
+    expect(screen.getByText('profiles.tools.executionNotice')).toBeTruthy()
+    fireEvent.click(screen.getByRole('checkbox', { name: 'write' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'read' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'read' }))
     fireEvent.click(saveButton())
 
     await waitFor(() => expect(api.saveProfile).toHaveBeenCalledTimes(1))
     expect(api.saveProfile.mock.calls[0][2]).toMatchObject({
       gateway_tools: true,
-      allow_write_tools: true,
-      tool_allowlist: ['search', 'read', 'list', 'write'],
+      disabled_tools: ['write'],
     })
+    expect(api.saveProfile.mock.calls[0][2]).not.toHaveProperty(
+      'allow_write_tools',
+    )
+    expect(api.saveProfile.mock.calls[0][2]).not.toHaveProperty(
+      'tool_allowlist',
+    )
+  })
+
+  it('uses only explicit readOnlyHint annotations for badges', async () => {
+    renderAt('/context-gateway/profiles/p1')
+    await screen.findByRole('checkbox', { name: 'read' })
+    const labelFor = (name: string) =>
+      within(screen.getByRole('checkbox', { name }).closest('label')!)
+    expect(labelFor('read').getByText('profiles.tools.readOnly')).toBeTruthy()
+    expect(
+      labelFor('write').getByText('profiles.tools.modifiesData'),
+    ).toBeTruthy()
+    for (const name of ['find', 'search', 'future_tool']) {
+      expect(labelFor(name).queryByText('profiles.tools.readOnly')).toBeNull()
+      expect(
+        labelFor(name).queryByText('profiles.tools.modifiesData'),
+      ).toBeNull()
+    }
+  })
+
+  it('preserves missing tool exclusions while re-enabling a listed tool', async () => {
+    renderAt('/context-gateway/profiles/p1')
+    const readTool = await screen.findByRole('checkbox', { name: 'read' })
+    expect(readTool.getAttribute('aria-checked')).toBe('false')
+    expect(
+      screen
+        .getByRole('checkbox', { name: 'future_tool' })
+        .getAttribute('aria-checked'),
+    ).toBe('true')
+    fireEvent.click(readTool)
+    fireEvent.click(saveButton())
+    await waitFor(() => expect(api.saveProfile).toHaveBeenCalledTimes(1))
+    expect(api.saveProfile.mock.calls[0][2].disabled_tools).toEqual([
+      'removed_tool',
+    ])
+  })
+
+  it('allows disabling every tool', async () => {
+    renderAt('/context-gateway/profiles/p2')
+    await screen.findByDisplayValue('Chat')
+    fireEvent.click(sectionSwitch('tools'))
+    await screen.findByRole('checkbox', { name: 'find' })
+    for (const tool of tools)
+      fireEvent.click(screen.getByRole('checkbox', { name: tool.name }))
+    expect(saveButton().disabled).toBe(false)
+    fireEvent.click(saveButton())
+    await waitFor(() => expect(api.saveProfile).toHaveBeenCalledTimes(1))
+    expect(api.saveProfile.mock.calls[0][2].disabled_tools).toEqual(
+      tools.map((tool) => tool.name),
+    )
+  })
+
+  it('explains the empty catalog and still lets a profile be saved', async () => {
+    api.listTools.mockResolvedValue([])
+    renderAt('/context-gateway/profiles/p2')
+    await screen.findByDisplayValue('Chat')
+    fireEvent.click(sectionSwitch('tools'))
+    expect(await screen.findByText('profiles.tools.empty')).toBeTruthy()
+    expect(saveButton().disabled).toBe(false)
+    fireEvent.click(saveButton())
+    await waitFor(() => expect(api.saveProfile).toHaveBeenCalledTimes(1))
+    expect(api.saveProfile.mock.calls[0][2].disabled_tools).toEqual([])
+  })
+
+  it('shows a retry action when the tools request fails', async () => {
+    api.listTools.mockRejectedValueOnce(new Error('Tools unavailable'))
+    renderAt('/context-gateway/profiles/p1')
+    expect(await screen.findByText('profiles.tools.loadFailed')).toBeTruthy()
+    expect(screen.queryByText('profiles.tools.empty')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'actions.retry' }))
+    expect(
+      await screen.findByRole('checkbox', { name: 'future_tool' }),
+    ).toBeTruthy()
+    expect(api.listTools).toHaveBeenCalledTimes(2)
   })
 
   it('shows tool calls by default and saves the switch', async () => {

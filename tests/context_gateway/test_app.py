@@ -5,6 +5,7 @@ from pathlib import Path
 import orjson
 import pytest
 from aiohttp import web
+from conftest import MCP_TOOLS
 
 from openviking_context_gateway.protocols import normalize
 
@@ -205,7 +206,7 @@ async def enable_tools(client, admin, **policy):
     assert response.status_code == 200, response.text
 
 
-def tool_call(name="openviking_search", identifier="g-1", arguments=None):
+def tool_call(name="openviking_find", identifier="g-1", arguments=None):
     return {
         "id": identifier,
         "type": "function",
@@ -348,7 +349,7 @@ async def test_hidden_tools_mixed_replay_and_usage(running_gateway, streaming, m
     headers = {"Authorization": "Bearer " + key["key"], "X-OpenViking-Session": "tool-session"}
     response = await client.post("/v1/chat/completions", headers=headers, json=body)
     assert response.status_code == 200, response.text
-    assert "openviking_search" not in response.text
+    assert "openviking_find" not in response.text
     from openviking_context_gateway.storage import digest
 
     sid = digest("tool-session")
@@ -377,12 +378,12 @@ async def test_hidden_tools_mixed_replay_and_usage(running_gateway, streaming, m
     else:
         visible = response.json()["choices"][0]["message"]
         assert response.json()["provider_field"] == "keep"
-    notice = '\n\n> OpenViking search: "blue" — done\n\n' if show else ""
+    notice = '\n\n> OpenViking find: "blue" — done\n\n' if show else ""
     assert visible["content"] == "Looking. " + notice + ("" if mixed else "Blue.")
     if streaming and show:
         # The call's head streams before it runs; its outcome follows.
         deltas = [c["delta"].get("content") for e in events for c in e.get("choices", [])]
-        assert deltas[1:4] == ['\n\n> OpenViking search: "blue"', " — done", "\n\n"]
+        assert deltas[1:4] == ['\n\n> OpenViking find: "blue"', " — done", "\n\n"]
     # A typical chat UI drops reasoning/unknown fields from its returned history.
     visible = {k: v for k, v in visible.items() if k in {"role", "content", "tool_calls"}}
     body["messages"].append(visible)
@@ -391,7 +392,7 @@ async def test_hidden_tools_mixed_replay_and_usage(running_gateway, streaming, m
     else:
         body["messages"].append({"role": "user", "content": "Continue"})
     # Change the live policy; the existing root must retain its frozen tools.
-    await enable_tools(client, admin, tool_allowlist=["list"])
+    await enable_tools(client, admin, disabled_tools=["find"])
     response = await client.post("/v1/chat/completions", headers=headers, json=body)
     assert response.status_code == 200, response.text
     replay = model_requests[-1]
@@ -399,7 +400,7 @@ async def test_hidden_tools_mixed_replay_and_usage(running_gateway, streaming, m
     hidden = replay["messages"][1]
     assert hidden["reasoning_content"] == "private-1"
     assert hidden["vendor_extension"] == {"signature": "opaque"}
-    assert hidden["tool_calls"][0]["function"]["name"] == "openviking_search"
+    assert hidden["tool_calls"][0]["function"]["name"] == "openviking_find"
     assert replay["messages"][2]["tool_call_id"] == "g-1"
     if mixed:
         assert replay["messages"][3]["tool_call_id"] == "c-1"
@@ -431,7 +432,7 @@ async def test_tool_capability_gate_and_frozen_conflict(running_gateway, extra):
     headers["X-OpenViking-Session"] = "enabled"
     response = await client.post("/v1/chat/completions", headers=headers, json=body)
     assert response.status_code == 200
-    assert len(orjson.loads(seen[-1][1])["tools"]) == 3
+    assert len(orjson.loads(seen[-1][1])["tools"]) == len(MCP_TOOLS)
     response = await client.post("/v1/chat/completions", headers=headers, json={**body, **extra})
     assert response.status_code == 200
     assert not orjson.loads(seen[-1][1]).get("tools")
@@ -526,7 +527,7 @@ async def test_attachment_import_and_signed_upload_proxy(running_gateway, name):
 
     app, client, admin, key, _, _ = running_gateway
     app.state.config.public_url = "https://gateway.example"
-    await enable_tools(client, admin, allow_write_tools=True, tool_allowlist=[name])
+    await enable_tools(client, admin)
     model_requests, uploads, mcp_requests = [], [], []
 
     async def backend(request):
@@ -627,7 +628,7 @@ async def test_attachment_import_and_signed_upload_proxy(running_gateway, name):
 async def test_shell_upload_instructions_use_public_proxy(running_gateway):
     app, client, admin, key, _, _ = running_gateway
     app.state.config.public_url = "https://gateway.example"
-    await enable_tools(client, admin, allow_write_tools=True, tool_allowlist=["add_resource"])
+    await enable_tools(client, admin)
     requests = []
 
     async def backend(request):
@@ -822,7 +823,7 @@ async def test_storage_failure_still_forwards_plain_chat(running_gateway, monkey
 @pytest.mark.parametrize("limit", [{}, {"max_tokens": 1024}, {"max_completion_tokens": 2048}])
 async def test_long_context_tool_continuation_preserves_output_limit(running_gateway, limit):
     app, client, admin, key, _, _ = running_gateway
-    await enable_tools(client, admin, allow_write_tools=True, tool_allowlist=["write"])
+    await enable_tools(client, admin)
     requests, writes = [], []
 
     async def backend(request):

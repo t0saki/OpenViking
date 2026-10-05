@@ -24,13 +24,13 @@ import {
 import { cn } from '#/lib/utils'
 
 import { deleteProfile, keysUsing } from '../-lib/api'
-import type { Profile } from '../-lib/api'
+import type { GatewayTool, Profile } from '../-lib/api'
 import { EMPTY_VALUE, formatCompact, formatNumber } from '../-lib/format'
 import { gatewayErrorMessage } from '../-lib/localize'
 import type { Translate } from '../-lib/localize'
-import { toProfileSettings, toolAccess } from '../-lib/profile-schema'
+import { offeredTools, toProfileSettings } from '../-lib/profile-schema'
 import { NEW_ID } from '../-lib/search'
-import { useGateway, useKeys, useProfiles } from '../-lib/use-gateway'
+import { useGateway, useKeys, useProfiles, useTools } from '../-lib/use-gateway'
 import { ConfirmDialog } from './confirm-dialog'
 import { EmptyState, ErrorState, LoadingState } from './empty-state'
 import { ExplainedButton } from './explained-button'
@@ -39,20 +39,14 @@ import type { ProfileSection } from './profiles-settings'
 import { RecommendedProfileButton } from './recommended-profile-button'
 import { SectionHeader } from './section-header'
 
-const TOOL_ACCESS_COPY = {
-  off: 'states.off',
-  read: 'profiles.summary.toolsRead',
-  readWrite: 'profiles.summary.toolsReadWrite',
-} as const
-
 /** One-line state of each section for a profile card, and whether it is on. */
 function summarize(
   t: Translate,
   profile: Profile,
+  tools: GatewayTool[] | undefined,
   locale?: string,
 ): Record<ProfileSection, { text: string; on: boolean }> {
   const settings = toProfileSettings(profile)
-  const access = toolAccess(settings)
   const state = (on: boolean, text: string) => ({
     on,
     text: on ? text : t('states.off'),
@@ -71,22 +65,31 @@ function summarize(
         tokens: formatCompact(settings.takeover_tokens, locale),
       }),
     ),
-    tools: state(access !== 'off', t(TOOL_ACCESS_COPY[access])),
+    tools: state(
+      settings.gateway_tools,
+      tools === undefined
+        ? t('states.on')
+        : t('profiles.summary.toolsEnabled', {
+            count: offeredTools(settings, tools).length,
+          }),
+    ),
   }
 }
 
 function ProfileCard({
   profile,
   usedBy,
+  tools,
   onDelete,
 }: {
   profile: Profile
   /** Keys using the profile; undefined while keys are loading. */
   usedBy?: number
+  tools: GatewayTool[] | undefined
   onDelete: () => void
 }) {
   const { t, i18n } = useTranslation('contextGateway')
-  const summary = summarize(t, profile, i18n.resolvedLanguage)
+  const summary = summarize(t, profile, tools, i18n.resolvedLanguage)
   const inUse = Boolean(usedBy)
   const deleteHint = inUse
     ? t('profiles.deleteBlocked', { count: usedBy })
@@ -191,6 +194,9 @@ export function ProfilesPage() {
   const { connection, invalidate } = useGateway()
   const profiles = useProfiles()
   const keys = useKeys()
+  const tools = useTools({
+    enabled: profiles.data?.some((profile) => profile.gateway_tools) ?? false,
+  })
   const [deleteTarget, setDeleteTarget] = React.useState<Profile | null>(null)
 
   const sorted = React.useMemo(
@@ -210,7 +216,7 @@ export function ProfilesPage() {
     onError: (error) => toast.error(gatewayErrorMessage(t, error)),
   })
 
-  const refreshing = profiles.isFetching || keys.isFetching
+  const refreshing = profiles.isFetching || keys.isFetching || tools.isFetching
 
   let content: React.ReactNode
   if (profiles.isPending) {
@@ -266,6 +272,7 @@ export function ProfilesPage() {
           <ProfileCard
             key={profile.id}
             profile={profile}
+            tools={tools.data}
             usedBy={keysUsing(keys.data, { profileId: profile.id })}
             onDelete={() => setDeleteTarget(profile)}
           />
@@ -285,7 +292,7 @@ export function ProfilesPage() {
               variant="outline"
               size="sm"
               disabled={refreshing}
-              onClick={() => void invalidate('profiles', 'keys')}
+              onClick={() => void invalidate('profiles', 'keys', 'tools')}
             >
               <RefreshCwIcon
                 className={refreshing ? 'animate-spin' : undefined}
@@ -308,6 +315,17 @@ export function ProfilesPage() {
           </>
         }
       />
+      {tools.isError ? (
+        <Card className="py-0">
+          <ErrorState
+            className="min-h-24"
+            title={t('profiles.tools.loadFailed')}
+            error={tools.error}
+            retrying={tools.isFetching}
+            onRetry={() => void tools.refetch()}
+          />
+        </Card>
+      ) : null}
       {content}
       <ConfirmDialog
         open={deleteTarget !== null}

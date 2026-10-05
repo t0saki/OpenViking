@@ -361,7 +361,7 @@ Each section has its own switch:
 | Recall memory | Searches OpenViking with each new user message and appends what is relevant to that message. | Sources: memories, resources, skills · Budget per message: 1,600 tokens · Budget per conversation: 6,000 tokens · Relevance threshold: 0.35 · Time limit: 2 s |
 | Save conversations | Writes finished turns to an OpenViking session and commits it, so OpenViking can extract memories. | Save the latest reply after: 600 s · Commit after: 20,000 tokens · Keep recent messages: 10 |
 | Long conversations | Replaces older history with OpenViking's summary once a conversation is long. Needs Save conversations. | Start after: 30,000 tokens · Keep recent turns: 3 · Wait for summary: 30 s |
-| OpenViking tools | Lets the model search and read OpenViking while it answers. Chat Completions, full-history Responses and Anthropic Messages. Off by default. | Tools: Search, Read, List · Allow write tools: off |
+| OpenViking tools | Lets the model search and read OpenViking while it answers. Chat Completions, full-history Responses and Anthropic Messages. Off by default. | All tools available from OpenViking; uncheck any you do not want |
 
 How the recall settings play out:
 
@@ -446,7 +446,7 @@ The expanded row shows the reason, for example that OpenViking rejected the key 
 
 ## OpenViking tools
 
-With OpenViking tools on, the model can search and read the user's accessible OpenViking data while answering. The gateway runs the tools, and the client continues receiving the answer until the reply ends. Reported token usage includes all model calls made during that reply.
+With OpenViking tools on, the model can use the tools available on your OpenViking server while answering, within the user's access permissions. The gateway runs the tools, and the client continues receiving the answer until the reply ends. Reported token usage includes all model calls made during that reply.
 
 Tools support streaming and nonstreaming requests in all three protocols:
 
@@ -460,17 +460,19 @@ If a reply calls both OpenViking and client tools, the gateway handles the OpenV
 
 This is meant for chat apps and API apps that cannot connect to OpenViking's MCP server. Clients that support MCP or have a plugin, such as Claude Code and Codex, are better served by those, where the client shows each tool call with its result and asks for permission first.
 
-To turn the tools on, enable the **OpenViking tools** section in a context profile and check the tools under **Tools**: **Search**, **Read** and **List**. **Allow OpenViking tools** is on by default on every upstream. Conversations that start after you save get the tools. The model sees them as `openviking_search`, `openviking_read` and `openviking_list`, and is told at the start of the conversation that these tools come from the gateway and are not in the client's tool list. The write tools, **Write** (`openviking_write`), **Import files** (`openviking_add_resource`) and **Import skills** (`openviking_add_skill`), are offered only when **Allow write tools** is on and the tool is checked.
+To turn the tools on, enable **OpenViking tools** in a context profile. The **Tools** list comes from your OpenViking server and all tools are selected by default. Uncheck the ones this profile should not provide. Issue a gateway key first if the list is empty. New tools added to OpenViking are available automatically unless you uncheck them; ongoing conversations keep the tool list they started with.
 
-> **Note**: Tool calls run inside the gateway, so they never go through the client's permission prompts. A write tool changes the user's OpenViking data without asking. Allow write tools only for users who expect that.
+**Allow OpenViking tools** is on by default for each upstream. With both switches on, new conversations get the selected tools with an `openviking_` prefix: for example `openviking_find`, `openviking_read`, `openviking_grep` and `openviking_glob`. The descriptions in Studio explain what each available tool does. Read-only labels appear only when OpenViking supplies that information.
+
+> **Note**: All selected tools run without the client's permission prompts, including tools that write or delete data. Uncheck those tools if they should not be available. A tool-call notice shows what happened; it is not a request for approval.
 
 **Tool call notices.** With **Show tool calls** on (the default), the reply gets a one-line notice for each OpenViking tool call the gateway runs, at the point in the answer where the call happened:
 
 ```text
-> OpenViking search: "release date" — done
+> OpenViking find: "release date" — done
 ```
 
-The notice names the tool and what it works on: the search query, the URI read, listed or written, or the file or skill being imported. In a streaming reply it appears as soon as the call starts, so users can see that something is happening during a slow import; a nonstreaming reply gets the same lines in the final message. The outcome is added when the call ends: `done`; `failed` when the call returned an error; `skipped` when the token budget was already spent and the gateway did not run the call. Each notice is a paragraph of its own. In Chat Completions the notices are part of the reply text. In Anthropic Messages the notices for one round of calls share one text block, and in Responses they share one assistant message. The model never sees these lines; it gets the actual calls and results. The gateway does not save the notices to OpenViking either. To hide them, turn off **Show tool calls** in the profile's **OpenViking tools** section, and the reply contains only the model's own output. Like the other tool settings, the change applies to new conversations.
+The notice names the tool and, where available, what it works on: the search query, the URI read, listed or written, or the file or skill being imported. In a streaming reply it appears as soon as the call starts, so users can see that something is happening during a slow import; a nonstreaming reply gets the same lines in the final message. The outcome is added when the call ends: `done`; `failed` when the call returned an error; `skipped` when the token budget was already spent and the gateway did not run the call. Each notice is a paragraph of its own. In Chat Completions the notices are part of the reply text. In Anthropic Messages the notices for one round of calls share one text block, and in Responses they share one assistant message. The model never sees these lines; it gets the actual calls and results. The gateway does not save the notices to OpenViking either. To hide them, turn off **Show tool calls** in the profile's **OpenViking tools** section, and the reply contains only the model's own output. Like the other tool settings, the change applies to new conversations.
 
 Whether a conversation gets tools is decided at its first request and kept, so profile changes reach new conversations only. When a request runs without tools, its detail on the Requests tab says why:
 
@@ -484,14 +486,15 @@ Whether a conversation gets tools is decided at its first request and kept, so p
 | `tools_forced_choice` | `tool_choice` is `required` or names a specific tool. |
 | `deepseek_reasoning_history_required` | The upstream's provider is DeepSeek and the request does not turn thinking off (`"thinking": {"type": "disabled"}`). This includes standard Responses requests, which have no `thinking` field. |
 | `tool_name_collision` | The client defines a tool with one of the `openviking_*` names. |
+| `tools_unavailable` | OpenViking could not provide its tool list and no previously loaded list was available. Start a new conversation after connectivity recovers. |
 | `tools_not_selected_at_session_start` | The profile has tools on, but the conversation's first request could not use them (for one of the reasons above), so the conversation has none. |
 
 Housekeeping and sub-agent requests keep the tool definitions but cannot call them, and conversations where an OpenViking plugin was detected get no tools.
 
-**Importing files and skills.** The import tools need a way to get the file to OpenViking, so they are offered only when the conversation's first request has one:
+**Importing files and skills.** The import tools are available when your OpenViking server provides them and they are selected in the profile. URL imports do not need a shell tool. Local files need one of these upload paths:
 
 - **A shell tool** (a client tool named like bash, shell, exec_command, terminal or run_command): the import tool returns a one-time upload link, and the model uploads the file with the client's own shell tool, which does go through the client's permission prompt. Skill directories are zipped first. The link points to `public_url` plus `/context-gateway/uploads`, so `public_url` must be an address the client can reach and your proxy must route that path to the gateway. Without `public_url`, imports fail with "Set context_gateway.public_url for client uploads".
-- **An attached file**: without a shell tool, the model can import a file attached to a user message, sent either as base64 file data or as attachment text. This includes Responses `input_file` and Anthropic `document.source` with embedded `base64` or `text` data. Open WebUI usually sends only the extracted text, which is imported as a text file. Remote URLs and provider file IDs are not fetched.
+- **An attached file**: without a shell tool, the model can import a file attached to a user message, sent either as base64 file data or as attachment text. This includes Responses `input_file` and Anthropic `document.source` with embedded `base64` or `text` data. Open WebUI usually sends only the extracted text, which is imported as a text file. Attachment URLs and provider file IDs are not fetched; use the import tool's URL parameter for a supported remote resource.
 
 Uploads are limited to `max_body_bytes` (32 MiB by default).
 
@@ -655,8 +658,7 @@ URL settings must be plain `http` or `https` addresses without credentials, quer
 | Wait for summary | `archive_wait_seconds` | `30` (seconds) | 0–60 | Longest wait for a pending summary near the context window. |
 | Default context window | `context_window` | unset | ≥ 1,024 | Window used when the upstream does not list the model. |
 | OpenViking tools | `gateway_tools` | `false` | | Offer OpenViking tools for Chat, full-history Responses and Anthropic Messages. |
-| Allow write tools | `allow_write_tools` | `false` | | Required before any write tool is offered. |
-| Tools | `tool_allowlist` | `search`, `read`, `list` | `search`, `read`, `list`, `write`, `add_resource`, `add_skill` | The tools offered, as `openviking_<name>`. |
+| Unselected tools | `disabled_tools` | `[]` | Tool names from OpenViking, without `openviking_` | Tools unavailable to new conversations. An empty list enables every available tool when the main switch is on. |
 | Show tool calls | `show_tool_calls` | `true` | | Add a one-line notice to the reply for each OpenViking tool call. |
 | Rounds per request | `tool_max_rounds` | `5` | 1–20 | See [OpenViking tools](#openviking-tools). |
 | Time limit per call | `tool_timeout_seconds` | `30` | up to 120 | |
@@ -787,7 +789,7 @@ Compare it with what the provider reaches without the gateway, then look at the 
 - The upload link cannot be reached, or returns 404: route `/context-gateway/uploads` to the gateway in your proxy.
 - 413: the file is larger than `max_body_bytes` or the proxy's limit.
 - 502 "OpenViking upload is unavailable": the gateway cannot reach OpenViking Server.
-- The import tools are not offered at all: the conversation's first request had neither a shell tool nor an attachment, or write tools are not allowed in the profile.
+- The import tools are not offered: the OpenViking server does not provide them, the profile has them unchecked, or gateway tools are disabled for this request. Check the Tools list and request details.
 
 ### Issues on degraded requests
 

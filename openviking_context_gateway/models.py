@@ -3,7 +3,7 @@
 from typing import Literal
 from urllib.parse import urlsplit
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 ProtocolName = Literal["anthropic", "chat", "responses"]
 
@@ -37,16 +37,22 @@ class Policy(BaseModel):
     context_window: int | None = Field(default=None, ge=1024)
     archive_wait_seconds: float = Field(default=30, ge=0, le=60)
     gateway_tools: bool = False
-    allow_write_tools: bool = False
-    tool_allowlist: list[
-        Literal["search", "read", "list", "write", "add_resource", "add_skill"]
-    ] = Field(default_factory=lambda: ["search", "read", "list"])
+    disabled_tools: list[str] = Field(default_factory=list)
     tool_max_rounds: int = Field(default=5, ge=1, le=20)
     tool_timeout_seconds: float = Field(default=30, gt=0, le=120)
     tool_result_bytes: int = Field(default=65536, ge=1024, le=1048576)
     tool_total_seconds: float = Field(default=120, gt=0, le=600)
     tool_total_tokens: int = Field(default=100000, ge=1024, le=1000000)
     show_tool_calls: bool = True
+
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate(cls, value):
+        if isinstance(value, dict):
+            obsolete = {"allow_write_tools", "tool_allowlist", "id", "revision"}
+            return {key: item for key, item in value.items() if key not in obsolete}
+        return value
 
 
 class Upstream(BaseModel):

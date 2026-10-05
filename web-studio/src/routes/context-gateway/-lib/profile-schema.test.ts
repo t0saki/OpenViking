@@ -6,7 +6,6 @@ import {
   duplicateProfile,
   offeredTools,
   toProfileSettings,
-  toolAccess,
   validateProfile,
 } from './profile-schema'
 
@@ -16,15 +15,23 @@ const profile = (patch: Partial<ProfileSettings> = {}): ProfileSettings => ({
 })
 
 describe('toProfileSettings', () => {
-  it('strips id and revision and keeps false and zero values', () => {
+  it('keeps known fields only while preserving false and zero values', () => {
     const stored: Profile = {
       ...profile({ recall: false, score_threshold: 0, session_max_tokens: 0 }),
       id: 'p1',
       revision: 4,
     }
-    const settings = toProfileSettings(stored)
+    const settings = toProfileSettings({
+      ...stored,
+      allow_write_tools: true,
+      tool_allowlist: ['read'],
+      future_setting: 'discard',
+    } as Profile)
     expect(settings).not.toHaveProperty('id')
     expect(settings).not.toHaveProperty('revision')
+    expect(settings).not.toHaveProperty('allow_write_tools')
+    expect(settings).not.toHaveProperty('tool_allowlist')
+    expect(settings).not.toHaveProperty('future_setting')
     expect(settings).toMatchObject({
       recall: false,
       score_threshold: 0,
@@ -54,6 +61,17 @@ describe('toProfileSettings', () => {
     expect(
       toProfileSettings(profile({ show_tool_calls: false })),
     ).toMatchObject({ show_tool_calls: false })
+  })
+
+  it('defaults older profiles to no disabled tools and keeps explicit exclusions', () => {
+    const { disabled_tools: _omitted, ...legacy } = profile()
+    expect(toProfileSettings(legacy as ProfileSettings).disabled_tools).toEqual(
+      [],
+    )
+    expect(
+      toProfileSettings(profile({ disabled_tools: ['forget', 'future_tool'] }))
+        .disabled_tools,
+    ).toEqual(['forget', 'future_tool'])
   })
 
   it('duplicates under a new name', () => {
@@ -144,29 +162,47 @@ describe('validateProfile', () => {
     expect(validateProfile(profile({ quotas: { skills: 3 } }))).toEqual({})
   })
 
-  it('needs a tool that can actually be offered', () => {
-    const writeOnly = profile({
-      gateway_tools: true,
-      tool_allowlist: ['write'],
-    })
-    expect(validateProfile(writeOnly).tool_allowlist?.key).toBe(
-      'validation.selectOneTool',
-    )
-    expect(validateProfile({ ...writeOnly, allow_write_tools: true })).toEqual(
-      {},
-    )
+  it('allows any exclusions, including tools absent from the current catalog', () => {
+    expect(
+      validateProfile(
+        profile({
+          gateway_tools: true,
+          disabled_tools: ['read', 'write', 'unknown'],
+        }),
+      ),
+    ).toEqual({})
   })
 })
 
 describe('tool access', () => {
-  it('offers write tools only when allowed', () => {
-    const tools = profile({
+  const tools = ['read', 'write', 'future_tool'].map((name) => ({
+    name,
+    description: name,
+  }))
+
+  it('keeps the gateway switch off by default but selects all tools when enabled', () => {
+    expect(PROFILE_DEFAULTS.gateway_tools).toBe(false)
+    expect(offeredTools(PROFILE_DEFAULTS, tools)).toEqual([])
+    expect(offeredTools(profile({ gateway_tools: true }), tools)).toEqual(tools)
+  })
+
+  it('excludes only raw MCP names and enables new tools automatically', () => {
+    const settings = profile({
       gateway_tools: true,
-      tool_allowlist: ['search', 'write', 'add_skill'],
+      disabled_tools: ['write', 'removed_tool'],
     })
-    expect(offeredTools(tools)).toEqual(['search'])
-    expect(toolAccess(tools)).toBe('read')
-    expect(toolAccess({ ...tools, allow_write_tools: true })).toBe('readWrite')
-    expect(toolAccess({ ...tools, gateway_tools: false })).toBe('off')
+    expect(offeredTools(settings, tools).map((tool) => tool.name)).toEqual([
+      'read',
+      'future_tool',
+    ])
+    expect(offeredTools({ ...settings, gateway_tools: false }, tools)).toEqual(
+      [],
+    )
+    expect(
+      offeredTools(
+        { ...settings, disabled_tools: tools.map((tool) => tool.name) },
+        tools,
+      ),
+    ).toEqual([])
   })
 })

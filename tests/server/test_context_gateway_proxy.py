@@ -135,6 +135,7 @@ async def test_user_and_pasted_key_together_are_rejected_without_echo(app, forwa
         ("POST", "keys/k/capture/reset", b'{"user_id": "alice"}'),
         ("PUT", "upstreams/u", b'{"user_id": "alice"}'),
         ("GET", "keys", b""),
+        ("GET", "tools", b""),
     ],
 )
 async def test_other_requests_pass_through_unchanged(app, forwarded, method, path, body):

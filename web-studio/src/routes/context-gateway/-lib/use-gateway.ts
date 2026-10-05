@@ -13,12 +13,14 @@ import {
   listKeys,
   listLogs,
   listProfiles,
+  listTools,
   listUpstreams,
 } from './api'
 import type {
   ConnectionInfo,
   GatewayError,
   GatewayKey,
+  GatewayTool,
   KeyUser,
   LogRecord,
   Overview,
@@ -33,6 +35,7 @@ export type GatewayResource =
   | 'logs'
   | 'upstreams'
   | 'profiles'
+  | 'tools'
   | 'keys'
   | 'users'
 
@@ -161,6 +164,9 @@ export const useUpstreams = (options?: GatewayQueryOptions<Upstream[]>) =>
 
 export const useProfiles = (options?: GatewayQueryOptions<Profile[]>) =>
   useGatewayQuery('profiles', [], listProfiles, options)
+
+export const useTools = (options?: GatewayQueryOptions<GatewayTool[]>) =>
+  useGatewayQuery('tools', [], listTools, options)
 
 export const useKeys = (options?: GatewayQueryOptions<GatewayKey[]>) =>
   useGatewayQuery('keys', [], listKeys, options)

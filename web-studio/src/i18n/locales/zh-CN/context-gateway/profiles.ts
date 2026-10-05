@@ -22,8 +22,8 @@ const profiles = {
   summary: {
     recallOn: '开启 · 每条消息 {{tokens}} Token',
     takeoverOn: '超过 {{tokens}} Token 后',
-    toolsRead: '只读',
-    toolsReadWrite: '读写',
+    toolsEnabled_one: '已启用 {{count}} 个工具',
+    toolsEnabled_other: '已启用 {{count}} 个工具',
   },
   deleteDialog: {
     title: '删除“{{name}}”？',
@@ -161,47 +161,22 @@ const profiles = {
   tools: {
     title: 'OpenViking 工具',
     description:
-      '让模型在回答时检索和读取 OpenViking，客户端无需执行这些调用。支持 Chat Completions、Responses 和 Anthropic Messages；客户端须回传完整对话。',
+      '让模型在回答时使用 OpenViking 工具。支持 Chat Completions、Responses 和 Anthropic Messages；客户端须回传完整对话。',
     available: {
       label: '工具',
-      description: '上游也需要允许使用 OpenViking 工具。',
+      description:
+        '默认勾选全部工具，以后新增的工具也会自动启用。不希望模型使用的工具可以取消勾选。上游也需要允许使用 OpenViking 工具。',
     },
-    names: {
-      search: {
-        label: '检索',
-        description: '查找相关的记忆、资源和技能',
-      },
-      read: {
-        label: '读取',
-        description: '按 viking:// 地址读取文件',
-      },
-      list: {
-        label: '列出目录',
-        description: '浏览目录内容',
-      },
-      write: {
-        label: '写入',
-        description: '按用户要求保存笔记',
-      },
-      add_resource: {
-        label: '导入文件',
-        description: '把 URL、本地文件或附件导入为资源',
-      },
-      add_skill: {
-        label: '导入技能',
-        description: '从文本、代码仓库、本地路径或附件安装技能',
-      },
-    },
-    allowWrite: {
-      label: '允许写入工具',
-      description: '允许模型修改 OpenViking 中的数据。',
-      warning:
-        '写入工具由模型自行决定何时调用；关闭“显示工具调用”后，客户端就看不到这些调用。只有客户端能执行 shell 命令或对话带有附件时，才会提供“导入文件”和“导入技能”；导入本地文件还需要在 ov.conf 中设置 context_gateway.public_url。',
-    },
+    empty: '发放网关密钥后可加载工具列表。',
+    loadFailed: '无法加载 OpenViking 工具',
+    readOnly: '只读',
+    modifiesData: '会修改数据',
+    executionNotice:
+      '网关执行所选工具时，不会在客户端请求权限确认。工具可能修改或删除数据。开启“显示工具调用”后，每次调用结束才会显示提示。',
     showCalls: {
       label: '显示工具调用',
       description:
-        '网关每执行一次 OpenViking 工具，就在回复里加一行提示，让用户看到这次调用。模型看不到这些提示，它们也不会保存到 OpenViking。',
+        '每次 OpenViking 工具调用结束后，在回复里加一行提示。提示不会在调用前请求权限确认。模型看不到这些提示，它们也不会保存到 OpenViking。',
     },
     maxRounds: {
       label: '每次请求的工具轮数',

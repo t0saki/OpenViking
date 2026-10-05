@@ -18,8 +18,33 @@ from openviking_context_gateway.models import Policy
 from openviking_context_gateway.storage import SQLiteKernelStore
 
 
+def mcp_tool(name, properties, required=()):
+    return {
+        "name": name,
+        "description": "OpenViking " + name,
+        "inputSchema": {"type": "object", "properties": properties, "required": list(required)},
+    }
+
+
+MCP_TOOLS = [
+    mcp_tool("find", {"query": {"type": "string"}}, ("query",)),
+    mcp_tool("search", {"query": {"type": "string"}, "session_id": {"type": "string"}}, ("query",)),
+    mcp_tool("read", {"uris": {"type": "array", "items": {"type": "string"}}}, ("uris",)),
+    mcp_tool("list", {"uri": {"type": "string"}}, ("uri",)),
+    mcp_tool("write", {"uri": {"type": "string"}, "content": {"type": "string"}}, ("uri", "content")),
+    mcp_tool("add_resource", {"path": {"type": "string"}, "description": {"type": "string"}}),
+    mcp_tool("add_skill", {"path": {"type": "string"}, "data": {"type": "string"}, "target_uri": {"type": "string"}}),
+    mcp_tool("grep", {"uri": {"type": "string"}, "pattern": {"type": "string"}}, ("uri", "pattern")),
+    mcp_tool("glob", {"pattern": {"type": "string"}}, ("pattern",)),
+    mcp_tool("health", {}),
+]
+
+
 class FakeViking:
     def __init__(self):
+        self.catalog = copy.deepcopy(MCP_TOOLS)
+        self.tool_keys = []
+        self.tools_failure = None
         self.recalls = []
         self.writes = []
         self.write_sessions = []
@@ -41,6 +66,12 @@ class FakeViking:
         self.entities = []
         self.skills = []
         self.summary = "Previously deployed to the blue cluster."
+
+    async def tools(self, key):
+        self.tool_keys.append(key)
+        if self.tools_failure:
+            raise self.tools_failure
+        return copy.deepcopy(self.catalog)
 
     async def recall(self, key, query, policy, exclude, budget):
         self.recalls.append((key, query, copy.deepcopy(exclude), budget))
@@ -184,6 +215,13 @@ async def running_gateway(tmp_path, monkeypatch):
     viking = FakeViking()
 
     async def backend(request):
+        if request.path == "/mcp" and (await request.json()).get("method") == "tools/list":
+            override.setdefault("tools_calls", []).append(request.headers.get("X-API-Key"))
+            if override.get("tools_error"):
+                return web.json_response({"error": "private server detail"}, status=503)
+            return web.json_response(
+                {"jsonrpc": "2.0", "id": 1, "result": {"tools": override.get("catalog", MCP_TOOLS)}}
+            )
         if override.get("handler"):
             response = await override["handler"](request)
             if response is not None:

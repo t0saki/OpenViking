@@ -4,6 +4,8 @@
 
 import asyncio
 import logging
+
+import orjson
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -155,9 +157,7 @@ class MemoryKernel:
             if body_chain != chain:
                 records.update(await self.store.replay.read(scope, sid, body_chain))
         upstream = next((u for u in upstreams if u["id"] == root["upstream_id"]), upstream)
-        policy = Policy.model_validate(
-            {k: v for k, v in root["policy"].items() if k not in {"id", "revision"}}
-        )
+        policy = Policy.model_validate(root["policy"])
         kind, anchor = classify(body, headers, messages, counting)
         disabled = (K.DISABLED, "") in records
         if plugin and not disabled:
@@ -222,6 +222,16 @@ class MemoryKernel:
     ):
         root = records.get((K.ROOT, ""))
         if root is None:
+            catalog, reason = [], ""
+            if (
+                not plugin
+                and policy.get("gateway_tools")
+                and not tool_block_reason(body, protocol, upstream)
+            ):
+                try:
+                    catalog = await self.viking.tools(credential["openviking_key"])
+                except VikingError:
+                    reason = "tools_unavailable"
             root = await self.store.replay.put(
                 scope,
                 sid,
@@ -230,7 +240,8 @@ class MemoryKernel:
                 {
                     "upstream_id": upstream["id"],
                     "tool_version": TOOL_VERSION,
-                    "tools": select_tools(body, protocol, upstream, policy) if not plugin else [],
+                    "tools": select_tools(body, protocol, upstream, policy, catalog),
+                    "tool_skip_reason": reason,
                     "policy": policy,
                     "credential_id": credential["id"],
                     "vendor": {
@@ -245,6 +256,7 @@ class MemoryKernel:
     @staticmethod
     def configure_tools(request, policy):
         tools = request.root["tools"]
+        request.metrics["tools_tokens"] = 0
         adapter = tool_protocol(request.protocol)
         if tools:
             reason = tool_block_reason(request.original, request.protocol, request.upstream)
@@ -259,6 +271,9 @@ class MemoryKernel:
             else:
                 adapter.add_tools(request.body, tools)
                 request.tools_active = True
+                request.metrics["tools_tokens"] = token_estimate(
+                    orjson.dumps(adapter.wire_tools(tools)).decode()
+                )
                 if request.kind != "count" and (
                     request.disabled or request.kind not in {"user", "continuation"}
                 ):
@@ -266,6 +281,7 @@ class MemoryKernel:
         elif policy.gateway_tools:
             request.metrics["tool_skip_reason"] = (
                 tool_block_reason(request.original, request.protocol, request.upstream)
+                or request.root.get("tool_skip_reason")
                 or "tools_not_selected_at_session_start"
             )
 
@@ -466,9 +482,7 @@ class MemoryKernel:
             or request.anchor < 0
         ):
             return
-        policy = Policy.model_validate(
-            {k: v for k, v in request.root["policy"].items() if k not in {"id", "revision"}}
-        )
+        policy = Policy.model_validate(request.root["policy"])
         if policy.capture:
             await CapturePipeline(self.store.capture).stage(request, response, policy)
 

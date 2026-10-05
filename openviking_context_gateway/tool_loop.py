@@ -121,7 +121,7 @@ class HiddenToolLoop:
             else:
                 result = await self.executor.execute(call)
             if show:
-                events = self.adapter.notice(notice_tail(result["content"], skipped))
+                events = self.adapter.notice(notice_tail(result.get("failed", False), skipped))
             results.append(result)
             self.token_cost += added_tokens(result)
         if show:

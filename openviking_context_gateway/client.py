@@ -11,6 +11,8 @@ import aiohttp
 import orjson
 from packaging.version import InvalidVersion, Version
 
+from .cache import TTLCache
+
 
 class VikingError(Exception):
     def __init__(self, reason, status=503):
@@ -22,6 +24,8 @@ class VikingClient:
     def __init__(self, http: aiohttp.ClientSession, base_url: str, min_version: str):
         self.http, self.base_url, self.min_version = http, base_url.rstrip("/"), min_version
         self.unavailable_reason = ""
+        self._tools_cache = TTLCache(ttl=300, capacity=8)
+        self._last_tools = {}
 
     async def request(self, method, path, key, body=None, timeout=30):
         try:
@@ -173,7 +177,28 @@ class VikingClient:
                 return state
         return "pending"
 
-    async def mcp(self, name, key, arguments):
+    async def tools(self, key):
+        async def load():
+            try:
+                result = await self.mcp("tools/list", key, timeout=5)
+                catalog = result.get("tools") if isinstance(result, dict) else None
+                if not isinstance(catalog, list) or any(
+                    not isinstance(tool, dict)
+                    or not isinstance(tool.get("name"), str)
+                    or not isinstance(tool.get("inputSchema"), dict)
+                    for tool in catalog
+                ):
+                    raise VikingError("openviking_mcp_invalid_catalog")
+                self._last_tools[self.base_url] = catalog
+                return catalog
+            except VikingError:
+                if self.base_url in self._last_tools:
+                    return self._last_tools[self.base_url]
+                raise
+
+        return await self._tools_cache.get(self.base_url, load)
+
+    async def mcp(self, method, key, params=None, timeout=120):
         """Stateless Streamable HTTP MCP; accept both JSON and SSE responses."""
         from .protocols import SSEDecoder
 
@@ -189,10 +214,10 @@ class VikingClient:
                 json={
                     "jsonrpc": "2.0",
                     "id": 1,
-                    "method": "tools/call",
-                    "params": {"name": name, "arguments": arguments},
+                    "method": method,
+                    "params": params or {},
                 },
-                timeout=aiohttp.ClientTimeout(total=120),
+                timeout=aiohttp.ClientTimeout(total=timeout),
                 allow_redirects=False,
             ) as response:
                 if response.status >= 300:

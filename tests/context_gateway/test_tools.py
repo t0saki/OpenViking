@@ -6,6 +6,8 @@ from types import SimpleNamespace
 import orjson
 import pytest
 
+from conftest import MCP_TOOLS, mcp_tool
+
 from openviking_context_gateway.capture import capture_messages
 from openviking_context_gateway.models import Policy, Upstream
 from openviking_context_gateway.protocols import ResponseCapture
@@ -27,10 +29,10 @@ from openviking_context_gateway.vendors import ark_url
 @pytest.mark.parametrize(
     "vendor,extra,expected",
     [
-        ("generic", {}, 3),
+        ("generic", {}, len(MCP_TOOLS)),
         ("deepseek", {}, 0),
         ("deepseek", {"thinking": {"type": "enabled"}}, 0),
-        ("deepseek", {"thinking": {"type": "disabled"}}, 3),
+        ("deepseek", {"thinking": {"type": "disabled"}}, len(MCP_TOOLS)),
         ("ark", {"tools": [{"type": "custom", "name": "x"}]}, 0),
     ],
 )
@@ -39,19 +41,28 @@ def test_vendor_tool_capabilities(vendor, extra, expected):
     upstream = Upstream(
         name="x", base_url="http://model", protocol="chat", vendor=vendor
     ).model_dump()
-    assert len(select_tools(extra, "chat", upstream, policy)) == expected
+    assert len(select_tools(extra, "chat", upstream, policy, MCP_TOOLS)) == expected
 
 
-def test_write_tools_require_permission_and_client_capability():
-    policy = Policy(
-        gateway_tools=True, tool_allowlist=["write", "add_resource", "add_skill"]
-    ).model_dump()
-    assert select_tools({}, "chat", {}, policy) == []
-    policy["allow_write_tools"] = True
-    assert len(select_tools({}, "chat", {}, policy)) == 1
-    shell = {"tools": [{"type": "function", "function": {"name": "exec_command"}}]}
-    assert len(select_tools(shell, "chat", {}, policy)) == 3
-    assert len(select_tools({**shell, "store": False}, "responses", {}, policy)) == 3
+def test_tools_default_to_all_and_only_raw_disabled_names_are_excluded():
+    policy = Policy(gateway_tools=True, disabled_tools=["write", "openviking_read"]).model_dump()
+    selected = select_tools({}, "chat", {}, policy, MCP_TOOLS)
+    names = {tool["function"]["name"] for tool in selected}
+    assert names == {"openviking_" + t["name"] for t in MCP_TOOLS if t["name"] != "write"}
+    assert {"openviking_add_resource", "openviking_add_skill", "openviking_read"} <= names
+    assert select_tools({}, "chat", {}, Policy().model_dump(), MCP_TOOLS) == []
+    catalog = [mcp_tool("future", {"new_argument": {"type": "string"}})]
+    future = select_tools({}, "chat", {}, policy, catalog)[0]["function"]
+    assert future == {
+        "name": "openviking_future",
+        "description": catalog[0]["description"],
+        "parameters": catalog[0]["inputSchema"],
+    }
+    for tool in selected:
+        if tool["function"]["name"] in {"openviking_add_resource", "openviking_add_skill"}:
+            assert tool["function"]["parameters"]["properties"]["attachment_index"]["type"] == "integer"
+            assert "anyOf" not in str(tool)
+    assert "attachment_index" not in str(MCP_TOOLS)
 
 
 def test_file_bytes_and_extracted_text():
@@ -83,7 +94,7 @@ def test_file_bytes_and_extracted_text():
 async def test_tool_claim_timeout_and_byte_bound(setup_kernel, credential, policy):
     kernel, store, viking, encryption = setup_kernel
     policy.update(
-        gateway_tools=True, allow_write_tools=True, tool_allowlist=["write"], tool_result_bytes=1024
+        gateway_tools=True, tool_result_bytes=1024
     )
     prepared = await kernel.prepare(
         {"messages": [{"role": "user", "content": "Save this"}]},
@@ -117,7 +128,7 @@ async def test_tool_claim_timeout_and_byte_bound(setup_kernel, credential, polic
     assert len(executed) == 1
     assert results[0] == results[1]
     assert len(results[0]["content"].encode()) <= 1024
-    assert orjson.loads(results[0]["content"])["truncated"]
+    assert results[0]["content"].endswith("[Tool result truncated.]")
     # A timed out write is remembered, including across a new store instance.
     policy["tool_timeout_seconds"] = 0.001
     prepared.root["policy"]["tool_timeout_seconds"] = 0.001
@@ -274,28 +285,22 @@ def test_notice_names_each_call_target(name, arguments, expected):
 
 
 @pytest.mark.parametrize(
-    "content,skipped,expected",
-    [
-        ('{"content":[{"type":"text","text":"ok"}]}', False, " — done"),
-        ('{"content":[{"type":"text","text":"denied"}],"isError":true}', False, " — failed"),
-        ('{"error":"Tool is not allowed"}', False, " — failed"),
-        ('{"truncated":true,"text":"{\\"error\\""}', False, " — done"),
-        ("plain text", False, " — done"),
-        ("Gateway tool budget reached; answer using the available results.", True, " — skipped"),
-    ],
+    "failed,skipped,expected",
+    [(False, False, " — done"), (True, False, " — failed"), (False, True, " — skipped"), (True, True, " — skipped")],
 )
-def test_notice_outcome(content, skipped, expected):
-    assert notice_tail(content, skipped) == expected
+def test_notice_outcome(failed, skipped, expected):
+    assert notice_tail(failed, skipped) == expected
 
 
 async def test_notices_stream_around_each_gateway_call():
-    contents = iter(['{"content":[]}', '{"error":"' + "x" * 4000 + '"}'])
+    contents = iter([("ok", False), ("x" * 4000, True)])
     deltas, seen = [], []
 
     async def execute(call):
         # The call's head has already streamed when the call starts.
         seen.append(deltas[-1])
-        return {"role": "tool", "tool_call_id": call["id"], "content": next(contents)}
+        content, failed = next(contents)
+        return {"role": "tool", "tool_call_id": call["id"], "content": content, "failed": failed}
 
     prepared = SimpleNamespace(
         body={"messages": [], "stream": True},
@@ -482,7 +487,9 @@ async def test_real_stateless_fastmcp_transport(json_response):
         assert server.started
         async with aiohttp.ClientSession(auto_decompress=False) as http:
             adapter = VikingClient(http, f"http://127.0.0.1:{port}", "0.4.16")
-            result = await adapter.mcp("find", "test-key", {"query": "blue"})
+            catalog = await adapter.tools("test-key")
+            assert [t["name"] for t in catalog] == ["find"]
+            result = await adapter.mcp("tools/call", "test-key", {"name": "find", "arguments": {"query": "blue"}})
             assert result["content"][0]["text"] == "found: blue"
     finally:
         server.should_exit = True
@@ -492,12 +499,12 @@ async def test_real_stateless_fastmcp_transport(json_response):
 
 async def test_explicit_session_keeps_initial_tool_snapshot(setup_kernel, credential, policy):
     kernel, _, _, _ = setup_kernel
-    policy.update(gateway_tools=True, tool_allowlist=["search"])
+    policy.update(gateway_tools=True, disabled_tools=["list"])
     body = {"messages": [{"role": "user", "content": "Find blue"}]}
     first = await kernel.prepare(
         body, "chat", {"x-openviking-session": "tools"}, credential, {"id": "upstream"}, policy
     )
-    policy = {**policy, "tool_allowlist": ["list"]}
+    policy = {**policy, "disabled_tools": ["find"]}
     body["messages"].extend(
         [{"role": "assistant", "content": "blue"}, {"role": "user", "content": "Follow up"}]
     )
@@ -551,3 +558,155 @@ async def test_incompatible_tools_keep_visible_history(setup_kernel, credential,
     )
     assert prepared.body["response_format"] == body["response_format"]
     assert all(not message.get("tool_calls") for message in prepared.body["messages"])
+
+
+async def test_catalog_cache_single_flight_refresh_and_last_success():
+    from openviking_context_gateway.client import VikingClient, VikingError
+
+    client = VikingClient(None, "http://one", "0.4.16")
+    calls, fail = [], False
+    catalog = [mcp_tool("future", {})]
+
+    async def mcp(method, key, params=None, timeout=120):
+        calls.append((method, key, timeout))
+        await asyncio.sleep(0)
+        if fail:
+            raise VikingError("openviking_mcp_unavailable")
+        return {"tools": copy.deepcopy(catalog)}
+
+    client.mcp = mcp
+    results = await asyncio.gather(*(client.tools(str(i)) for i in range(8)))
+    assert all(result == catalog for result in results)
+    assert calls == [("tools/list", "0", 5)]
+    catalog.append(mcp_tool("new", {}))
+    assert len(await client.tools("another-account")) == 1
+    client._tools_cache.clear()
+    assert len(await client.tools("new-key")) == 2
+    fail = True
+    client._tools_cache.clear()
+    assert len(await client.tools("offline")) == 2
+    # A different server must not inherit the previous server's last good list.
+    client.base_url = "http://two"
+    with pytest.raises(VikingError):
+        await client.tools("other")
+
+
+async def test_catalog_unavailable_freezes_safe_empty_root(setup_kernel, credential, policy):
+    from openviking_context_gateway.client import VikingError
+
+    kernel, _, viking, _ = setup_kernel
+    policy.update(gateway_tools=True)
+    viking.tools_failure = VikingError("private details")
+    body = {"messages": [{"role": "user", "content": "Look up my deployment"}]}
+    prepared = await kernel.prepare(body, "chat", {}, credential, {"id": "u"}, policy)
+    assert prepared.root["tool_version"] == 2
+    assert not prepared.tools_active and prepared.root["tools"] == []
+    assert prepared.metrics["tool_skip_reason"] == "tools_unavailable"
+    assert prepared.metrics["tools_tokens"] == 0
+    assert "private details" not in str(prepared.metrics)
+    viking.tools_failure = None
+    repeated = await kernel.prepare(body, "chat", {}, credential, {"id": "u"}, policy)
+    assert repeated.root == prepared.root and len(viking.tool_keys) == 1
+
+
+@pytest.mark.parametrize("arguments", ["{broken", "[]", "null", "{}", '{"value":"x","extra":1}'])
+async def test_generic_executor_checks_frozen_keys_and_required(
+    setup_kernel, credential, policy, arguments
+):
+    from unittest.mock import AsyncMock
+
+    kernel, store, viking, _ = setup_kernel
+    policy.update(gateway_tools=True)
+    viking.catalog = [mcp_tool("future", {"value": {"type": "string"}}, ("value",))]
+    prepared = await kernel.prepare(
+        {"messages": [{"role": "user", "content": "Run new tool"}]},
+        "chat", {}, credential, {"id": "u"}, policy,
+    )
+    viking.mcp = AsyncMock()
+    executor = ToolExecutor(viking, store, prepared, credential, "", 1024)
+    result = await executor.execute(gateway_call("future", arguments))
+    assert result["failed"] and "Invalid tool arguments" in result["content"]
+    viking.mcp.assert_not_called()
+
+
+async def test_new_tools_preserve_arguments_and_normalize_failed_receipt(
+    setup_kernel, credential, policy
+):
+    from unittest.mock import AsyncMock
+
+    kernel, store, viking, _ = setup_kernel
+    policy.update(gateway_tools=True)
+    viking.catalog = [mcp_tool("future", {"attachment_index": {"type": "string"}}, ("attachment_index",))]
+    prepared = await kernel.prepare(
+        {"messages": [{"role": "user", "content": "Run new tool"}]},
+        "chat", {}, credential, {"id": "u"}, policy,
+    )
+    assert prepared.metrics["tools_tokens"] > 0
+    # Type validation belongs to MCP; attachment_index is only a hook for add_*.
+    args = {"attachment_index": 7}
+    viking.mcp = AsyncMock(return_value={
+        "content": [
+            {"type": "text", "text": "first"},
+            {"type": "image", "data": "secret-base64-image"},
+            {"type": "audio", "data": "secret-base64-audio"},
+            {"type": "text", "text": "last"},
+        ],
+        "structuredContent": {"duplicated": "secret structured content"},
+        "isError": True,
+    })
+    executor = ToolExecutor(viking, store, prepared, credential, "", 1024)
+    call = gateway_call("future", args)
+    result = await executor.execute(call)
+    assert result["content"] == (
+        "first\n[OpenViking returned image content; omitted.]\n"
+        "[OpenViking returned audio content; omitted.]\nlast"
+    )
+    assert result["failed"] is True
+    viking.mcp.assert_awaited_once_with("tools/call", credential["openviking_key"], {"name": "future", "arguments": args})
+    assert await ToolExecutor(viking, store, prepared, credential, "", 1024).execute(call) == result
+    assert viking.mcp.await_count == 1
+    assert notice_tail(result["failed"], False) == " — failed"
+    assert "failed" not in tool_protocol("chat")({}).results([result])[0]
+    assert tool_protocol("anthropic")({}).results([result])[0]["content"][0]["is_error"] is True
+    assert tool_protocol("responses")({}).results([result])[0]["output"] == result["content"]
+
+
+@pytest.mark.parametrize("version,target", [(1, "find"), (2, "search")])
+async def test_old_root_search_mapping_and_policy_migration(
+    setup_kernel, credential, policy, version, target
+):
+    from unittest.mock import AsyncMock
+
+    from openviking_context_gateway.storage import digest
+
+    kernel, store, viking, _ = setup_kernel
+    policy.update(gateway_tools=True, allow_write_tools=False, tool_allowlist=["search"])
+    body = {"messages": [{"role": "user", "content": "Find my deployment"}]}
+    initial = await kernel.prepare(body, "chat", {}, credential, {"id": "u"}, policy)
+    await store.replay.put(initial.scope, digest("legacy"), "root", "", {**initial.root, "tool_version": version})
+    prepared = await kernel.prepare(
+        body, "chat", {"x-openviking-session": "legacy"}, credential, {"id": "u"}, policy,
+    )
+    assert prepared.root["tool_version"] == version
+    viking.mcp = AsyncMock(return_value={"content": [{"type": "text", "text": "found"}]})
+    result = await ToolExecutor(viking, store, prepared, credential, "", 1024).execute(gateway_call("search", {"query": "deploy"}))
+    assert result["content"] == "found" and not result["failed"]
+    assert viking.mcp.call_args.args[2]["name"] == target
+    migrated = Policy.model_validate(prepared.root["policy"]).model_dump()
+    assert not {"allow_write_tools", "tool_allowlist", "id", "revision"} & migrated.keys()
+    assert migrated["disabled_tools"] == []
+
+
+@pytest.mark.parametrize("value", [[], {"content": None}, {"content": [None]}, {"content": [{"type": "text", "text": 7}]}])
+async def test_malformed_mcp_result_is_a_failed_tool(setup_kernel, credential, policy, value):
+    from unittest.mock import AsyncMock
+
+    kernel, store, viking, _ = setup_kernel
+    policy.update(gateway_tools=True)
+    prepared = await kernel.prepare(
+        {"messages": [{"role": "user", "content": "Search"}]},
+        "chat", {}, credential, {"id": "u"}, policy,
+    )
+    viking.mcp = AsyncMock(return_value=value)
+    result = await ToolExecutor(viking, store, prepared, credential, "", 1024).execute(gateway_call("find", {"query": "x"}))
+    assert result["failed"] and result["content"] == "Invalid tool arguments or OpenViking operation failed"

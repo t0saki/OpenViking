@@ -128,7 +128,6 @@ const common = {
     selectOneSource: '至少选择一个来源',
     unknownCategory: '未知分类“{{name}}”',
     quotasAllZero: '至少把一个分类设为大于 0，或关闭分类限额',
-    selectOneTool: '至少选择一个工具',
     baseUrl:
       '请输入 http:// 或 https:// 地址，不能包含账号密码、查询参数或片段',
     subscriptionKey:

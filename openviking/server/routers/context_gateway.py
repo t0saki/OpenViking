@@ -67,7 +67,7 @@ async def proxy_context_gateway(
     # Only fixed management resources. No caller-supplied destination or identity.
     if (
         path.split("/", 1)[0]
-        not in {"overview", "logs", "guides", "upstreams", "policies", "keys", "users"}
+        not in {"overview", "logs", "guides", "upstreams", "policies", "keys", "users", "tools"}
         or ".." in path
     ):
         raise HTTPException(404)

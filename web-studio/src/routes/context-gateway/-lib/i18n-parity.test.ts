@@ -38,4 +38,18 @@ describe('contextGateway translations', () => {
     expect(en.appShell.footer.contextGateway).toBe('Context Gateway')
     expect(zhCN.appShell.footer.contextGateway).toBe('上下文网关')
   })
+
+  it('keeps tool names server-provided and supports count summaries', () => {
+    for (const locale of [en, zhCN]) {
+      expect(locale.contextGateway.profiles.tools).not.toHaveProperty('names')
+      expect(locale.contextGateway.profiles.tools).not.toHaveProperty(
+        'allowWrite',
+      )
+      for (const key of ['toolsEnabled_one', 'toolsEnabled_other'] as const) {
+        expect(
+          placeholders(locale.contextGateway.profiles.summary[key]),
+        ).toEqual(['count'])
+      }
+    }
+  })
 })

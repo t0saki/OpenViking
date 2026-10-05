@@ -10,11 +10,16 @@ import {
   gatewayScope,
   useGateway,
   useLogs,
+  useTools,
   useUpstreams,
 } from './use-gateway'
 
 const state = vi.hoisted(() => ({ role: 'admin' }))
-const api = vi.hoisted(() => ({ listUpstreams: vi.fn(), listLogs: vi.fn() }))
+const api = vi.hoisted(() => ({
+  listUpstreams: vi.fn(),
+  listLogs: vi.fn(),
+  listTools: vi.fn(),
+}))
 
 vi.mock('#/hooks/use-app-connection', () => ({
   useAppConnection: () => ({
@@ -34,6 +39,7 @@ vi.mock('./api', async (importOriginal) => ({
   ...(await importOriginal<typeof Api>()),
   listUpstreams: api.listUpstreams,
   listLogs: api.listLogs,
+  listTools: api.listTools,
 }))
 
 let client: QueryClient
@@ -46,6 +52,7 @@ beforeEach(() => {
   state.role = 'admin'
   api.listUpstreams.mockReset()
   api.listLogs.mockReset()
+  api.listTools.mockReset()
 })
 afterEach(cleanup)
 
@@ -74,9 +81,38 @@ it('manages with the admin key for account administrators', () => {
 
 it('does not load anything for regular users', () => {
   state.role = 'user'
-  const { result } = renderHook(() => useUpstreams(), { wrapper })
-  expect(result.current.fetchStatus).toBe('idle')
+  const { result } = renderHook(
+    () => ({ upstreams: useUpstreams(), tools: useTools() }),
+    { wrapper },
+  )
+  expect(result.current.upstreams.fetchStatus).toBe('idle')
+  expect(result.current.tools.fetchStatus).toBe('idle')
   expect(api.listUpstreams).not.toHaveBeenCalled()
+  expect(api.listTools).not.toHaveBeenCalled()
+})
+
+it('scopes and refreshes the tools catalog through the admin connection', async () => {
+  const tools = [{ name: 'future_tool', description: 'New tool' }]
+  api.listTools.mockResolvedValue(tools)
+  const { result } = renderHook(
+    () => ({ gateway: useGateway(), tools: useTools() }),
+    { wrapper },
+  )
+  await waitFor(() => expect(result.current.tools.data).toEqual(tools))
+  expect(api.listTools).toHaveBeenCalledWith(result.current.gateway.connection)
+  expect(
+    client.getQueryData(gatewayQueryKey(result.current.gateway.scope, 'tools')),
+  ).toEqual(tools)
+  expect(
+    client.getQueryData(
+      gatewayQueryKey(
+        gatewayScope('https://ov.example.com', 'other', 'admin-key'),
+        'tools',
+      ),
+    ),
+  ).toBeUndefined()
+  await result.current.gateway.invalidate('tools')
+  expect(api.listTools).toHaveBeenCalledTimes(2)
 })
 
 it('loads resources with the admin connection and invalidates by resource', async () => {

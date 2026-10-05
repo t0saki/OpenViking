@@ -107,7 +107,7 @@ class ChatProtocol(ToolProtocol):
         return [self.chunk({"content": text})]
 
     def results(self, results):
-        return results
+        return [{key: value for key, value in r.items() if key != "failed"} for r in results]
 
     def chunk(self, delta, finish=None):
         return {

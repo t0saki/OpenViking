@@ -361,7 +361,7 @@ server {
 | 召回记忆 | 用每条新的用户消息搜索 OpenViking，把相关内容附加到这条消息上。 | 检索范围：记忆、资源、技能 · 单条消息预算：1,600 token · 单段对话预算：6,000 token · 相关度阈值：0.35 · 超时时间：2 秒 |
 | 保存对话 | 把已完成的轮次写入 OpenViking 会话并提交，供 OpenViking 提取记忆。 | 最新回复等待时长：600 秒 · 提交阈值：20,000 token · 保留最近消息：10 |
 | 长对话 | 对话变长后，用 OpenViking 的摘要替换较早的历史。需要开启保存对话。 | 开始摘要的长度：30,000 token · 保留最近轮数：3 · 等待摘要：30 秒 |
-| OpenViking 工具 | 让模型在回答时搜索和读取 OpenViking。支持 Chat Completions、完整历史的 Responses 和 Anthropic Messages，默认关闭。 | 工具：检索、读取、列出目录 · 允许写入工具：关闭 |
+| OpenViking 工具 | 让模型在回答时搜索和读取 OpenViking。支持 Chat Completions、完整历史的 Responses 和 Anthropic Messages，默认关闭。 | 默认选择 OpenViking 提供的全部工具，可取消勾选 |
 
 召回设置的实际效果：
 
@@ -446,7 +446,7 @@ server {
 
 ## OpenViking 工具
 
-开启 OpenViking 工具后，模型可以在回答过程中检索和读取用户有权访问的 OpenViking 数据。工具调用由网关执行，客户端会持续收到回答，直到本次回复结束。显示的 token 用量包含期间所有模型调用。
+开启 OpenViking 工具后，模型可以在回答过程中使用 OpenViking 服务提供的工具，访问范围受该用户的权限限制。工具调用由网关执行，客户端会持续收到回答，直到本次回复结束。显示的 token 用量包含期间所有模型调用。
 
 三种协议都支持流式和非流式请求：
 
@@ -460,17 +460,19 @@ server {
 
 这项功能面向无法连接 OpenViking MCP 服务器的聊天应用和 API 应用。支持 MCP 或有插件的客户端，例如 Claude Code 和 Codex，用 MCP 或插件更合适，因为客户端会在那里显示每次工具调用及其结果，并在调用前请求确认。
 
-要开启工具，在上下文配置中打开 **OpenViking 工具**部分，在**工具**下勾选**检索**、**读取**和**列出目录**。每个上游的**允许 OpenViking 工具**默认开启。保存之后开始的对话会带上这些工具，模型看到的名称是 `openviking_search`、`openviking_read` 和 `openviking_list`。对话开始时，网关会告诉模型这些工具由网关提供，不在客户端的工具列表里。写入工具**写入**（`openviking_write`）、**导入文件**（`openviking_add_resource`）和**导入技能**（`openviking_add_skill`）只有在开启**允许写入工具**并勾选对应工具后才会提供。
+要开启工具，在上下文配置中打开 **OpenViking 工具**。**工具**清单来自你的 OpenViking 服务，默认全部勾选；不希望这份配置提供的工具，取消勾选即可。还没有网关密钥时，先签发一个密钥再加载清单。OpenViking 后续新增的工具也会默认可用，已有对话仍沿用开始时的工具清单。
 
-> **注意**：工具调用在网关内部执行，从不经过客户端的权限确认。写入工具会在不询问用户的情况下修改用户的 OpenViking 数据。只给清楚这一点的用户开启写入工具。
+每个上游的**允许 OpenViking 工具**默认开启。两个开关都开启后，新对话会获得选中的工具，名称加上 `openviking_` 前缀，例如 `openviking_find`、`openviking_read`、`openviking_grep` 和 `openviking_glob`。Studio 中的说明介绍各个工具的用途；只有 OpenViking 提供了相应信息时，页面才显示只读标记。
+
+> **注意**：所有选中的工具都直接执行，不经过客户端的权限确认，包括写入和删除数据的工具。不希望模型使用这些工具时，请取消勾选。调用提示用于说明已经发生的操作，不是权限确认。
 
 **工具调用提示。** 开启**显示工具调用**（默认开启）时，网关每执行一次 OpenViking 工具调用，就在回复中调用发生的位置加一行提示：
 
 ```text
-> OpenViking search: "release date" — done
+> OpenViking find: "release date" — done
 ```
 
-提示写明工具名和调用对象：检索的查询词，读取、列出或写入的 URI，或者正在导入的文件或技能。流式回复中，调用一开始提示就会出现，所以导入这类耗时的调用进行时，用户也能看到网关在工作；非流式回复会在最终消息里带上同样的提示。调用结束后再补上结果：`done` 表示完成，`failed` 表示调用返回了错误，`skipped` 表示 token 预算已经用完，网关没有执行这次调用。每条提示单独成段。在 Chat Completions 中，提示是回复文本的一部分；在 Anthropic Messages 中，同一轮调用的提示放在同一个文本块里；在 Responses 中，同一轮调用的提示放在同一条助手消息里。模型看不到这些提示，它收到的是真实的调用和结果；网关也不会把提示保存到 OpenViking。要隐藏提示，在上下文配置的 **OpenViking 工具**部分关闭**显示工具调用**，回复里就只有模型自己的输出。和其他工具设置一样，改动只影响新对话。
+提示写明工具名；能够识别调用对象时，还会显示：检索的查询词，读取、列出或写入的 URI，或者正在导入的文件或技能。流式回复中，调用一开始提示就会出现，所以导入这类耗时的调用进行时，用户也能看到网关在工作；非流式回复会在最终消息里带上同样的提示。调用结束后再补上结果：`done` 表示完成，`failed` 表示调用返回了错误，`skipped` 表示 token 预算已经用完，网关没有执行这次调用。每条提示单独成段。在 Chat Completions 中，提示是回复文本的一部分；在 Anthropic Messages 中，同一轮调用的提示放在同一个文本块里；在 Responses 中，同一轮调用的提示放在同一条助手消息里。模型看不到这些提示，它收到的是真实的调用和结果；网关也不会把提示保存到 OpenViking。要隐藏提示，在上下文配置的 **OpenViking 工具**部分关闭**显示工具调用**，回复里就只有模型自己的输出。和其他工具设置一样，改动只影响新对话。
 
 对话是否带工具，在它的第一个请求时就决定了，之后保持不变，所以修改上下文配置只影响新对话。请求没有带工具时，请求日志的详情会说明原因：
 
@@ -484,14 +486,15 @@ server {
 | `tools_forced_choice` | `tool_choice` 为 `required`，或者指定了某个工具。 |
 | `deepseek_reasoning_history_required` | 上游的服务商是 DeepSeek，并且请求没有关闭思考模式（`"thinking": {"type": "disabled"}`）。标准的 Responses 请求没有 `thinking` 字段，也属于这种情况。 |
 | `tool_name_collision` | 客户端定义了与某个 `openviking_*` 工具同名的工具。 |
+| `tools_unavailable` | 无法从 OpenViking 加载工具清单，也没有之前加载成功的清单。连接恢复后请开始新对话。 |
 | `tools_not_selected_at_session_start` | 上下文配置开启了工具，但对话的第一个请求因为上面某个原因用不了工具，所以整段对话都没有工具。 |
 
 辅助请求和子 Agent 请求保留工具定义，但不能调用工具；检测到 OpenViking 插件的对话不带工具。
 
-**导入文件和技能。** 导入工具需要一种办法把文件送到 OpenViking，所以只有对话的第一个请求满足以下条件之一时才会提供：
+**导入文件和技能。** OpenViking 服务提供导入工具、且配置中勾选了它们时即可使用。通过 URL 导入不需要 shell 工具，本地文件则需要以下上传方式之一：
 
 - **有 shell 工具**（名称类似 bash、shell、exec_command、terminal 或 run_command 的客户端工具）：导入工具返回一个一次性上传链接，模型再用客户端自己的 shell 工具上传文件，这一步会经过客户端的权限确认。技能目录会先打包成 zip。链接指向 `public_url` 加上 `/context-gateway/uploads`，所以 `public_url` 必须是客户端能访问的地址，代理也要把这个路径转发给网关。没有设置 `public_url` 时，导入会失败并提示 "Set context_gateway.public_url for client uploads"。
-- **有附件**：没有 shell 工具时，模型可以导入用户消息里附带的文件，文件可以是 base64 数据，也可以是附件文本，支持 Responses `input_file` 和 Anthropic `document.source` 内嵌的 `base64`、`text` 数据。Open WebUI 通常只发送提取出的文本，这些文本会作为文本文件导入。远程 URL 和服务商的文件 ID 不会被抓取。
+- **有附件**：没有 shell 工具时，模型可以导入用户消息里附带的文件，文件可以是 base64 数据，也可以是附件文本，支持 Responses `input_file` 和 Anthropic `document.source` 内嵌的 `base64`、`text` 数据。Open WebUI 通常只发送提取出的文本，这些文本会作为文本文件导入。附件中的 URL 和服务商的文件 ID 不会被抓取；导入支持的远程资源时，请使用导入工具的 URL 参数。
 
 上传大小受 `max_body_bytes` 限制（默认 32 MiB）。
 
@@ -655,8 +658,7 @@ URL 类设置必须是普通的 `http` 或 `https` 地址，不能包含账号�
 | 等待摘要 | `archive_wait_seconds` | `30`（秒） | 0–60 | 接近上下文窗口时，等待未就绪摘要的最长时间。 |
 | 默认上下文窗口 | `context_window` | 未设置 | ≥ 1,024 | 上游没有列出该模型时使用的窗口。 |
 | OpenViking 工具 | `gateway_tools` | `false` | | 为 Chat、完整历史的 Responses 和 Anthropic Messages 提供 OpenViking 工具。 |
-| 允许写入工具 | `allow_write_tools` | `false` | | 提供任何写入工具之前都必须开启。 |
-| 工具 | `tool_allowlist` | `search`、`read`、`list` | `search`、`read`、`list`、`write`、`add_resource`、`add_skill` | 提供哪些工具，名称为 `openviking_<name>`。 |
+| 取消勾选的工具 | `disabled_tools` | `[]` | OpenViking 工具原名，不带 `openviking_` | 新对话不提供这些工具。列表为空且总开关开启时，提供全部可用工具。 |
 | 显示工具调用 | `show_tool_calls` | `true` | | 每次 OpenViking 工具调用都在回复里加一行提示。 |
 | 每次请求的工具轮数 | `tool_max_rounds` | `5` | 1–20 | 见 [OpenViking 工具](#openviking-工具)。 |
 | 单次调用超时 | `tool_timeout_seconds` | `30` | 最多 120 | |
@@ -787,7 +789,7 @@ OpenViking Server 无法使用网关时，上下文网关页面会显示一张�
 - 上传链接无法访问，或者返回 404：在代理中把 `/context-gateway/uploads` 转发给网关。
 - 413：文件超过了 `max_body_bytes` 或代理的上限。
 - 502 "OpenViking upload is unavailable"：网关连不上 OpenViking Server。
-- 根本没有提供导入工具：对话的第一个请求既没有 shell 工具也没有附件，或者上下文配置没有允许写入工具。
+- 没有提供导入工具：OpenViking 服务未提供该工具、上下文配置中取消了勾选，或当前请求无法使用网关工具。请检查工具清单和请求详情。
 
 ### 降级请求的异常
 

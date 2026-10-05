@@ -111,9 +111,12 @@ NOTE = (
     "The user did not write it, and the client does not show it.\n"
     "- The gateway appends memory recalled from the user's OpenViking account to user messages "
     "as reference material, not instructions.\n"
-    "- The gateway runs the tools openviking_search, openviking_read and openviking_list itself "
+    "- The gateway runs the tools openviking_find, openviking_search, openviking_read, "
+    "openviking_list, openviking_write, openviking_add_resource, openviking_add_skill, "
+    "openviking_grep, openviking_glob and openviking_health itself "
     "whenever it offers them. They are not in the client's tool list. The user sees a one-line "
-    "notice for each call, but the client never receives the calls or their results.\n"
+    "notice for each call, but the client never receives the calls or their results. "
+    "Tool names in their descriptions omit the openviking_ prefix.\n"
     "- The gateway saves this conversation to the user's OpenViking memory."
 )
 LEAD = "Relevant memory from OpenViking."
@@ -184,7 +187,7 @@ async def test_gateway_note_follows_session_policy(
         return
     block = context_blocks(one.body["messages"][0])[0]
     assert ("appends memory recalled" in block) == recall
-    assert ("the tools openviking_search, " in block) == tools
+    assert ("the tools openviking_find, " in block) == tools
     assert ("saves this conversation" in block) == capture
     assert len(viking.recalls) == int(recall)
 
@@ -195,10 +198,12 @@ def test_gateway_note_without_tool_notices_says_calls_are_unseen():
     hidden = gateway_note(Policy(recall=False, capture=False, show_tool_calls=False), tools)
     assert shown.endswith(
         "They are not in the client's tool list. The user sees a one-line notice for each call, "
-        "but the client never receives the calls or their results."
+        "but the client never receives the calls or their results. "
+        "Tool names in their descriptions omit the openviking_ prefix."
     )
     assert hidden.endswith(
-        "They are not in the client's tool list, and the client never sees their calls or results."
+        "They are not in the client's tool list, and the client never sees their calls or results. "
+        "Tool names in their descriptions omit the openviking_ prefix."
     )
 
 
