@@ -150,21 +150,19 @@ class VikingClient:
             committed = True
         else:
             committed = orjson.loads(meta).get("phase1", {}).get("status") == "ready"
-        archive_id = uri.rstrip("/").split("/")[-1]
         if not committed:
-            terminal = await self.archive_state(key, session, archive_id, uri)
+            terminal = await self.archive_state(key, uri)
             if terminal == "failed" or time.time() - intent["created"] >= 900:
                 return {**intent, "status": "failed", "committed": False}
             return {**intent, "next_check": time.time() + 5}
         return {
             **intent,
             "archive_uri": uri,
-            "archive_id": archive_id,
             "status": "pending",
             "committed": True,
         }
 
-    async def archive_state(self, key, session, archive, uri):
+    async def archive_state(self, key, uri):
         for marker, state in ((".done", "completed"), (".failed.json", "failed")):
             if await self.read_content(key, uri.rstrip("/") + "/" + marker) is not None:
                 return state

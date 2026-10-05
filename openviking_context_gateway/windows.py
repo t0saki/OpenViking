@@ -16,7 +16,14 @@ from dataclasses import dataclass
 from .blocks import block, token_estimate
 from .compaction import active_cut, cut_hint, opening_block
 from .models import Policy
-from .protocols import append_context, clean_text, is_user, text_content, unwrap_client
+from .protocols import (
+    accepts_context,
+    append_context,
+    clean_text,
+    is_user,
+    text_content,
+    unwrap_client,
+)
 from .records import RecordKind as K
 from .tool_protocols import tool_protocol
 
@@ -25,6 +32,7 @@ ALONE = (
     "openviking_new_context must be the only tool call in its response, so no call in this "
     "response ran. Call it again on its own."
 )
+STAY = "A new context window cannot start at this point; continue in the current one."
 SEARCHABLE = " Earlier windows stay searchable with openviking_grep and openviking_read."
 REMINDERS = {
     "soft": "[context-reminder] This context window is {} full. At the next natural boundary, "
@@ -133,13 +141,19 @@ def status_line(request, policy):
 
 
 async def remind(store, request, policy):
-    """Number the window, and append a due reminder to a continuation's last message."""
+    """Number the window, and append a due reminder to a continuation's tool result."""
     if not active(request):
         return
     index, window = active_cut(request), window_number(request)
     request.metrics["window"] = window
     anchor = (request.chain or [""])[-1]
-    if request.kind != "continuation" or not anchor or (K.INJECTION, anchor) in request.records:
+    field = tool_protocol(request.protocol).field
+    if (
+        request.kind != "continuation"
+        or not anchor
+        or (K.INJECTION, anchor) in request.records
+        or not accepts_context(request.body[field][-1])
+    ):
         return
     kind = due(request, policy, index)
     if not kind:
@@ -160,7 +174,6 @@ async def remind(store, request, policy):
         },
     )
     request.records[K.INJECTION, anchor] = decision
-    field = tool_protocol(request.protocol).field
     append_context(request.body[field][-1], decision["text"], request.protocol)
     request.metrics["window_reminder"] = decision["reminder"]
 
@@ -174,6 +187,11 @@ async def new_context(request, credential, args):
         return {"content": "reason and notes must be non-empty strings.", "failed": True}
     # The cut follows the last client message, so every later request can replay it.
     position = max((i for i, a in enumerate(request.capture_chain) if a), default=-1)
+    # Without a client message there is nothing to cut at. A cut this request was built
+    # on (a compaction just now, or a reset stored by an earlier attempt) keeps its
+    # stored text, so a new window there could never be replayed.
+    if position < 0 or request.capture_chain[position] not in request.body_chain:
+        return {"content": STAY, "failed": True}
     window = window_number(request, position) + 1
     parts = [
         f"This is context window {window}. You started it by calling {NEW_CONTEXT}, and the "

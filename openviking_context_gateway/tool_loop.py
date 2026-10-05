@@ -9,6 +9,7 @@ import async_timeout
 import orjson
 
 from .capture import CapturePipeline
+from .compaction import cut_messages
 from .protocols import SSEDecoder, messages_of, usage_of
 from .records import RecordKind as K
 from .tool_catalog import notice_head
@@ -77,9 +78,9 @@ class HiddenToolLoop:
         self.transcript.extend(self.round.output)
         add_usage(self.usage, self.round.usage)
         normalized = usage_of({"usage": self.round.usage})
-        self.capture.context_usage = normalized
         if normalized["input_tokens"]:
             # The latest round measures the window best; native tools read it here.
+            self.capture.context_usage = normalized
             self.prepared.context_tokens = normalized["input_tokens"] + normalized["output_tokens"]
         if self.rounds:
             self.token_cost += normalized["output_tokens"] or added_tokens(self.round.output)
@@ -155,10 +156,11 @@ class HiddenToolLoop:
             self.prepared.metrics["tool_stop_reason"] = "token_budget"
 
     def reset(self, anchor, value):
-        """Continue in the window the model started: the system prefix and its header."""
-        field = self.adapter.field
-        prefix = [m for m in self.body[field] if m.get("role") in {"system", "developer"}]
-        self.body[field] = [*prefix, {"role": "user", "content": value["text"]}]
+        """Continue in the window the model started, cut the way the next request replays it."""
+        start, chain = messages_of(self.prepared.body, self.protocol), self.prepared.capture_chain
+        # Only system and developer messages follow the anchor in this request's body.
+        index = len(start) - len(chain) + chain.index(anchor)
+        self.body[self.adapter.field] = cut_messages(start, index, value["text"])
         self.transcript, self.window = [], (anchor, value)
         # Later native calls see the cut the way the next request replays it.
         self.prepared.records[K.REPLACEMENT, anchor] = value
@@ -170,8 +172,8 @@ class HiddenToolLoop:
             hidden_chain([*self.prepared.messages, *visible], self.protocol)[-1] if visible else ""
         )
         if self.window:
-            # Put-if-absent: a retry that resets again at this anchor keeps the
-            # first header, and the next request replays it before this transcript.
+            # new_context refuses an anchor whose cut this request applies, so only a
+            # concurrent request can have stored another header here first.
             await self.store.replay.put(
                 self.prepared.scope, self.prepared.session, K.REPLACEMENT, *self.window
             )

@@ -39,27 +39,12 @@ describe('contextGateway translations', () => {
     expect(zhCN.appShell.footer.contextGateway).toBe('上下文网关')
   })
 
-  it('drops copy for replaced long-conversation settings', () => {
+  it('summarize compaction and tool counts with their values', () => {
     for (const locale of [en, zhCN]) {
-      const { profiles, enums, units } = locale.contextGateway
-      expect(profiles).not.toHaveProperty('takeover')
-      expect(profiles.summary).not.toHaveProperty('takeoverOn')
-      expect(enums.degradation).not.toHaveProperty('archive_wait_timeout')
-      expect(units).not.toHaveProperty('turns')
-      expect(placeholders(profiles.summary.compactionOn)).toEqual(['percent'])
-    }
-  })
-
-  it('keeps tool names server-provided and supports count summaries', () => {
-    for (const locale of [en, zhCN]) {
-      expect(locale.contextGateway.profiles.tools).not.toHaveProperty('names')
-      expect(locale.contextGateway.profiles.tools).not.toHaveProperty(
-        'allowWrite',
-      )
+      const { summary } = locale.contextGateway.profiles
+      expect(placeholders(summary.compactionOn)).toEqual(['percent'])
       for (const key of ['toolsEnabled_one', 'toolsEnabled_other'] as const) {
-        expect(
-          placeholders(locale.contextGateway.profiles.summary[key]),
-        ).toEqual(['count'])
+        expect(placeholders(summary[key])).toEqual(['count'])
       }
     }
   })

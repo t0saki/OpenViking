@@ -522,7 +522,7 @@ A model's context window limits how long a conversation can get. With **Compacti
 
 The window comes from the upstream's **Context windows** entry for the model (the name sent to the upstream), else from the profile's **Default context window**. Without either, the gateway assumes 1,000,000 tokens. For a model with a smaller window, set one of the two; otherwise the provider rejects the conversation as too long before compaction ever starts.
 
-**How the summary is written.** The gateway sends one extra, nonstreaming request to the same upstream and model, with the client's system prompt, tools and thinking settings unchanged, so most of it is served from the provider's prompt cache. The request holds the conversation up to the cut and an instruction to summarize it for the model itself: the user's goals and latest request word for word, decisions and progress, files, paths and identifiers, errors and their fixes, open items, and key facts from recent tool results. An earlier summary is folded into the new one. The summary is plain text of at most **Summary length** tokens (8,000), and the provider bills the request like any other.
+**How the summary is written.** The gateway sends one extra, nonstreaming request to the same upstream and model, with the client's system prompt, tools and thinking settings unchanged, so most of it is served from the provider's prompt cache. Settings a plain-text summary cannot follow are left out: a forced tool choice is turned off, and structured output formats and stop sequences are dropped. The request holds the conversation up to the cut and an instruction to summarize it for the model itself: the user's goals and latest request word for word, decisions and progress, files, paths and identifiers, errors and their fixes, open items, and key facts from recent tool results. An earlier summary is folded into the new one. The summary is plain text of at most **Summary length** tokens (8,000), and the provider bills the request like any other.
 
 **What the model receives afterwards.** Where the cut falls depends on the request:
 
@@ -535,7 +535,7 @@ The summary message starts with a note that the gateway replaced the earlier par
 
 **Searching what was cut.** The conversation itself is still saved in OpenViking. When **Save conversations** is on and the conversation offers the `openviking_grep` and `openviking_read` tools, the summary is followed by directions: the conversation's OpenViking sessions (`viking://user/<user_id>/sessions/<session_id>/`), where their messages are stored, and how to search them: grep a session with a specific pattern to get line numbers, then read the lines around a match. When a cut falls in the middle of a turn, the part before it is saved to OpenViking right away, so the model can search it while the turn continues.
 
-**When compaction fails.** If the summary request fails, or the reply calls a tool, is empty or is cut off at the length limit, the gateway sends the full history instead and does not try again in that conversation for 60 seconds. The request's detail on the Requests tab shows **Compaction failed** with the reason.
+**When compaction fails.** If the summary request fails, or the reply calls a tool, is empty or is cut off at the length limit, the gateway sends the full history instead and does not try again in that conversation for 60 seconds. The request's detail on the Requests tab shows **Compaction failed** with the reason. If the context is still at or above **Compact at** after a summary, for example because the system prompt and tools alone fill most of the window, the gateway keeps the summary but also waits 60 seconds before compacting again, with the reason `still_over_threshold`.
 
 **Working Memory is not used.** The summary comes from the conversation's own model, not from OpenViking's session summaries. New OpenViking sessions the gateway creates have Working Memory turned off: commits still archive the messages and OpenViking still extracts memories, but it writes no session summary.
 
@@ -552,11 +552,11 @@ With **Agent-managed context windows** on (off by default), the model decides it
 What the model sees:
 
 - Two tools next to the OpenViking tools. They are not part of the profile's **Tools** list; this setting alone controls them.
-  - `openviking_new_context(reason, notes, next_steps)` starts a new window; `next_steps` is optional. It must be the only tool call in its round. Called together with other tools, every call in the round returns an error and the window is not reset.
+  - `openviking_new_context(reason, notes, next_steps)` starts a new window; `next_steps` is optional. It must be the only tool call in its round. Called together with other tools, every call in the round returns an error and the window is not reset. It also returns an error when the gateway already replaced the context at the same point in this request, for example by compacting it.
   - `openviking_context_remaining()` reports the window number, the estimated tokens used and left, the user turns in this window, the time since the user's previous message, and a one-line recommendation.
 - A line in the opening note saying that the model manages its own context windows with these tools.
 - A status line after each new user message, at the end of the memory block: `[context-status] window wN · ~X/Y tokens (P%) · T since your previous message`.
-- At most one soft and one hard reminder per window, when the window reaches **Soft reminder at** (0.7) and **Hard reminder at** (0.85). The soft reminder suggests starting a new window at a natural break; the hard one asks for it now. A reminder is attached to the latest message, which during a tool step is the tool result.
+- At most one soft and one hard reminder per window, when the window reaches **Soft reminder at** (0.7) and **Hard reminder at** (0.85). The soft reminder suggests starting a new window at a natural break; the hard one asks for it now. A reminder is attached to the new user message or, during a tool step, to the tool result.
 
 When the model calls `openviking_new_context`, the gateway replaces the conversation so far with a window header, and the model carries on in the same reply. The header says that the model started window N and that the user did not write it, then gives the reason, the notes and next steps, the user's latest message word for word, directions for searching earlier windows (under the same conditions as for compaction), and the conversation's opening note. Later requests rebuild the same window from the client's history. The part before the reset is saved to OpenViking right away and stays searchable. The reason and notes appear only in the header; they are not saved to OpenViking. A reset costs one provider cache miss but no summary request.
 
@@ -820,7 +820,7 @@ If the provider rejects long conversations as too long for the model:
 
 - **The model's window is unknown to the gateway.** Without an entry in the upstream's **Context windows** or a **Default context window** in the profile, the gateway assumes 1,000,000 tokens and compacts too late for smaller models. Add the model's window.
 - **Compaction is off** in the conversation's profile. Profile changes reach new conversations only.
-- **Compaction failed.** The request detail shows the reason, and the gateway tries again after 60 seconds. If summaries are cut off at the length limit, raise **Summary length**.
+- **Compaction failed.** The request detail shows the reason, and the gateway tries again after 60 seconds. If summaries are cut off at the length limit, raise **Summary length**. `still_over_threshold` means the system prompt, tools and summary alone fill most of the window: lower **Summary length**, or check the model's window.
 
 ### File imports fail
 

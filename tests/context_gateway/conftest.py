@@ -138,10 +138,9 @@ class FakeViking:
             "status": "pending",
             "committed": True,
             "archive_uri": uri,
-            "archive_id": uri.rsplit("/", 1)[-1],
         }
 
-    async def archive_state(self, key, session, archive, uri=""):
+    async def archive_state(self, key, uri=""):
         return self.archive_status
 
 

@@ -285,9 +285,17 @@ def session_id(headers: dict) -> str | None:
     return None
 
 
+TOOL_OUTPUTS = {"function_call_output", "custom_tool_call_output"}
+
+
+def accepts_context(message: dict) -> bool:
+    """Whether append_context can extend the message: a user message or a tool result."""
+    return message.get("role") in {"user", "tool"} or message.get("type") in TOOL_OUTPUTS
+
+
 def append_context(message: dict, text: str, protocol: str) -> None:
     """Append text to a user message or tool result; Anthropic results get a trailing block."""
-    tool_output = message.get("type") in {"function_call_output", "custom_tool_call_output"}
+    tool_output = message.get("type") in TOOL_OUTPUTS
     field = "output" if tool_output else "content"
     content = message.get(field, "")
     if (protocol == "chat" or tool_output) and isinstance(content, str):

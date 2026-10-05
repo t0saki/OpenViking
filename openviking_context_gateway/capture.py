@@ -137,11 +137,10 @@ class CapturePipeline:
         user_anchor = request.capture_chain[request.anchor]
         while True:
             value = old.value or new_capture()
-            endpoints = [
-                value["delivered"],
-                *[t["anchor"] for t in value["pending"]],
-            ]
-            if any(a and a not in positions for a in endpoints):
+            # The worker may be writing a due tail, so a changed one starts over here;
+            # advance() drops any other unconfirmed tail.
+            now = time.time()
+            if any(t["anchor"] not in positions for t in value["pending"] if t["ready"] <= now):
                 value = new_capture("history_changed", value)
             value, _ = await asyncio.to_thread(
                 self.advance,
@@ -260,8 +259,11 @@ class CaptureWorker:
         self.queue, self.replay = store.capture, store.replay
         self.management, self.viking = management, viking
 
-    async def save(self, item, previous, value):
-        """Merge worker-owned progress into a concurrently updated request tail."""
+    async def save(self, item, previous, value, written=None):
+        """Merge worker-owned progress into a concurrently updated request tail.
+
+        ``written`` is the delivered message when this save moves ``delivered``.
+        """
         while True:
             if await self.queue.swap(
                 item["scope"],
@@ -278,9 +280,10 @@ class CaptureWorker:
             # The writer may only advance through the queued messages it read.
             pending = fresh.value["pending"]
             if value["delivered"] != previous.value["delivered"]:
-                pending = remaining(pending, value["delivered"])
+                pending = remaining(pending, written)
                 if pending is None:
-                    # An idle reply was edited while its HTTP write was in flight.
+                    # An idle reply was edited, or gained its tool results, while its
+                    # HTTP write was in flight.
                     await reset_capture(
                         self.queue,
                         item["scope"],
@@ -388,11 +391,11 @@ class CaptureWorker:
             state["delivered"] = turn["anchor"]
             state["pending"] = state["pending"][1:]
             state["idle"] = not turn["confirmed"]
-            doc = await self.save(item, doc, state)
+            doc = await self.save(item, doc, state, turn["messages"][-1])
             state = copy.deepcopy(doc.value)
         # Each save may merge a concurrent request, so continue from what it stored.
         if state.get("archive") and state["archive"]["status"] not in TERMINAL:
-            state["archive"] = await observe_archive(self.viking, state["archive"], token, session)
+            state["archive"] = await observe_archive(self.viking, state["archive"], token)
             doc = await self.save(item, doc, state)
             state = copy.deepcopy(doc.value)
         if state.get("error"):
@@ -441,13 +444,14 @@ class CaptureWorker:
         return await self.save(item, doc, state)
 
 
-def remaining(pending, delivered):
-    """The queue after a delivered message, trimming a segment re-queued around it."""
-    source = SOURCE + delivered
+def remaining(pending, written):
+    """The queue after a delivered message, trimming a segment re-queued around it.
+
+    None when the queue no longer holds the message exactly as it was written.
+    """
     for index, turn in enumerate(pending):
-        ids = [m["source_message_ids"][0] for m in turn["messages"]]
-        if source in ids:
-            rest = turn["messages"][ids.index(source) + 1 :]
+        if written in turn["messages"]:
+            rest = turn["messages"][turn["messages"].index(written) + 1 :]
             head = [{**turn, "messages": rest, "continued": True}] if rest else []
             return head + pending[index + 1 :]
     return None

@@ -190,9 +190,7 @@ async def test_archive_state_uses_server_terminal_markers(marker, expected):
 
     client.request = request
     assert (
-        await client.archive_state(
-            "synthetic", "session", "archive_001", "viking://user/a/sessions/s/history/archive_001"
-        )
+        await client.archive_state("synthetic", "viking://user/a/sessions/s/history/archive_001")
         == expected
     )
     assert all("/api/v1/content/read?uri=viking%3A" in path for path in paths)

@@ -34,6 +34,7 @@ from openviking_context_gateway.windows import (
     NEW_CONTEXT,
     REMINDERS,
     SEARCHABLE,
+    STAY,
     amount,
     context_remaining,
     due,
@@ -183,10 +184,11 @@ def confirmed_cuts(monkeypatch):
     return cuts
 
 
-async def send(running_gateway, protocol, streaming, rounds, fail=False):
+async def send(running_gateway, protocol, streaming, rounds, fail=False, body=None):
     """One client request whose hidden rounds make the given gateway calls, then answer."""
     app, client, _, key, _, _ = running_gateway
-    run = SimpleNamespace(requests=[], upstream=[], mcp=[], body=client_body(protocol, streaming))
+    body = body or client_body(protocol, streaming)
+    run = SimpleNamespace(requests=[], upstream=[], mcp=[], body=body)
 
     async def backend(request):
         if request.path == "/mcp":
@@ -379,6 +381,27 @@ async def test_window_header_carries_notes_message_hint_and_opening(
         assert (await new_context(prepared, credential, args))["failed"]
 
 
+async def test_new_context_needs_a_client_message_and_an_unreplaced_anchor(
+    setup_kernel, credential, policy
+):
+    kernel, store, _, _ = setup_kernel
+    policy.update(recall=False)
+    refused = {"content": STAY, "failed": True}
+    # A cut at the empty anchor of system messages would apply to every session.
+    system = [{"role": "system", "content": "Be brief."}]
+    prepared = await windows_request(kernel, credential, policy, system)
+    assert await new_context(prepared, credential, NOTES) == refused
+    # A cut this request was built on keeps its stored text, so no window starts there.
+    messages = [{"role": "user", "content": "First task"}]
+    prepared = await windows_request(kernel, credential, policy, messages)
+    anchor = prepared.capture_chain[-1]
+    cut = {"source": "compaction", "text": "Summary", "tokens": 1}
+    await store.replay.put(prepared.scope, prepared.session, K.REPLACEMENT, anchor, cut)
+    prepared = await windows_request(kernel, credential, policy, messages)
+    assert prepared.metrics["compaction_applied"] == anchor
+    assert await new_context(prepared, credential, NOTES) == refused
+
+
 async def test_context_remaining_reports_the_window(setup_kernel, credential, policy):
     kernel, _, _, _ = setup_kernel
     policy.update(recall=False)
@@ -565,6 +588,29 @@ async def test_continuation_reminders_append_to_tool_results_once(
     ]
 
 
+@pytest.mark.parametrize(
+    "protocol, last",
+    [
+        ("chat", {"role": "assistant", "content": "Sure"}),
+        ("anthropic", {"role": "assistant", "content": [{"type": "text", "text": "Sure"}]}),
+        ("responses", {"type": "local_shell_call_output", "id": "o", "output": "done"}),
+    ],
+)
+async def test_continuation_reminders_skip_messages_that_are_not_tool_results(
+    setup_kernel, credential, policy, protocol, last
+):
+    kernel, _, _, _ = setup_kernel
+    policy.update(recall=False, capture=False, window_soft_ratio=0.3, window_hard_ratio=0.6)
+    upstream = {"id": "u", "context_windows": {"model": 20_000}}
+    messages = [{"role": "user", "content": "word " * 7200}, last]
+    prepared = await windows_request(kernel, credential, policy, messages, upstream, protocol)
+    frozen = Policy.model_validate(prepared.root["policy"])
+    assert prepared.kind == "continuation" and due(prepared, frozen, -1) == "soft"
+    assert prepared.body[FIELDS[protocol]][-1] == last
+    assert (K.INJECTION, prepared.chain[-1]) not in prepared.records
+    assert "window_reminder" not in prepared.metrics
+
+
 @pytest.mark.parametrize("protocol", ["chat", "anthropic", "responses"])
 @pytest.mark.parametrize("streaming", [False, True])
 async def test_reset_continues_in_the_new_window(
@@ -701,6 +747,26 @@ async def test_reset_replays_on_the_next_request(running_gateway, protocol):
     assert replay[len(prefix) + 1 : -1] == round_output(protocol, run.upstream[1])
     assert text_content(replay[-1]).startswith("Go\n")
     assert "[context-status] window w2 " in text_content(replay[-1])
+
+
+async def test_reset_builds_the_window_the_next_request_replays(running_gateway, confirmed_cuts):
+    app, client, admin, _, _, _ = running_gateway
+    await enable_tools(client, admin, agent_windows=True)
+    body = client_body("chat", False)
+    late = {"role": "system", "content": "Answer in English."}
+    body["messages"].append(late)
+    run = await send(running_gateway, "chat", False, [[(NEW_CONTEXT, NOTES)]], body=body)
+    assert run.response.status_code == 200, run.response.text
+    window = run.requests[1]["messages"]
+    # A system message after the cut stays after the header, where the replay puts it.
+    assert window == [body["messages"][0], {"role": "user", "content": window[1]["content"]}, late]
+    run.body["messages"] += [
+        *visible_messages("chat", run.response, False),
+        {"role": "user", "content": "Go"},
+    ]
+    response = await client.post(PATHS["chat"], headers=run.headers, json=run.body)
+    assert response.status_code == 200, response.text
+    assert run.requests[-1]["messages"][: len(window)] == window
 
 
 async def test_compaction_cuts_when_the_model_never_starts_a_window(

@@ -20,6 +20,7 @@ from .common import (
 
 class AnthropicProtocol(ToolProtocol):
     id_prefix = "msg_"
+    summary_drops = ("stop_sequences", "output_config.format")
 
     @staticmethod
     def wire_tools(tools):
@@ -68,7 +69,7 @@ class AnthropicProtocol(ToolProtocol):
         content = response.get("content") or []
         if any(block.get("type") == "tool_use" for block in content):
             raise SummaryError("summary_tool_call")
-        if response.get("stop_reason") not in {"end_turn", "stop_sequence"}:
+        if response.get("stop_reason") != "end_turn":
             raise SummaryError("summary_incomplete")
         return text_content({"content": content})
 

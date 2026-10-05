@@ -6,7 +6,7 @@ import copy
 import orjson
 import pytest
 from aiohttp import web
-from conftest import replay_records
+from conftest import make_due, replay_records
 from test_review_regressions import worker_for
 
 from openviking_context_gateway.blocks import block, history_hint
@@ -18,7 +18,7 @@ from openviking_context_gateway.compaction import (
     estimate,
     opening_block,
 )
-from openviking_context_gateway.protocols import ResponseCapture, text_content
+from openviking_context_gateway.protocols import ResponseCapture, text_content, usage_of
 from openviking_context_gateway.state_store import get_state
 from openviking_context_gateway.tool_protocols import hidden_chain, tool_protocol
 from openviking_context_gateway.tool_protocols.common import SummaryError
@@ -363,6 +363,44 @@ async def test_usage_only_measures_the_history_its_reply_belongs_to(
     assert (await prepare(kernel, "chat", messages, credential, policy)).context_tokens < 1000
 
 
+async def test_replies_without_usage_leave_the_estimate_to_the_whole_request(
+    setup_kernel, credential, policy
+):
+    kernel, store, _, _ = setup_kernel
+    policy.update(recall=False)
+    messages = [{"role": "user", "content": "word " * 2000}]
+    first = await prepare(kernel, "chat", messages, credential, policy)
+    reply = {"role": "assistant", "content": "Blue."}
+    # A streamed reply without include_usage, or a tool loop whose rounds report none.
+    response = ResponseCapture("chat", reply, usage=usage_of({}), complete=True)
+    await kernel.completed(first, credential, response)
+    assert "usage" not in (await get_state(store.state, first.scope, first.session)).value
+    messages += [reply, {"role": "user", "content": "Next?"}]
+    assert (await prepare(kernel, "chat", messages, credential, policy)).context_tokens > 2500
+
+
+async def test_a_cut_that_stays_over_the_threshold_backs_off(setup_kernel, credential, policy):
+    kernel, _, _, _ = setup_kernel
+    policy.update(context_window=2000, recall=False)
+    # The system prompt alone fills the window, and no cut can remove it.
+    messages = [
+        {"role": "system", "content": "rule " * 1900},
+        {"role": "user", "content": "How do I deploy?"},
+    ]
+    first = await prepare(kernel, "chat", messages, credential, policy)
+    reply = {"role": "assistant", "content": "Blue."}
+    await answered(kernel, first, credential, reply, tokens=2400)
+    messages += [reply, {"role": "user", "content": "Next?"}]
+    summarize = Summarizer("chat")
+    second = await prepare(kernel, "chat", messages, credential, policy, summarize=summarize)
+    assert second.metrics["compaction_tokens"] and second.context_tokens >= 1800
+    assert second.metrics["compaction_failed"] == "still_over_threshold"
+    await answered(kernel, second, credential, reply, tokens=2400)
+    messages += [reply, {"role": "user", "content": "And then?"}]
+    third = await prepare(kernel, "chat", messages, credential, policy, summarize=summarize)
+    assert len(summarize.requests) == 1 and "compaction_failed" not in third.metrics
+
+
 def test_estimate_counts_inline_media_like_an_image():
     image = {"type": "image", "source": {"type": "base64", "data": "iVBOR" + "A" * 400000}}
     assert MEDIA_TOKENS <= estimate([image]) < MEDIA_TOKENS + 50
@@ -374,7 +412,9 @@ def test_estimate_counts_inline_media_like_an_image():
     [
         ("chat", {"stream": True, "stream_options": {"include_usage": True}}, {"max_tokens": 8000}),
         ("chat", {"max_completion_tokens": 100}, {"max_completion_tokens": 8000}),
-        ("chat", {"reasoning_effort": "high"}, {"max_tokens": 24000}),
+        # o-series models reject max_tokens; a client that sent it keeps it.
+        ("chat", {"reasoning_effort": "high"}, {"max_completion_tokens": 24000}),
+        ("chat", {"reasoning_effort": "high", "max_tokens": 100}, {"max_tokens": 24000}),
         (
             "anthropic",
             {"thinking": {"type": "enabled", "budget_tokens": 4000}},
@@ -399,6 +439,44 @@ def test_summary_requests_keep_client_settings_and_set_the_cap(protocol, body, c
 
 
 @pytest.mark.parametrize(
+    "protocol,body,kept",
+    [
+        (
+            "chat",
+            {"tool_choice": "required", "response_format": {"type": "json_object"}, "stop": "x"},
+            {"tool_choice": "none"},
+        ),
+        (
+            "anthropic",
+            {
+                "tool_choice": {"type": "any"},
+                "stop_sequences": ["x"],
+                "output_config": {"effort": "high", "format": {"type": "json_schema"}},
+            },
+            {"tool_choice": {"type": "none"}, "output_config": {"effort": "high"}},
+        ),
+        (
+            "responses",
+            {
+                "tool_choice": {"type": "function", "name": "x"},
+                "text": {"format": {"type": "json_schema"}, "verbosity": "low"},
+            },
+            {"tool_choice": "none", "text": {"verbosity": "low"}},
+        ),
+    ],
+)
+def test_summary_requests_drop_output_settings_a_summary_cannot_follow(protocol, body, kept):
+    adapter = tool_protocol(protocol)
+    body = {"model": "m", "tools": [{"name": "x"}], **body}
+    original = copy.deepcopy(body)
+    request = adapter.summary_request(body, [], "Summarize", 8000)
+    assert {key: request[key] for key in kept} == kept
+    assert not {"response_format", "stop", "stop_sequences"} & request.keys()
+    # The client's own request is forwarded unchanged.
+    assert request["tools"] == body["tools"] and body == original
+
+
+@pytest.mark.parametrize(
     "protocol,response,reason",
     [
         (
@@ -414,6 +492,11 @@ def test_summary_requests_keep_client_settings_and_set_the_cap(protocol, body, c
         (
             "anthropic",
             {"content": [{"type": "text", "text": "x"}], "stop_reason": "max_tokens"},
+            "summary_incomplete",
+        ),
+        (
+            "anthropic",
+            {"content": [{"type": "text", "text": "x"}], "stop_reason": "stop_sequence"},
             "summary_incomplete",
         ),
         (
@@ -535,4 +618,33 @@ async def test_hints_name_the_sessions_that_hold_earlier_history(setup_kernel, c
     )
     hint = history_hint("alice", [fresh.capture_target, first.capture_target], tools, True)
     summary_block = second.body["messages"][0]["content"].split("</openviking-context>")[0]
+    assert summary_block.endswith("\n\n" + hint + "\n")
+
+
+async def test_a_cut_that_moves_capture_to_a_new_session_names_it_first(
+    setup_kernel, credential, policy
+):
+    kernel, store, viking, encryption = setup_kernel
+    policy.update(context_window=1024, gateway_tools=True, recall=False, commit_tokens=1000000)
+    worker = await worker_for(store, encryption, credential, viking)
+    messages = [{"role": "user", "content": "Fix the build"}]
+    first = await prepare(kernel, "chat", messages, credential, policy)
+    function = {"name": "run", "arguments": "{}"}
+    step = {
+        "role": "assistant",
+        "content": "Step 0",
+        "tool_calls": [{"id": "call-0", "type": "function", "function": function}],
+    }
+    await answered(kernel, first, credential, step)
+    # The tool runs long enough for the turn to be saved while idle, without its call.
+    await make_due(store)
+    assert await worker.once()
+    messages += [step, {"role": "tool", "tool_call_id": "call-0", "content": "ok"}]
+    cut = await prepare(kernel, "chat", messages, credential, policy, summarize=Summarizer("chat"))
+    state = (await store.capture.get(cut.scope, cut.session)).value
+    assert state["reason"] == "continued_after_idle"
+    hint = history_hint(
+        "alice", [state["ov_session"], first.capture_target], cut.root["tools"], True
+    )
+    summary_block = cut.body["messages"][0]["content"].split("</openviking-context>")[0]
     assert summary_block.endswith("\n\n" + hint + "\n")

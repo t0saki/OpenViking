@@ -7,6 +7,7 @@ execute tools, own budgets, or access storage. The shared loop owns those steps.
 """
 
 import copy
+import functools
 import re
 import uuid
 from abc import ABC, abstractmethod
@@ -64,6 +65,16 @@ def add_usage(total, usage):
             total[key] = total.get(key, 0) + value
         else:
             total[key] = value
+
+
+def without(value, path):
+    """A copy of ``value`` without the dotted ``path``; everything else is shared."""
+    key, _, rest = path.partition(".")
+    if key not in value or (rest and not isinstance(value[key], dict)):
+        return value
+    if not rest:
+        return {k: v for k, v in value.items() if k != key}
+    return {**value, key: without(value[key], rest)}
 
 
 def sse(value):
@@ -131,6 +142,8 @@ class ToolProtocol(ABC):
     field = "messages"
     id_prefix = ""
     canonicalizes_history = False
+    # Dotted body paths a summary request drops: output formats, stop sequences, stream options.
+    summary_drops: tuple[str, ...] = ()
 
     def __init__(self, body: dict):
         self.body = body
@@ -179,13 +192,17 @@ class ToolProtocol(ABC):
         """Ask for a summary of ``messages`` without streaming.
 
         System, tools and reasoning settings stay as the client sent them, so
-        the upstream can reuse its cached prefix.
+        the upstream can reuse its cached prefix. Output settings a plain-text
+        summary cannot follow are dropped, and a forced tool choice becomes none.
         """
-        return {
-            **body,
+        request = {
+            **functools.reduce(without, cls.summary_drops, body),
             cls.field: [*messages, {"role": "user", "content": instruction}],
             "stream": False,
         }
+        if cls.tool_choice(body) not in ("auto", "none"):
+            cls.disable_tools(request)
+        return request
 
     @staticmethod
     @abstractmethod

@@ -245,6 +245,48 @@ async def test_cut_requeuing_an_idle_tail_in_flight_is_trimmed_not_reset(
     assert_once(viking)
 
 
+@pytest.mark.parametrize("protocol", PROTOCOLS)
+async def test_idle_tail_that_gains_its_tool_result_in_flight_is_delivered_again(
+    setup_kernel, credential, policy, protocol
+):
+    _, store, viking, encryption = setup_kernel
+    policy.update(recall=False, commit_tokens=1000000)
+    chat = Conversation(setup_kernel, credential, policy, protocol)
+    worker = await worker_for(store, encryption, credential, viking)
+    first = await chat.reply(call(protocol, 0))
+    assert await worker.once()
+    await make_due(store)
+
+    async def finish():
+        chat.messages.append(result(protocol, 0))
+        await chat.reply([answer("Done")])
+
+    # The idle tail lacks the unanswered call; the copy queued during its write has it.
+    await while_delivering(worker, viking, finish)
+    await chat.say("Thanks")
+    assert await worker.once()
+    state = await chat.state(first)
+    assert sent(viking)[state["ov_session"]] == [*TURN, "Step 0", "call-0", "Done"]
+    assert_once(viking)
+
+
+async def test_only_a_due_tail_moves_a_changed_history_to_a_new_session(
+    setup_kernel, credential, policy
+):
+    policy.update(recall=False)
+    chat = Conversation(setup_kernel, credential, policy)
+    first = await chat.reply([answer("Answer A")])
+    # Regenerating an answer that is not due for saving keeps the session.
+    chat.messages.pop()
+    assert (await chat.prepare()).capture_target == first.capture_target
+    await chat.reply([answer("Answer B")])
+    # The worker may already be writing a due answer, so changing it starts over.
+    await make_due(setup_kernel[1])
+    chat.messages.pop()
+    assert (await chat.prepare()).capture_target != first.capture_target
+    assert (await chat.state(first))["reason"] == "history_changed"
+
+
 @pytest.mark.parametrize("cut", [False, True])
 async def test_extending_a_turn_delivered_while_idle_starts_a_new_session(
     setup_kernel, credential, policy, cut

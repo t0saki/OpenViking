@@ -79,6 +79,12 @@ def cut_point(request):
     return next((i for i in range(end - 1, -1, -1) if request.capture_chain[i]), -1)
 
 
+def cut_messages(messages, index, text):
+    """Replace messages up to ``index`` with one user message; system messages stay first."""
+    prefix = [m for m in messages[: index + 1] if m.get("role") in {"system", "developer"}]
+    return [*prefix, {"role": "user", "content": text}, *messages[index + 1 :]]
+
+
 def apply_cut(request):
     """Replace the history up to the latest cut with that cut's text."""
     index = active_cut(request)
@@ -86,14 +92,11 @@ def apply_cut(request):
         return
     anchor = request.capture_chain[index]
     field = tool_protocol(request.protocol).field
-    messages = request.body[field]
-    prefix = [m for m in messages[: index + 1] if m.get("role") in {"system", "developer"}]
-    request.body[field] = [
-        *prefix,
-        {"role": "user", "content": request.records[K.REPLACEMENT, anchor]["text"]},
-        *messages[index + 1 :],
-    ]
-    request.body_chain = [""] * (len(prefix) + 1) + request.body_chain[index + 1 :]
+    rest = request.body_chain[index + 1 :]
+    request.body[field] = cut_messages(
+        request.body[field], index, request.records[K.REPLACEMENT, anchor]["text"]
+    )
+    request.body_chain = [""] * (len(request.body[field]) - len(rest)) + rest
     request.metrics["compaction_applied"] = anchor
 
 

@@ -22,6 +22,7 @@ CLIENT_CALLS = {"function_call", "custom_tool_call"}
 class ResponsesProtocol(ToolProtocol):
     field = "input"
     id_prefix = "resp_"
+    summary_drops = ("text.format",)
 
     @staticmethod
     def wire_tools(tools):

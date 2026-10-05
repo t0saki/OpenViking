@@ -507,6 +507,7 @@ class MemoryKernel:
             returned = [*request.messages, *(response.output_items or [response.message])]
             endpoint = (await asyncio.to_thread(hidden_chain, returned, request.protocol))[-1]
         # The next request measures its context from this usage while the reply stays in it.
+        # Without counts from the upstream, it estimates the whole request instead.
         usage = {
             **(response.context_usage or response.usage or {}),
             "anchor": endpoint,
@@ -515,7 +516,7 @@ class MemoryKernel:
 
         def observe(value):
             if (
-                response.usage
+                usage.get("input_tokens")
                 and endpoint
                 and usage["time"] >= value.get("usage", {}).get("time", 0)
             ):
@@ -626,9 +627,12 @@ class MemoryKernel:
             logger.exception("Context Gateway summary failed")
             await self.compaction_failed(request, "summary_failed")
             return
+        anchor = request.capture_chain[cut]
+        if policy.capture and request.kind == "continuation":
+            # First, so the hint names the session that receives the part being cut.
+            await CapturePipeline(self.store.capture).confirm_cut(request, anchor)
         hint = cut_hint(request, credential["user_id"], policy)
         text = replacement_text(summary, hint, opening_block(request.records, request.chain))
-        anchor = request.capture_chain[cut]
         # A concurrent request may have written this cut first; its text wins.
         record = await self.store.replay.put(
             request.scope,
@@ -638,14 +642,15 @@ class MemoryKernel:
             {"source": "compaction", "text": text, "tokens": token_estimate(text)},
         )
         request.records[K.REPLACEMENT, anchor] = record
-        if policy.capture and request.kind == "continuation":
-            await CapturePipeline(self.store.capture).confirm_cut(request, anchor)
         request.metrics.update(
             compaction_tokens=record["tokens"],
             compaction_ms=round((time.monotonic() - started) * 1000, 2),
         )
         # Later readers see the compacted context; the metric keeps the estimate that triggered it.
         request.context_tokens = await self.measure(request)
+        if request.context_tokens >= policy.compaction_threshold * request.context_window:
+            # What a cut cannot remove fills the window, so summarizing again soon cannot help.
+            await self.compaction_failed(request, "still_over_threshold")
 
     async def compaction_failed(self, request, reason):
         request.metrics["compaction_failed"] = reason

@@ -102,11 +102,6 @@ describe('enum labels', () => {
       }
     }
     expect(degradationInfo(t, 'new_reason')).toEqual({ label: 'new_reason' })
-    // Long conversations no longer wait for a summary.
-    expect(DEGRADATIONS).not.toContain('archive_wait_timeout')
-    expect(degradationInfo(t, 'archive_wait_timeout')).toEqual({
-      label: 'archive_wait_timeout',
-    })
   })
 })
 

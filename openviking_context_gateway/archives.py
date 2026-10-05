@@ -12,14 +12,14 @@ MAX_PENDING_SECONDS = 900
 TERMINAL = {"completed", "failed", "abandoned"}
 
 
-async def observe_archive(viking, archive, token, session):
+async def observe_archive(viking, archive, token):
     """Follow a commit until the server marks its archive done; the next commit waits for it."""
     now = time.time()
     if archive["status"] in TERMINAL or archive.get("next_check", 0) > now:
         return archive
     try:
         status = await asyncio.wait_for(
-            viking.archive_state(token, session, archive["archive_id"], archive["archive_uri"]),
+            viking.archive_state(token, archive["archive_uri"]),
             timeout=POLL_SECONDS,
         )
     except (VikingError, asyncio.TimeoutError):

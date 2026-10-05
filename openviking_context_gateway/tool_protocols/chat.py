@@ -19,6 +19,7 @@ from .common import (
 class ChatProtocol(ToolProtocol):
     id_prefix = "chatcmpl-"
     canonicalizes_history = True
+    summary_drops = ("stream_options", "response_format", "stop")
 
     @staticmethod
     def wire_tools(tools):
@@ -48,9 +49,12 @@ class ChatProtocol(ToolProtocol):
     @classmethod
     def summary_request(cls, body, messages, instruction, max_tokens):
         request = super().summary_request(body, messages, instruction, max_tokens)
-        request.pop("stream_options", None)
-        cap = "max_completion_tokens" if "max_completion_tokens" in body else "max_tokens"
-        request[cap] = max_tokens + (SUMMARY_HEADROOM if body.get("reasoning_effort") else 0)
+        # Reasoning models count reasoning in max_completion_tokens, and OpenAI's o-series
+        # reject max_tokens; a client that set max_tokens keeps it.
+        reasoning = bool(body.get("reasoning_effort"))
+        completion = "max_completion_tokens" in body or (reasoning and "max_tokens" not in body)
+        cap = "max_completion_tokens" if completion else "max_tokens"
+        request[cap] = max_tokens + (SUMMARY_HEADROOM if reasoning else 0)
         return request
 
     @staticmethod
