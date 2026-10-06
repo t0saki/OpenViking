@@ -17,7 +17,7 @@ const profiles = {
   empty: {
     title: '还没有上下文配置',
     description:
-      '每个网关密钥都需要一份上下文配置。推荐设置会为每条新消息召回记忆、保存对话，并为长对话生成摘要，之后可以随时修改。',
+      '每个网关密钥都需要一份上下文配置。推荐设置会为每条新消息召回记忆、保存对话、为长对话生成摘要，并让模型使用只读的 OpenViking 工具，之后可以随时修改。',
   },
   summary: {
     recallOn: '开启 · 每条消息 {{tokens}} Token',
@@ -182,7 +182,7 @@ const profiles = {
     available: {
       label: '工具',
       description:
-        '默认勾选全部工具，以后新增的工具也会自动启用。不希望模型使用的工具可以取消勾选。上游也需要允许使用 OpenViking 工具。',
+        '推荐设置勾选只读工具，会修改数据的工具不勾选。以后新增的工具会自动启用。上游也需要允许使用 OpenViking 工具。',
     },
     empty: '签发网关密钥后即可加载工具清单。',
     loadFailed: '无法加载 OpenViking 工具',

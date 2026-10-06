@@ -23,7 +23,7 @@ from openviking_context_gateway.compaction import (
 from openviking_context_gateway.protocols import ResponseCapture, text_content, usage_of
 from openviking_context_gateway.state_store import get_state
 from openviking_context_gateway.tool_protocols import hidden_chain, tool_protocol
-from openviking_context_gateway.tool_protocols.common import SummaryError
+from openviking_context_gateway.tool_protocols.common import SUMMARY_HEADROOM, SummaryError
 
 FIELD = {"chat": "messages", "anthropic": "messages", "responses": "input"}
 INSTRUCTION_START = INSTRUCTION[:40]
@@ -179,7 +179,7 @@ async def test_continuation_cut_keeps_thinking_and_delivers_the_cut_part_at_once
         ),
         ({"choices": [{"message": {"content": "cut"}, "finish_reason": "length"}]}, None),
         ({"choices": [{"message": {"content": " "}, "finish_reason": "stop"}]}, "summary_empty"),
-        (SummaryError("summary_http_400"), "summary_http_400"),
+        (SummaryError("summary_http_500"), "summary_http_500"),
         (RuntimeError("bug"), "summary_failed"),
     ],
 )
@@ -207,6 +207,30 @@ async def test_failed_summary_forwards_the_history_and_backs_off(
     assert await store.state.swap(failed.scope, failed.session, old, value)
     await prepare(kernel, "chat", messages, credential, policy, summarize=summarize)
     assert len(summarize.requests) == 2
+
+
+async def test_rejected_summary_cap_retries_without_headroom(setup_kernel, credential, policy):
+    kernel, _, _, _ = setup_kernel
+    policy.update(context_window=1024, recall=False)
+    messages = [{"role": "user", "content": "How do I deploy?"}]
+    first = await prepare(kernel, "chat", messages, credential, policy)
+    reply = {"role": "assistant", "content": "Blue."}
+    await answered(kernel, first, credential, reply)
+    messages += [reply, {"role": "user", "content": "What next?"}]
+    caps = []
+
+    # Models such as gpt-4o or deepseek-chat reject an output cap above their limit.
+    async def summarize(prepared, body):
+        caps.append(body["max_tokens"])
+        if body["max_tokens"] > policy["summary_max_tokens"]:
+            raise SummaryError("summary_http_400")
+        return summary_response("chat")
+
+    request = await prepare(kernel, "chat", messages, credential, policy, summarize=summarize)
+    limit = policy["summary_max_tokens"]
+    assert caps == [limit + SUMMARY_HEADROOM, limit]
+    assert "compaction_failed" not in request.metrics
+    assert request.body["messages"] != messages
 
 
 async def test_hidden_tool_records_cross_cuts_and_earlier_summaries_fold_in(
@@ -417,8 +441,13 @@ def test_estimate_counts_inline_media_like_an_image():
 @pytest.mark.parametrize(
     "protocol,body,cap",
     [
-        ("chat", {"stream": True, "stream_options": {"include_usage": True}}, {"max_tokens": 8000}),
-        ("chat", {"max_completion_tokens": 100}, {"max_completion_tokens": 8000}),
+        # Models such as DeepSeek reason without being asked, so headroom is unconditional.
+        (
+            "chat",
+            {"stream": True, "stream_options": {"include_usage": True}},
+            {"max_tokens": 24000},
+        ),
+        ("chat", {"max_completion_tokens": 100}, {"max_completion_tokens": 24000}),
         # o-series models reject max_tokens; a client that sent it keeps it.
         ("chat", {"reasoning_effort": "high"}, {"max_completion_tokens": 24000}),
         ("chat", {"reasoning_effort": "high", "max_tokens": 100}, {"max_tokens": 24000}),
@@ -428,7 +457,8 @@ def test_estimate_counts_inline_media_like_an_image():
             {"max_tokens": 12000},
         ),
         ("anthropic", {"thinking": {"type": "adaptive"}}, {"max_tokens": 24000}),
-        ("responses", {"max_output_tokens": 50}, {"max_output_tokens": 8000}),
+        ("anthropic", {"max_tokens": 100}, {"max_tokens": 24000}),
+        ("responses", {"max_output_tokens": 50}, {"max_output_tokens": 24000}),
         ("responses", {"reasoning": {"effort": "low"}}, {"max_output_tokens": 24000}),
     ],
 )

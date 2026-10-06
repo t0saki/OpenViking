@@ -194,7 +194,15 @@ async def test_kernel_and_capture_work_with_kv_ports(credential, protocol):
     assert fork.capture_target != p.capture_target
     assert await worker.once() and await worker.once()
     assert len(set(viking.write_sessions)) == 2
-    assert set(K) == {K.ROOT, K.INJECTION, K.DISABLED, K.HIDDEN, K.REPLACEMENT, K.REPLY}
+    assert set(K) == {
+        K.ROOT,
+        K.INJECTION,
+        K.DISABLED,
+        K.HIDDEN,
+        K.REPLACEMENT,
+        K.REPLY,
+        K.REASONING,
+    }
 
 
 async def test_expired_lease_cannot_write_or_release_new_owner(setup_kernel):

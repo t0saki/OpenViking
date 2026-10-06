@@ -19,6 +19,8 @@ _RULES = json.loads(files("openviking_context_gateway").joinpath("client-rules.j
 PLUGIN_TAGS = tuple(_RULES["plugin_tags"])
 NOISE_TAGS = tuple(_RULES["noise_tags"])
 AUXILIARY_PATTERNS = tuple(_RULES["auxiliary_patterns"])
+# Vendors whose models expect their reasoning back in later turns.
+REASONING_VENDORS = {"deepseek", "ark", "byteplus"}
 
 
 def clean_text(text: str) -> str:
@@ -341,6 +343,12 @@ def assistant_texts(message: dict) -> list[dict]:
     return [b for b in content if isinstance(b, dict) and b.get("type") == "text" and b.get("text")]
 
 
+def replays_reasoning(upstream: dict) -> bool:
+    """Whether the gateway restores reasoning clients drop; DeepSeek requires it with tools."""
+    value = upstream.get("replay_reasoning")
+    return upstream.get("vendor") in REASONING_VENDORS if value is None else value
+
+
 def enhanced_supported(body, protocol):
     return protocol != "responses" or (
         body.get("store") is False
@@ -450,6 +458,9 @@ class ResponseCapture:
                     self.message = {"role": "assistant", "content": ""}
                 if isinstance(delta.get("content"), str):
                     self.message["content"] += delta["content"]
+                if isinstance(delta.get("reasoning_content"), str):
+                    reasoning = self.message.get("reasoning_content", "")
+                    self.message["reasoning_content"] = reasoning + delta["reasoning_content"]
                 for call in delta.get("tool_calls") or []:
                     calls = self.message.setdefault("tool_calls", [])
                     index = call.get("index", 0)

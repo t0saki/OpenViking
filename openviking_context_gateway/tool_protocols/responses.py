@@ -41,12 +41,36 @@ class ResponsesProtocol(ToolProtocol):
             dict.fromkeys([*body.get("include", []), "reasoning.encrypted_content"])
         )
 
+    @staticmethod
+    def split_reasoning(output):
+        # Only plain-text reasoning can be resent; summaries and encrypted content cannot.
+        visible, reasoning, pending = [], {}, []
+        for item in output:
+            if item.get("type") == "reasoning":
+                content = item.get("content")
+                if isinstance(content, list) and any(
+                    isinstance(part, dict) and isinstance(part.get("text"), str) and part["text"]
+                    for part in content
+                ):
+                    pending.append(item)
+                continue
+            if pending:
+                reasoning[len(visible)] = {"items": pending}
+                pending = []
+            visible.append(item)
+        return visible, reasoning
+
+    @staticmethod
+    def restore_reasoning(previous, message, value):
+        if previous and previous[-1].get("type") == "reasoning":
+            return [message]
+        return [*value["items"], message]
+
     @classmethod
-    def summary_request(cls, body, messages, instruction, max_tokens):
+    def summary_request(cls, body, messages, instruction, max_tokens, headroom=SUMMARY_HEADROOM):
         request = super().summary_request(body, messages, instruction, max_tokens)
-        request["max_output_tokens"] = max_tokens + (
-            SUMMARY_HEADROOM if body.get("reasoning") else 0
-        )
+        # Some models reason without a reasoning field, so the headroom does not depend on it.
+        request["max_output_tokens"] = max_tokens + headroom
         return request
 
     @staticmethod

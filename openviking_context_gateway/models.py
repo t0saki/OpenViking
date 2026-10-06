@@ -7,6 +7,18 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 ProtocolName = Literal["anthropic", "chat", "responses"]
 
+# OpenViking MCP tools that change data; new profiles offer only the read-only ones.
+WRITE_TOOLS = (
+    "remember",
+    "write",
+    "edit",
+    "add_resource",
+    "add_skill",
+    "forget",
+    "set_acl",
+    "cancel_watch",
+)
+
 
 class CaptureReset(BaseModel):
     session: str = Field(min_length=1, max_length=128)
@@ -23,7 +35,7 @@ class Policy(BaseModel):
     context_types: list[str] = Field(default_factory=lambda: ["memory", "resource", "skill"])
     quotas: dict[str, int] = Field(default_factory=dict)
     max_tokens: int = Field(default=1600, ge=64, le=32000)
-    session_max_tokens: int = Field(default=6000, ge=0)
+    session_max_tokens: int = Field(default=30000, ge=0)
     score_threshold: float = Field(default=0.35, ge=0, le=1)
     recall_timeout: float = Field(default=2, gt=0, le=30)
     query_max_chars: int = Field(default=8000, ge=3, le=32000)
@@ -35,8 +47,9 @@ class Policy(BaseModel):
     summary_max_tokens: int = Field(default=8000, ge=1000, le=32000)
     # Fallback when the upstream lists no window for the model; 1M is assumed when unset.
     context_window: int | None = Field(default=None, ge=1024)
-    gateway_tools: bool = False
-    disabled_tools: list[str] = Field(default_factory=list)
+    gateway_tools: bool = True
+    # MCP tool names; tools the server adds later stay enabled.
+    disabled_tools: list[str] = Field(default_factory=lambda: list(WRITE_TOOLS))
     tool_max_rounds: int = Field(default=5, ge=1, le=20)
     tool_timeout_seconds: float = Field(default=30, gt=0, le=120)
     tool_result_bytes: int = Field(default=65536, ge=1024, le=1048576)
@@ -87,6 +100,9 @@ class Upstream(BaseModel):
     enabled: bool = True
     vendor: Literal["generic", "anthropic", "openai", "deepseek", "ark", "byteplus"] = "generic"
     allow_gateway_tools: bool = True
+    # Send back the reasoning a client dropped from replies the gateway relayed.
+    # None follows the vendor: on for DeepSeek, Ark and BytePlus, off otherwise.
+    replay_reasoning: bool | None = None
     coding_plan: bool = False
     allow_coding_plan: bool = False
     cache_min_tokens: int = Field(default=1024, ge=0)

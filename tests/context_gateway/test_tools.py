@@ -21,20 +21,37 @@ from openviking_context_gateway.vendors import ark_url
 
 
 @pytest.mark.parametrize(
-    "vendor,extra,offered",
+    "vendor,replay,extra,offered",
     [
-        ("generic", {}, True),
-        ("deepseek", {}, False),
-        ("deepseek", {"thinking": {"type": "enabled"}}, False),
-        ("deepseek", {"thinking": {"type": "disabled"}}, True),
-        ("ark", {"tools": [{"type": "custom", "name": "x"}]}, False),
+        ("generic", None, {}, True),
+        # DeepSeek needs every reply's reasoning once tools are present; the gateway restores it.
+        ("deepseek", None, {}, True),
+        ("deepseek", None, {"thinking": {"type": "enabled"}}, True),
+        ("deepseek", False, {}, False),
+        ("deepseek", False, {"thinking": {"type": "enabled"}}, False),
+        ("deepseek", False, {"thinking": {"type": "disabled"}}, True),
+        ("ark", None, {"tools": [{"type": "custom", "name": "x"}]}, False),
     ],
 )
-def test_vendor_tool_capabilities(vendor, extra, offered):
+def test_vendor_tool_capabilities(vendor, replay, extra, offered):
     upstream = Upstream(
-        name="x", base_url="http://model", protocol="chat", vendor=vendor
+        name="x", base_url="http://model", protocol="chat", vendor=vendor, replay_reasoning=replay
     ).model_dump()
-    assert (tool_block_reason(extra, "chat", upstream) == "") == offered
+    reason = tool_block_reason(extra, "chat", upstream)
+    assert (reason == "") == offered
+    if vendor == "deepseek" and not offered:
+        assert reason == "deepseek_reasoning_history_required"
+
+
+def test_default_policy_offers_read_only_and_future_tools():
+    policy = Policy().model_dump()
+    assert policy["gateway_tools"]
+    catalog = [*MCP_TOOLS, mcp_tool("future", {})]
+    names = {
+        tool["function"]["name"].removeprefix("openviking_")
+        for tool in select_tools(catalog, policy)
+    }
+    assert names == {"find", "search", "read", "list", "grep", "glob", "health", "future"}
 
 
 def test_tools_default_to_all_and_only_raw_disabled_names_are_excluded():

@@ -11,14 +11,14 @@ description: 把任何使用 API Key 的模型客户端指向上下文网关，�
 | 能力 | 网关做什么 |
 | --- | --- |
 | 自动召回 | 用户每发一条新消息，网关先检索 OpenViking，把相关记忆附加到这条消息上再交给模型。之后的请求里，网关把这些内容原样放回原位，服务商的提示缓存不会因此失效。 |
-| 主动使用记忆 | 模型调用 OpenViking 工具来检索、读取、写入和导入，网关执行调用后把结果接回给模型，客户端只收到一条连贯的回复。这项功能默认关闭。 |
+| 主动使用记忆 | 模型调用 OpenViking 工具来检索、读取、写入和导入，网关执行调用后把结果接回给模型，客户端只收到一条连贯的回复。新建的上下文配置默认开启，只提供只读工具。 |
 | 沉淀与压缩 | 网关把对话保存回 OpenViking，由 OpenViking 从中提取新的记忆。对话接近模型的上下文窗口时，网关让同一个模型写一份摘要，替换较早的内容。 |
 
 **适合谁**：装不了插件或 MCP 的客户端，例如聊天应用、SDK 脚本和低代码平台；以及想集中管理模型服务商、密钥和记忆设置的团队。**不适用**：直接用订阅账号登录的客户端（可以改用[订阅反代上游](#自定义上游)），以及 Cursor、Trae 这类从厂商服务器发起模型调用的客户端。
 
 网关支持三种常用的模型 API：Anthropic Messages、OpenAI Chat Completions 和 OpenAI Responses（要求每个请求都带完整历史）。它把每个请求转发给你配置的模型服务商，这里称为**上游**；请求用哪种 API 发来，就用同一种 API 转发，网关不做转换。
 
-> **注意**：上下文网关是一个单独运行的进程 `openviking-context-gateway`，不在 OpenViking Server 进程里。它和 VikingBot 的网关（`vikingbot gateway`）没有关系。
+> **注意**：上下文网关是一个单独运行的进程 `openviking-context-gateway`，不在 OpenViking Server 进程里。名字相近的 `vikingbot gateway` 是 VikingBot 的长期运行入口，负责远程访问和接入聊天平台；两者是 OpenViking 里用途不同的组件。
 
 上下文网关目前处于 Beta 阶段。本页介绍网关的工作方式和客户端接入方法。为团队部署网关和日常运维，见[上下文网关部署与运维](22-context-gateway-operations.md)。
 
@@ -121,7 +121,7 @@ Relevant memory from OpenViking. Use the openviking_read tool to expand URIs.
 
 | 客户端 | 不经过网关时 | 经过网关并开启 OpenViking 工具后 |
 | --- | --- | --- |
-| 聊天应用，例如 Cherry Studio、Open WebUI | 要用记忆得自己配 MCP 或写工具，普通对话只收发文本。 | 模型自己检索记忆、按 URI 读取原文、记下用户要求记住的事。用户附带的文件可以导入 OpenViking：客户端发送原文件就导入原文件，Open WebUI 通常只发送提取出的文本。即使是不带任何工具的纯聊天模式，模型也能调用 OpenViking 工具。 |
+| 聊天应用，例如 Cherry Studio、Open WebUI | 要用记忆得自己配 MCP 或写工具，普通对话只收发文本。 | 模型自己检索记忆、按 URI 读取原文；勾选 `remember` 后还能记下用户要求记住的事。勾选 `add_resource` 后，用户附带的文件可以导入 OpenViking：客户端发送原文件就导入原文件，Open WebUI 通常只发送提取出的文本。即使是不带任何工具的纯聊天模式，模型也能调用 OpenViking 工具。 |
 | SDK 脚本、低代码平台 | 一问一答，要多步操作就得自己写循环。 | 一次请求里完成“检索 → 读取 → grep 精确匹配 → 作答”，代码不用改。 |
 | Claude Code、Codex 等编程 Agent（未装 OpenViking 插件或 MCP） | 有自己的工具，但没有 OpenViking。 | OpenViking 工具和 Bash 等客户端工具在同一条回复里混用，不用装插件或配 MCP。需要逐次确认工具调用时，仍建议使用插件或 MCP。 |
 
@@ -139,9 +139,9 @@ Relevant memory from OpenViking. Use the openviking_read tool to expand URIs.
 
 ### 怎么开启、有什么上限
 
-- **默认关闭。** 管理员在上下文配置里打开 **OpenViking 工具**，“使用推荐设置创建”也不会打开它。打开后默认勾选全部工具，可以逐个取消。全部工具定义约占 3,500 个输入 token，会随对话中的每个请求发送，所以取消用不到的工具也能节省 token。改动只影响新对话。
+- **默认只提供只读工具。** 新建的上下文配置默认打开 **OpenViking 工具**，“使用推荐设置创建”也一样。默认勾选的是只读工具：`find`、`search`、`grep`、`glob`、`list`、`tree`、`read`、`list_watches`、`get_acl`、`list_users`、`list_groups` 和 `health`。会修改数据的工具默认不勾选：`remember`、`write`、`edit`、`add_resource`、`add_skill`、`forget`、`set_acl` 和 `cancel_watch`。想让模型保存记忆，就勾选 `remember`；想让它导入网页或附件，就勾选 `add_resource`。OpenViking 以后新增的工具会自动勾选。已有的上下文配置保留原来的设置。全部工具定义约占 3,500 个输入 token，会随对话中的每个请求发送，所以取消用不到的工具也能节省 token。改动只影响新对话。
 - **上限。** 默认每个请求最多 5 轮工具调用、新增 100,000 token。用完后网关拒绝之后的 OpenViking 调用，模型用已有结果继续回答；模型被拒后仍坚持调用，这个请求就会报错。单次调用超过 30 秒，这次调用向模型返回错误；整个请求超过 120 秒，请求失败。
-- **客户端要求。** 客户端要每轮回传完整历史；使用 OpenAI Responses 时要设置 `store: false`。客户端强制指定某个工具或要求结构化输出、上游关闭了**允许 OpenViking 工具**，或者上游是 DeepSeek 而请求没有关闭思考模式时，网关不提供 OpenViking 工具（所以经 Responses 使用 DeepSeek 时没有工具）。对话是否带工具，在它的第一个请求时就决定了。
+- **客户端要求。** 客户端要每轮回传完整历史；使用 OpenAI Responses 时要设置 `store: false`。客户端强制指定某个工具或要求结构化输出、上游关闭了**允许 OpenViking 工具**，或者上游是 DeepSeek、关闭了**补全推理内容回传**而请求又没有关闭思考模式时，网关不提供 OpenViking 工具。DeepSeek 要求带工具的请求回传之前每条回复的推理内容，而很多客户端不会发回来；DeepSeek 上游默认开启**补全推理内容回传**，由网关补回这部分内容，所以保持思考模式也能使用工具，见[上游](22-context-gateway-operations.md#上游)。对话是否带工具，在它的第一个请求时就决定了。
 
 完整的条件、上限设置、文件导入方式和失败处理，见[OpenViking 工具](22-context-gateway-operations.md#openviking-工具)。
 
@@ -295,7 +295,7 @@ curl -s http://127.0.0.1:1935/health
 打开 <http://127.0.0.1:1933/studio>，进入**连接设置**，把 alice 的密钥同时填入**用户 API 密钥**和**管理员 API 密钥**。然后在侧边栏的“设置”分组里选择**上下文网关**。第一个请求到达之前，“概览”标签页会显示**快速开始**清单，步骤与下面相同：
 
 1. **添加上游。** 在“上游”标签页选择**添加上游**。填写名称，选择服务商，再选择客户端使用的协议（本流程用 Chat Completions）。Studio 会填入服务商的 Base URL，例如 OpenAI 为 `https://api.openai.com/v1`；选*通用*时需要自己填写。保持选中**由网关保管 API Key**，再粘贴服务商的 API Key。保存后在上游列表里点**测试**，确认网关能连上服务商。
-2. **创建上下文配置。** 在“上下文配置”标签页选择**使用推荐设置创建**，会创建一份名为“默认”的配置。
+2. **创建上下文配置。** 在“上下文配置”标签页选择**使用推荐设置创建**，会创建一份名为“默认”的配置，其中 OpenViking 工具只勾选了只读工具。
 3. **签发网关密钥。** 在“密钥”标签页选择**签发密钥**。填写名称，在 **OpenViking 用户**中选择 alice（账号里只有她一个用户时已经自动选好），再选择“默认”配置和刚添加的上游，然后签发。**复制网关密钥**对话框只显示一次完整的 `ovcg_…` 密钥，关闭之前先复制好。
 4. **接入客户端。** “接入”标签页列出了每种客户端的配置，并已填好你的网关地址。下文[接入客户端](#接入客户端)也列出了同样的配置。
 

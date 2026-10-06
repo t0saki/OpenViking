@@ -137,7 +137,7 @@ const upstreams = {
         'Limits the protocols below to the ones this provider offers. For a provider not listed here, or a compatible proxy such as LiteLLM, choose Generic.',
       hints: {
         deepseek:
-          "OpenViking tools are only offered when a request turns thinking off. Standard Responses requests have no thinking field, so they don't get the tools. Recalling memory works as usual.",
+          'With tools present, DeepSeek needs the reasoning of every earlier reply. The gateway restores what clients drop, so OpenViking tools work; if you turn that off below, they are only offered when a request turns thinking off.',
         ark: "Enter the Ark address without a path, such as https://ark.cn-beijing.volces.com. The gateway adds /api/v3 or /api/compatible/v1 for each protocol and keeps each conversation's prompt_cache_key stable so the cache keeps hitting.",
         byteplus:
           "Enter the ModelArk address without a path, such as https://ark.ap-southeast.bytepluses.com. The gateway adds /api/v3 or /api/compatible/v1 for each protocol and keeps each conversation's prompt_cache_key stable so the cache keeps hitting.",
@@ -224,6 +224,11 @@ const upstreams = {
       label: 'Allow OpenViking tools',
       description:
         'Context profiles with OpenViking tools can offer them through this upstream. Turning this off also stops them in ongoing conversations.',
+    },
+    replayReasoning: {
+      label: 'Restore reasoning the client drops',
+      description:
+        "Sends each reply's reasoning back with later requests when the client leaves it out. DeepSeek rejects tool requests without it, so this is on by default for DeepSeek, Ark and BytePlus.",
     },
     cacheMinTokens: {
       label: 'Minimum cacheable prompt',

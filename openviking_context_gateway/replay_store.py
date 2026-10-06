@@ -11,7 +11,7 @@ from .records import RecordKind as K
 # Records that rewrite a history prefix. A request inherits them from the sessions
 # whose replies its history contains: model output does not collide by chance,
 # while client-authored text such as an opening prompt does.
-INHERITED = {K.INJECTION, K.HIDDEN, K.REPLACEMENT}
+INHERITED = {K.INJECTION, K.HIDDEN, K.REPLACEMENT, K.REASONING}
 
 
 class ReplayStore(Protocol):

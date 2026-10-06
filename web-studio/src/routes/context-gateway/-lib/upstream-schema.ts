@@ -16,6 +16,7 @@ export const UPSTREAM_DEFAULTS: UpstreamInput = {
   enabled: true,
   vendor: 'generic',
   allow_gateway_tools: true,
+  replay_reasoning: null,
   coding_plan: false,
   allow_coding_plan: false,
   cache_min_tokens: 1024,
@@ -50,6 +51,32 @@ export const VENDOR_PROTOCOLS: Record<Vendor, Protocol[]> = {
   deepseek: PROTOCOLS,
   ark: PROTOCOLS,
   byteplus: PROTOCOLS,
+}
+
+/**
+ * Providers whose models expect their reasoning back in later turns; the
+ * gateway restores reasoning for them unless the upstream turns it off.
+ */
+export const REASONING_VENDORS: Vendor[] = ['deepseek', 'ark', 'byteplus']
+
+/** Whether the gateway restores dropped reasoning for this upstream. */
+export function replaysReasoning(
+  upstream: Pick<UpstreamInput, 'vendor' | 'replay_reasoning'>,
+): boolean {
+  return (
+    upstream.replay_reasoning ?? REASONING_VENDORS.includes(upstream.vendor)
+  )
+}
+
+/**
+ * The stored setting for a switch at `checked`: null while it matches the
+ * vendor default, so the upstream keeps following its vendor.
+ */
+export function replayReasoningSetting(
+  vendor: Vendor,
+  checked: boolean,
+): boolean | null {
+  return checked === REASONING_VENDORS.includes(vendor) ? null : checked
 }
 
 /** Each provider's own API address; Generic has none. */

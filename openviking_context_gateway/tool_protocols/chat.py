@@ -46,15 +46,30 @@ class ChatProtocol(ToolProtocol):
             canonical.append(message)
         return prefix_chain(canonical)
 
+    @staticmethod
+    def split_reasoning(output):
+        return output, {
+            index: {"reasoning_content": message["reasoning_content"]}
+            for index, message in enumerate(output)
+            if isinstance(message.get("reasoning_content"), str) and message["reasoning_content"]
+        }
+
+    @staticmethod
+    def restore_reasoning(previous, message, value):
+        if message.get("role") != "assistant" or message.get("reasoning_content"):
+            return [message]
+        return [{**message, **value}]
+
     @classmethod
-    def summary_request(cls, body, messages, instruction, max_tokens):
+    def summary_request(cls, body, messages, instruction, max_tokens, headroom=SUMMARY_HEADROOM):
         request = super().summary_request(body, messages, instruction, max_tokens)
         # Reasoning models count reasoning in max_completion_tokens, and OpenAI's o-series
-        # reject max_tokens; a client that set max_tokens keeps it.
+        # reject max_tokens; a client that set max_tokens keeps it. Some models reason
+        # without reasoning_effort, so the headroom does not depend on it.
         reasoning = bool(body.get("reasoning_effort"))
         completion = "max_completion_tokens" in body or (reasoning and "max_tokens" not in body)
         cap = "max_completion_tokens" if completion else "max_tokens"
-        request[cap] = max_tokens + (SUMMARY_HEADROOM if reasoning else 0)
+        request[cap] = max_tokens + headroom
         return request
 
     @staticmethod

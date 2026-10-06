@@ -13,3 +13,5 @@ class RecordKind(str, Enum):
     REPLACEMENT = "replacement"
     # The session whose model produced the reply ending at the anchor.
     REPLY = "reply"
+    # Reasoning the upstream returned for the reply item at the anchor, for clients that drop it.
+    REASONING = "reasoning"

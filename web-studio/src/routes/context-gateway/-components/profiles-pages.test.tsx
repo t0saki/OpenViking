@@ -28,7 +28,7 @@ import type {
   Profile,
   ProfileSettings,
 } from '../-lib/api'
-import { PROFILE_DEFAULTS } from '../-lib/profile-schema'
+import { PROFILE_DEFAULTS, WRITE_TOOLS } from '../-lib/profile-schema'
 import { parseProfileEditorSearch } from '../-lib/search'
 import { ProfilesPage } from './profiles-page'
 import { ProfileEditor } from './profiles-editor'
@@ -120,6 +120,8 @@ const chat: Profile = {
   revision: 1,
   name: 'Chat',
   recall: false,
+  // Saved with OpenViking tools off; the recommended write exclusions remain.
+  gateway_tools: false,
 }
 
 const key = (id: string, policyId: string): GatewayKey => ({
@@ -490,7 +492,7 @@ describe('profile editor', () => {
     expect(saveButton().disabled).toBe(true)
   })
 
-  it('selects every MCP tool by default and saves only unchecked raw names', async () => {
+  it('leaves write tools unchecked by default and saves only unchecked raw names', async () => {
     renderAt('/context-gateway/profiles/p2')
     await screen.findByDisplayValue('Chat')
     expect(sectionSwitch('tools').getAttribute('aria-checked')).toBe('false')
@@ -505,7 +507,7 @@ describe('profile editor', () => {
         screen
           .getByRole('checkbox', { name: toolName(tool.name) })
           .getAttribute('aria-checked'),
-      ).toBe('true')
+      ).toBe(String(!WRITE_TOOLS.includes(tool.name)))
       expect(screen.getByText(tool.description)).toBeTruthy()
     }
     expect(
@@ -513,14 +515,19 @@ describe('profile editor', () => {
     ).toBeNull()
     expect(screen.getByText('profiles.tools.executionNotice')).toBeTruthy()
     fireEvent.click(screen.getByRole('checkbox', { name: toolName('write') }))
+    fireEvent.click(screen.getByRole('checkbox', { name: toolName('find') }))
     fireEvent.click(screen.getByRole('checkbox', { name: toolName('read') }))
     fireEvent.click(screen.getByRole('checkbox', { name: toolName('read') }))
     fireEvent.click(saveButton())
 
     await waitFor(() => expect(api.saveProfile).toHaveBeenCalledTimes(1))
+    // Listed tools in catalog order, then exclusions the catalog lacks.
     expect(api.saveProfile.mock.calls[0][2]).toMatchObject({
       gateway_tools: true,
-      disabled_tools: ['write'],
+      disabled_tools: [
+        'find',
+        ...WRITE_TOOLS.filter((name) => name !== 'write'),
+      ],
     })
     expect(api.saveProfile.mock.calls[0][2]).not.toHaveProperty(
       'allow_write_tools',
@@ -575,16 +582,17 @@ describe('profile editor', () => {
     await screen.findByDisplayValue('Chat')
     fireEvent.click(sectionSwitch('tools'))
     await screen.findByRole('checkbox', { name: toolName('find') })
-    for (const tool of tools)
-      fireEvent.click(
-        screen.getByRole('checkbox', { name: toolName(tool.name) }),
-      )
+    for (const tool of tools) {
+      const box = screen.getByRole('checkbox', { name: toolName(tool.name) })
+      if (box.getAttribute('aria-checked') === 'true') fireEvent.click(box)
+    }
     expect(saveButton().disabled).toBe(false)
     fireEvent.click(saveButton())
     await waitFor(() => expect(api.saveProfile).toHaveBeenCalledTimes(1))
-    expect(api.saveProfile.mock.calls[0][2].disabled_tools).toEqual(
-      tools.map((tool) => tool.name),
-    )
+    expect(api.saveProfile.mock.calls[0][2].disabled_tools).toEqual([
+      ...tools.map((tool) => tool.name),
+      ...WRITE_TOOLS.filter((name) => name !== 'write'),
+    ])
   })
 
   it('explains the empty catalog and still lets a profile be saved', async () => {
@@ -596,7 +604,7 @@ describe('profile editor', () => {
     expect(saveButton().disabled).toBe(false)
     fireEvent.click(saveButton())
     await waitFor(() => expect(api.saveProfile).toHaveBeenCalledTimes(1))
-    expect(api.saveProfile.mock.calls[0][2].disabled_tools).toEqual([])
+    expect(api.saveProfile.mock.calls[0][2].disabled_tools).toEqual(WRITE_TOOLS)
   })
 
   it('shows a retry action when the tools request fails', async () => {

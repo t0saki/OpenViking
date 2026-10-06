@@ -150,7 +150,9 @@ async def setup_kernel(tmp_path):
 
 @pytest.fixture
 def policy():
-    return {**Policy().model_dump(), "id": "policy", "revision": 1}
+    # Tests opt in to OpenViking tools explicitly, and then get every tool.
+    policy = Policy(gateway_tools=False, disabled_tools=[]).model_dump()
+    return {**policy, "id": "policy", "revision": 1}
 
 
 async def replay_records(store, request, kind):
@@ -340,7 +342,11 @@ async def running_gateway(tmp_path, monkeypatch):
                 )
                 assert response.status_code == 200, response.text
             assert (
-                await client.put("/admin/policies/default", headers=admin, json={"name": "Default"})
+                await client.put(
+                    "/admin/policies/default",
+                    headers=admin,
+                    json={"name": "Default", "gateway_tools": False},
+                )
             ).status_code == 200
             minted = await client.post(
                 "/admin/keys",

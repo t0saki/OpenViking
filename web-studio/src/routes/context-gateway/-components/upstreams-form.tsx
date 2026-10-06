@@ -41,6 +41,8 @@ import {
   defaultBaseUrl,
   endpointPreview,
   protocolFor,
+  replayReasoningSetting,
+  replaysReasoning,
   supportsProtocol,
   usesDefaultBaseUrl,
 } from '../-lib/upstream-schema'
@@ -542,6 +544,18 @@ export function UpstreamForm({
           checked={draft.allow_gateway_tools}
           onCheckedChange={(allowed) =>
             onChange('allow_gateway_tools', allowed)
+          }
+        />
+        <ToggleRow
+          id="upstream-replay-reasoning"
+          label={t('upstreams.form.replayReasoning.label')}
+          description={t('upstreams.form.replayReasoning.description')}
+          checked={replaysReasoning(draft)}
+          onCheckedChange={(checked) =>
+            onChange(
+              'replay_reasoning',
+              replayReasoningSetting(draft.vendor, checked),
+            )
           }
         />
         {ARK_VENDORS.includes(draft.vendor) ? (

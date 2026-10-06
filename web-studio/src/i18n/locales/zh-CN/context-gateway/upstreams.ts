@@ -132,7 +132,7 @@ const upstreams = {
         '选定服务商后，下方只能选它提供的协议。列表里没有的服务商，以及 LiteLLM 这类兼容代理，请选“通用”。',
       hints: {
         deepseek:
-          '只有请求关闭了思考模式，网关才会提供 OpenViking 工具。标准的 Responses 请求没有 thinking 字段，所以不会得到这些工具。召回记忆不受影响。',
+          '请求带工具时，DeepSeek 要求回传之前每条回复的推理内容。网关会补回客户端丢掉的部分，所以 OpenViking 工具可以正常使用；如果在下方关闭补全，只有请求关闭了思考模式才会提供这些工具。',
         ark: '填写不带路径的方舟地址，例如 https://ark.cn-beijing.volces.com。网关会按协议补上 /api/v3 或 /api/compatible/v1，并让每段对话的 prompt_cache_key 保持不变，缓存才能持续命中。',
         byteplus:
           '填写不带路径的 BytePlus 方舟地址，例如 https://ark.ap-southeast.bytepluses.com。网关会按协议补上 /api/v3 或 /api/compatible/v1，并让每段对话的 prompt_cache_key 保持不变，缓存才能持续命中。',
@@ -214,6 +214,11 @@ const upstreams = {
       label: '允许 OpenViking 工具',
       description:
         '允许模型通过这个上游使用上下文配置中选定的 OpenViking 工具。关闭后，进行中的对话也会停用这些工具。',
+    },
+    replayReasoning: {
+      label: '补全推理内容回传',
+      description:
+        '客户端回传历史时丢掉了模型的推理内容，网关会在后续请求中补回。DeepSeek 在带工具的请求里缺少推理内容会报错，所以 DeepSeek、火山方舟和 BytePlus 方舟默认开启。',
     },
     cacheMinTokens: {
       label: '最小可缓存长度',

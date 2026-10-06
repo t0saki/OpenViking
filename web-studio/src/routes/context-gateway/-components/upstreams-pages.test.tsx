@@ -532,6 +532,41 @@ describe('UpstreamEditor', () => {
     expect(baseUrlInput().value).toBe('https://api.openai.com/v1')
   })
 
+  it('preselects reasoning restore by provider and saves only a deviation', async () => {
+    renderAt('/context-gateway/upstreams/new')
+    await screen.findByText('upstreams.editor.newTitle')
+    const toggle = () =>
+      screen.getByRole('switch', {
+        name: 'upstreams.form.replayReasoning.label',
+      })
+    expect(toggle().getAttribute('aria-checked')).toBe('false')
+
+    await chooseVendor('deepseek')
+    await waitFor(() =>
+      expect(toggle().getAttribute('aria-checked')).toBe('true'),
+    )
+    fireEvent.click(toggle())
+    expect(toggle().getAttribute('aria-checked')).toBe('false')
+
+    fireEvent.change(screen.getByLabelText('upstreams.form.name.label'), {
+      target: { value: 'DeepSeek' },
+    })
+    fireEvent.change(
+      screen.getByLabelText('upstreams.form.apiKey.label', { exact: false }),
+      { target: { value: 'sk-test' } },
+    )
+    const create = screen.getByRole('button', {
+      name: 'upstreams.editor.create',
+    })
+    await waitFor(() => expect(create.hasAttribute('disabled')).toBe(false))
+    fireEvent.click(create)
+    await waitFor(() => expect(api.saveUpstream).toHaveBeenCalledTimes(1))
+    expect(lastSavedBody()).toMatchObject({
+      vendor: 'deepseek',
+      replay_reasoning: false,
+    })
+  })
+
   it("fills in the provider's default base URL for each protocol", async () => {
     renderAt('/context-gateway/upstreams/new')
     await screen.findByText('upstreams.editor.newTitle')

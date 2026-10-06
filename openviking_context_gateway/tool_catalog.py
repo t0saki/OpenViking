@@ -6,7 +6,7 @@ import copy
 
 import orjson
 
-from .protocols import enhanced_supported
+from .protocols import enhanced_supported, replays_reasoning
 from .tool_protocols import tool_protocol
 from .tool_protocols.common import PREFIX
 from .windows import native_definitions
@@ -41,7 +41,12 @@ TOOL_OVERRIDES = {
 }
 
 
-def tool_block_reason(body, protocol, upstream):
+def tool_block_reason(body, protocol, upstream, restores_reasoning=True):
+    """Why the request gets no gateway tools, or ``""``.
+
+    ``restores_reasoning`` is false when this request's replies go upstream without
+    the reasoning the gateway would otherwise restore.
+    """
     if not enhanced_supported(body, protocol):
         return "tools_require_full_history"
     if not upstream.get("allow_gateway_tools", True):
@@ -59,7 +64,10 @@ def tool_block_reason(body, protocol, upstream):
     reason = tool_protocol(protocol).block_reason(body)
     if reason:
         return reason
-    if upstream.get("vendor") == "deepseek":
+    # With tools, DeepSeek rejects history whose replies lack their reasoning.
+    if upstream.get("vendor") == "deepseek" and not (
+        restores_reasoning and replays_reasoning(upstream)
+    ):
         thinking = body.get("thinking") or {}
         if thinking.get("type") != "disabled":
             return "deepseek_reasoning_history_required"

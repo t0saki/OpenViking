@@ -64,7 +64,7 @@ const enums = {
     tools_non_function: 'The client sent tools that are not functions',
     tools_forced_choice: 'The client required a specific tool',
     deepseek_reasoning_history_required:
-      'DeepSeek thinking is on; tools need it turned off',
+      'DeepSeek thinking is on and earlier reasoning cannot be sent back',
     tool_name_collision: 'The client defines a tool with the same name',
     tools_unavailable:
       "OpenViking's tool list couldn't be loaded when this conversation started",

@@ -61,6 +61,11 @@ type UpstreamSettings = {
   enabled: boolean
   vendor: Vendor
   allow_gateway_tools: boolean
+  /**
+   * Send back the reasoning clients drop from relayed replies; null follows
+   * the vendor (see `replaysReasoning`).
+   */
+  replay_reasoning: boolean | null
   coding_plan: boolean
   allow_coding_plan: boolean
   cache_min_tokens: number

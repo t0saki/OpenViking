@@ -23,7 +23,9 @@ StreamEvent = dict | None
 # One rendered notice line, with the blank lines that separate it. Capture
 # strips exactly these lines, so this pattern must follow notice_head/tail.
 NOTICE = re.compile(r"^> OpenViking \w+(?:: [^\n]+)? — (?:done|failed|skipped)$\n*", re.M)
-# Reasoning counts against these output caps, so a summary needs room beyond its own text.
+# Reasoning counts against these output caps, and some models reason without being
+# asked, so a summary request first asks for this room beyond its own text. Models
+# with a smaller output limit reject that cap, and the kernel retries without it.
 SUMMARY_HEADROOM = 16000
 
 
@@ -181,13 +183,38 @@ class ToolProtocol(ABC):
         return messages
 
     @staticmethod
+    def split_reasoning(output: list[dict]) -> tuple[list[dict], dict[int, dict]]:
+        """A reply as a client that drops reasoning resends it, and the reasoning to restore.
+
+        The reasoning is keyed by the index, in that form, of the item that carries
+        it or that it precedes.
+        """
+        return output, {}
+
+    @staticmethod
+    def restore_reasoning(previous: list[dict], message: dict, value: dict) -> list[dict]:
+        """``message`` with recorded reasoning back, after the items ``previous`` holds.
+
+        A message that still carries reasoning comes back unchanged.
+        """
+        return [message]
+
+    # Whether omit_hidden_history removes reasoning, so none is restored before it.
+    omits_reasoning = False
+
+    @staticmethod
     def omit_hidden_history(messages: list[dict]) -> list[dict]:
         """Drop what cannot be used without the omitted tool history."""
         return strip_notices(messages)
 
     @classmethod
     def summary_request(
-        cls, body: dict, messages: list[dict], instruction: str, max_tokens: int
+        cls,
+        body: dict,
+        messages: list[dict],
+        instruction: str,
+        max_tokens: int,
+        headroom: int = SUMMARY_HEADROOM,
     ) -> dict:
         """Ask for a summary of ``messages`` without streaming.
 

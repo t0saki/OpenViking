@@ -37,6 +37,7 @@ from .protocols import (
     messages_of,
     plugin_present,
     prefix_chain,
+    replays_reasoning,
     session_id,
     strip_thinking,
     text_content,
@@ -90,6 +91,8 @@ class Prepared:
     # Sessions and thinking digests this request read; it keeps them from expiring.
     ancestors: list[str] = field(default_factory=list)
     thinking: list[str] = field(default_factory=list)
+    # Anchors of replies whose thinking the client resent as text.
+    thinking_as_text: set[str] = field(default_factory=set)
     # The reply's anchor; ``relayed`` records it once it succeeds.
     relayed: bool = False
     reply_anchor: str = ""
@@ -196,6 +199,11 @@ class MemoryKernel:
         sid, anonymous, chain, body_chain, ancestors = await self.identity(
             scope, messages, protocol, headers
         )
+        as_text = (
+            {a for a, m, s in zip(body_chain, messages, sent, strict=True) if m != s}
+            if thinking
+            else set()
+        )
         records, observations, capture = await self.store.load(
             scope, sid, list(dict.fromkeys(["", *chain, *body_chain])), ancestors
         )
@@ -237,6 +245,7 @@ class MemoryKernel:
             upstream=upstream,
             ancestors=ancestors,
             thinking=thinking,
+            thinking_as_text=as_text,
             metrics={
                 "kind": kind,
                 "replay_hits": 0,
@@ -248,8 +257,9 @@ class MemoryKernel:
             },
         )
         CapturePipeline.metrics(prepared, policy)
-        self.configure_tools(prepared, policy, owner)
+        # Replay first: it decides whether replies keep their reasoning, which tools depend on.
         self.replay(prepared)
+        self.configure_tools(prepared, policy, owner)
         if not disabled and policy.capture and kind == "user" and anchor >= 0:
             await CapturePipeline(self.store.capture).confirm(prepared, credential, policy)
         if kind in {"user", "continuation"}:
@@ -320,7 +330,13 @@ class MemoryKernel:
         request.metrics["tools_tokens"] = 0
         adapter = tool_protocol(request.protocol)
         if tools:
-            reason = tool_block_reason(request.original, request.protocol, request.upstream)
+            # Assemble restores no reasoning here, and thinking resent as text stays text.
+            restores = not (
+                request.disabled or request.strip_replayed_thinking or request.thinking_as_text
+            )
+            reason = tool_block_reason(
+                request.original, request.protocol, request.upstream, restores
+            )
             names = {t["function"]["name"] for t in tools}
             collision = any(
                 t.get("function", t).get("name") in names for t in request.original.get("tools", [])
@@ -532,15 +548,39 @@ class MemoryKernel:
             for text in unsigned_thinking(response.message):
                 await self.store.state.swap(request.scope, THINKING + digest(text), Document(), {})
         if response.message and request.kind in {"user", "continuation"}:
-            returned = [*request.messages, *(response.output_items or [response.message])]
-            chain = await asyncio.to_thread(hidden_chain, returned, request.protocol)
+            output = response.output_items or [response.message]
+            chain = await asyncio.to_thread(
+                hidden_chain, [*request.messages, *output], request.protocol
+            )
             request.reply_anchor = chain[-1]
+            if response.finished and not request.disabled and replays_reasoning(request.upstream):
+                await self.record_reasoning(request, output, chain)
         if response.finished and request.reply_anchor:
             # A reply that hands the turn to client tools is resent with their results.
             await self.store.replay.put(
                 request.scope, request.session, K.REPLY, request.reply_anchor, {}
             )
         request.relayed = True
+
+    async def record_reasoning(self, request, output, chain):
+        """Keep the reply's reasoning under the anchors the client resends it by."""
+        adapter = tool_protocol(request.protocol)
+        visible, reasoning = adapter.split_reasoning(output)
+        if not reasoning:
+            return
+        if visible is not output:
+            chain = await asyncio.to_thread(
+                hidden_chain, [*request.messages, *visible], request.protocol
+            )
+            # Without its reasoning items the reply ends at another anchor; forks find it there.
+            if chain[-1]:
+                await self.store.replay.put(request.scope, request.session, K.REPLY, chain[-1], {})
+        tail = chain[len(request.messages) :]
+        for index, value in reasoning.items():
+            if tail[index]:
+                await self.store.replay.put(
+                    request.scope, request.session, K.REASONING, tail[index], value
+                )
 
     async def completed(self, request, credential, response):
         await self.relayed(request, response)
@@ -589,9 +629,16 @@ class MemoryKernel:
 
     @staticmethod
     def assemble(request):
-        """Apply the latest cut, then expand or drop hidden tool history."""
+        """Apply the latest cut, restore dropped reasoning, then expand or drop hidden history."""
         apply_cut(request)
         adapter = tool_protocol(request.protocol)
+        if (
+            not request.disabled
+            and not request.strip_replayed_thinking
+            and not (request.hidden_history_unavailable and adapter.omits_reasoning)
+            and replays_reasoning(request.upstream)
+        ):
+            MemoryKernel.restore_reasoning(request)
         messages = request.body[adapter.field]
         if request.tools_active:
             messages = replay_hidden(
@@ -605,6 +652,36 @@ class MemoryKernel:
                 messages = cleaned
                 request.metrics.setdefault("degradation", "hidden_tool_history_unavailable")
         request.body[adapter.field] = messages
+
+    @staticmethod
+    def restore_reasoning(request):
+        """Give each reply back the reasoning the client dropped, the same bytes every turn.
+
+        Inserted items get no anchor, so the body chain stays aligned with the body.
+        Spans a hidden transcript replaces are left alone: the transcript has the
+        reasoning, and its visible count is the span as the client sent it.
+        """
+        adapter = tool_protocol(request.protocol)
+        covered = set()
+        if request.tools_active:
+            for index, anchor in enumerate(request.body_chain):
+                record = request.records.get((K.HIDDEN, anchor)) if anchor else None
+                if record and 0 < record["visible_count"] <= index + 1:
+                    covered.update(range(index + 1 - record["visible_count"], index + 1))
+        messages, chain, restored = [], [], 0
+        for index, (message, anchor) in enumerate(
+            zip(request.body[adapter.field], request.body_chain, strict=True)
+        ):
+            value = request.records.get((K.REASONING, anchor)) if anchor else None
+            items = [message]
+            if value and anchor not in request.thinking_as_text and index not in covered:
+                items = adapter.restore_reasoning(messages, message, value)
+                restored += items != [message]
+            messages.extend(items)
+            chain.extend(["" for _ in items[1:]] + [anchor])
+        request.body[adapter.field], request.body_chain = messages, chain
+        if restored:
+            request.metrics["reasoning_restored"] = restored
 
     @classmethod
     def assembled(cls, request):
@@ -650,10 +727,18 @@ class MemoryKernel:
             if messages[len(span) :] != kept:
                 raise SummaryError("cut_not_found")
             instruction = summary_instruction(policy.summary_max_tokens, in_progress)
-            response = await summarize(
-                request,
-                adapter.summary_request(body, span, instruction, policy.summary_max_tokens),
-            )
+            limit = policy.summary_max_tokens
+            try:
+                response = await summarize(
+                    request, adapter.summary_request(body, span, instruction, limit)
+                )
+            except SummaryError as error:
+                # Models with a small output limit reject the headroom; ask for the bare cap.
+                if error.reason != "summary_http_400":
+                    raise
+                response = await summarize(
+                    request, adapter.summary_request(body, span, instruction, limit, headroom=0)
+                )
             summary = adapter.summary_text(response).strip()
             if not summary:
                 raise SummaryError("summary_empty")

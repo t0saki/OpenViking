@@ -3,6 +3,18 @@ import type { GatewayTool, Profile, ProfileSettings, QuotaBucket } from './api'
 import { checkNumber, checkRequired, collect } from './validation'
 import type { NumberRule, ValidationErrors } from './validation'
 
+/** OpenViking MCP tools that change data; mirrors `WRITE_TOOLS` in `models.py`. */
+export const WRITE_TOOLS = [
+  'remember',
+  'write',
+  'edit',
+  'add_resource',
+  'add_skill',
+  'forget',
+  'set_acl',
+  'cancel_watch',
+]
+
 /** Recommended settings; identical to the gateway's own defaults. */
 export const PROFILE_DEFAULTS: ProfileSettings = {
   name: 'Default',
@@ -13,7 +25,7 @@ export const PROFILE_DEFAULTS: ProfileSettings = {
   context_types: ['memory', 'resource', 'skill'],
   quotas: {},
   max_tokens: 1600,
-  session_max_tokens: 6000,
+  session_max_tokens: 30000,
   score_threshold: 0.35,
   recall_timeout: 2,
   query_max_chars: 8000,
@@ -27,9 +39,9 @@ export const PROFILE_DEFAULTS: ProfileSettings = {
   agent_windows: false,
   window_soft_ratio: 0.7,
   window_hard_ratio: 0.85,
-  gateway_tools: false,
+  gateway_tools: true,
   show_tool_calls: true,
-  disabled_tools: [],
+  disabled_tools: WRITE_TOOLS,
   tool_max_rounds: 5,
   tool_timeout_seconds: 30,
   tool_result_bytes: 65536,

@@ -17,6 +17,8 @@ from .common import (
     strip_notices,
 )
 
+THINKING = {"thinking", "redacted_thinking"}
+
 
 class AnthropicProtocol(ToolProtocol):
     id_prefix = "msg_"
@@ -48,19 +50,53 @@ class AnthropicProtocol(ToolProtocol):
     def join_replayed_history(messages):
         return merge_tool_results(messages)
 
+    omits_reasoning = True
+
     @staticmethod
     def omit_hidden_history(messages):
         return strip_thinking(strip_notices(messages))
 
+    @staticmethod
+    def split_reasoning(output):
+        reasoning = {}
+        for index, message in enumerate(output):
+            content = message.get("content")
+            blocks = [
+                [position, block]
+                for position, block in enumerate(content if isinstance(content, list) else [])
+                if isinstance(block, dict) and block.get("type") in THINKING
+            ]
+            if blocks:
+                reasoning[index] = {"blocks": blocks}
+        return output, reasoning
+
+    @staticmethod
+    def restore_reasoning(previous, message, value):
+        content = message.get("content")
+        if isinstance(content, str):
+            content = [{"type": "text", "text": content}] if content else []
+        if (
+            message.get("role") != "assistant"
+            or not isinstance(content, list)
+            or any(isinstance(b, dict) and b.get("type") in THINKING for b in content)
+        ):
+            return [message]
+        # Blocks go back where the reply had them, so the client's form must equal it without them.
+        content = list(content)
+        for position, block in value["blocks"]:
+            content.insert(position, block)
+        return [{**message, "content": content}]
+
     @classmethod
-    def summary_request(cls, body, messages, instruction, max_tokens):
+    def summary_request(cls, body, messages, instruction, max_tokens, headroom=SUMMARY_HEADROOM):
         request = super().summary_request(body, messages, instruction, max_tokens)
         thinking = body.get("thinking") or {}
         # Thinking spends from max_tokens, and a manual budget must stay below it.
+        # Without a manual budget, leave headroom anyway: some models think by default.
         if thinking.get("type") == "enabled":
             max_tokens += thinking.get("budget_tokens", 0)
-        elif thinking.get("type") == "adaptive":
-            max_tokens += SUMMARY_HEADROOM
+        else:
+            max_tokens += headroom
         request["max_tokens"] = max_tokens
         return request
 

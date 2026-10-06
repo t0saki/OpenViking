@@ -7,6 +7,7 @@ import pytest
 from aiohttp import web
 from conftest import MCP_TOOLS
 
+from openviking_context_gateway.models import WRITE_TOOLS
 from openviking_context_gateway.protocols import normalize
 from openviking_context_gateway.tool_loop import REFUSED
 
@@ -129,7 +130,13 @@ async def test_recorded_client_disabled_passthrough(running_gateway, client_name
     await client.put(
         "/admin/policies/off",
         headers=admin,
-        json={"name": "Off", "recall": False, "capture": False, "compaction": False},
+        json={
+            "name": "Off",
+            "recall": False,
+            "capture": False,
+            "compaction": False,
+            "gateway_tools": False,
+        },
     )
     minted = await client.post(
         "/admin/keys",
@@ -227,6 +234,7 @@ async def enable_tools(client, admin, **policy):
         json={
             "name": "Tools",
             "gateway_tools": True,
+            "disabled_tools": [],
             "recall": False,
             "compaction": False,
             **policy,
@@ -1173,7 +1181,7 @@ async def test_profiles_with_retired_tool_fields_still_save(running_gateway):
     )
     assert response.status_code == 200, response.text
     saved = response.json()
-    assert saved["gateway_tools"] and saved["disabled_tools"] == []
+    assert saved["gateway_tools"] and saved["disabled_tools"] == list(WRITE_TOOLS)
     assert (
         not {"allow_write_tools", "tool_allowlist", "takeover", "keep_recent_turns"} & saved.keys()
     )

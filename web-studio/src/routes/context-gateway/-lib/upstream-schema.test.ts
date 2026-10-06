@@ -11,6 +11,8 @@ import {
   endpointPreview,
   isValidBaseUrl,
   protocolFor,
+  replayReasoningSetting,
+  replaysReasoning,
   servedModels,
   supportsProtocol,
   toUpstreamInput,
@@ -304,5 +306,35 @@ describe('validateUpstream', () => {
       'name',
       'priority',
     ])
+  })
+})
+
+describe('replaysReasoning', () => {
+  it('follows the vendor until the upstream overrides it', () => {
+    expect(
+      replaysReasoning({ vendor: 'deepseek', replay_reasoning: null }),
+    ).toBe(true)
+    expect(replaysReasoning({ vendor: 'ark', replay_reasoning: null })).toBe(
+      true,
+    )
+    expect(
+      replaysReasoning({ vendor: 'byteplus', replay_reasoning: null }),
+    ).toBe(true)
+    expect(replaysReasoning({ vendor: 'openai', replay_reasoning: null })).toBe(
+      false,
+    )
+    expect(
+      replaysReasoning({ vendor: 'generic', replay_reasoning: true }),
+    ).toBe(true)
+    expect(
+      replaysReasoning({ vendor: 'deepseek', replay_reasoning: false }),
+    ).toBe(false)
+  })
+
+  it('stores null while the switch matches the vendor default', () => {
+    expect(replayReasoningSetting('deepseek', true)).toBeNull()
+    expect(replayReasoningSetting('deepseek', false)).toBe(false)
+    expect(replayReasoningSetting('generic', false)).toBeNull()
+    expect(replayReasoningSetting('generic', true)).toBe(true)
   })
 })

@@ -333,7 +333,7 @@ server {
 
 - **服务商**决定可以选哪些协议，并让网关适配各家服务商的差异。编辑页只提供服务商支持的协议，见上表。列表里没有的服务商、LiteLLM 和 new-api 这类兼容代理，以及 [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) 这类把订阅账号包装成 API 的反向代理，都选*通用*（见[自定义上游](15-context-gateway.md#自定义上游)；用订阅额度时是否合规请自行确认）。
   - *通用*、*Anthropic* 和 *OpenAI* 转发请求的方式相同。
-  - *DeepSeek*：只有请求关闭了思考模式（`"thinking": {"type": "disabled"}`）时才提供 OpenViking 工具，因为 DeepSeek 的思考模式需要推理历史，而聊天应用不会把推理历史发回来。标准的 Responses 请求没有 `thinking` 字段，所以不会得到 OpenViking 工具。记忆照常补充。
+  - *DeepSeek*：请求带工具时，DeepSeek 要求历史里之前每条回复都带着推理内容，而很多聊天应用不会把推理内容发回来。DeepSeek 上游默认开启**补全推理内容回传**（见下文“路由”），所以请求保持思考模式也能得到 OpenViking 工具。关闭这项设置后，只有请求关闭了思考模式（`"thinking": {"type": "disabled"}`）时才提供 OpenViking 工具；标准的 Responses 请求没有 `thinking` 字段，这时也得不到工具。记忆照常补充。
   - *火山方舟*和它的海外站 *BytePlus 方舟*行为相同：请求发往方舟自己的路径。Chat Completions 和 Responses 的每段对话都使用一个固定的 `prompt_cache_key`，方舟的前缀缓存就能跟着对话走。如果请求的模型、思考模式、采样参数、系统提示词或工具与对话的第一个请求不同，就会被标记为**缓存参数有变化**（`ark_cache_parameters_changed`），因为这些参数一变，方舟就会重新建立缓存。
 - **协议**决定上游能处理哪些客户端请求，也决定网关如何发送密钥：Anthropic Messages 用 `x-api-key`，另外两种用 `Authorization: Bearer`。
 - **Base URL。** 选择服务商后，编辑页会填入上表中的默认地址。切换服务商或协议时，只有地址为空或仍是之前的默认地址，才会换成新的默认地址，自己填写的地址不会被覆盖；地址与默认地址不同时，点输入框下方的**使用默认地址**即可恢复。网关把客户端的请求路径拼接在后面，并去掉重复的 `/v1`，所以 `https://api.openai.com/v1` 和 `https://api.anthropic.com` 都能用。编辑页会显示请求实际发往的地址。火山方舟和 BytePlus 方舟请填写不带路径的地址，例如 `https://ark.cn-beijing.volces.com`，它适用于全部三种协议；以 `/api/v3` 结尾的地址只适用于 Chat Completions 和 Responses，以 `/api/compatible/v1` 结尾的只适用于 Anthropic Messages。API 路径不以 `/v1` 结尾的服务商（例如 `…/api/paas/v4`）不能直接使用，需要在中间加一个 LiteLLM 之类的兼容代理。
@@ -358,6 +358,7 @@ server {
 - **优先级。** 对每个请求，网关从密钥绑定的已启用上游中挑出使用这种 API、并且提供所请求模型的那些，再选优先级最高的一个。只要原来的上游还能服务，对话就一直留在它开始时的上游上，所以修改优先级只影响新对话。
 - **启用。** 停用的上游不接收请求，也不出现在模型列表里。原本使用它的对话会转到下一个候选上游，这会造成一次服务商缓存未命中，并丢掉之前的 Claude 思考块；这些请求会被标记为**上游已切换**（`upstream_changed`）。想保留恢复的余地，就用停用代替删除。
 - **允许 OpenViking 工具**决定能否通过这个上游提供 OpenViking 工具。关闭后立即生效，已经带工具的对话也会受影响。
+- **补全推理内容回传。** 客户端回传历史时，常常丢掉模型之前回复里的推理内容。开启后，网关记下经它转发的每条回复的推理内容，在后续请求里放回原来的回复上：Chat Completions 补回 `reasoning_content`，Anthropic Messages 把 thinking 块放回原位，Responses 把带明文内容的 reasoning 项放回对应条目之前。每轮补回的内容逐字节相同，所以服务商的提示词缓存照常命中；补回的内容计入输入 token。客户端自己回传了推理内容的回复保持不变。DeepSeek、火山方舟和 BytePlus 方舟默认开启，其他服务商默认关闭。DeepSeek 在带工具的请求里缺少推理内容会报错，所以关闭后，DeepSeek 上游只在请求关闭思考模式时提供 OpenViking 工具。即使开启，有些请求也补不回推理内容，这些请求同样得不到工具：对话换了上游（`upstream_changed`）、Claude 对话丢了记忆记录（`missing_injection_record`），或者客户端把思考内容当作正文发回。
 - **最小可缓存长度**（仅火山方舟和 BytePlus 方舟）是模型能缓存的最短提示词长度，只影响请求日志如何报告缓存资格。
 
 其他上游设置都立即生效，对进行中的对话也一样。网关没有故障转移：选中的上游出错时，客户端会收到这个错误；服务商无法访问时返回 502 "Model upstream is unavailable"。
@@ -378,10 +379,10 @@ server {
 
 | 部分 | 作用 | 主要设置和默认值 |
 | --- | --- | --- |
-| 召回记忆 | 用每条新的用户消息搜索 OpenViking，把相关内容附加到这条消息上。 | 检索范围：记忆、资源、技能 · 单条消息预算：1,600 token · 单个上下文窗口预算：6,000 token · 相关度阈值：0.35 · 超时时间：2 秒 |
+| 召回记忆 | 用每条新的用户消息搜索 OpenViking，把相关内容附加到这条消息上。 | 检索范围：记忆、资源、技能 · 单条消息预算：1,600 token · 单个上下文窗口预算：30,000 token · 相关度阈值：0.35 · 超时时间：2 秒 |
 | 保存对话 | 把已完成的轮次写入 OpenViking 会话并提交，供 OpenViking 提取记忆。 | 最新回复等待时长：600 秒 · 提交阈值：20,000 token · 保留最近消息：10 |
 | 长对话 | 对话接近模型的上下文窗口时压缩：由同一个模型写摘要，用摘要替换之前的消息。Agent 自管上下文窗口是实验性的另一种方式。 | 压缩：开启 · 压缩时机：上下文窗口的 0.9 · 摘要长度上限：8,000 token · Agent 自管上下文窗口：关闭 |
-| OpenViking 工具 | 让模型在回答时使用 OpenViking 的工具。支持 Chat Completions、完整历史的 Responses 和 Anthropic Messages，默认关闭。 | 默认选择 OpenViking 提供的全部工具，可取消勾选 |
+| OpenViking 工具 | 让模型在回答时使用 OpenViking 的工具。支持 Chat Completions、完整历史的 Responses 和 Anthropic Messages，新建的配置默认开启。 | 默认勾选只读工具，会修改数据的工具不勾选 |
 
 召回设置的实际效果：
 
@@ -480,11 +481,11 @@ server {
 
 这项功能面向无法连接 OpenViking MCP 服务器的聊天应用和 API 应用。支持 MCP 或有插件的客户端，例如 Claude Code 和 Codex，用 MCP 或插件更合适，因为客户端会在那里显示每次工具调用及其结果，并在调用前请求确认。
 
-要开启工具，在上下文配置中打开 **OpenViking 工具**。**工具**清单来自你的 OpenViking 服务，默认全部勾选；不希望这份配置提供的工具，取消勾选即可。还没有网关密钥时，先签发一个密钥再加载清单。OpenViking 后续新增的工具也会默认可用，已有对话仍沿用开始时的工具清单。
+新建的上下文配置默认打开 **OpenViking 工具**，“使用推荐设置创建”也一样。**工具**清单来自你的 OpenViking 服务，默认只勾选只读工具：`find`、`search`、`grep`、`glob`、`list`、`tree`、`read`、`list_watches`、`get_acl`、`list_users`、`list_groups` 和 `health`。会修改数据的工具默认不勾选：`remember`、`write`、`edit`、`add_resource`、`add_skill`、`forget`、`set_acl` 和 `cancel_watch`。比如想让模型保存记忆，就勾选 `remember`；想让它导入网页或附件，就勾选 `add_resource`。已有的上下文配置保留原来的设置。还没有网关密钥时，先签发一个密钥再加载清单。OpenViking 后续新增的工具也会默认可用，已有对话仍沿用开始时的工具清单。
 
 每个上游的**允许 OpenViking 工具**默认开启。两个开关都开启后，新对话会获得选中的工具，名称加上 `openviking_` 前缀，例如 `openviking_find`、`openviking_read`、`openviking_grep` 和 `openviking_glob`。Studio 中的说明介绍各个工具的用途；只有 OpenViking 提供了相应信息时，页面才显示只读标记。提供给模型的工具定义会随对话中的每个请求发送，OpenViking 的全部工具约占 3,500 个输入 token，所以取消勾选用不到的工具也能节省 token。
 
-> **注意**：所有选中的工具都直接执行，不经过客户端的权限确认，包括写入和删除数据的工具。不希望模型使用这些工具时，请取消勾选；给聊天应用用的上下文配置，建议至少取消 `forget` 和 `set_acl`。调用提示用于说明已经发生的操作，不是权限确认。
+> **注意**：所有选中的工具都直接执行，不经过客户端的权限确认，包括写入和删除数据的工具。勾选会修改数据的工具之前，先确认可以接受这一点；给聊天应用用的上下文配置，建议不要勾选 `forget` 和 `set_acl`。调用提示用于说明已经发生的操作，不是权限确认。
 
 **工具调用提示。** 开启**显示工具调用**（默认开启）时，网关每执行一次 OpenViking 工具调用，就在回复中调用发生的位置加一行提示：
 
@@ -504,7 +505,7 @@ server {
 | `tools_structured_output` | 请求要求结构化输出（`response_format`、`text.format` 或 `output_config.format`）。 |
 | `tools_non_function` | Chat Completions 客户端传入了 function 以外类型的工具。 |
 | `tools_forced_choice` | `tool_choice` 为 `required`，或者指定了某个工具。 |
-| `deepseek_reasoning_history_required` | 上游的服务商是 DeepSeek，并且请求没有关闭思考模式（`"thinking": {"type": "disabled"}`）。标准的 Responses 请求没有 `thinking` 字段，也属于这种情况。 |
+| `deepseek_reasoning_history_required` | 上游的服务商是 DeepSeek，请求没有关闭思考模式（`"thinking": {"type": "disabled"}`），而之前的回复发到上游时会缺少推理内容：关闭了**补全推理内容回传**，或者这个请求补不回推理内容，因为对话换了上游、丢了记忆记录，或者思考内容被当作正文发回。标准的 Responses 请求没有 `thinking` 字段，按开启思考模式处理。 |
 | `tool_name_collision` | 客户端定义了与某个 `openviking_*` 工具同名的工具。 |
 | `tools_unavailable` | 无法从 OpenViking 加载工具清单，也没有之前加载成功的清单。连接恢复后请开始新对话。 |
 | `tools_not_selected_at_session_start` | 上下文配置开启了工具，但对话的第一个请求因为上面某个原因用不了工具，所以整段对话都没有工具。 |
@@ -542,7 +543,7 @@ Token 预算用于模型使用 OpenViking 工具时新增的调用、结果和�
 
 上下文窗口取自上游**上下文窗口**中该模型的条目（按发给上游的模型名查找），没有时取上下文配置的**默认上下文窗口**。两者都没有，网关按 1,000,000 token 计算。窗口更小的模型请设置其中一项，否则还没等到压缩，服务商就会以对话过长为由拒绝请求。
 
-**摘要怎么生成。** 网关向同一个上游、同一个模型额外发一次非流式请求，客户端的系统提示词、工具和思考设置都保持不变，所以大部分内容能命中服务商的提示词缓存。纯文本摘要无法遵守的设置会去掉：强制的工具选择改为不调用工具，结构化输出格式和停止序列也不保留。这个请求包含压缩位置之前的对话，以及一条要求模型为自己写摘要的指令。摘要要覆盖：用户的目标和最新请求的原文、关键决定和当前进度、文件、路径和标识符、出过的错误和修正、未完成的事项，以及最近几次工具结果里的要点。之前的摘要会并进新摘要。摘要是纯文本，最多**摘要长度上限**个 token（8,000），这次请求和其他请求一样由服务商计费。
+**摘要怎么生成。** 网关向同一个上游、同一个模型额外发一次非流式请求，客户端的系统提示词、工具和思考设置都保持不变，所以大部分内容能命中服务商的提示词缓存。纯文本摘要无法遵守的设置会去掉：强制的工具选择改为不调用工具，结构化输出格式和停止序列也不保留。这个请求包含压缩位置之前的对话，以及一条要求模型为自己写摘要的指令。摘要要覆盖：用户的目标和最新请求的原文、关键决定和当前进度、文件、路径和标识符、出过的错误和修正、未完成的事项，以及最近几次工具结果里的要点。之前的摘要会并进新摘要。摘要是纯文本，最多**摘要长度上限**个 token（8,000）。思考内容也计入输出上限，而有些模型（如 DeepSeek V4.1）即使请求里没有思考设置也会默认思考，所以网关总是在摘要长度上限之外再留 16,000 token 的输出余量；客户端手动指定了思考预算时，改为加上这份预算。这次请求和其他请求一样由服务商计费。
 
 **之后模型收到什么。** 压缩位置取决于请求类型：
 
@@ -728,7 +729,7 @@ URL 类设置必须是普通的 `http` 或 `https` 地址，不能包含账号�
 | 开头内容预算 | `profile_max_tokens` | `4000` | 0–32,000 | 画像和目录的独立预算；0 表示省略。目录需要启用读取工具。 |
 | 检索范围 | `context_types` | `memory`、`resource`、`skill` | 至少一个 | 搜索范围：记忆、资源、技能。 |
 | 单条消息预算 | `max_tokens` | `1600` | 64–32,000 | 一条消息最多补充的 token 数。 |
-| 单个上下文窗口预算 | `session_max_tokens` | `6000` | ≥ 0 | 一个上下文窗口内最多补充的 token 数，每次压缩后重新计算；0 表示关闭召回。 |
+| 单个上下文窗口预算 | `session_max_tokens` | `30000` | ≥ 0 | 一个上下文窗口内最多补充的 token 数，每次压缩后重新计算；0 表示关闭召回。 |
 | 相关度阈值 | `score_threshold` | `0.35` | 0–1 | 接受的最低相关度分数。 |
 | 超时时间 | `recall_timeout` | `2`（秒） | 最多 30 | 搜索最多等待多久，超时后消息不带记忆继续发送。 |
 | 检索文本长度 | `query_max_chars` | `8000` | 3–32,000 | 用作检索文本的消息字符数。 |
@@ -744,8 +745,8 @@ URL 类设置必须是普通的 `http` 或 `https` 地址，不能包含账号�
 | Agent 自管上下文窗口 | `agent_windows` | `false` | | 实验性。让模型自己开启新的上下文窗口；需要 OpenViking 工具。 |
 | 软提醒时机 | `window_soft_ratio` | `0.7` | 0.3–0.95，须低于 `window_hard_ratio` | 上下文窗口用到这个比例时，提醒模型尽快开启新窗口。 |
 | 硬提醒时机 | `window_hard_ratio` | `0.85` | 0.4–0.97 | 上下文窗口用到这个比例时，要求模型立即开启新窗口。 |
-| OpenViking 工具 | `gateway_tools` | `false` | | 为 Chat、完整历史的 Responses 和 Anthropic Messages 提供 OpenViking 工具。 |
-| 取消勾选的工具 | `disabled_tools` | `[]` | OpenViking 工具原名，不带 `openviking_` | 新对话不提供这些工具。列表为空且总开关开启时，提供全部可用工具。 |
+| OpenViking 工具 | `gateway_tools` | `true` | | 为 Chat、完整历史的 Responses 和 Anthropic Messages 提供 OpenViking 工具。 |
+| 取消勾选的工具 | `disabled_tools` | 会修改数据的 8 个工具：`remember`、`write`、`edit`、`add_resource`、`add_skill`、`forget`、`set_acl` 和 `cancel_watch` | OpenViking 工具原名，不带 `openviking_` | 新对话不提供这些工具，其余可用工具都会提供，包括以后新增的。API 请求省略这个字段时使用默认列表；列表为空且总开关开启时，提供全部可用工具。 |
 | 显示工具调用 | `show_tool_calls` | `true` | | 每次 OpenViking 工具调用都在回复里加一行提示。 |
 | 每次请求的工具轮数 | `tool_max_rounds` | `5` | 1–20 | 见 [OpenViking 工具](#openviking-工具)。 |
 | 单次调用超时 | `tool_timeout_seconds` | `30` | 最多 120 | |
@@ -770,6 +771,7 @@ URL 类设置必须是普通的 `http` 或 `https` 地址，不能包含账号�
 | 优先级 | `priority` | `0` | 数值越大，新对话越优先使用。 |
 | 启用 | `enabled` | `true` | 停用的上游不接收请求。 |
 | 允许 OpenViking 工具 | `allow_gateway_tools` | `true` | 能否通过这个上游提供 OpenViking 工具。 |
+| 补全推理内容回传 | `replay_reasoning` | `null`（跟随服务商） | 把客户端丢掉的推理内容补回之前的回复。`null` 时 `deepseek`、`ark` 和 `byteplus` 开启，其他服务商关闭；`true` 或 `false` 覆盖服务商默认值。Studio 中开关与服务商默认值一致时保存为 `null`。 |
 | 这是 Coding Plan 或订阅密钥 | `coding_plan` | `false` | 除非另外允许，否则拒绝发往这个上游的请求。 |
 | 仍然允许 | `allow_coding_plan` | `false` | 允许使用被标记为 Coding Plan 的密钥。 |
 | 最小可缓存长度 | `cache_min_tokens` | `1024` | 仅火山方舟和 BytePlus 方舟；影响缓存资格的报告。 |

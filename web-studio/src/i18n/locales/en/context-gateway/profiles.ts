@@ -17,7 +17,7 @@ const profiles = {
   empty: {
     title: 'No context profiles yet',
     description:
-      'Every gateway key needs a context profile. The recommended settings recall memory for each new message, save conversations and summarize long ones. You can change them at any time.',
+      'Every gateway key needs a context profile. The recommended settings recall memory for each new message, save conversations, summarize long ones and let the model use the read-only OpenViking tools. You can change them at any time.',
   },
   summary: {
     recallOn: 'On · {{tokens}} tokens per message',
@@ -191,7 +191,7 @@ const profiles = {
     available: {
       label: 'Tools',
       description:
-        'All tools are selected by default, including tools added in the future. Uncheck any you do not want the model to use. The upstream must allow OpenViking tools as well.',
+        'The recommended settings select the read-only tools and leave the ones that change data unchecked. Tools added in the future are selected automatically. The upstream must allow OpenViking tools as well.',
     },
     empty: 'Issue a gateway key to load the tool list.',
     loadFailed: "Couldn't load OpenViking tools",

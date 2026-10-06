@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import type { Profile, ProfileSettings } from './api'
 import {
   PROFILE_DEFAULTS,
+  WRITE_TOOLS,
   duplicateProfile,
   offeredTools,
   toProfileSettings,
@@ -63,11 +64,14 @@ describe('toProfileSettings', () => {
     ).toMatchObject({ show_tool_calls: false })
   })
 
-  it('defaults older profiles to no disabled tools and keeps explicit exclusions', () => {
+  it('fills missing exclusions with the write tools and keeps explicit ones', () => {
     const { disabled_tools: _omitted, ...legacy } = profile()
     expect(toProfileSettings(legacy as ProfileSettings).disabled_tools).toEqual(
-      [],
+      WRITE_TOOLS,
     )
+    expect(
+      toProfileSettings(profile({ disabled_tools: [] })).disabled_tools,
+    ).toEqual([])
     expect(
       toProfileSettings(profile({ disabled_tools: ['forget', 'future_tool'] }))
         .disabled_tools,
@@ -235,10 +239,12 @@ describe('tool access', () => {
     description: name,
   }))
 
-  it('keeps the gateway switch off by default but selects all tools when enabled', () => {
-    expect(PROFILE_DEFAULTS.gateway_tools).toBe(false)
-    expect(offeredTools(PROFILE_DEFAULTS, tools)).toEqual([])
-    expect(offeredTools(profile({ gateway_tools: true }), tools)).toEqual(tools)
+  it('offers only read-only and future tools by default', () => {
+    expect(PROFILE_DEFAULTS.gateway_tools).toBe(true)
+    expect(
+      offeredTools(PROFILE_DEFAULTS, tools).map((tool) => tool.name),
+    ).toEqual(['read', 'future_tool'])
+    expect(offeredTools(profile({ disabled_tools: [] }), tools)).toEqual(tools)
   })
 
   it('excludes only raw MCP names and enables new tools automatically', () => {

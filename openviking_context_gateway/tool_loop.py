@@ -10,7 +10,7 @@ import orjson
 
 from .capture import CapturePipeline
 from .compaction import cut_messages
-from .protocols import SSEDecoder, messages_of, usage_of
+from .protocols import SSEDecoder, messages_of, replays_reasoning, usage_of
 from .records import RecordKind as K
 from .tool_catalog import notice_head
 from .tool_protocols import hidden_chain, tool_protocol
@@ -183,17 +183,27 @@ class HiddenToolLoop:
                 self.prepared.scope, self.prepared.session, K.REPLACEMENT, *self.window
             )
         if self.hidden and anchor:
+            value = {
+                "messages": self.transcript,
+                "visible_count": len(visible),
+                "upstream_id": self.prepared.root["upstream_id"],
+            }
             await self.store.replay.put(
-                self.prepared.scope,
-                self.prepared.session,
-                K.HIDDEN,
-                anchor,
-                {
-                    "messages": self.transcript,
-                    "visible_count": len(visible),
-                    "upstream_id": self.prepared.root["upstream_id"],
-                },
+                self.prepared.scope, self.prepared.session, K.HIDDEN, anchor, value
             )
+            # A client that drops reasoning items resends the reply at another anchor,
+            # which relaying recorded as the same reply; the transcript replaces it there too.
+            dropped, _ = self.adapter.split_reasoning(visible)
+            if dropped is not visible and replays_reasoning(self.prepared.upstream):
+                other = hidden_chain([*self.prepared.messages, *dropped], self.protocol)[-1]
+                if dropped and other:
+                    await self.store.replay.put(
+                        self.prepared.scope,
+                        self.prepared.session,
+                        K.HIDDEN,
+                        other,
+                        {**value, "visible_count": len(dropped)},
+                    )
         elif self.hidden:
             self.prepared.metrics["degradation"] = "hidden_reply_without_anchor"
         if self.window:
