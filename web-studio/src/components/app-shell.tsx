@@ -96,10 +96,10 @@ const NAV_ITEMS: readonly NavItem[] = [
   },
   {
     icon: PanelsTopLeftIcon,
-    id: 'playground',
+    id: 'filesystem',
     section: 'workspace',
-    titleKey: 'navigation.playground.title',
-    to: '/playground',
+    titleKey: 'navigation.filesystem.title',
+    to: '/filesystem',
   },
   {
     icon: BotIcon,
