@@ -11,8 +11,8 @@ OpenViking Server 在 `/api/v1/admin/context-gateway` 下转发上下文网关�
 **代码入口**：
 
 - `openviking/server/routers/context_gateway.py` - OpenViking Server 代理、角色检查和账号隔离
-- `openviking_context_gateway/app.py` - 网关管理路由
-- `openviking_context_gateway/models.py` - 上游、上下文配置和密钥模型
+- `context_gateway/app.py` - 网关管理路由
+- `context_gateway/models.py` - 上游、上下文配置和密钥模型
 
 ## 代理方式
 

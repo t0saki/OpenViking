@@ -11,11 +11,11 @@ import pytest_asyncio
 from aiohttp import web
 from cryptography.fernet import Fernet
 
-from openviking_context_gateway.app import create_app
-from openviking_context_gateway.config import ContextGatewayConfig
-from openviking_context_gateway.kernel import MemoryKernel
-from openviking_context_gateway.models import Policy
-from openviking_context_gateway.storage import SQLiteKernelStore
+from context_gateway.app import create_app
+from context_gateway.config import ContextGatewayConfig
+from context_gateway.kernel import MemoryKernel
+from context_gateway.models import Policy
+from context_gateway.storage import SQLiteKernelStore
 
 
 def mcp_tool(name, properties, required=()):
@@ -163,7 +163,7 @@ async def replay_records(store, request, kind):
 
 
 async def update_capture(store, request, **changes):
-    from openviking_context_gateway.capture import ready_at
+    from context_gateway.capture import ready_at
 
     old = await store.capture.get(request.scope, request.session)
     value = {**old.value, **changes}
@@ -172,7 +172,7 @@ async def update_capture(store, request, **changes):
 
 
 async def make_due(store):
-    from openviking_context_gateway.capture import ready_at
+    from context_gateway.capture import ready_at
 
     with store.connect() as c:
         keys = list(c.execute("SELECT scope,session FROM capture"))

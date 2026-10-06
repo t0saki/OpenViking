@@ -15,8 +15,8 @@ from pathlib import Path
 
 import aiohttp
 
-from openviking_context_gateway.protocols import SSEDecoder
-from openviking_context_gateway.tool_protocols import ResponseCapture
+from context_gateway.protocols import SSEDecoder
+from context_gateway.tool_protocols import ResponseCapture
 
 
 def check_cache(turns, block_tokens):

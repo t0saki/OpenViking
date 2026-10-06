@@ -23,12 +23,12 @@ from aiohttp import web
 from context_gateway_profile import RuntimeProfile
 from cryptography.fernet import Fernet
 
-from openviking_context_gateway.app import create_app
-from openviking_context_gateway.config import ContextGatewayConfig
-from openviking_context_gateway.kernel import MemoryKernel
-from openviking_context_gateway.models import Policy, Upstream
-from openviking_context_gateway.protocols import parse_body
-from openviking_context_gateway.storage import SQLiteKernelStore, digest
+from context_gateway.app import create_app
+from context_gateway.config import ContextGatewayConfig
+from context_gateway.kernel import MemoryKernel
+from context_gateway.models import Policy, Upstream
+from context_gateway.protocols import parse_body
+from context_gateway.storage import SQLiteKernelStore, digest
 
 
 def cycle(i):

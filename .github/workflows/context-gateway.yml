@@ -1,7 +1,7 @@
 name: Context Gateway
 on:
   pull_request:
-    paths: ["openviking_context_gateway/**", "tests/context_gateway/**", "scripts/*context*gateway*", "openviking/server/routers/context_gateway.py", "openviking_cli/utils/config/context_gateway_config.py", ".github/workflows/context-gateway.yml"]
+    paths: ["context_gateway/**", "tests/context_gateway/**", "scripts/*context*gateway*", "openviking/server/routers/context_gateway.py", "openviking_cli/utils/config/context_gateway_config.py", ".github/workflows/context-gateway.yml"]
   workflow_dispatch:
 jobs:
   test:

@@ -7,8 +7,8 @@ import pytest
 from aiohttp import web
 from conftest import MCP_TOOLS
 
-from openviking_context_gateway.protocols import normalize
-from openviking_context_gateway.tool_loop import REFUSED
+from context_gateway.protocols import normalize
+from context_gateway.tool_loop import REFUSED
 
 
 @pytest.mark.parametrize(
@@ -386,15 +386,15 @@ async def test_hidden_tools_mixed_replay_and_usage(running_gateway, streaming, m
     response = await client.post("/v1/chat/completions", headers=headers, json=body)
     assert response.status_code == 200, response.text
     assert "openviking_find" not in response.text
-    from openviking_context_gateway.storage import digest
+    from context_gateway.storage import digest
 
     sid = digest("tool-session")
     stored = await app.state.store.state.read(digest("tenant\0alice\0chat"), [sid])
     assert stored[sid].value["usage"]["input_tokens"] == 100
     assert len(calls) == 1 and len(model_requests) == (1 if mixed else 2)
     if streaming:
-        from openviking_context_gateway.protocols import SSEDecoder
-        from openviking_context_gateway.tool_protocols.common import merge_delta
+        from context_gateway.protocols import SSEDecoder
+        from context_gateway.tool_protocols.common import merge_delta
 
         visible = {"role": "assistant", "content": ""}
         events = [SSEDecoder.data(f) for f in SSEDecoder().feed(response.content)]

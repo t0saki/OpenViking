@@ -8,10 +8,10 @@ from aiohttp import web
 from conftest import make_due
 from test_review_regressions import worker_for
 
-from openviking_context_gateway.records import RecordKind as K
-from openviking_context_gateway.state_store import get_state
-from openviking_context_gateway.storage import SCHEMA_VERSION, ManagementStore, SQLiteKernelStore
-from openviking_context_gateway.tool_protocols import ResponseCapture, hidden_chain
+from context_gateway.records import RecordKind as K
+from context_gateway.state_store import get_state
+from context_gateway.storage import SCHEMA_VERSION, ManagementStore, SQLiteKernelStore
+from context_gateway.tool_protocols import ResponseCapture, hidden_chain
 
 QUESTION = {"role": "user", "content": "How do I deploy?"}
 

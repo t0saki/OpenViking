@@ -1,6 +1,6 @@
 # Context Gateway tests
 
-Tests for `openviking_context_gateway`. They need no vector engine, model SDK, OpenViking
+Tests for `context_gateway`. They need no vector engine, model SDK, OpenViking
 Server or network access beyond localhost: OpenViking and the model upstreams are faked in
 process. For what the gateway does and how to deploy it, see the user guides
 [Context Gateway](../../docs/en/guides/15-context-gateway.md) and

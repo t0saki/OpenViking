@@ -7,16 +7,16 @@ import orjson
 import pytest
 from conftest import MCP_TOOLS, mcp_tool
 
-from openviking_context_gateway.capture import capture_messages
-from openviking_context_gateway.models import Policy, Upstream
-from openviking_context_gateway.proxy import upstream_url
-from openviking_context_gateway.storage import SQLiteKernelStore
-from openviking_context_gateway.tool_catalog import notice_head, select_tools, tool_block_reason
-from openviking_context_gateway.tool_executor import ToolExecutor, attachment_bytes, attachments
-from openviking_context_gateway.tool_loop import HiddenToolLoop
-from openviking_context_gateway.tool_protocols import ResponseCapture, hidden_chain, tool_protocol
-from openviking_context_gateway.tool_protocols.common import NOTICE, notice_tail, sse
-from openviking_context_gateway.vendors import ark_url
+from context_gateway.capture import capture_messages
+from context_gateway.models import Policy, Upstream
+from context_gateway.proxy import upstream_url
+from context_gateway.storage import SQLiteKernelStore
+from context_gateway.tool_catalog import notice_head, select_tools, tool_block_reason
+from context_gateway.tool_executor import ToolExecutor, attachment_bytes, attachments
+from context_gateway.tool_loop import HiddenToolLoop
+from context_gateway.tool_protocols import ResponseCapture, hidden_chain, tool_protocol
+from context_gateway.tool_protocols.common import NOTICE, notice_tail, sse
+from context_gateway.vendors import ark_url
 
 
 @pytest.mark.parametrize(
@@ -200,8 +200,8 @@ async def test_hidden_branch_restart_and_archive_mapping(setup_kernel, credentia
     p = await kernel.prepare({"messages": raw}, "chat", {}, credential, {"id": "u"}, policy)
     p.body["messages"] = copy.deepcopy(raw)
     p.body_chain = hidden_chain(raw, "chat")
-    from openviking_context_gateway.compaction import apply_cut
-    from openviking_context_gateway.tool_protocols import replay_hidden
+    from context_gateway.compaction import apply_cut
+    from context_gateway.tool_protocols import replay_hidden
 
     p.records["replacement", p.chain[2]] = {"source": "compaction", "text": "summary"}
     apply_cut(p)
@@ -464,7 +464,7 @@ async def test_real_stateless_fastmcp_transport(json_response):
     from mcp.server.fastmcp import FastMCP
     from mcp.server.transport_security import TransportSecuritySettings
 
-    from openviking_context_gateway.client import VikingClient
+    from context_gateway.client import VikingClient
 
     mcp = FastMCP(
         "gateway-test",
@@ -571,7 +571,7 @@ async def test_incompatible_tools_keep_visible_history(setup_kernel, credential,
 
 
 async def test_catalog_cache_single_flight_refresh_and_last_success():
-    from openviking_context_gateway.client import VikingClient, VikingError
+    from context_gateway.client import VikingClient, VikingError
 
     calls, fail = [], False
     catalog = [mcp_tool("future", {})]
@@ -609,7 +609,7 @@ async def test_catalog_cache_single_flight_refresh_and_last_success():
 
 
 async def test_catalog_unavailable_freezes_safe_empty_root(setup_kernel, credential, policy):
-    from openviking_context_gateway.client import VikingError
+    from context_gateway.client import VikingError
 
     kernel, _, viking, _ = setup_kernel
     policy.update(gateway_tools=True)
@@ -731,7 +731,7 @@ async def test_new_tools_preserve_arguments_and_normalize_failed_receipt(
 async def test_saved_root_keeps_its_tools(setup_kernel, credential, policy):
     from unittest.mock import AsyncMock
 
-    from openviking_context_gateway.storage import digest
+    from context_gateway.storage import digest
 
     kernel, store, viking, _ = setup_kernel
     body = {"messages": [{"role": "user", "content": "Find my deployment"}]}

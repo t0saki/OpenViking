@@ -11,8 +11,8 @@ OpenViking Server forwards Context Gateway management calls below `/api/v1/admin
 **Code entry points**:
 
 - `openviking/server/routers/context_gateway.py` - OpenViking Server proxy, role check and account scoping
-- `openviking_context_gateway/app.py` - gateway management routes
-- `openviking_context_gateway/models.py` - upstream, context profile and key models
+- `context_gateway/app.py` - gateway management routes
+- `context_gateway/models.py` - upstream, context profile and key models
 
 ## How the proxy works
 

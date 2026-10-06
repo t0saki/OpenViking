@@ -41,7 +41,7 @@ def main():
     import uvicorn
 
     uvicorn.run(
-        "openviking_context_gateway.app:create_app",
+        "context_gateway.app:create_app",
         factory=True,
         host=config.host,
         port=config.port,

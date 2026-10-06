@@ -6,13 +6,13 @@ import time
 import pytest
 from conftest import replay_records
 
-from openviking_context_gateway.blocks import gateway_note
-from openviking_context_gateway.capture import CaptureWorker, capture_messages
-from openviking_context_gateway.capture_store import Document
-from openviking_context_gateway.client import VikingError
-from openviking_context_gateway.kernel import token_estimate
-from openviking_context_gateway.models import Policy
-from openviking_context_gateway.protocols import (
+from context_gateway.blocks import gateway_note
+from context_gateway.capture import CaptureWorker, capture_messages
+from context_gateway.capture_store import Document
+from context_gateway.client import VikingError
+from context_gateway.kernel import token_estimate
+from context_gateway.models import Policy
+from context_gateway.protocols import (
     classify,
     normalize,
     parse_body,
@@ -20,8 +20,8 @@ from openviking_context_gateway.protocols import (
     prefix_chain,
     text_content,
 )
-from openviking_context_gateway.storage import ManagementStore, SQLiteKernelStore
-from openviking_context_gateway.tool_protocols import ResponseCapture
+from context_gateway.storage import ManagementStore, SQLiteKernelStore
+from context_gateway.tool_protocols import ResponseCapture
 
 
 async def prepare(kernel, body, credential, policy, protocol="chat", session="session", **kwargs):
@@ -268,7 +268,7 @@ async def test_profile_is_frozen_separately_from_recall(setup_kernel, credential
 async def test_recall_uses_server_rendered_and_uri_only_entries(
     setup_kernel, credential, policy, read
 ):
-    from openviking_context_gateway.blocks import block, neutralize
+    from context_gateway.blocks import block, neutralize
 
     kernel, store, viking, _ = setup_kernel
     policy.update(gateway_tools=read)
@@ -345,7 +345,7 @@ async def test_full_recall_budget_uses_server_token_units(setup_kernel, credenti
 @pytest.mark.parametrize("remaining", [63, 64])
 @pytest.mark.parametrize("read", [False, True])
 async def test_recall_minimum_payload_budget(setup_kernel, credential, policy, remaining, read):
-    from openviking_context_gateway.blocks import block
+    from context_gateway.blocks import block
 
     kernel, store, viking, _ = setup_kernel
     lead = LEAD + (" Use the openviking_read tool to expand URIs." if read else "")
@@ -582,7 +582,7 @@ def test_capture_pairs_tools_and_strips_noise():
 
 
 def test_sse_chunk_boundaries_and_anthropic_usage():
-    from openviking_context_gateway.protocols import SSEDecoder
+    from context_gateway.protocols import SSEDecoder
 
     raw = 'data: {"text":"中文"}\r\n\r\ndata: [DONE]\n\n'.encode()
     decoder = SSEDecoder()
