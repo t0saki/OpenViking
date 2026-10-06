@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0
 
 import re
+from collections import Counter
 from types import SimpleNamespace
 
 from openviking.retrieve.context_assembler import pipeline as pipeline_module
@@ -11,7 +12,7 @@ from openviking.retrieve.context_assembler.budget import (
     per_entry_cap,
     plan_entries,
 )
-from openviking.retrieve.context_assembler.gather import Candidate, category_for
+from openviking.retrieve.context_assembler.gather import Candidate, category_for, category_targets
 from openviking.retrieve.context_assembler.models import AssembledEntry
 from openviking.retrieve.context_assembler.params import (
     OTHER_MEMORY_CATEGORY,
@@ -1093,3 +1094,25 @@ async def test_backfill_never_exceeds_the_quota_total_or_reaches_zero_quota_buck
         f"{preferences}/1.md",
     ]
     assert all("/entities" not in call["target_uri"] for call in finds)
+
+
+async def test_full_buckets_keep_their_quotas_when_one_bucket_scores_highest():
+    quotas = {"events": 1, "entities": 2, "preferences": 1, "experiences": 1, "resources": 3}
+    hits_by_target = {}
+    for bucket, base in (
+        ("events", 0.9),
+        ("entities", 0.5),
+        ("preferences", 0.5),
+        ("experiences", 0.5),
+        ("resources", 0.5),
+    ):
+        target = category_targets(bucket, _ctx())[0]
+        hits_by_target[target] = [_hit(f"{target}/{i}.md", base - i * 0.01) for i in range(8)]
+
+    result = await assemble_context(
+        service=_bucket_service(hits_by_target),
+        ctx=_ctx(),
+        params=AssembleParams(query="q", quotas=quotas, max_tokens=8000, peer_scope="actor"),
+    )
+
+    assert Counter(entry.category for entry in result.entries) == quotas

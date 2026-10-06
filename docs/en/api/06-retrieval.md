@@ -693,7 +693,7 @@ Injecting context every turn used to mean searching per type, reading each hit b
 **Tier rules**
 
 - **Purpose presets**: `chat` uses `events:3, entities:3, preferences:1, experiences:1, resources:1, skills:1`; `coding` uses `events:1, entities:2, preferences:1, experiences:1, resources:3, skills:2`. Each bucket first takes up to its own quota; when a bucket finds fewer matches, its unused slots go to the best remaining hits of the other buckets, so the total (10 for either preset) is never exceeded. Results are deduplicated and globally sorted after gathering, but are not truncated by a second global `limit`
-- **Default tier per category**: with `detail` omitted, each category lands on the tier below. Among file entries, only `events` needs a body read at its default tier. Directory hits read `.overview.md`. Preset scope directories (`viking://resources`, `viking://agent` and its preset children, the user root and its first-level directories) carry only boilerplate summaries and are never served
+- **Default tier per category**: with `detail` omitted, each category lands on the tier below. Among file entries, only `events` needs a body read at its default tier. Directory hits read `.overview.md`. Preset scope directories (`viking://resources`, `viking://agent` and its preset children, the user root and its first-level directories) serve only for navigation and are never returned as entries, even after their `.overview.md` has been regenerated from their contents
 
   | Category | Default tier | Leftover budget may reach | Why |
   |----------|--------------|---------------------------|-----|
