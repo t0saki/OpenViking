@@ -4,11 +4,11 @@ description: Deploy Context Gateway with Docker Compose, Helm or your own proxy,
 
 # Context Gateway deployment and operations
 
-This page is for the people who run Context Gateway: deploying it, managing upstreams, context profiles and keys in Studio, keeping data safe, and fixing problems. For what the gateway does and how to connect clients, see [Context Gateway](15-context-gateway.md).
+This page is for the people who run Context Gateway: deploying it, managing upstreams, context profiles and keys in Studio, keeping data safe, day-to-day operations, and fixing problems. For what the gateway does and how to connect clients, see [Context Gateway](15-context-gateway.md); for the overall architecture, see [Architecture at a glance](15-context-gateway.md#architecture-at-a-glance) on that page.
 
 Context Gateway is currently in beta. Its settings and APIs may change between releases, so read the release notes before you upgrade.
 
-The gateway is a separate process next to OpenViking Server, normally on port 1935. Clients send their model requests to it. You manage it in Studio, which OpenViking Server serves; Studio's management calls reach the gateway through OpenViking Server.
+The gateway is a separate process next to OpenViking Server, normally on port 1935. Clients send their model requests to it. You manage it in Studio, which OpenViking Server serves; Studio's management calls reach the gateway through OpenViking Server. The two processes talk only over HTTP: the gateway calls OpenViking's public APIs to search memory, save conversations and run tools, and OpenViking Server calls the gateway's management API. The diagram shows the request paths when a single HTTPS address is exposed:
 
 ```text
                        clients
@@ -35,7 +35,7 @@ The gateway is a separate process next to OpenViking Server, normally on port 19
 - **An account admin key** for Studio. Everything you configure belongs to the account of the key you sign in with. A root key also works but manages whichever account it resolves to, so prefer the account admin's key.
 - **An OpenViking user for each person** who gets a gateway key, in the same account. Users and admins both work; root does not. When you issue the key, OpenViking Server reads the user's OpenViking key itself; if it stores only key hashes, the user has to provide their key.
 - **API keys for your model providers.** Subscription logins are rejected, and Coding Plan keys are refused unless you explicitly allow them.
-- **A local disk on one host** for the gateway's storage (`~/.openviking/context-gateway` by default). Network file systems and storage shared between hosts are not supported.
+- **A local disk on one host** for the gateway's storage (`~/.openviking/context-gateway` by default). Network file systems and storage shared between hosts are not supported. Run only one gateway instance at a time; for more capacity, add workers (see [Scaling](#scaling)).
 - **Two secrets**, described next.
 
 ## Secrets
@@ -62,6 +62,17 @@ Keep them in your secret store or deployment environment, not in `ov.conf` or so
 - Without valid secrets the gateway stops at startup. OpenViking Server starts without the admin token, but Studio's Context Gateway page then reports that the management token is not configured.
 
 ## Deploy
+
+### Deployment options
+
+The gateway and OpenViking talk only over HTTP, so they can share a machine or a Pod, or run separately. Every form has to meet the [requirements](#requirements): OpenViking 0.4.16 or later in API key mode, gateway storage on a local disk of one host, one gateway instance at a time, the encryption key available to the gateway, and the same admin token in both processes. Leave load balancing, failover and rate limiting to a LiteLLM or new-api gateway behind it.
+
+| Form | Suits | How to deploy | Watch for |
+| --- | --- | --- | --- |
+| Single machine | Trying it out yourself | Install `openviking[context-gateway]` and run `openviking-context-gateway` with the same `ov.conf` as OpenViking; see the [Quick start](15-context-gateway.md#quick-start). | You can skip the reverse proxy if only this machine uses it. |
+| [Docker Compose](#docker-compose) | Small teams on one server | The gateway runs in its own container, and the bundled Caddy routes by path on port 1934. | The gateway port is not mapped to the host; only the gateway container gets the encryption key. |
+| [Helm](#helm) | Kubernetes | The gateway runs as a second container in the OpenViking Pod, sharing its volume and `ov.conf`. | Keep one replica; the chart cannot split the gateway into its own Pod. |
+| [Separate deployment](#separate-deployment) | Gateway and OpenViking on different machines or Pods | Write your own Deployment or service definitions and put the same `context_gateway` section in both `ov.conf` files. | Each side must reach the other; the link carries users' OpenViking keys; network latency eats into the recall time limit. |
 
 Both processes read the `context_gateway` section of the same `ov.conf`. OpenViking Server uses it to find the gateway for Studio and for data deletion; the gateway uses all of it. A few rules apply to this section:
 
@@ -226,6 +237,15 @@ What the chart does when `contextGateway.enabled` is true:
 - It adds a readiness probe on the gateway's `/health`. `contextGateway.resources` sets the gateway container's requests and limits.
 
 Keep `replicaCount: 1`. The gateway's storage lives on the ReadWriteOnce volume and must be used from a single host; scale with `contextGateway.workers` instead. For passing the root key and model keys from Secrets, see the [chart README](https://github.com/volcengine/OpenViking/blob/main/deploy/helm/README.md).
+
+### Separate deployment
+
+When the gateway and OpenViking run on different machines or Pods, the chart and the Compose file no longer apply, and you write the deployment definitions yourself. Put the same `context_gateway` section in both `ov.conf` files, and keep these points in mind:
+
+- **Set the address in both directions.** The gateway reaches OpenViking at `openviking_url`; OpenViking Server reaches the gateway at `url`, which carries Studio's management calls and user data deletion. Both should be private addresses, and the gateway's `host` must listen on an interface the other side can reach.
+- **Protect the link between them.** The gateway calls OpenViking with each user's own OpenViking key, and management calls carry the admin token, so keep this link on a private network or behind TLS.
+- **Mind the latency.** Recall for each new message waits at most the context profile's **Time limit** (2 seconds by default), and the network round trip between the gateway and OpenViking counts against it. With higher latency, recall times out more often and the message goes to the model without memory.
+- **Upgrade in order.** When you upgrade the two separately, upgrade OpenViking first, then the gateway; see [Upgrades](#upgrades).
 
 ### Your own reverse proxy
 
@@ -446,7 +466,7 @@ The expanded row shows the reason, for example that OpenViking rejected the key 
 
 ## OpenViking tools
 
-With OpenViking tools on, the model can use the tools available on your OpenViking server while answering, within the user's access permissions. The gateway runs the tools, and the client continues receiving the answer until the reply ends. Reported token usage includes all model calls made during that reply.
+With OpenViking tools on, the model can use the tools available on your OpenViking server while answering, within the user's access permissions. The gateway runs the tools, and the client continues receiving the answer until the reply ends. Reported token usage includes all model calls made during that reply. For what this means for different clients, which tools the model can use and what users see in the reply, see [Agentic memory for any client](15-context-gateway.md#agentic-memory-for-any-client) in the Context Gateway guide; this section covers client requirements, settings and limits.
 
 Tools support streaming and nonstreaming requests in all three protocols:
 
@@ -464,7 +484,7 @@ To turn the tools on, enable **OpenViking tools** in a context profile. The **To
 
 **Allow OpenViking tools** is on by default for each upstream. With both switches on, new conversations get the selected tools with an `openviking_` prefix: for example `openviking_find`, `openviking_read`, `openviking_grep` and `openviking_glob`. The descriptions in Studio explain what each available tool does. Read-only labels appear only when OpenViking supplies that information. The definitions of the offered tools go with every request in the conversation; OpenViking's full set adds about 3,500 input tokens, so unchecking tools nobody needs also saves tokens.
 
-> **Note**: All selected tools run without the client's permission prompts, including tools that write or delete data. Uncheck those tools if they should not be available. A tool-call notice shows what happened; it is not a request for approval.
+> **Note**: All selected tools run without the client's permission prompts, including tools that write or delete data. Uncheck those tools if they should not be available; for profiles used by chat apps, we recommend unchecking at least `forget` and `set_acl`. A tool-call notice shows what happened; it is not a request for approval.
 
 **Tool call notices.** With **Show tool calls** on (the default), the reply gets a one-line notice for each OpenViking tool call the gateway runs, at the point in the answer where the call happened:
 
@@ -564,6 +584,8 @@ Each request's detail on the Requests tab shows the window number, whether the m
 
 ## Security and data
 
+**Isolation by user.** Each gateway key is bound to one OpenViking user. The gateway searches memory, saves conversations and calls tools with that user's own OpenViking key, so it never has more access than the user does, and each user's conversation state is kept apart. Sessions and memories always live in OpenViking; the gateway stores only the state it needs to keep conversations going.
+
 **What the gateway stores.** Under `storage_path`, the gateway keeps two SQLite databases:
 
 - `management.sqlite3`: upstreams, context profiles, gateway keys, request logs and the mapping from Responses IDs to upstreams. Upstream API keys and header values, and the OpenViking keys bound to gateway keys, are encrypted. Gateway keys themselves are stored only as a hash and a short prefix.
@@ -589,12 +611,14 @@ Stored values are encrypted with the encryption key. The files are readable only
 - Delete one user's gateway data from Studio (a key's **More actions** menu → **Delete this user's gateway data…**) or with `DELETE /api/v1/admin/context-gateway/users/{user_id}/data` on OpenViking Server, using an account admin key. This revokes the user's gateway keys and deletes their conversation state. Request-log metadata ages out with retention.
 - Removing a user in OpenViking does the same automatically. Removing an account also deletes the account's upstreams, profiles, keys and request logs from the gateway. If the gateway is unreachable at that moment, OpenViking keeps retrying. If you stop using the gateway, set `context_gateway.enabled` to `false` so deletions no longer wait for it.
 - Sessions and memories in OpenViking are deleted through OpenViking, not the gateway.
+- Deleting a memory in OpenViking does not remove a copy already added to a conversation: to replay it exactly, the gateway keeps the added memory text in the conversation state until the conversation expires. To clear it at once, delete the user's gateway data. That also revokes all of the user's gateway keys, so you have to issue new ones afterwards.
 
 **Access.**
 
 - Clients authenticate with gateway keys, sent as `Authorization: Bearer` or `x-api-key`. Keys can be revoked at any time.
 - The gateway uses each user's own OpenViking key for memory search, saving and tools, so it can do only what that user can do.
-- Only OpenViking Server should hold the admin token, and the gateway's `/admin/*` paths must stay private (see [Routes](#routes)). Studio users are checked by OpenViking Server: account admins and root only, each limited to their own account.
+- Only OpenViking Server should hold the admin token, and the gateway's `/admin/*` paths must stay private (see [Routes](#routes)). Studio users are checked by OpenViking Server: account admins and root only, each limited to their own account. The admin token has no such limit: whoever holds it can manage every account, so never expose the gateway port to the internet.
+- Account admins can issue gateway keys for any user in their account (when OpenViking stores only key hashes, the user has to provide their key). A gateway key lets its holder recall memory and call tools as that user, so the right to issue keys amounts to reading the memory of every user in the account. Give it only to admins you trust.
 - `/context-gateway/uploads` needs no gateway key. A one-time token signed by OpenViking authorizes each upload, and the gateway forwards it only to OpenViking's upload endpoint. Keep its query string out of proxy logs.
 - `X-OpenViking-*` headers, client credentials and cookies are never forwarded to upstreams.
 
@@ -603,6 +627,38 @@ Stored values are encrypted with the encryption key. The files are readable only
 - **`kernel.sqlite3` lost**: memory added earlier cannot be replayed. Each ongoing conversation pays one provider cache miss, Claude conversations lose earlier thinking once (**Memory record missing**, `missing_injection_record`), and turns not yet saved are lost.
 - **`management.sqlite3` lost**: upstreams, profiles, keys and request logs are gone. Set them up again and issue new keys.
 - **Encryption key lost**: neither database can be read. Start with an empty `storage_path`.
+
+## Day-to-day operations
+
+The Context Gateway page is open only to account admins and root. Initial setup follows the order upstream → context profile → key → connect a client; after that, day-to-day work comes down to a few things.
+
+- **Watch the first-call cache hit rate.** The **First-call cache hit rate** on the Overview tab reflects prompt caching across turns and should stay close to what the provider reaches without the gateway. The **Within-turn cache hit rate** covers tool steps and is normally high. If the first-call rate drops noticeably, see [The first-call cache hit rate dropped](#the-first-call-cache-hit-rate-dropped).
+- **Use the request log to track down a single request.** Filter by new messages, tool steps or issues, then expand a row to see the recall result, saving status and why OpenViking tools were off; see [Requests and overview](#requests-and-overview).
+- **Set the public address.** Shared deployments must set `public_url`. Without it, Studio's setup instructions show the internal address and the upload links of the OpenViking import tools do not work.
+- **Back up regularly.** Back up the gateway's storage directory and the encryption key; for how, and what a loss means, see **Backups** under [Security and data](#security-and-data).
+
+### Upgrades
+
+- OpenViking Server must be at least `min_server_version` (0.4.16). With an older server, memory search and saving stop and no keys can be issued. When you upgrade the gateway and OpenViking separately, upgrade OpenViking first, then the gateway.
+- Read the release notes before you upgrade. If a new gateway version cannot read the old storage format, it stops at startup with `Unsupported gateway schema`; see [The gateway does not start](#the-gateway-does-not-start).
+
+### Monitoring
+
+The gateway exports no metrics such as Prometheus and writes no HTTP access log. Check how it is doing on Studio's Overview and Requests tabs, or through the management API on OpenViking Server (`/api/v1/admin/context-gateway/overview` and `logs`); use the gateway's `/health` to check that the process is alive.
+
+## Design trade-offs
+
+The table explains why the gateway's key design choices were made and what they cost, to help you judge whether it fits your setup:
+
+| Design | Choice and reason | Cost |
+| --- | --- | --- |
+| Where it plugs in | On the model call path instead of a plugin in every agent: clients that cannot install plugins can use it, and provider keys are managed in one place. | It cannot see the working directory; keeping projects' memory apart means using a different OpenViking user per project. |
+| Who runs the tools | The gateway runs OpenViking tools during the reply, stores the tool rounds and replays them unchanged on the next turn: even clients with no tools and no MCP support get a model that uses memory itself. | No per-call approval; clients must send the full history every turn; admins need to narrow the tool list and limits. |
+| Where memory goes | At the end of the newest user message, not in the system prompt: changing one character of the system prompt invalidates the whole cache, while appending at the end and replaying it unchanged keeps the prefix stable. | The gateway must reliably record the exact text of every addition; if a record is lost, the cache misses once. |
+| When turns are saved | One turn behind: only when the next message brings the previous turn back is it clear that the user kept it. | The last turn is saved only after **Save the latest reply after** (10 minutes by default). |
+| Long conversations | The gateway has the same model write the summary: only the gateway knows what the model actually received, and the summary request mostly hits the cache. | The turn that triggers compaction costs one extra, billed model call; text before the cut is no longer sent to the model. |
+| Local state | SQLite on a single host, with no Postgres or Redis dependency, suited to self-hosting on one machine. | The gateway cannot fail over between machines and is a single point on the model call path. |
+| Client identity | The gateway issues its own keys instead of using OpenViking keys directly: they can be revoked on their own, and one person's clients can be bound to different context profiles. | The gateway has to keep users' OpenViking keys encrypted; a leaked gateway key exposes that user's memory. |
 
 ## Configuration reference
 
@@ -723,6 +779,16 @@ URL settings must be plain `http` or `https` addresses without credentials, quer
 Studio calls the management API on OpenViking Server under `/api/v1/admin/context-gateway/`, with the resources `overview`, `logs`, `guides`, `upstreams`, `policies`, `keys` and `users/{user_id}/data`. Scripts can call the same paths with an account admin key.
 
 ## Troubleshooting
+
+### Common symptoms
+
+| Symptom | Cause | What to do |
+| --- | --- | --- |
+| A conversation gets no recall and is not saved | An OpenViking plugin or an MCP server named `openviking` was detected, and the gateway stepped aside, leaving recall, saving and OpenViking tools to the plugin. | Expected: it keeps the same content from being added or saved twice. See [Gateway or plugin?](15-context-gateway.md#gateway-or-plugin). |
+| Saving shows **Retrying**, then **Paused** | OpenViking rejected the save or could not be reached, often because the user's OpenViking key was regenerated. | The gateway recovers on its own once the cause is fixed; if the key is no longer valid, issue a new gateway key. See [Conversations do not appear in OpenViking](#conversations-do-not-appear-in-openviking). |
+| The profile has tools on, but the conversation has none | The conversation's first request did not meet the tool conditions, or the client does not send the full history. | Check the reason in the request log (see [OpenViking tools](#openviking-tools)), fix it and start a new conversation. |
+| Requests go without memory | OpenViking unreachable or too slow, budget used up, nothing relevant, and so on. | See [No memory is added](#no-memory-is-added). |
+| The provider rejects a long conversation as too long | The gateway does not know the model's real window and compacts too late. | See [Long conversations hit the context limit](#long-conversations-hit-the-context-limit). |
 
 ### The gateway does not start
 

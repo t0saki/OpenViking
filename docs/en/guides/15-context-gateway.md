@@ -4,7 +4,17 @@ description: Give any API-key model client OpenViking memory by pointing it at t
 
 # Context Gateway
 
-Context Gateway gives any model client that uses an API key access to OpenViking memory. Point the client's base URL at the gateway and give it a gateway key instead of the provider's API key; you install nothing in the client and change no prompts. For every new message, the gateway searches OpenViking and adds what is relevant to that message before it reaches the model. It also saves the conversation back to OpenViking, so OpenViking can extract new memories from it.
+Connect **any** model client that lets you change its base URL to Context Gateway, and it gets OpenViking memory, with the model able to work with that memory itself. The client changes two settings: the base URL points at the gateway, and the model provider's API key is replaced with a gateway key. There is no plugin to install and no code or prompt to change.
+
+With OpenViking tools on, the model can search memory, read the original text, note down something new and import material, all within a single reply. The gateway runs these tools itself, so the client does not have to declare or implement any of them. That lets **any** client, whether a chat app, an SDK script or a low-code platform, work with memory the way an agent does.
+
+| Capability | What the gateway does |
+| --- | --- |
+| Automatic recall | For every new user message, the gateway first searches OpenViking and appends the relevant memory to that message before it reaches the model. On later requests it puts that content back exactly where it was, so the provider's prompt cache stays valid. |
+| Model-driven memory | The model calls OpenViking tools to search, read, write and import. The gateway runs each call and feeds the result back to the model, and the client receives one continuous reply. This is off by default. |
+| Saving and compaction | The gateway saves conversations back to OpenViking, which extracts new memories from them. When a conversation nears the model's context window, the gateway has the same model write a summary that replaces the earlier part. |
+
+**Who it is for**: clients that cannot install a plugin or MCP server, such as chat apps, SDK scripts and low-code platforms, and teams that want to manage model providers, keys and memory settings in one place. **Not for**: clients signed in with a subscription, and clients such as Cursor and Trae whose model calls leave from the vendor's servers.
 
 The gateway accepts the three common model APIs: Anthropic Messages, OpenAI Chat Completions and OpenAI Responses (when each request carries the full history). It forwards every request to a model provider you configure, called an **upstream**, and never converts one API into another. It does not handle billing, quotas or load balancing. If you need those, run a gateway such as LiteLLM or new-api behind it and add that as an upstream.
 
@@ -12,51 +22,27 @@ The gateway accepts the three common model APIs: Anthropic Messages, OpenAI Chat
 
 Context Gateway is currently in beta. This page explains how the gateway works and how to connect clients. To deploy it for a team and run it day to day, see [Context Gateway deployment and operations](22-context-gateway-operations.md).
 
-## Gateway or plugin?
+## Architecture at a glance
 
-OpenViking also connects to agents through plugins that run inside the agent: Claude Code, Codex, OpenCode, pi, OpenClaw, Hermes and others (see [Agent Integrations](../agent-integrations/01-overview.md)). The two approaches complement each other. Their differences come from where each one runs:
+![Context Gateway architecture: the client changes only its base URL and API key, and a reverse proxy sends its model requests to the gateway; the gateway searches and saves memory with the user's own OpenViking key, then forwards the request to the upstream model provider in the same API; sessions and memories live in OpenViking, and the gateway host keeps only two encrypted SQLite files](../../images/context-gateway/architecture.en.svg)
 
-| | Context Gateway | Agent plugin |
-| --- | --- | --- |
-| Where it runs | Between the client and the model provider. It sees only the requests sent to the model. | Inside the agent. It sees the agent's sessions, events and local workspace. |
-| Clients it covers | Anything that lets you set a base URL and an API key: chat apps, SDK and API apps, low-code platforms, coding agents. | Agents that have an OpenViking plugin. |
-| Clients it cannot cover | Clients signed in with a subscription (a Claude login in Claude Code, a ChatGPT login in Codex) and clients whose model calls leave from the vendor's servers, such as Cursor and Trae. | Clients without an extension API. |
-| Per-project memory | Cannot see the working directory or repository. Keep projects apart with separate keys. | Detects the workspace and repository automatically. |
-| What you can see | Added memory is invisible in the client. OpenViking tool calls show up in the reply as one-line notices by default, without their results. You review both in Studio. Tool calls run without the client's permission prompts. | Tool calls appear in the transcript and go through the agent's permission prompts. |
-| When conversations are saved | One turn behind: a turn is saved when the next message arrives, the last turn after a quiet period. | On the agent's own events, such as the end of each turn. |
-| Setup and upgrades | One service for everyone, nothing to install on each machine. Upstreams, keys and memory settings are managed in one place. | Installed and upgraded on each machine. |
-| Keys, data and failures | Holds provider API keys and unsaved conversation text centrally (encrypted) and adds one hop to every model call. If the gateway is down, model calls through it fail. | Provider keys stay with each agent; only captured conversations go to OpenViking. No extra service to keep running. |
+- **Where it runs**: the gateway is a separate service. It can share a machine or a Pod with OpenViking, or run on its own (see [Deployment options](22-context-gateway-operations.md#deployment-options)). In a shared deployment its port is not exposed; a reverse proxy routes the model API and tool upload paths to the gateway and everything else to OpenViking. For a local trial on one machine, you can skip the proxy.
+- **How it relates to OpenViking**: the gateway only calls OpenViking's public APIs. Embedding and memory extraction happen inside OpenViking.
+- **Where the data lives**: sessions and memories live in OpenViking. The gateway host keeps only two encrypted SQLite files, one for upstreams, keys and settings and one for conversation state. A conversation's state is deleted after 30 days without use. For deletion and isolation, see [Security and data](22-context-gateway-operations.md#security-and-data).
+- **When something fails**: if OpenViking is unavailable, conversations continue without memory and saving retries automatically. If the gateway is down, every model call that goes through it fails.
+- **Who manages it**: account admins issue a gateway key to each user in Studio. Each key is bound to one OpenViking user, one **context profile** (memory settings such as the recall budget, whether conversations are saved and whether OpenViking tools are offered) and a set of **upstreams** (the model endpoints and API keys requests are forwarded to).
 
-Keep the plugin for Claude Code, Codex or pi when you want per-project memory and tool calls you can see and approve. Use the gateway for clients that have no plugin, and when you want to manage providers, keys and memory settings centrally.
+## What happens once you connect
 
-**Using both.** When a request shows signs of an OpenViking plugin, the gateway stops adding memory and saving turns for that conversation and only forwards it, so nothing is added or saved twice. It looks for:
+Two terms first. **Recall** means searching OpenViking for memory relevant to a message and appending it to that message. **Prompt caching** is a provider billing feature: the part of a request that matches the start of the previous one is billed at the cached rate, and everything from the first differing byte on is billed at the full rate. The cached rate is usually a small fraction of the full price; see each provider's pricing page for the exact figures.
 
-- memory blocks that plugins insert into the prompt: `<openviking-context>`, `<relevant-memories>`, `<relevant-memory>` or `<memory-context>`;
-- a client tool whose name contains an `openviking` segment, such as `openviking_search` or `mcp__openviking__find`, so a client that has the OpenViking MCP server configured under the name `openviking` counts too;
-- an `X-OpenViking-Plugin` request header, which plugin and app authors can send to opt out explicitly.
+| What you do | What you get | What it costs | What to watch |
+| --- | --- | --- | --- |
+| Point the base URL at the gateway and replace the API key with a gateway key. For Claude Code, also set `CLAUDE_CODE_GATEWAY_HINT_HEADERS=1` so sub-agent and background requests are labeled and are not recalled for or saved. | Relevant memory added to every new message, plus your user profile at the start of a conversation; conversations saved to OpenViking and turned into new memories; automatic compaction of long conversations; optionally, a model that searches, reads and writes OpenViking itself (see the [next section](#agentic-memory-for-any-client)). | The first model call of each new message waits up to 2 extra seconds; added memory is billed as input tokens, mostly at the cached rate on later requests; the turn that triggers compaction makes one extra model call. | Added memory is invisible in the client (the provider does see it), and Studio's request log records only counts and timing. Without a configured context window, the gateway assumes 1,000,000 tokens when deciding when to compact; for models with smaller windows, ask an admin to set the real window, or long conversations will be rejected by the provider as too long. When the client has an OpenViking plugin or an MCP server named `openviking`, the gateway does not recall, save or offer OpenViking tools for that conversation. |
 
-The decision is permanent for that conversation; start a new conversation without the plugin to use gateway memory again. Other conversations are not affected. On Studio's **Requests** tab these requests are flagged **OpenViking plugin in use**.
+![What happens in one turn: the gateway recognizes the conversation and the request type, puts earlier memory back exactly as it was, recalls only for the new message, forwards the request to the upstream in the same API and queues the turn for saving; below, how replay keeps the prompt cache hitting, and how saving and compaction work across turns](../../images/context-gateway/one-turn.en.svg)
 
-## How it works
-
-```text
-client                        Context Gateway                          model provider
-(base URL = gateway,                                                   (upstream)
- key = gateway key)
-
-  request  -----------------> 1. check the gateway key
-  (full history)              2. re-add memory from earlier turns
-                              3. new user message: search OpenViking
-                                 and append what is relevant
-                              4. forward the request ----------------->
-  reply    <----------------- 5. stream the reply back <---------------
-                              6. queue the finished turn
-                                         |
-                                         |  search, save turns, commit
-                                         v
-                                 OpenViking Server
-                                 (extracts memories)
-```
+The gateway recognizes when requests belong to the same conversation. Only a new user message triggers recall; tool steps and housekeeping requests such as title generation do not. The rest of this section walks through each step.
 
 **What the model sees.** Model APIs are stateless: the client resends the whole conversation with every request. When a request ends with a new user message, the gateway searches OpenViking with the text of that message and appends the results to the end of the same message:
 
@@ -104,17 +90,97 @@ Relevant memory from OpenViking. Use the openviking_read tool to expand URIs.
 
 The profile and catalogs can appear even when the first message has no search results. The opening note and context do not consume the recall budget. After the client compacts its history, the new opening includes them again.
 
-**Replay.** On every later request in the conversation, the gateway puts each block back on the message it was first added to, byte for byte. Providers cache prompts by prefix and Claude's thinking signatures cover the earlier conversation, so keeping that history identical keeps the provider cache warm and keeps Claude from rejecting the conversation.
+**Replay.** The client's history does not contain what the gateway added, so the gateway keeps its own record of each memory block. On every later request in the conversation, it puts each block back on the message it was first added to, byte for byte. Providers cache prompts by prefix and Claude's thinking signatures cover the earlier conversation, so the history has to stay identical: that keeps the provider cache hitting and keeps Claude from rejecting the conversation. The same reason explains why memory goes at the end of the newest message rather than into the system prompt: changing a single character of the system prompt invalidates the entire cache after it.
 
 **When conversations are saved.** The gateway saves finished turns to an OpenViking session owned by the key's user; these sessions are named `context-gateway-…`. A turn is saved when the next user message arrives, which confirms the client kept it, so regenerated or abandoned answers are never saved. The last turn of a conversation is saved after 10 quiet minutes. Then the gateway commits the session, and OpenViking extracts memories from it in the background. The gateway also commits whenever 20,000 tokens are waiting in the session to be committed. Text the gateway added, and client noise such as `<system-reminder>` blocks, are stripped before saving. Sub-agent, housekeeping and token-count requests are never saved.
 
-**Long conversations.** When a conversation reaches 90% of the model's context window (the default), the gateway compacts it: the same model writes a bounded summary of the conversation so far, and from then on that summary replaces everything before the cut. Nothing before the cut is kept word for word. When conversations are saved and the model has the OpenViking grep and read tools, the summary is followed by directions for searching the saved conversation for details. OpenViking's Working Memory summaries are not used, and new OpenViking sessions the gateway creates have Working Memory turned off. The gateway assumes a 1,000,000-token window unless the upstream or the context profile sets the model's window, so set it for models with smaller windows. Each compaction costs one extra model request and one provider cache miss. See [Long conversations](22-context-gateway-operations.md#long-conversations) for the details.
+**Long conversations.** When a conversation reaches 90% of the model's context window (the default), the gateway compacts it: the same model writes a bounded summary of the conversation so far, and from then on that summary replaces everything before the cut. Nothing before the cut is kept word for word; the history shown in the client stays as it was. When conversations are saved and the model has the OpenViking grep and read tools, the summary is followed by directions for searching the saved conversation for details. The model writes the summary itself: OpenViking's Working Memory summaries are not used, and new OpenViking sessions the gateway creates have Working Memory turned off. The gateway assumes a 1,000,000-token window unless the upstream or the context profile sets the model's window, so set it for models with smaller windows. Each compaction costs one extra model request and one provider cache miss. See [Long conversations](22-context-gateway-operations.md#long-conversations) for the details.
 
-**OpenViking tools.** A context profile can also let the model use your OpenViking server's tools while answering. This works with Chat Completions, full-history Responses and Anthropic Messages, with streaming or nonstreaming replies. It is off by default. Once it is on, every tool OpenViking provides is selected, including tools that change or delete data, and the gateway runs them without the client's permission prompts; uncheck any tool the model should not use. See [OpenViking tools](22-context-gateway-operations.md#openviking-tools) for setup and client requirements.
+All of these numbers come from the key's **context profile**, where you can change budgets and timing or turn each feature off.
+
+## Agentic memory for any client
+
+With automatic recall, the gateway guesses what the model needs. With OpenViking tools on, the model decides for itself what to search, read and remember. The gateway runs the tools, so the client does not declare or implement any of them, and it works even when the request carries no tools at all.
+
+![One reply with OpenViking tools: the gateway adds recalled memory and the OpenViking tool definitions to the client's request; when the model calls an OpenViking tool, the gateway runs it with the user's OpenViking key, feeds the result back and asks the model again until it gives a final answer; the client receives one continuous reply with notice lines, and the tool rounds are replayed unchanged in the next turn](../../images/context-gateway/tool-loop.en.svg)
+
+- **Several steps in one reply**: the gateway intercepts the OpenViking tool calls the model makes, runs them with the user's OpenViking key, feeds the results back and asks the model again until it stops calling them. The client receives one continuous reply, streaming or not.
+- **The client's own tools still work**: in the same reply, the model can call both OpenViking tools and client tools such as Bash. Client tool calls go to the client unchanged and pass through its permission prompts as usual.
+- **The next turn remembers**: the model's tool calls and the results the gateway fetched are not in the client's history. The gateway stores these tool rounds and replays them unchanged on the next turn, so the model remembers what it found and the prompt cache stays valid.
+
+### What each kind of client gets
+
+| Client | Without the gateway | Through the gateway with OpenViking tools on |
+| --- | --- | --- |
+| Chat apps, such as Cherry Studio and Open WebUI | Using memory means configuring MCP or writing tools yourself; a plain chat only exchanges text. | The model searches memory, reads the original text by URI and notes down what the user asks it to remember. Files the user attaches can be imported into OpenViking: when the client sends the original file, that file is imported; Open WebUI usually sends only the extracted text. The model can call OpenViking tools even in a plain chat mode with no tools at all. |
+| SDK scripts and low-code platforms | One question, one answer; multi-step work needs a loop you write yourself. | One request covers "search → read → grep for exact matches → answer", with no code changes. |
+| Coding agents such as Claude Code and Codex (without the OpenViking plugin or MCP server) | Their own tools, but no OpenViking. | OpenViking tools and client tools such as Bash mix in the same reply, with no plugin or MCP to install. If you want to approve each tool call, the plugin or MCP server is still the better choice. |
+
+### Which tools the model can use
+
+The tools come straight from the MCP tool list your OpenViking server provides, with an `openviking_` prefix added to each name, so tools that OpenViking adds later become available automatically. The common groups:
+
+| Purpose | Tools | What the model uses them for |
+| --- | --- | --- |
+| Search | `find`, `search`, `grep`, `glob` | Semantic search over memory and resources; exact lookups by regular expression or file name. |
+| Browse and read | `list`, `tree`, `read` | Expanding a recalled entry to its original text by URI; browsing memory and skill directories. |
+| Write | `remember`, `write`, `edit` | Storing a long-term memory; writing or partially editing memory files. |
+| Import | `add_resource`, `add_skill` | Importing a web page or code repository by URL, importing a chat attachment, creating a skill from a piece of text, all without a shell on the client. |
+| Delete and permissions | `forget`, `set_acl` and others | Permanently deleting memory; changing access to shared resources. |
+
+### Turning them on, and the limits
+
+- **Off by default.** An admin turns on **OpenViking tools** in the context profile; **Create with recommended settings** leaves it off. Once on, every tool is selected, and you can uncheck them one by one. The full set of tool definitions adds about 3,500 input tokens to every request in the conversation, so unchecking tools nobody needs also saves tokens. Changes apply to new conversations only.
+- **Limits.** By default each request allows at most 5 rounds of tool calls and 100,000 additional tokens. Once either is used up, the gateway refuses further OpenViking calls and the model answers with the results it already has; if the model keeps calling after being refused, the request fails. A single call that runs longer than 30 seconds returns an error to the model; a request that runs longer than 120 seconds in total fails.
+- **Client requirements.** The client must send the full history every turn; with OpenAI Responses it must also set `store: false`. The gateway does not offer OpenViking tools when the client forces a specific tool or asks for structured output, when the upstream has **Allow OpenViking tools** off, or when the upstream is DeepSeek and the request does not turn thinking off (so DeepSeek over Responses gets no tools). Whether a conversation gets tools is decided at its first request.
+
+For the full conditions, limit settings, file imports and failure handling, see [OpenViking tools](22-context-gateway-operations.md#openviking-tools).
+
+### What users see
+
+The model's text streams as usual. Each OpenViking tool call leaves a one-line notice in the reply: it appears when the call starts, and `done`, `failed` or `skipped` is added when it ends:
+
+```text
+> OpenViking find: "the release date we agreed on" — done
+> OpenViking read: viking://user/alice/memories/release.md — done
+```
+
+A notice shows only the tool name and what it works on, such as the query or URI; users never see the full arguments or the results. Notices are not sent to the model or saved to OpenViking, and an admin can turn them off in the context profile. The token usage the client receives is the sum of every model call in the reply.
+
+### Costs and admin controls
+
+> **Note**: Selected tools run without the client's permission prompts, including tools that write or delete data. A notice tells the user what already happened; it is not a request for approval. The model can do no more than the user's own OpenViking permissions allow.
+
+- **Narrow the tool list.** For profiles used by chat apps, we recommend unchecking at least `forget` and `set_acl`. This is a recommendation, not the default.
+- **Four controls**: the on/off switch in the context profile, the per-tool checkboxes, each upstream's **Allow OpenViking tools** switch, and the limits on tool rounds and tokens.
+- **Gateway tools or a plugin/MCP server.** Plugins and MCP servers show each call and its result in the client and ask for approval first, which makes them more transparent for Claude Code and Codex. Gateway tools are mainly for clients that cannot use a plugin or MCP server.
 
 **Experimental: agent-managed context windows.** Where the model has OpenViking tools, a profile can also let it manage its own context windows: it gets two more tools, one to check how full its window is and one to start a fresh window with hand-off notes it writes itself, and the gateway reminds it as the window fills. This is off by default. See [Experimental: agent-managed context windows](22-context-gateway-operations.md#experimental-agent-managed-context-windows).
 
-All of these numbers come from the key's **context profile**, where you can change budgets and timing or turn each feature off.
+## Gateway or plugin?
+
+OpenViking also connects to agents through plugins that run inside the agent: Claude Code, Codex, OpenCode, pi, OpenClaw, Hermes and others (see [Agent Integrations](../agent-integrations/01-overview.md)). The two approaches complement each other. Their differences come from where each one runs:
+
+| | Context Gateway | Agent plugin |
+| --- | --- | --- |
+| Where it runs | Between the client and the model provider. It sees only the requests sent to the model. | Inside the agent. It sees the agent's sessions, events and local workspace. |
+| Clients it covers | Anything that lets you set a base URL and an API key: chat apps, SDK and API apps, low-code platforms, coding agents. | Agents that have an OpenViking plugin. |
+| Clients it cannot cover | Clients signed in with a subscription (a Claude login in Claude Code, a ChatGPT login in Codex) and clients whose model calls leave from the vendor's servers, such as Cursor and Trae. | Clients without an extension API. |
+| Per-project memory | Cannot see the working directory or repository. Memory belongs to an OpenViking user, so to keep projects apart, give each project a gateway key bound to a different OpenViking user. | Detects the workspace and repository automatically. |
+| What you can see | Added memory is invisible in the client. OpenViking tool calls show up in the reply as one-line notices by default, without their results. You review both in Studio. Tool calls run without the client's permission prompts. | Tool calls appear in the transcript and go through the agent's permission prompts. |
+| When conversations are saved | One turn behind: a turn is saved when the next message arrives, the last turn after a quiet period. | On the agent's own events, such as the end of each turn. |
+| Setup and upgrades | One service for everyone, nothing to install on each machine. Upstreams, keys and memory settings are managed in one place. | Installed and upgraded on each machine. |
+| Keys, data and failures | Holds provider API keys and unsaved conversation text centrally (encrypted) and adds one hop to every model call. If the gateway is down, model calls through it fail. | Provider keys stay with each agent; only captured conversations go to OpenViking. No extra service to keep running. |
+
+Keep the plugin for Claude Code, Codex or pi when you want per-project memory and tool calls you can see and approve. Use the gateway for clients that have no plugin, and when you want to manage providers, keys and memory settings centrally.
+
+**Using both.** When a request shows signs of an OpenViking plugin, the gateway stops adding memory, saving turns and offering OpenViking tools for that conversation and only forwards it, so nothing is added or saved twice. It looks for:
+
+- memory blocks that plugins insert into the prompt: `<openviking-context>`, `<relevant-memories>`, `<relevant-memory>` or `<memory-context>`;
+- a client tool whose name contains an `openviking` segment, such as `openviking_search` or `mcp__openviking__find`, so a client that has the OpenViking MCP server configured under the name `openviking` counts too;
+- an `X-OpenViking-Plugin` request header, which plugin and app authors can send to opt out explicitly.
+
+The decision is permanent for that conversation; start a new conversation without the plugin to use gateway memory again. Other conversations are not affected. On Studio's **Requests** tab these requests are flagged **OpenViking plugin in use**.
 
 ## Quick start
 
