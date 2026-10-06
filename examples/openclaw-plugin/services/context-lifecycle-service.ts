@@ -427,6 +427,7 @@ function isSessionNotFoundError(err: unknown): boolean {
 }
 
 const PROFILE_MAX_CHARS = 8000;
+const PROFILE_READ_TIMEOUT_MS = 3000;
 
 function resolveAssembleRouting(params: AssembleOpenVikingSessionParams) {
   const { sessionId, sessionKey, cfg, resolveAgentId, logger } = params;
@@ -445,12 +446,20 @@ function resolveAssembleRouting(params: AssembleOpenVikingSessionParams) {
 
 // Server-side context assembly leaves profile.md out on the assumption that the
 // client injects it, so read it here: the user's profile and, with peer scope, the actor's.
-async function readProfileBlock(client: OpenVikingClient, actorPeerId?: string): Promise<string> {
+async function readProfileBlock(
+  client: OpenVikingClient,
+  actorPeerId: string | undefined,
+  timeoutMs: number,
+  logger: ContextEngineLifecycleLogger,
+): Promise<string> {
   const uris = ["viking://~/memories/profile.md"];
   if (actorPeerId) uris.push(`viking://~/peers/${actorPeerId}/memories/profile.md`);
-  const reads = await Promise.allSettled(uris.map((uri) => client.read(uri, actorPeerId)));
+  const reads = await Promise.allSettled(uris.map((uri) => client.read(uri, actorPeerId, timeoutMs)));
   return reads
     .map((read, i) => {
+      if (read.status === "rejected" && !String(read.reason).includes("[NOT_FOUND]")) {
+        logger.warn?.(`openviking: profile read failed (uri=${uris[i]}): ${String(read.reason)}`);
+      }
       const text = read.status === "fulfilled" && typeof read.value === "string" ? read.value.trim() : "";
       if (!text) return "";
       const capped = text.length > PROFILE_MAX_CHARS
@@ -511,7 +520,12 @@ export async function assembleOpenVikingSession(
     const routing = resolveAssembleRouting(params);
     const client = await params.getClient();
     const [profileBlock, recallBlock] = await Promise.all([
-      readProfileBlock(client, routing.actorPeerId),
+      readProfileBlock(
+        client,
+        routing.actorPeerId,
+        Math.min(params.cfg.autoRecallTimeoutMs ?? PROFILE_READ_TIMEOUT_MS, PROFILE_READ_TIMEOUT_MS),
+        params.logger,
+      ),
       query.query.length < 5 ? "" : recallForAssemble(params, query, client, routing)
         .then((recall) => recall.block)
         .catch((err) => {
@@ -520,7 +534,7 @@ export async function assembleOpenVikingSession(
         }),
     ]);
     const baseTokens = estimateTextTokens(assembled.systemPromptAddition ?? "");
-    for (const blocks of [[profileBlock, recallBlock], [profileBlock]]) {
+    for (const blocks of [[profileBlock, recallBlock], [profileBlock], [recallBlock]]) {
       if (!blocks.some(Boolean)) continue;
       const systemPromptAddition = [assembled.systemPromptAddition, ...blocks].filter(Boolean).join("\n\n");
       const estimatedTokens = assembled.estimatedTokens + estimateTextTokens(systemPromptAddition) - baseTokens;

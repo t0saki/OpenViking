@@ -227,7 +227,7 @@ describe("context-engine assemble()", () => {
       mockProfile(client);
       const messages: [] = [];
       const result = await engine.assemble({ sessionId: "new-session", messages, prompt });
-      expect(client.read).toHaveBeenCalledWith(userProfileUri, undefined);
+      expect(client.read).toHaveBeenCalledWith(userProfileUri, undefined, 3000);
       expect(result.messages).toBe(messages);
       expect(result.systemPromptAddition).toContain(`<user-profile uri="${userProfileUri}">`);
       expect(result.systemPromptAddition).toContain("Basalt-x");
@@ -283,11 +283,33 @@ describe("context-engine assemble()", () => {
       const result = await engine.assemble({
         sessionId: "session", messages: [], prompt, runtimeContext: { senderId: "telegram:12345" },
       });
-      expect(client.read).toHaveBeenCalledWith(userProfileUri, "telegram_12345");
-      expect(client.read).toHaveBeenCalledWith(peerProfileUri, "telegram_12345");
+      expect(client.read).toHaveBeenCalledWith(userProfileUri, "telegram_12345", 3000);
+      expect(client.read).toHaveBeenCalledWith(peerProfileUri, "telegram_12345", 3000);
       expect(result.systemPromptAddition).toContain("Basalt-x");
       expect(result.systemPromptAddition).toContain(`<user-profile uri="${peerProfileUri}">`);
       expect(result.systemPromptAddition).toContain("Timezone: UTC+8");
+    });
+
+    it("bounds the profile read by the auto-recall timeout", async () => {
+      const { engine, client } = makeEngine(undefined, { cfgOverrides: { autoRecall: true, autoRecallTimeoutMs: 1000 } });
+      mockProfile(client);
+      await engine.assemble({ sessionId: "session", messages: [], prompt: "hi" });
+      expect(client.read).toHaveBeenCalledWith(userProfileUri, undefined, 1000);
+    });
+
+    it("warns when the profile read fails for a reason other than a missing file", async () => {
+      const { engine, client, logger } = makeEngine(undefined, { cfgOverrides: { autoRecall: true } });
+      mockRecall(client);
+      client.read.mockRejectedValue(new Error("OpenViking request failed [PERMISSION_DENIED]: forbidden"));
+      const result = await engine.assemble({ sessionId: "session", messages: [], prompt });
+      expect(result.systemPromptAddition).toContain(memory);
+      expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining(`profile read failed (uri=${userProfileUri})`));
+      expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("PERMISSION_DENIED"));
+
+      logger.warn.mockClear();
+      mockProfile(client, {});
+      await engine.assemble({ sessionId: "session", messages: [], prompt });
+      expect(logger.warn).not.toHaveBeenCalledWith(expect.stringContaining("profile read failed"));
     });
 
     it("caps a long profile", async () => {
@@ -309,6 +331,17 @@ describe("context-engine assemble()", () => {
       expect(tighter.systemPromptAddition).toBeUndefined();
     });
 
+    it("keeps recall when the profile alone does not fit the budget", async () => {
+      const { engine, client } = makeEngine(undefined, { cfgOverrides: { autoRecall: true } });
+      mockProfile(client, {});
+      mockRecall(client);
+      const recallOnly = await engine.assemble({ sessionId: "session", messages: [], prompt });
+      mockProfile(client, { [userProfileUri]: "画像".repeat(3950) });
+      const result = await engine.assemble({ sessionId: "session", messages: [], prompt, tokenBudget: recallOnly.estimatedTokens });
+      expect(result.systemPromptAddition).toBe(recallOnly.systemPromptAddition);
+      expect(result.systemPromptAddition).not.toContain("<user-profile");
+    });
+
     it.each([
       { name: "autoRecall off", cfgOverrides: { autoRecall: false }, sessionKey: undefined },
       { name: "bypassed session", cfgOverrides: { autoRecall: true, bypassSessionPatterns: ["agent:*:cron:**"] }, sessionKey: "agent:main:cron:task" },
@@ -324,7 +357,7 @@ describe("context-engine assemble()", () => {
       const { engine, client } = makeEngine(undefined, { cfgOverrides: { autoRecall: true } });
       mockProfile(client);
       const result = await engine.assemble({ sessionId: "session", messages: [{ role: "user", content: prompt }] });
-      expect(client.read).not.toHaveBeenCalledWith(userProfileUri, expect.anything());
+      expect(client.read.mock.calls.some(([uri]) => uri === userProfileUri)).toBe(false);
       expect(JSON.stringify(result)).not.toContain("Basalt-x");
     });
 
