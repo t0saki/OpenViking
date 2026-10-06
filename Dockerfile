@@ -59,6 +59,7 @@ COPY crates/ crates/
 COPY openviking/ openviking/
 COPY --from=web-studio-builder /app/web-studio/dist/ openviking/web_studio/dist/
 COPY openviking_cli/ openviking_cli/
+COPY openviking_context_gateway/ openviking_context_gateway/
 COPY src/ src/
 COPY third_party/ third_party/
 
