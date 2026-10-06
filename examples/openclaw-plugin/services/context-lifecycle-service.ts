@@ -426,14 +426,12 @@ function isSessionNotFoundError(err: unknown): boolean {
   return errorMessage.includes("[NOT_FOUND]") && errorMessage.includes("Session not found");
 }
 
-async function recallForAssemble(
-  params: AssembleOpenVikingSessionParams,
-  recallQuery: ReturnType<typeof prepareRecallQuery>,
-) {
-  const { sessionId, sessionKey, cfg, getClient, resolveAgentId, queryConfigStore, logger, traceRecorder } = params;
+const PROFILE_MAX_CHARS = 8000;
+
+function resolveAssembleRouting(params: AssembleOpenVikingSessionParams) {
+  const { sessionId, sessionKey, cfg, resolveAgentId, logger } = params;
   const ovSessionId = openClawSessionToOvStorageId(sessionId, sessionKey);
   const sender = extractRuntimeSenderId(params.runtimeContext);
-  const client = await getClient();
   const routingRef = sessionId ?? sessionKey ?? ovSessionId;
   const agentId = resolveAgentId(routingRef, sessionKey, ovSessionId);
   const actorPeerId = resolveOpenVikingActorPeerId({
@@ -442,6 +440,36 @@ async function recallForAssemble(
     assistantPeerId: agentId,
     warn: (message) => logger.warn?.(message),
   });
+  return { ovSessionId, agentId, actorPeerId };
+}
+
+// Server-side context assembly leaves profile.md out on the assumption that the
+// client injects it, so read it here: the user's profile and, with peer scope, the actor's.
+async function readProfileBlock(client: OpenVikingClient, actorPeerId?: string): Promise<string> {
+  const uris = ["viking://~/memories/profile.md"];
+  if (actorPeerId) uris.push(`viking://~/peers/${actorPeerId}/memories/profile.md`);
+  const reads = await Promise.allSettled(uris.map((uri) => client.read(uri, actorPeerId)));
+  return reads
+    .map((read, i) => {
+      const text = read.status === "fulfilled" && typeof read.value === "string" ? read.value.trim() : "";
+      if (!text) return "";
+      const capped = text.length > PROFILE_MAX_CHARS
+        ? `${text.slice(0, PROFILE_MAX_CHARS).trimEnd()}\n... [profile truncated]`
+        : text;
+      return `<user-profile uri="${uris[i]}">\n${capped}\n</user-profile>`;
+    })
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+async function recallForAssemble(
+  params: AssembleOpenVikingSessionParams,
+  recallQuery: ReturnType<typeof prepareRecallQuery>,
+  client: OpenVikingClient,
+  routing: ReturnType<typeof resolveAssembleRouting>,
+) {
+  const { sessionId, sessionKey, cfg, queryConfigStore, logger, traceRecorder } = params;
+  const { ovSessionId, agentId, actorPeerId } = routing;
   const queryConfig = await queryConfigStore?.getEffective({
     agentId,
     sessionId,
@@ -474,24 +502,31 @@ export async function assembleOpenVikingSession(
   const assembled = await assembleSessionContext(params);
   // Current OpenClaw supplies the pending turn separately from history. Keep
   // recalled context out of persisted messages and let the host own that turn.
-  if (
-    !params.isMainAssemble || !params.cfg.autoRecall || !params.prompt ||
-    params.isBypassedSession(params)
-  ) {
+  if (!params.isMainAssemble || !params.cfg.autoRecall || params.isBypassedSession(params)) {
     return assembled;
   }
-  const query = prepareRecallQuery(params.prompt);
-  if (query.query.length < 5) return assembled;
+  const query = prepareRecallQuery(params.prompt ?? "");
 
   try {
-    const recall = await recallForAssemble(params, query);
-    if (!recall.block) return assembled;
-    const systemPromptAddition = [assembled.systemPromptAddition, recall.block].filter(Boolean).join("\n\n");
-    const estimatedTokens = assembled.estimatedTokens
-      + estimateTextTokens(systemPromptAddition)
-      - estimateTextTokens(assembled.systemPromptAddition ?? "");
-    if (estimatedTokens > params.tokenBudget) return assembled;
-    return { ...assembled, systemPromptAddition, estimatedTokens };
+    const routing = resolveAssembleRouting(params);
+    const client = await params.getClient();
+    const [profileBlock, recallBlock] = await Promise.all([
+      readProfileBlock(client, routing.actorPeerId),
+      query.query.length < 5 ? "" : recallForAssemble(params, query, client, routing)
+        .then((recall) => recall.block)
+        .catch((err) => {
+          params.logger.warn?.(`openviking: auto-recall failed: ${String(err)}`);
+          return "";
+        }),
+    ]);
+    const baseTokens = estimateTextTokens(assembled.systemPromptAddition ?? "");
+    for (const blocks of [[profileBlock, recallBlock], [profileBlock]]) {
+      if (!blocks.some(Boolean)) continue;
+      const systemPromptAddition = [assembled.systemPromptAddition, ...blocks].filter(Boolean).join("\n\n");
+      const estimatedTokens = assembled.estimatedTokens + estimateTextTokens(systemPromptAddition) - baseTokens;
+      if (estimatedTokens <= params.tokenBudget) return { ...assembled, systemPromptAddition, estimatedTokens };
+    }
+    return assembled;
   } catch (err) {
     params.logger.warn?.(`openviking: auto-recall failed: ${String(err)}`);
     return assembled;
@@ -571,7 +606,7 @@ async function assembleSessionContext(params: AssembleOpenVikingSessionParams): 
     }
 
     try {
-      const recall = await recallForAssemble(params, recallQuery);
+      const recall = await recallForAssemble(params, recallQuery, await getClient(), resolveAssembleRouting(params));
 
       if (!recall.block) {
         return assemblePassthrough({
@@ -692,7 +727,7 @@ async function assembleSessionContext(params: AssembleOpenVikingSessionParams): 
     if (isSessionNotFoundError(err)) {
       const errorMessage = String(err);
       logger.info(
-        `openviking: assemble skipped because OV session does not exist ` +
+        `openviking: session history not assembled because OV session does not exist ` +
           `(session=${ovSessionId}, tokenBudget=${tokenBudget}, agentId=${resolveAgentId(ovSessionId)})`,
       );
       return assemblePassthrough({
