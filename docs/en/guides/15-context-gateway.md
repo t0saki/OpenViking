@@ -14,13 +14,22 @@ With OpenViking tools on, the model can search memory, read the original text, n
 | Model-driven memory | The model calls OpenViking tools to search, read, write and import. The gateway runs each call and feeds the result back to the model, and the client receives one continuous reply. This is off by default. |
 | Saving and compaction | The gateway saves conversations back to OpenViking, which extracts new memories from them. When a conversation nears the model's context window, the gateway has the same model write a summary that replaces the earlier part. |
 
-**Who it is for**: clients that cannot install a plugin or MCP server, such as chat apps, SDK scripts and low-code platforms, and teams that want to manage model providers, keys and memory settings in one place. **Not for**: clients signed in with a subscription, and clients such as Cursor and Trae whose model calls leave from the vendor's servers.
+**Who it is for**: clients that cannot install a plugin or MCP server, such as chat apps, SDK scripts and low-code platforms, and teams that want to manage model providers, keys and memory settings in one place. **Not for**: clients signed in directly with a subscription (use a [subscription proxy upstream](#custom-upstreams) instead), and clients such as Cursor and Trae whose model calls leave from the vendor's servers.
 
-The gateway accepts the three common model APIs: Anthropic Messages, OpenAI Chat Completions and OpenAI Responses (when each request carries the full history). It forwards every request to a model provider you configure, called an **upstream**, and never converts one API into another. It does not handle billing, quotas or load balancing. If you need those, run a gateway such as LiteLLM or new-api behind it and add that as an upstream.
+The gateway accepts the three common model APIs: Anthropic Messages, OpenAI Chat Completions and OpenAI Responses (when each request carries the full history). It forwards every request to a model provider you configure, called an **upstream**, and never converts one API into another.
 
 > **Note**: Context Gateway runs as its own process, `openviking-context-gateway`, next to OpenViking Server. It is unrelated to the VikingBot gateway (`vikingbot gateway`).
 
 Context Gateway is currently in beta. This page explains how the gateway works and how to connect clients. To deploy it for a team and run it day to day, see [Context Gateway deployment and operations](22-context-gateway-operations.md).
+
+## Custom upstreams
+
+Upstreams are customizable: any service compatible with one of these three APIs can be an upstream, not only a model provider itself. Two common uses:
+
+- **Billing, quotas and load balancing.** The gateway does not handle these. If you need them, run a gateway such as LiteLLM or new-api behind it and add that as an upstream.
+- **Using subscription quota.** Clients cannot sign in to the gateway with a subscription, but you can add a reverse proxy such as [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) as an upstream. It exposes subscription accounts such as ChatGPT (Codex) and Claude as an API, so Codex, for example, can use a ChatGPT subscription through the gateway. Tibo, who leads Codex at OpenAI, has [publicly walked through](https://x.com/thsottiaux/status/2076119366647894371) connecting a Codex subscription with CLIProxyAPI. **Make sure this complies with your provider's terms.**
+
+See [Upstreams](22-context-gateway-operations.md#upstreams) for how to add one; choose *Generic* as the provider.
 
 ## Architecture at a glance
 
@@ -165,7 +174,7 @@ OpenViking also connects to agents through plugins that run inside the agent: Cl
 | --- | --- | --- |
 | Where it runs | Between the client and the model provider. It sees only the requests sent to the model. | Inside the agent. It sees the agent's sessions, events and local workspace. |
 | Clients it covers | Anything that lets you set a base URL and an API key: chat apps, SDK and API apps, low-code platforms, coding agents. | Agents that have an OpenViking plugin. |
-| Clients it cannot cover | Clients signed in with a subscription (a Claude login in Claude Code, a ChatGPT login in Codex) and clients whose model calls leave from the vendor's servers, such as Cursor and Trae. | Clients without an extension API. |
+| Clients it cannot cover | Clients signed in directly with a subscription (a Claude login in Claude Code, a ChatGPT login in Codex; use a [subscription proxy upstream](#custom-upstreams) instead) and clients whose model calls leave from the vendor's servers, such as Cursor and Trae. | Clients without an extension API. |
 | Per-project memory | Cannot see the working directory or repository. Memory belongs to an OpenViking user, so to keep projects apart, give each project a gateway key bound to a different OpenViking user. | Detects the workspace and repository automatically. |
 | What you can see | Added memory is invisible in the client. OpenViking tool calls show up in the reply as one-line notices by default, without their results. You review both in Studio. Tool calls run without the client's permission prompts. | Tool calls appear in the transcript and go through the agent's permission prompts. |
 | When conversations are saved | One turn behind: a turn is saved when the next message arrives, the last turn after a quiet period. | On the agent's own events, such as the end of each turn. |

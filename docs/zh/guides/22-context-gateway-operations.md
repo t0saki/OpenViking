@@ -331,7 +331,7 @@ server {
 
 **接口。**
 
-- **服务商**决定可以选哪些协议，并让网关适配各家服务商的差异。编辑页只提供服务商支持的协议，见上表。列表里没有的服务商，以及 LiteLLM、new-api 这类兼容代理，选*通用*。
+- **服务商**决定可以选哪些协议，并让网关适配各家服务商的差异。编辑页只提供服务商支持的协议，见上表。列表里没有的服务商、LiteLLM 和 new-api 这类兼容代理，以及 [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) 这类把订阅账号包装成 API 的反向代理，都选*通用*（见[自定义上游](15-context-gateway.md#自定义上游)；用订阅额度时是否合规请自行确认）。
   - *通用*、*Anthropic* 和 *OpenAI* 转发请求的方式相同。
   - *DeepSeek*：只有请求关闭了思考模式（`"thinking": {"type": "disabled"}`）时才提供 OpenViking 工具，因为 DeepSeek 的思考模式需要推理历史，而聊天应用不会把推理历史发回来。标准的 Responses 请求没有 `thinking` 字段，所以不会得到 OpenViking 工具。记忆照常补充。
   - *火山方舟*和它的海外站 *BytePlus 方舟*行为相同：请求发往方舟自己的路径。Chat Completions 和 Responses 的每段对话都使用一个固定的 `prompt_cache_key`，方舟的前缀缓存就能跟着对话走。如果请求的模型、思考模式、采样参数、系统提示词或工具与对话的第一个请求不同，就会被标记为**缓存参数有变化**（`ark_cache_parameters_changed`），因为这些参数一变，方舟就会重新建立缓存。

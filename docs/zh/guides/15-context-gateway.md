@@ -14,13 +14,22 @@ description: 把任何使用 API Key 的模型客户端指向上下文网关，�
 | 主动使用记忆 | 模型调用 OpenViking 工具来检索、读取、写入和导入，网关执行调用后把结果接回给模型，客户端只收到一条连贯的回复。这项功能默认关闭。 |
 | 沉淀与压缩 | 网关把对话保存回 OpenViking，由 OpenViking 从中提取新的记忆。对话接近模型的上下文窗口时，网关让同一个模型写一份摘要，替换较早的内容。 |
 
-**适合谁**：装不了插件或 MCP 的客户端，例如聊天应用、SDK 脚本和低代码平台；以及想集中管理模型服务商、密钥和记忆设置的团队。**不适用**：用订阅账号登录的客户端，以及 Cursor、Trae 这类从厂商服务器发起模型调用的客户端。
+**适合谁**：装不了插件或 MCP 的客户端，例如聊天应用、SDK 脚本和低代码平台；以及想集中管理模型服务商、密钥和记忆设置的团队。**不适用**：直接用订阅账号登录的客户端（可以改用[订阅反代上游](#自定义上游)），以及 Cursor、Trae 这类从厂商服务器发起模型调用的客户端。
 
-网关支持三种常用的模型 API：Anthropic Messages、OpenAI Chat Completions 和 OpenAI Responses（要求每个请求都带完整历史）。它把每个请求转发给你配置的模型服务商，这里称为**上游**；请求用哪种 API 发来，就用同一种 API 转发，网关不做转换。计费、配额和负载均衡不由网关负责；需要这些能力时，可以在网关后面再接一层 LiteLLM、new-api 这类网关，把它添加为上游。
+网关支持三种常用的模型 API：Anthropic Messages、OpenAI Chat Completions 和 OpenAI Responses（要求每个请求都带完整历史）。它把每个请求转发给你配置的模型服务商，这里称为**上游**；请求用哪种 API 发来，就用同一种 API 转发，网关不做转换。
 
 > **注意**：上下文网关是一个单独运行的进程 `openviking-context-gateway`，不在 OpenViking Server 进程里。它和 VikingBot 的网关（`vikingbot gateway`）没有关系。
 
 上下文网关目前处于 Beta 阶段。本页介绍网关的工作方式和客户端接入方法。为团队部署网关和日常运维，见[上下文网关部署与运维](22-context-gateway-operations.md)。
+
+## 自定义上游
+
+上游可以自定义：任何兼容这三种 API 之一的服务都能添加为上游，不一定是模型服务商本身。常见的两种用法：
+
+- **计费、配额和负载均衡。** 网关不负责这些。需要时在网关后面接一层 LiteLLM、new-api 这类网关，把它添加为上游。
+- **使用订阅额度。** 客户端不能直接用订阅账号登录网关，但可以把 [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) 这类反向代理添加为上游。它把 ChatGPT（Codex）、Claude 等订阅账号包装成 API，例如 Codex 就可以经网关用上 ChatGPT 订阅额度。OpenAI Codex 负责人 Tibo 曾[公开介绍](https://x.com/thsottiaux/status/2076119366647894371)过用 CLIProxyAPI 接入 Codex 订阅的做法。**是否符合服务商的使用条款，请自行确认。**
+
+添加方法见[上游](22-context-gateway-operations.md#上游)，服务商选*通用*。
 
 ## 一张图看懂架构
 
@@ -165,7 +174,7 @@ OpenViking 也可以通过运行在 Agent 内部的插件接入 Claude Code、Co
 | --- | --- | --- |
 | 运行位置 | 在客户端和模型服务商之间，只能看到发给模型的请求。 | 在 Agent 内部，能看到 Agent 的会话、事件和本地工作区。 |
 | 适用的客户端 | 凡是能设置 Base URL 和 API Key 的客户端：聊天应用、SDK 和 API 应用、低代码平台、编程 Agent。 | 有 OpenViking 插件的 Agent。 |
-| 无法覆盖的客户端 | 用订阅账号登录的客户端（Claude Code 的 Claude 登录、Codex 的 ChatGPT 登录），以及模型调用从厂商服务器发出的客户端，例如 Cursor 和 Trae。 | 没有扩展接口的客户端。 |
+| 无法覆盖的客户端 | 直接用订阅账号登录的客户端（Claude Code 的 Claude 登录、Codex 的 ChatGPT 登录；可以改用[订阅反代上游](#自定义上游)），以及模型调用从厂商服务器发出的客户端，例如 Cursor 和 Trae。 | 没有扩展接口的客户端。 |
 | 按项目区分记忆 | 看不到工作目录和代码仓库。记忆按 OpenViking 用户归属，需要按项目隔离时，给每个项目使用绑定不同 OpenViking 用户的网关密钥。 | 自动识别工作区和代码仓库。 |
 | 能看到什么 | 补充的记忆在客户端里不可见。OpenViking 工具调用默认在回复里显示为一行提示，但不显示调用结果。两者都可以到 Studio 查看。工具调用不经过客户端的权限确认。 | 工具调用出现在对话记录里，并经过 Agent 的权限确认。 |
 | 保存时机 | 晚一轮：下一条消息到达时保存上一轮，最后一轮在对话停顿一段时间后保存。 | 跟随 Agent 自己的事件，例如每轮结束时。 |
