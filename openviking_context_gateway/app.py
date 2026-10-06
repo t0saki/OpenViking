@@ -247,10 +247,13 @@ def create_app(config: ContextGatewayConfig | None = None):
         if not key:
             raise HTTPException(404, "Gateway key not found")
         scope = digest(account + "\0" + key["user_id"] + "\0" + data.protocol)
-        records = await store.replay.read(scope, data.session, [""])
-        if (K.ROOT, "") not in records:
+        # A session header value, or the hashed id request logs show.
+        for session in (digest(data.session), data.session):
+            if (K.ROOT, "") in await store.replay.read(scope, session, [""]):
+                break
+        else:
             raise HTTPException(404, "Gateway session not found")
-        await reset_capture(store.capture, scope, data.session, "manual_reset")
+        await reset_capture(store.capture, scope, session, "manual_reset")
         return {"status": "ready", "message": "Capture will resync from the next request history"}
 
     @app.get("/admin/guides")

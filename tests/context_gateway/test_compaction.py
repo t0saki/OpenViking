@@ -261,9 +261,8 @@ async def test_concurrent_compactions_share_the_first_written_cut(setup_kernel, 
     kernel, _, _, _ = setup_kernel
     policy.update(context_window=1024, recall=False)
     messages = [{"role": "user", "content": "How do I deploy?"}]
-    for session in ("one", "two"):
-        first = await prepare(kernel, "chat", messages, credential, policy, session=session)
-        await answered(kernel, first, credential, {"role": "assistant", "content": "Blue."})
+    first = await prepare(kernel, "chat", messages, credential, policy, session="one")
+    await answered(kernel, first, credential, {"role": "assistant", "content": "Blue."})
     messages += [{"role": "assistant", "content": "Blue."}, {"role": "user", "content": "Next?"}]
     arrived = []
     both = asyncio.Event()
@@ -280,7 +279,7 @@ async def test_concurrent_compactions_share_the_first_written_cut(setup_kernel, 
 
     one, two = await asyncio.gather(
         prepare(kernel, "chat", messages, credential, policy, "one", summarize=summarizer("A")),
-        prepare(kernel, "chat", messages, credential, policy, "two", summarize=summarizer("B")),
+        prepare(kernel, "chat", messages, credential, policy, "one", summarize=summarizer("B")),
     )
     assert sorted(arrived) == ["A", "B"]
     assert one.body == two.body
@@ -294,12 +293,15 @@ async def test_recall_budget_restarts_after_a_cut(setup_kernel, credential, poli
     first = await prepare(kernel, "chat", messages, credential, policy)
     spent = first.observation.value["recall"]["spent"]
     policy.update(session_max_tokens=spent + 63)
-    first = await prepare(kernel, "chat", messages, credential, policy, session="budget")
+    # A session continuing the reply inherits the opening recall and its cost.
+    await answered(kernel, first, credential, {"role": "assistant", "content": "Blue."})
     messages += [{"role": "assistant", "content": "Blue."}, {"role": "user", "content": "Next?"}]
     exhausted = await prepare(kernel, "chat", messages, credential, policy, session="budget")
     assert exhausted.metrics["recall_reason"] == "disabled" and len(viking.recalls) == 1
     cut = {"source": "compaction", "text": "Earlier summary", "tokens": 3}
-    await store.replay.put(first.scope, "budget", "replacement", exhausted.capture_chain[1], cut)
+    await store.replay.put(
+        first.scope, exhausted.session, "replacement", exhausted.capture_chain[1], cut
+    )
     messages += [{"role": "assistant", "content": "Done."}, {"role": "user", "content": "More?"}]
     fresh = await prepare(kernel, "chat", messages, credential, policy, session="budget")
     # Memory the cut removed may be recalled again in the new window.

@@ -181,6 +181,12 @@ class ProxyRequest:
             except (ValueError, RecursionError):
                 pass
         self.model = routing.get("model", "") if isinstance(routing, dict) else ""
+        # Calls on a stored response are pinned to its upstream and carry no model.
+        if self.credential["models"] and self.raw and not self.path.startswith("/v1/responses/"):
+            if self.request.headers.get("content-encoding", "identity").lower() != "identity":
+                raise HTTPException(415, "Compressed request bodies are not supported")
+            if not self.model or not isinstance(self.model, str):
+                raise HTTPException(400, "Request model is missing")
         if self.credential["models"] and self.model and self.model not in self.credential["models"]:
             raise HTTPException(403, "Model is not allowed by this key")
         self.metrics["model"] = self.model
@@ -278,6 +284,15 @@ class ProxyRequest:
         except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as error:
             raise SummaryError("summary_unavailable") from error
 
+    async def relay(self):
+        """Record a finished reply before the client receives its end."""
+        if not (self.capture.finished and self.prepared and self.response.status < 300):
+            return
+        try:
+            await self.app.state.kernel.relayed(self.prepared, self.capture)
+        except Exception:
+            logger.exception("Context Gateway reply bookkeeping failed")
+
     async def finish(self):
         self.metrics.update(self.capture.usage or {})
         if self.upstream.get("vendor") in ARK_VENDORS:
@@ -342,6 +357,7 @@ class ProxyRequest:
             finished = False
             try:
                 async for chunk in loop.run(response, send):
+                    await self.relay()
                     yield chunk
                 finished = True
             except (ToolLoopError, aiohttp.ClientError) as error:
@@ -374,6 +390,7 @@ class ProxyRequest:
                 getattr(error, "status", 502), str(error), headers=getattr(error, "headers", None)
             )
         self.metrics.update(prepared.metrics)
+        await self.relay()
         return Response(
             orjson.dumps(loop.final),
             headers=headers,
@@ -392,7 +409,6 @@ class ProxyRequest:
                 finished = False
                 try:
                     async for chunk in response.content.iter_any():
-                        yield chunk
                         if observe:
                             try:
                                 for frame in decoder.feed(chunk):
@@ -403,6 +419,8 @@ class ProxyRequest:
                                 observe = False
                                 capture.complete = False
                                 self.metrics["degradation"] = "capture_parse_failure"
+                            await self.relay()
+                        yield chunk
                     finished = True
                 finally:
                     response.close()
@@ -424,6 +442,7 @@ class ProxyRequest:
                     pass
         finally:
             response.close()
+        await self.relay()
         return Response(
             content,
             status_code=response.status,

@@ -228,7 +228,7 @@ async def test_signed_thinking_text_is_not_mistaken_for_a_resent_block(
     assert not await store.state.read(first.scope, [THINKING + digest("Same words")])
     said = {"role": "assistant", "content": [{"type": "text", "text": "Same words"}]}
     history = [{"role": "user", "content": "Go"}, said]
-    assert await kernel.sent_history(first.scope, history, "anthropic") == history
+    assert await kernel.sent_history(first.scope, history, "anthropic") == (history, [])
 
 
 @pytest.mark.parametrize(

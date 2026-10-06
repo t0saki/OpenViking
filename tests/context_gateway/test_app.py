@@ -55,6 +55,27 @@ async def test_http_replay_and_client_visibility(running_gateway, path, protocol
 async def test_recorded_client_prefixes(running_gateway, client_name, session_header):
     app, client, admin, key, seen, writes = running_gateway
     fixture = json.loads((Path(__file__).parent / "fixtures" / f"{client_name}.json").read_text())
+    field = "input" if client_name == "codex-cli" else "messages"
+    first, second = (r["body"][field] for r in fixture["requests"])
+    # The upstream returns the recorded reply, so the second request continues it.
+    reply = second[len(first) : -1]
+    recorded_reply = {
+        "claude-code": {
+            "role": "assistant",
+            "content": reply[0]["content"],
+            "stop_reason": "end_turn",
+        },
+        "codex-cli": {"id": "resp-1", "object": "response", "status": "completed", "output": reply},
+        "openai-python": {"choices": [{"message": reply[0], "finish_reason": "stop"}]},
+    }[client_name]
+
+    async def handler(request):
+        if request.path != fixture["requests"][0]["path"] or upstream:
+            return None
+        seen.append((request.path, await request.read(), dict(request.headers)))
+        return web.json_response(recorded_reply)
+
+    app.state.test_backend["handler"] = handler
     upstream = []
     for recorded in fixture["requests"]:
         headers = {"Authorization": "Bearer " + key["key"]}
@@ -69,7 +90,6 @@ async def test_recorded_client_prefixes(running_gateway, client_name, session_he
         assert "openviking-context" not in response.text
         forwarded = [raw for path, raw, _ in seen if path == recorded["path"]][-1]
         upstream.append(orjson.loads(forwarded))
-    field = "input" if client_name == "codex-cli" else "messages"
     old, new = (body[field] for body in upstream)
     assert "openviking-context" in str(old)
     assert [normalize(m) for m in old] == [normalize(m) for m in new[: len(old)]]
@@ -192,6 +212,8 @@ async def test_stateful_responses_and_counting(running_gateway):
     assert (await client.get("/v1/responses/resp-1", headers=headers)).status_code == 200
     assert (await client.get("/v1/responses/unknown", headers=headers)).status_code == 404
     body = {"model": "model", "messages": [{"role": "user", "content": "Remember this request"}]}
+    # A token count joins the conversation by its session header.
+    headers["X-OpenViking-Session"] = "counted"
     await client.post("/v1/messages", headers=headers, json=body)
     first = orjson.loads(seen[-1][1])
     await client.post("/v1/messages/count_tokens", headers=headers, json=body)
@@ -999,6 +1021,9 @@ async def test_capture_reset_is_scoped_to_the_key_account(running_gateway):
     wrong = await client.post(path, headers={**admin, "X-OpenViking-Account": "other"}, json=body)
     assert wrong.status_code == 404
     assert (await client.post(path, headers=admin, json=body)).status_code == 200
+    # The session header value the client sent names the same session.
+    raw = {**body, "session": "reset"}
+    assert (await client.post(path, headers=admin, json=raw)).status_code == 200
     assert (
         await client.post(path, headers=admin, json={**body, "session": "unknown"})
     ).status_code == 404
@@ -1153,3 +1178,44 @@ async def test_profiles_with_retired_tool_fields_still_save(running_gateway):
         not {"allow_write_tools", "tool_allowlist", "takeover", "keep_recent_turns"} & saved.keys()
     )
     assert saved["compaction"] and saved["summary_max_tokens"] == 8000
+
+
+async def test_model_restricted_key_rejects_bodies_without_a_readable_model(running_gateway):
+    import gzip
+
+    _, client, admin, key, seen, _ = running_gateway
+    minted = await client.post(
+        "/admin/keys",
+        headers=admin,
+        json={
+            "name": "restricted",
+            "openviking_key": "user-key",
+            "policy_id": "default",
+            "upstream_ids": ["chat", "responses"],
+            "models": ["model"],
+        },
+    )
+    assert minted.status_code == 200, minted.text
+    restricted = {"Authorization": "Bearer " + minted.json()["key"]}
+    compressed = gzip.compress(b'{"model":"error","messages":[{"role":"user","content":"hi"}]}')
+    gzipped = {**restricted, "content-encoding": "gzip", "content-type": "application/json"}
+    before = len(seen)
+    response = await client.post("/v1/chat/completions", headers=gzipped, content=compressed)
+    assert response.status_code == 415
+    for raw in (b"not json", b"[]", b'{"messages":[]}', b'{"model":["model"]}'):
+        response = await client.post("/v1/chat/completions", headers=restricted, content=raw)
+        assert response.status_code == 400, raw
+    assert len(seen) == before
+
+    response = await client.post(
+        "/v1/responses", headers=restricted, json={"model": "model", "input": "hi"}
+    )
+    assert response.status_code == 200, response.text
+    assert (await client.get("/v1/responses/resp-1", headers=restricted)).status_code == 200
+    models = await client.get("/v1/models", headers=restricted)
+    assert [m["id"] for m in models.json()["data"]] == ["model"]
+
+    unrestricted = {"Authorization": "Bearer " + key["key"], "content-encoding": "gzip"}
+    response = await client.post("/v1/chat/completions", headers=unrestricted, content=compressed)
+    assert response.status_code != 415 and len(seen) > before + 1
+    assert seen[-1][0] == "/v1/chat/completions"

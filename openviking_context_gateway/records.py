@@ -1,6 +1,6 @@
 # Copyright (c) 2026 Beijing Volcano Engine Technology Co., Ltd.
 # SPDX-License-Identifier: AGPL-3.0
-"""The five immutable decisions that change the upstream conversation."""
+"""Immutable records: decisions that change the upstream conversation, and reply owners."""
 
 from enum import Enum
 
@@ -11,3 +11,5 @@ class RecordKind(str, Enum):
     DISABLED = "disabled"
     HIDDEN = "hidden"
     REPLACEMENT = "replacement"
+    # The session whose model produced the reply ending at the anchor.
+    REPLY = "reply"

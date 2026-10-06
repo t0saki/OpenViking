@@ -87,6 +87,12 @@ class Prepared:
     # The estimated current context and the window it is measured against.
     context_tokens: int = 0
     context_window: int = 0
+    # Sessions and thinking digests this request read; it keeps them from expiring.
+    ancestors: list[str] = field(default_factory=list)
+    thinking: list[str] = field(default_factory=list)
+    # The reply's anchor; ``relayed`` records it once it succeeds.
+    relayed: bool = False
+    reply_anchor: str = ""
 
 
 class MemoryKernel:
@@ -115,56 +121,57 @@ class MemoryKernel:
         every reply from matching its anchors in the next request.
         """
         if protocol != "anthropic":
-            return messages
+            return messages, []
         texts = {id(b): THINKING + digest(b["text"]) for m in messages for b in assistant_texts(m)}
         known = await self.store.state.read(scope, list(set(texts.values()))) if texts else {}
         if not known:
-            return messages
+            return messages, []
         dropped = {block for block, key in texts.items() if key in known}
         return [
             {**m, "content": [b for b in m["content"] if id(b) not in dropped]}
             if assistant_texts(m)
             else m
             for m in messages
-        ]
+        ], sorted(known)
 
-    async def identity(self, scope, messages, protocol, headers, tools):
+    async def identity(self, scope, messages, protocol, headers):
+        """Resolve the session and the sessions whose replies the history contains.
+
+        Replies are matched in the chain flavour ``completed`` records them in. A
+        request without a session header continues the session that produced the
+        latest reply it contains, or starts a new one when two sessions produced it.
+        """
         sid = session_id(headers)
-        needs_hidden = tool_protocol(protocol).canonicalizes_history and (sid is None or tools)
 
         def chains():
             chain = prefix_chain(messages)
-            return chain, hidden_chain(messages, protocol) if needs_hidden else chain
+            if not tool_protocol(protocol).canonicalizes_history:
+                return chain, chain
+            return chain, hidden_chain(messages, protocol)
 
         # Small prompts need no executor; large payloads must not block the loop.
         if len(messages) > 32 or any(len(m.get("content") or "") > 8192 for m in messages):
             chain, body_chain = await asyncio.to_thread(chains)
         else:
             chain, body_chain = chains()
+        endpoints = [
+            a
+            for a, m in zip(body_chain, messages, strict=True)
+            if a
+            and (
+                m.get("role") == "assistant"
+                or protocol == "responses"
+                and m.get("type") in {"reasoning", "function_call", "custom_tool_call"}
+            )
+        ]
+        owners = await self.store.replay.replies(scope, endpoints) if endpoints else {}
         anonymous = sid is None
         if anonymous:
-            endpoints = [
-                a
-                for a, m in zip(body_chain, messages, strict=True)
-                if a
-                and (
-                    m.get("role") == "assistant"
-                    or protocol == "responses"
-                    and m.get("type") in {"reasoning", "function_call", "custom_tool_call"}
-                )
-            ]
-            owners = (
-                await self.store.state.read(scope, ["prefix:" + a for a in endpoints])
-                if endpoints
-                else {}
-            )
-            for anchor in reversed(endpoints):
-                match = owners.get("prefix:" + anchor)
-                if match:
-                    sid = match.value["owners"][0] if len(match.value["owners"]) == 1 else None
-                    break
-            sid = sid or "anonymous-" + uuid.uuid4().hex
-        return sid, anonymous, chain, body_chain
+            latest = next((owners[a] for a in reversed(endpoints) if a in owners), set())
+            sid = next(iter(latest)) if len(latest) == 1 else "anonymous-" + uuid.uuid4().hex
+        # A reply two sessions produced, such as a greeting, proves no inheritance.
+        ancestors = sorted({next(iter(o)) for o in owners.values() if len(o) == 1} - {sid})
+        return sid, anonymous, chain, body_chain, ancestors
 
     async def prepare(
         self,
@@ -185,29 +192,17 @@ class MemoryKernel:
         scope = digest(credential["account"] + "\0" + credential["user_id"] + "\0" + protocol)
         # Anchors, capture and recall read the history as the gateway relayed it;
         # the upstream still gets exactly what the client sent.
-        messages = await self.sent_history(scope, sent, protocol)
-        sid, anonymous, chain, body_chain = await self.identity(
-            scope,
-            messages,
-            protocol,
-            headers,
-            (policy.get("gateway_tools", False) or policy.get("capture", True)),
+        messages, thinking = await self.sent_history(scope, sent, protocol)
+        sid, anonymous, chain, body_chain, ancestors = await self.identity(
+            scope, messages, protocol, headers
         )
         records, observations, capture = await self.store.load(
-            scope, sid, list(dict.fromkeys(["", *chain, *body_chain]))
+            scope, sid, list(dict.fromkeys(["", *chain, *body_chain])), ancestors
         )
         plugin = plugin_present(body, headers)
         root = await self.session_root(
             records, scope, sid, body, protocol, upstream, policy, credential, plugin
         )
-        if (
-            tool_protocol(protocol).canonicalizes_history
-            and (root["tools"] or root["policy"]["capture"])
-            and body_chain is chain
-        ):
-            body_chain = await asyncio.to_thread(hidden_chain, messages, protocol)
-            if body_chain != chain:
-                records.update(await self.store.replay.read(scope, sid, body_chain))
         upstream = next((u for u in upstreams if u["id"] == root["upstream_id"]), upstream)
         policy = Policy.model_validate(root["policy"])
         kind, anchor = classify(body, headers, messages)
@@ -240,6 +235,8 @@ class MemoryKernel:
             observation=observations.get(sid, Document()),
             capture_target=capture.value.get("ov_session", ""),
             upstream=upstream,
+            ancestors=ancestors,
+            thinking=thinking,
             metrics={
                 "kind": kind,
                 "replay_hits": 0,
@@ -527,21 +524,33 @@ class MemoryKernel:
                 return
             old = await get_state(self.store.state, request.scope, request.session)
 
-    async def completed(self, request, credential, response):
+    async def relayed(self, request, response):
+        """Record what the client's next request is matched by, before the client can send it."""
+        if request.relayed:
+            return
         if request.protocol == "anthropic" and response.message:
-            # First, so the client's next request can already be matched.
             for text in unsigned_thinking(response.message):
                 await self.store.state.swap(request.scope, THINKING + digest(text), Document(), {})
+        if response.message and request.kind in {"user", "continuation"}:
+            returned = [*request.messages, *(response.output_items or [response.message])]
+            chain = await asyncio.to_thread(hidden_chain, returned, request.protocol)
+            request.reply_anchor = chain[-1]
+        if response.finished and request.reply_anchor:
+            # A reply that hands the turn to client tools is resent with their results.
+            await self.store.replay.put(
+                request.scope, request.session, K.REPLY, request.reply_anchor, {}
+            )
+        request.relayed = True
+
+    async def completed(self, request, credential, response):
+        await self.relayed(request, response)
+        endpoint = request.reply_anchor
         chain = set(request.chain)
         sent = [
             a
             for (k, a), v in request.records.items()
             if k == K.INJECTION and v.get("text") and a in chain
         ]
-        endpoint = ""
-        if response.message and request.kind in {"user", "continuation"}:
-            returned = [*request.messages, *(response.output_items or [response.message])]
-            endpoint = (await asyncio.to_thread(hidden_chain, returned, request.protocol))[-1]
         # The next request measures its context from this usage while the reply stays in it.
         # Without counts from the upstream, it estimates the whole request instead.
         usage = {
@@ -564,18 +573,8 @@ class MemoryKernel:
             return value
 
         await self.update_observation(request, observe)
-        if request.anonymous and response.complete and endpoint:
-            key = "prefix:" + endpoint
-            old = await get_state(self.store.state, request.scope, key)
-            while True:
-                owners = old.value.get("owners", [])
-                if request.session in owners or len(owners) >= 2:
-                    break
-                if await self.store.state.swap(
-                    request.scope, key, old, {"owners": [*owners, request.session]}
-                ):
-                    break
-                old = await get_state(self.store.state, request.scope, key)
+        if request.ancestors or request.thinking:
+            await self.store.keep(request.scope, request.ancestors, request.thinking)
         if (
             request.disabled
             or request.kind not in {"user", "continuation"}
@@ -632,8 +631,8 @@ class MemoryKernel:
     async def compact(self, request, credential, policy, summarize):
         """Replace the history before a new cut with a model-written summary.
 
-        The summary covers only what the cut replaces, so every branch sharing that
-        prefix can reuse the record. Failures forward the full history and back off.
+        The summary covers only what the cut replaces, so every branch continuing these
+        replies can reuse the record. Failures forward the full history and back off.
         """
         failed_at = request.observation.value.get("compaction", {}).get("failed_at", 0)
         cut = cut_point(request)

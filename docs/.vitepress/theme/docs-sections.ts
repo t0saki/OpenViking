@@ -214,6 +214,7 @@ export const sections: DocSection[] = [
       ]),
       g('Administration and operations APIs', '管理与运维 API', [
         p('api/08-admin'),
+        p('api/25-context-gateway'),
         p('api/12-acl'),
         p('api/10-privacy'),
         p('api/07-system'),

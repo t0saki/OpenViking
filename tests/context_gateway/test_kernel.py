@@ -102,7 +102,9 @@ async def test_empty_decision_and_concurrent_first_writer(setup_kernel, credenti
     fresh = await asyncio.gather(
         *(prepare(kernel, body, credential, policy, session="different") for _ in range(10))
     )
-    assert all(x.body == one.body for x in fresh)  # inherited empty decisions are also sticky
+    # Another conversation with the same opening decides for itself, once.
+    assert all(x.body == fresh[0].body for x in fresh)
+    assert "Deploy using the blue cluster." in fresh[0].body["messages"][0]["content"]
 
 
 NOTE = (
@@ -395,12 +397,14 @@ async def test_scope_fork_and_policy_snapshot(setup_kernel, credential, policy):
     policy["max_tokens"] = 128
     second = await prepare(kernel, body, credential, policy)
     assert second.root["policy"]["max_tokens"] == 1600
-    fork = await prepare(kernel, body, credential, policy, session="fork")
-    assert fork.body == first.body
     assert len(viking.recalls) == 1
+    # A new conversation with the same opening starts from the current policy.
+    fork = await prepare(kernel, body, credential, policy, session="fork")
+    assert fork.root["policy"]["max_tokens"] == 128
+    assert len(viking.recalls) == 2
     other = await prepare(kernel, body, {**credential, "user_id": "bob"}, policy)
     assert other.scope != first.scope
-    assert len(viking.recalls) == 2
+    assert len(viking.recalls) == 3
 
 
 async def test_plugin_stop_is_sticky_but_replays_existing_prefix(setup_kernel, credential, policy):
@@ -462,7 +466,7 @@ async def test_lease_is_exclusive_and_old_owner_cannot_ack(setup_kernel):
     assert await store.capture.claim() is None
 
 
-async def test_cut_records_are_shared_immutable_and_ignore_takeovers(
+async def test_cut_records_are_inherited_immutable_and_ignore_takeovers(
     setup_kernel, credential, policy
 ):
     kernel, store, _, _ = setup_kernel
@@ -481,14 +485,17 @@ async def test_cut_records_are_shared_immutable_and_ignore_takeovers(
     assert (await prepare(kernel, body, credential, policy)).body == one.body
     cut = {"source": "compaction", "text": "verified summary", "tokens": 4}
     await store.replay.put(one.scope, "other", "replacement", one.chain[0], cut)
+    fork = await prepare(kernel, body, credential, policy, session="fork")
+    assert fork.body == one.body  # the history does not continue the other conversation
+    await store.replay.put(one.scope, "other", "reply", one.body_chain[1], {})
     two = await prepare(kernel, body, credential, policy, session="fork")
     assert two.body["messages"][0] == {"role": "user", "content": "verified summary"}
     assert two.body["messages"][1:] == one.body["messages"][1:]
     assert two.metrics["compaction_applied"] == one.chain[0]
     await store.replay.put(
-        one.scope, one.session, "replacement", one.chain[0], {**cut, "text": "Changed"}
+        one.scope, "other", "replacement", one.chain[0], {**cut, "text": "Changed"}
     )
-    assert (await prepare(kernel, body, credential, policy)).body == two.body
+    assert (await prepare(kernel, body, credential, policy, session="fork")).body == two.body
 
 
 async def test_encryption_and_whole_session_expiry(setup_kernel):

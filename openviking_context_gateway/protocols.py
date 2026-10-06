@@ -278,8 +278,8 @@ def session_id(headers: dict) -> str | None:
     ):
         if headers.get(key):
             return hashlib.sha256(headers[key].encode()).hexdigest()
-    # The kernel resolves completed reply prefixes or allocates an isolated
-    # anonymous session. Opening user text alone is not an identity.
+    # The kernel continues the session whose reply the history contains, or
+    # allocates an isolated anonymous one. Opening user text alone is not an identity.
     return None
 
 
@@ -400,8 +400,15 @@ class ResponseCapture:
     usage: dict | None = None
     response_id: str = ""
     complete: bool = False
+    # The reply ended in calls to the client's tools; the turn goes on in the next request.
+    handoff: bool = False
     output_items: list | None = None
     context_usage: dict | None = None
+
+    @property
+    def finished(self):
+        """The whole reply arrived, whether it ended the turn or handed it to client tools."""
+        return self.complete or self.handoff
 
     def nonstream(self, body):
         self.usage = usage_of(body)
@@ -409,11 +416,13 @@ class ResponseCapture:
         if self.protocol == "anthropic":
             self.message = {"role": "assistant", "content": body.get("content", [])}
             self.complete = body.get("stop_reason") in {"end_turn", "stop_sequence"}
+            self.handoff = body.get("stop_reason") == "tool_use"
         elif self.protocol == "chat":
             choices = body.get("choices") or []
             if choices:
                 self.message = choices[0].get("message")
                 self.complete = choices[0].get("finish_reason") in {"stop", "length"}
+                self.handoff = choices[0].get("finish_reason") in {"tool_calls", "function_call"}
         else:
             output = body.get("output", [])
             self.output_items = output
@@ -441,7 +450,21 @@ class ResponseCapture:
                     self.message = {"role": "assistant", "content": ""}
                 if isinstance(delta.get("content"), str):
                     self.message["content"] += delta["content"]
-                self.complete = self.complete or choice.get("finish_reason") in {"stop", "length"}
+                for call in delta.get("tool_calls") or []:
+                    calls = self.message.setdefault("tool_calls", [])
+                    index = call.get("index", 0)
+                    calls.extend({} for _ in range(index + 1 - len(calls)))
+                    for key, value in call.items():
+                        if key == "function":
+                            function = calls[index].setdefault("function", {})
+                            for name, part in value.items():
+                                if isinstance(part, str):
+                                    function[name] = function.get(name, "") + part
+                        elif key != "index" and value is not None:
+                            calls[index][key] = value
+                finish = choice.get("finish_reason")
+                self.complete = self.complete or finish in {"stop", "length"}
+                self.handoff = self.handoff or finish in {"tool_calls", "function_call"}
         elif kind == "message_start":
             self.message = {"role": "assistant", "content": []}
             self.usage = usage_of(body.get("message", {}))
@@ -452,13 +475,22 @@ class ResponseCapture:
             index, delta = body.get("index", 0), body.get("delta", {})
             if index < len(self.message["content"]):
                 block = self.message["content"][index]
-                for key in ("text", "thinking", "signature"):
+                for key in ("text", "thinking", "signature", "partial_json"):
                     if key in delta:
                         block[key] = block.get(key, "") + delta[key]
+        elif kind == "content_block_stop" and self.message is not None:
+            index = body.get("index", 0)
+            if index < len(self.message["content"]):
+                block = self.message["content"][index]
+                if "partial_json" in block:
+                    text = block.pop("partial_json")
+                    try:
+                        block["input"] = orjson.loads(text) if text else {}
+                    except ValueError:
+                        pass
         elif kind == "message_delta":
-            self.complete = body.get("delta", {}).get("stop_reason") in {
-                "end_turn",
-                "stop_sequence",
-            }
+            stop = body.get("delta", {}).get("stop_reason")
+            self.complete = stop in {"end_turn", "stop_sequence"}
+            self.handoff = stop == "tool_use"
             if self.usage is not None:
                 self.usage["output_tokens"] = body.get("usage", {}).get("output_tokens", 0)

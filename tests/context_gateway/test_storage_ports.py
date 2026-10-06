@@ -14,7 +14,7 @@ from openviking_context_gateway.kernel import MemoryKernel
 from openviking_context_gateway.models import Policy
 from openviking_context_gateway.protocols import ResponseCapture
 from openviking_context_gateway.records import RecordKind as K
-from openviking_context_gateway.replay_store import SHARED
+from openviking_context_gateway.replay_store import INHERITED
 from openviking_context_gateway.storage import ManagementStore, digest
 
 
@@ -22,17 +22,27 @@ class KVReplay:
     def __init__(self):
         self.values = {}
 
-    async def read(self, scope, session, anchors):
-        return {
-            (k, a): copy.deepcopy(v)
+    async def read(self, scope, session, anchors, ancestors=()):
+        rows = sorted(
+            (owner == session, owner, k, a, v)
             for (s, owner, k, a), v in self.values.items()
-            if s == scope and owner in {session, "*"} and a in anchors
-        }
+            if s == scope
+            and a in anchors
+            and k != K.REPLY
+            and (owner == session or owner in ancestors and k in INHERITED)
+        )
+        return {(k, a): copy.deepcopy(v) for _, _, k, a, v in rows}
+
+    async def replies(self, scope, anchors):
+        owners = {}
+        for s, owner, k, a in self.values:
+            if s == scope and k == K.REPLY and a in anchors:
+                owners.setdefault(a, set()).add(owner)
+        return owners
 
     async def put(self, scope, session, kind, anchor, value):
-        owner = "*" if kind in SHARED else session
         return copy.deepcopy(
-            self.values.setdefault((scope, owner, kind, anchor), copy.deepcopy(value))
+            self.values.setdefault((scope, session, kind, anchor), copy.deepcopy(value))
         )
 
 
@@ -100,12 +110,15 @@ class KVPorts:
     def __init__(self):
         self.replay, self.state, self.capture = KVReplay(), KVState(), KVQueue()
 
-    async def load(self, scope, session, anchors):
+    async def load(self, scope, session, anchors, ancestors=()):
         return (
-            await self.replay.read(scope, session, anchors),
+            await self.replay.read(scope, session, anchors, ancestors),
             await self.state.read(scope, [session]),
             await self.capture.get(scope, session),
         )
+
+    async def keep(self, scope, sessions, keys):
+        pass
 
 
 @pytest.mark.parametrize("protocol", ["chat", "anthropic", "responses"])
@@ -162,13 +175,16 @@ async def test_kernel_and_capture_work_with_kv_ports(credential, protocol):
         p,
         credential,
         ResponseCapture(
-            protocol, {"role": "assistant", "content": "Ok"}, usage={"input_tokens": 1000}
+            protocol,
+            {"role": "assistant", "content": "Ok"},
+            usage={"input_tokens": 1000},
+            complete=True,
         ),
     )
     messages += [{"role": "assistant", "content": "Ok"}, {"role": "user", "content": "And then?"}]
     compacted = await prepare()
     assert compacted.metrics["compaction_tokens"] > 0
-    # Another kernel and another session sharing the prefix replay the same cut.
+    # Another kernel and another session continuing the reply replay the same cut.
     kernel = MemoryKernel(ports, viking)
     fork = await prepare("fork")
     assert fork.body[field][0]["content"].startswith(
@@ -178,7 +194,7 @@ async def test_kernel_and_capture_work_with_kv_ports(credential, protocol):
     assert fork.capture_target != p.capture_target
     assert await worker.once() and await worker.once()
     assert len(set(viking.write_sessions)) == 2
-    assert set(K) == {K.ROOT, K.INJECTION, K.DISABLED, K.HIDDEN, K.REPLACEMENT}
+    assert set(K) == {K.ROOT, K.INJECTION, K.DISABLED, K.HIDDEN, K.REPLACEMENT, K.REPLY}
 
 
 async def test_expired_lease_cannot_write_or_release_new_owner(setup_kernel):

@@ -158,13 +158,8 @@ async def test_hidden_branch_restart_and_archive_mapping(setup_kernel, credentia
         {"role": "assistant", "content": "blue"},
     ]
     p = await kernel.prepare({"messages": messages}, "chat", {}, credential, {"id": "u"}, policy)
-    await store.replay.put(
-        p.scope,
-        p.session,
-        "hidden",
-        hidden_chain(messages, "chat")[-1],
-        {"messages": history, "visible_count": 1},
-    )
+    for kind, value in (("hidden", {"messages": history, "visible_count": 1}), ("reply", {})):
+        await store.replay.put(p.scope, p.session, kind, hidden_chain(messages, "chat")[-1], value)
     kernel.store = SQLiteKernelStore(store.path, encryption)
     p = await kernel.prepare(
         {"messages": [*messages, {"role": "user", "content": "follow up"}]},

@@ -2,10 +2,12 @@
 # SPDX-License-Identifier: AGPL-3.0
 """Small operational documents, separate from immutable replay decisions.
 
-Response observations, anonymous identity indexes and tool receipts use the
-same single-key CAS primitive. No transaction spans a document and the queue.
+Response observations, relayed thinking digests and tool receipts use the same
+single-key CAS primitive. No transaction spans a document and the queue. A
+document not written within the retention period expires on its own.
 """
 
+import time
 from typing import Protocol
 
 import orjson
@@ -43,17 +45,18 @@ class SQLiteStateStore:
         def swap():
             with self.db.connect() as c:
                 c.execute("BEGIN IMMEDIATE")
-                self.db.touch(c, scope, "*")
+                self.db.check(c, scope)
                 if previous.version:
                     changed = c.execute(
-                        "UPDATE state SET value=?,version=version+1 "
+                        "UPDATE state SET value=?,version=version+1,touched=? "
                         "WHERE scope=? AND key=? AND version=?",
-                        (self.db.encode(value), scope, key, previous.version),
+                        (self.db.encode(value), time.time(), scope, key, previous.version),
                     ).rowcount
                 else:
                     changed = c.execute(
-                        "INSERT OR IGNORE INTO state VALUES (?,?,?,1)",
-                        (scope, key, self.db.encode(value)),
+                        "INSERT OR IGNORE INTO state(scope,key,value,version,touched) "
+                        "VALUES (?,?,?,1,?)",
+                        (scope, key, self.db.encode(value), time.time()),
                     ).rowcount
                 c.commit()
                 return bool(changed)

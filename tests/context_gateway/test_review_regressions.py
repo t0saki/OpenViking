@@ -289,7 +289,7 @@ async def test_repeated_prepare_has_one_read_and_no_capture_write(
 
     monkeypatch.setattr(store, "run", tracked)
     await prepare(kernel, credential, policy, messages)
-    assert calls == [("read_batch", False)]
+    assert calls == [("replies", False), ("read_batch", False)]
     assert len(old.value["pending"]) == 5
 
 
@@ -301,7 +301,7 @@ async def test_hot_read_ignores_unrelated_operational_documents(
     p = await prepare(kernel, credential, policy, history(1)[:1])
     with store.connect() as c:
         c.executemany(
-            "INSERT INTO state VALUES (?,?,?,1)",
+            "INSERT INTO state(scope,key,value,version) VALUES (?,?,?,1)",
             [
                 (p.scope, f"tool:unrelated-{i}", store.encode({"content": "old"}))
                 for i in range(1500)

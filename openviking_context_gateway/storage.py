@@ -34,7 +34,8 @@ class KernelStore(Protocol):
     capture: CaptureQueue
     state: StateStore
 
-    async def load(self, scope, session, anchors) -> tuple: ...
+    async def load(self, scope, session, anchors, ancestors=()) -> tuple: ...
+    async def keep(self, scope, sessions, keys) -> None: ...
 
 
 class Database:
@@ -102,7 +103,7 @@ class SQLiteKernelStore(Database):
     async def initialize(self):
         def initialize():
             with self.connect() as c:
-                if c.execute("PRAGMA user_version").fetchone()[0] not in (0, 1):
+                if c.execute("PRAGMA user_version").fetchone()[0] not in (0, 1, 2):
                     raise ValueError("Unsupported gateway schema; configure a fresh storage_path")
                 c.execute("PRAGMA journal_mode=WAL")
                 c.executescript("""
@@ -114,8 +115,10 @@ class SQLiteKernelStore(Database):
                         PRIMARY KEY(scope,session,kind,anchor),
                         FOREIGN KEY(scope,session) REFERENCES sessions ON DELETE CASCADE);
                     CREATE INDEX IF NOT EXISTS replay_anchors ON replay(scope,session,anchor);
+                    CREATE INDEX IF NOT EXISTS replay_kinds ON replay(scope,kind,anchor);
                     CREATE TABLE IF NOT EXISTS state (
                         scope TEXT, key TEXT, value BLOB NOT NULL, version INTEGER NOT NULL,
+                        touched REAL NOT NULL DEFAULT 0,
                         PRIMARY KEY(scope,key));
                     CREATE TABLE IF NOT EXISTS capture (
                         scope TEXT, session TEXT, value BLOB NOT NULL, version INTEGER NOT NULL,
@@ -124,14 +127,30 @@ class SQLiteKernelStore(Database):
                         FOREIGN KEY(scope,session) REFERENCES sessions ON DELETE CASCADE);
                     CREATE INDEX IF NOT EXISTS capture_ready ON capture(ready,lease);
                     CREATE TABLE IF NOT EXISTS deleted_scopes (scope TEXT PRIMARY KEY);
-                    PRAGMA user_version=1;
                 """)
+                c.execute("BEGIN IMMEDIATE")
+                version = c.execute("PRAGMA user_version").fetchone()[0]
+                if version == 1:
+                    # Version 1 shared prefix records under session "*" and kept
+                    # anonymous reply owners as state documents.
+                    c.execute("ALTER TABLE state ADD COLUMN touched REAL NOT NULL DEFAULT 0")
+                    c.execute("UPDATE state SET touched=?", (time.time(),))
+                    c.execute("DELETE FROM state WHERE key LIKE 'prefix:%'")
+                    c.execute("DELETE FROM replay WHERE session='*'")
+                    c.execute("DELETE FROM sessions WHERE session='*'")
+                if version < 2:
+                    c.execute("PRAGMA user_version=2")
+                c.commit()
 
         await self.run(initialize, write=True)
 
-    def touch(self, c, scope, session):
+    @staticmethod
+    def check(c, scope):
         if c.execute("SELECT 1 FROM deleted_scopes WHERE scope=?", (scope,)).fetchone():
             raise RuntimeError("Gateway user data has been deleted")
+
+    def touch(self, c, scope, session):
+        self.check(c, scope)
         now = time.time()
         c.execute(
             "INSERT INTO sessions VALUES (?,?,?) ON CONFLICT(scope,session) "
@@ -139,10 +158,28 @@ class SQLiteKernelStore(Database):
             (scope, session, now, now - 60),
         )
 
-    async def load(self, scope, session, anchors):
+    async def keep(self, scope, sessions, keys):
+        """Keep sessions and state a live session reads, but does not write, from expiring."""
+
+        def keep():
+            with self.connect() as c:
+                c.execute("BEGIN IMMEDIATE")
+                for session in sessions:
+                    self.touch(c, scope, session)
+                now = time.time()
+                c.execute(
+                    "UPDATE state SET touched=? WHERE scope=? AND touched<? "
+                    "AND key IN (SELECT value FROM json_each(?))",
+                    (now, scope, now - 86400, orjson.dumps(keys).decode()),
+                )
+                c.commit()
+
+        await self.run(keep, write=True)
+
+    async def load(self, scope, session, anchors, ancestors=()):
         """Coalesce concurrent reads for one loop turn; do not cache snapshots."""
         future = asyncio.get_running_loop().create_future()
-        self._loads.append((future, (scope, session, anchors)))
+        self._loads.append((future, (scope, session, anchors, ancestors)))
         if len(self._loads) == 1:
             asyncio.get_running_loop().call_soon(self._dispatch_loads)
         return await future
@@ -155,10 +192,10 @@ class SQLiteKernelStore(Database):
         def read_batch():
             results = []
             with self.connect() as c:
-                for _, (scope, session, anchors) in batch:
+                for _, (scope, session, anchors, ancestors) in batch:
                     try:
                         result = (
-                            self.replay.read_in(c, scope, session, anchors),
+                            self.replay.read_in(c, scope, session, anchors, ancestors),
                             self.state.read_in(c, scope, [session]),
                             self.capture.read_in(c, scope, session),
                         )
@@ -194,7 +231,7 @@ class SQLiteKernelStore(Database):
                     c.execute("DELETE FROM state WHERE scope=?", (scope,))
                 else:
                     c.execute("DELETE FROM sessions WHERE touched<?", (before,))
-                    c.execute("DELETE FROM state WHERE scope NOT IN (SELECT scope FROM sessions)")
+                    c.execute("DELETE FROM state WHERE touched<?", (before,))
                 c.commit()
 
         await self.run(expire, write=True)
