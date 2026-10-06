@@ -693,7 +693,7 @@ Agent 插件每轮注入上下文时，过去需要按类型逐个检索、再�
 **档位规则**
 
 - **Purpose 预设**：`chat` 使用 `events:3, entities:3, preferences:1, experiences:1, resources:1, skills:1`；`coding` 使用 `events:1, entities:2, preferences:1, experiences:1, resources:3, skills:2`。这些值是每个分类的绝对上限，不是权重。各桶结果汇总后仍会去重并全局排序，但不会再被第二个全局 `limit` 截断
-- **按类别的默认档**：省略 `detail` 时，各类别落在下表的档位；文件条目中只有 `events` 的默认档需要回读正文；目录命中会读取 `.overview.md`
+- **按类别的默认档**：省略 `detail` 时，各类别落在下表的档位；文件条目中只有 `events` 的默认档需要回读正文；目录命中会读取 `.overview.md`。预置的作用域目录（`viking://resources`、`viking://agent` 及其预置子目录、用户根目录及其一级目录）只有模板摘要，不会作为条目返回
 
   | 类别 | 默认档 | 剩余预算可加深到 | 原因 |
   |------|--------|------------------|------|

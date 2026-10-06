@@ -12,6 +12,7 @@ import asyncio
 from dataclasses import dataclass, replace
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Set, Tuple
 
+from openviking.core.directories import preset_directory_uris
 from openviking.core.namespace import AGENT_SKILLS_ROOT, canonical_user_root
 from openviking.core.retrieval_targets import default_target_directories
 from openviking.core.retrieval_types import SearchType
@@ -224,6 +225,7 @@ async def gather_candidates(
     penalties = penalties or {}
     excluded = excluded or set()
     planned = [q for q in queries if q] or [""]
+    preset_dirs = preset_directory_uris(ctx)
 
     searched: Dict[str, int] = {}
     retrieval_errors: List[str] = []
@@ -237,7 +239,7 @@ async def gather_candidates(
             if not uri:
                 continue
             base_uri, is_directory = strip_level_suffix(uri)
-            if base_uri.endswith("/profile.md"):
+            if base_uri.endswith("/profile.md") or base_uri in preset_dirs:
                 continue
             category = category_for(item, bucket)
             abstract = _abstract(item)

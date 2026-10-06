@@ -959,3 +959,60 @@ async def test_flat_retrieval_collapses_skills_and_leaves_other_hits_alone():
     assert result.stats["candidates"] == 3
     assert [entry.uri for entry in result.entries] == [f"{DEPLOY}/SKILL.md", events_dir]
     assert result.stats["deduped"] == 1
+
+
+def _hit(uri, score, abstract=None):
+    return {"uri": uri, "score": score, "abstract": abstract or uri, "level": 2}
+
+
+async def test_preset_scope_directories_are_not_served():
+    project = "viking://resources/proj"
+    doc = f"{USER_ROOT}/resources/doc.md"
+    hits = [
+        _hit("viking://resources/.overview.md", 0.6, "Resource storage root"),
+        _hit(f"{USER_ROOT}/resources/.abstract.md", 0.6, "User resources"),
+        _hit(f"{USER_ROOT}/.overview.md", 0.6, "User root"),
+        _hit(f"{USER_ROOT}/privacy/.abstract.md", 0.6, "Privacy"),
+        _hit(f"{project}/.overview.md", 0.5, "project overview"),
+        _hit(doc, 0.4, "doc"),
+    ]
+
+    async def fake_find(**kwargs):
+        del kwargs
+        return _FakeFindResult(resources=list(hits))
+
+    async def fake_read(uri, **kwargs):
+        del kwargs
+        return f"overview of {uri}"
+
+    service = SimpleNamespace(
+        search=SimpleNamespace(find=fake_find),
+        fs=SimpleNamespace(read=fake_read),
+        sessions=SimpleNamespace(),
+        viking_fs=None,
+    )
+    result = await assemble_context(
+        service=service,
+        ctx=_ctx(),
+        params=AssembleParams(query="q", quotas={"resources": 3}, peer_scope="actor"),
+    )
+
+    assert [entry.uri for entry in result.entries] == [project, doc]
+
+
+async def test_flat_retrieval_skips_preset_directories():
+    memory = f"{USER_ROOT}/memories/preferences/lang.md"
+    hits = [
+        _hit(f"{USER_ROOT}/memories/.overview.md", 0.7, "Memory root"),
+        _hit("viking://agent/tools/.abstract.md", 0.7, "Tools"),
+        _hit(memory, 0.5, "prefers Python"),
+    ]
+    service = _service(hits=hits, bodies={})
+
+    result = await assemble_context(
+        service=service,
+        ctx=_ctx(),
+        params=AssembleParams(query="q", limit=5, peer_scope="actor"),
+    )
+
+    assert [entry.uri for entry in result.entries] == [memory]
