@@ -310,7 +310,7 @@ async def gather_candidates(
             events_time_decay_protection=events_time_decay_protection,
         )
 
-    async def gather_bucket(bucket: str, quota: int) -> List[Candidate]:
+    async def gather_bucket(bucket: str, quota: int, width: int) -> List[Candidate]:
         targets = category_targets(bucket, ctx)
         context_type = {
             "resources": ContextType.RESOURCE,
@@ -335,7 +335,7 @@ async def gather_candidates(
                             query=query,
                             ctx=ctx,
                             target_uri=targets,
-                            limit=_overfetch(quota),
+                            limit=_overfetch(width),
                             score_threshold=score_threshold,
                             filter=bucket_filter,
                             search_type=search_type,
@@ -347,7 +347,7 @@ async def gather_candidates(
                             query=query,
                             find_ctx=ctx,
                             target_uri=target,
-                            find_limit=_overfetch(quota),
+                            find_limit=_overfetch(width),
                             find_filter=bucket_filter,
                         )
                         for target in targets
@@ -358,7 +358,7 @@ async def gather_candidates(
                     query=query,
                     find_ctx=ctx,
                     target_uri=target,
-                    find_limit=_overfetch(quota),
+                    find_limit=_overfetch(width),
                     find_filter=bucket_filter,
                 )
                 for query in planned
@@ -371,7 +371,7 @@ async def gather_candidates(
                     query=query,
                     find_ctx=open_ctx,
                     target_uri=f"{user_root}/peers",
-                    find_limit=_overfetch(max(quota * OTHER_PEER_OVERFETCH, quota)),
+                    find_limit=_overfetch(max(quota * OTHER_PEER_OVERFETCH, width)),
                     find_filter=bucket_filter,
                 )
                 for query in planned
@@ -394,7 +394,7 @@ async def gather_candidates(
         if bucket == "skills":
             candidates = _dedupe_candidates(candidates)
         candidates.sort(key=_rank_key, reverse=True)
-        return candidates[: max(0, quota)]
+        return candidates
 
     async def gather_flat() -> List[Candidate]:
         searches = [
@@ -450,9 +450,23 @@ async def gather_candidates(
         candidates = await gather_flat()
     else:
         active = [(bucket, quota) for bucket, quota in quotas.items() if quota > 0]
-        buckets = await asyncio.gather(*(gather_bucket(b, q) for b, q in active))
-        candidates = [candidate for bucket in buckets for candidate in bucket]
-        candidates = _dedupe_candidates(candidates)
+        total = sum(quota for _, quota in active)
+        buckets = await asyncio.gather(*(gather_bucket(b, q, total) for b, q in active))
+        # Each quota is a first-pass ceiling; slots a bucket leaves unused go to
+        # the best remaining hits of the other buckets.
+        first: List[Candidate] = []
+        spare: List[Candidate] = []
+        for (_, quota), found in zip(active, buckets, strict=True):
+            first.extend(found[:quota])
+            spare.extend(found[quota:])
+        candidates = _dedupe_candidates(first)
+        taken = {c.base_uri for c in candidates}
+        for candidate in sorted(spare, key=_rank_key, reverse=True):
+            if len(candidates) >= total:
+                break
+            if candidate.base_uri not in taken:
+                taken.add(candidate.base_uri)
+                candidates.append(candidate)
         candidates.sort(key=_rank_key, reverse=True)
 
     candidates = await _fill_skill_abstracts(service, candidates)

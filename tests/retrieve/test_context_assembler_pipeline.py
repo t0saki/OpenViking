@@ -129,7 +129,7 @@ def test_render_neutralizes_forged_memory_tags():
     assert rendered.endswith("</memory>")
 
 
-def test_coding_purpose_uses_absolute_cross_domain_quotas():
+def test_coding_purpose_uses_cross_domain_quotas():
     assert normalize_quotas(None, "coding") == {
         "events": 1,
         "entities": 2,
@@ -965,6 +965,31 @@ def _hit(uri, score, abstract=None):
     return {"uri": uri, "score": score, "abstract": abstract or uri, "level": 2}
 
 
+def _bucket_service(hits_by_target, finds=None):
+    """Answers each target from ``hits_by_target`` and honours the requested limit."""
+
+    async def fake_find(**kwargs):
+        if finds is not None:
+            finds.append(kwargs)
+        hits = hits_by_target.get(kwargs["target_uri"], [])[: kwargs["limit"]]
+        return _FakeFindResult(memories=list(hits), resources=list(hits))
+
+    async def fake_find_skills(**kwargs):
+        del kwargs
+        return _FakeFindResult()
+
+    async def fake_read(uri, **kwargs):
+        del kwargs
+        return f"# Summary\n{uri}"
+
+    return SimpleNamespace(
+        search=SimpleNamespace(find=fake_find, find_skills=fake_find_skills),
+        fs=SimpleNamespace(read=fake_read),
+        sessions=SimpleNamespace(),
+        viking_fs=None,
+    )
+
+
 async def test_preset_scope_directories_are_not_served():
     project = "viking://resources/proj"
     doc = f"{USER_ROOT}/resources/doc.md"
@@ -1016,3 +1041,55 @@ async def test_flat_retrieval_skips_preset_directories():
     )
 
     assert [entry.uri for entry in result.entries] == [memory]
+
+
+async def test_unused_bucket_slots_backfill_with_the_best_remaining_hits():
+    preferences = f"{USER_ROOT}/memories/preferences"
+    service = _bucket_service(
+        {
+            preferences: [
+                _hit(f"{preferences}/nickname.md", 0.75, "call me Z"),
+                _hit(f"{preferences}/style.md", 0.67, "terse answers"),
+            ]
+        }
+    )
+
+    result = await assemble_context(
+        service=service,
+        ctx=_ctx(),
+        params=AssembleParams(query="my preferences", purpose="coding", peer_scope="actor"),
+    )
+
+    assert [entry.uri for entry in result.entries] == [
+        f"{preferences}/nickname.md",
+        f"{preferences}/style.md",
+    ]
+
+
+async def test_backfill_never_exceeds_the_quota_total_or_reaches_zero_quota_buckets():
+    finds = []
+    preferences = f"{USER_ROOT}/memories/preferences"
+    entities = f"{USER_ROOT}/memories/entities"
+    service = _bucket_service(
+        {
+            preferences: [_hit(f"{preferences}/{i}.md", 0.9 - i * 0.1) for i in range(3)],
+            entities: [_hit(f"{entities}/e.md", 0.95)],
+        },
+        finds=finds,
+    )
+
+    result = await assemble_context(
+        service=service,
+        ctx=_ctx(),
+        params=AssembleParams(
+            query="q",
+            quotas={"preferences": 1, "events": 1, "entities": 0},
+            peer_scope="actor",
+        ),
+    )
+
+    assert [entry.uri for entry in result.entries] == [
+        f"{preferences}/0.md",
+        f"{preferences}/1.md",
+    ]
+    assert all("/entities" not in call["target_uri"] for call in finds)
