@@ -22,6 +22,10 @@ from .capture_store import CaptureQueue, SQLiteCaptureQueue
 from .replay_store import ReplayStore, SQLiteReplayStore
 from .state_store import SQLiteStateStore, StateStore
 
+# Pre-release builds stamped versions 1-4 on incompatible layouts; reusing
+# one of them would let old files through and fail on the first write.
+SCHEMA_VERSION = 5
+
 
 def digest(value: str) -> str:
     return hashlib.sha256(value.encode()).hexdigest()
@@ -103,7 +107,7 @@ class SQLiteKernelStore(Database):
     async def initialize(self):
         def initialize():
             with self.connect() as c:
-                if c.execute("PRAGMA user_version").fetchone()[0] not in (0, 1, 2):
+                if c.execute("PRAGMA user_version").fetchone()[0] not in (0, SCHEMA_VERSION):
                     raise ValueError("Unsupported gateway schema; configure a fresh storage_path")
                 c.execute("PRAGMA journal_mode=WAL")
                 c.executescript("""
@@ -118,7 +122,7 @@ class SQLiteKernelStore(Database):
                     CREATE INDEX IF NOT EXISTS replay_kinds ON replay(scope,kind,anchor);
                     CREATE TABLE IF NOT EXISTS state (
                         scope TEXT, key TEXT, value BLOB NOT NULL, version INTEGER NOT NULL,
-                        touched REAL NOT NULL DEFAULT 0,
+                        touched REAL NOT NULL,
                         PRIMARY KEY(scope,key));
                     CREATE TABLE IF NOT EXISTS capture (
                         scope TEXT, session TEXT, value BLOB NOT NULL, version INTEGER NOT NULL,
@@ -128,19 +132,7 @@ class SQLiteKernelStore(Database):
                     CREATE INDEX IF NOT EXISTS capture_ready ON capture(ready,lease);
                     CREATE TABLE IF NOT EXISTS deleted_scopes (scope TEXT PRIMARY KEY);
                 """)
-                c.execute("BEGIN IMMEDIATE")
-                version = c.execute("PRAGMA user_version").fetchone()[0]
-                if version == 1:
-                    # Version 1 shared prefix records under session "*" and kept
-                    # anonymous reply owners as state documents.
-                    c.execute("ALTER TABLE state ADD COLUMN touched REAL NOT NULL DEFAULT 0")
-                    c.execute("UPDATE state SET touched=?", (time.time(),))
-                    c.execute("DELETE FROM state WHERE key LIKE 'prefix:%'")
-                    c.execute("DELETE FROM replay WHERE session='*'")
-                    c.execute("DELETE FROM sessions WHERE session='*'")
-                if version < 2:
-                    c.execute("PRAGMA user_version=2")
-                c.commit()
+                c.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
 
         await self.run(initialize, write=True)
 
@@ -252,6 +244,8 @@ class ManagementStore(Database):
     async def initialize(self):
         def initialize():
             with self.connect() as c:
+                if c.execute("PRAGMA user_version").fetchone()[0] not in (0, SCHEMA_VERSION):
+                    raise ValueError("Unsupported gateway schema; configure a fresh storage_path")
                 c.execute("PRAGMA journal_mode=WAL")
                 c.executescript("""
                     CREATE TABLE IF NOT EXISTS objects (
@@ -265,8 +259,8 @@ class ManagementStore(Database):
                         account TEXT, kind TEXT, id TEXT, expires REAL,
                         PRIMARY KEY(account,kind,id));
                     CREATE INDEX IF NOT EXISTS expiry_time ON object_expiry(expires);
-                    PRAGMA user_version=2;
                 """)
+                c.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
 
         await self.run(initialize, write=True)
 

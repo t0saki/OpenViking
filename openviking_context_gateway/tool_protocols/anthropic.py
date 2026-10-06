@@ -23,6 +23,37 @@ THINKING = {"thinking", "redacted_thinking"}
 class AnthropicProtocol(ToolProtocol):
     id_prefix = "msg_"
     summary_drops = ("stop_sequences", "output_config.format")
+    reply_ends = frozenset({"end_turn", "stop_sequence", "tool_use"})
+    signed_thinking = True
+
+    @staticmethod
+    def auth_header(key):
+        return {"x-api-key": key}
+
+    @staticmethod
+    def thinking_as_text(message):
+        content = message.get("content")
+        if message.get("role") != "assistant" or not isinstance(content, list):
+            return []
+        return [
+            b for b in content if isinstance(b, dict) and b.get("type") == "text" and b.get("text")
+        ]
+
+    @staticmethod
+    def unsigned_thinking(output):
+        # DeepSeek through Ark returns thinking without a signature.
+        return [
+            block["thinking"]
+            for message in output
+            for block in (
+                message.get("content") if isinstance(message.get("content"), list) else []
+            )
+            if isinstance(block, dict)
+            and block.get("type") == "thinking"
+            and not block.get("signature")
+            and isinstance(block.get("thinking"), str)
+            and block["thinking"].strip()
+        ]
 
     @staticmethod
     def wire_tools(tools):
@@ -116,66 +147,86 @@ class AnthropicProtocol(ToolProtocol):
     def begin(self):
         super().begin()
         self.blocks, self.arguments, self.indices = {}, {}, {}
-        self.stopped, self.closed = False, set()
+        self.opened, self.stopped, self.closed = False, False, set()
 
-    def event(self, value):
-        kind = value["type"]
+    def accumulate(self, value):
+        kind = value.get("type")
         if kind == "message_start":
             self.envelope = copy.deepcopy(value["message"])
             self.usage.update(self.envelope.get("usage") or {})
-            if not self.started:
-                self.started = True
-                return [
-                    {**value, "message": {**self.envelope, "id": self.identifier, "content": []}}
-                ]
+            self.opened = True
         elif kind == "content_block_start":
-            index, block = value["index"], copy.deepcopy(value["content_block"])
-            self.blocks[index] = block
-            # Buffer tool blocks until the full call is validated. All other
-            # blocks stream immediately, including opaque/redacted thinking.
-            if block["type"] != "tool_use":
-                self.indices[index] = len(self.visible[0]["content"])
-                self.visible[0]["content"].append(block)
-                return [{**value, "index": self.indices[index]}]
+            self.blocks[value["index"]] = copy.deepcopy(value["content_block"])
         elif kind == "content_block_delta":
             index, delta = value["index"], value["delta"]
             block = self.blocks[index]
-            if delta["type"] == "input_json_delta":
+            if "partial_json" in delta:
                 self.arguments[index] = self.arguments.get(index, "") + delta["partial_json"]
             else:
                 for key in ("text", "thinking", "signature"):
                     if key in delta:
                         block[key] = block.get(key, "") + delta[key]
-                if delta["type"] == "citations_delta":
+                if delta.get("type") == "citations_delta":
                     block.setdefault("citations", []).append(copy.deepcopy(delta["citation"]))
-            if index in self.indices:
-                return [{**value, "index": self.indices[index]}]
         elif kind == "content_block_stop":
             index = value["index"]
             self.closed.add(index)
             arguments = self.arguments.get(index, "")
             if arguments:
                 self.blocks[index]["input"] = orjson.loads(arguments)
-            if index in self.indices:
-                return [{**value, "index": self.indices[index]}]
         elif kind == "message_delta":
             self.finish = value.get("delta", {}).get("stop_reason") or self.finish
             self.envelope.update(value.get("delta", {}))
             self.usage.update(value.get("usage") or {})
         elif kind == "message_stop":
             self.stopped = True
-        else:
+
+    def event(self, value):
+        self.accumulate(value)
+        kind = value["type"]
+        if kind == "message_start":
+            if not self.started:
+                self.started = True
+                return [
+                    {**value, "message": {**self.envelope, "id": self.identifier, "content": []}}
+                ]
+        elif kind == "content_block_start":
+            index = value["index"]
+            block = self.blocks[index]
+            # Buffer tool blocks until the full call is validated. All other
+            # blocks stream immediately, including opaque/redacted thinking.
+            if block["type"] != "tool_use":
+                self.indices[index] = len(self.visible[0]["content"])
+                self.visible[0]["content"].append(block)
+                return [{**value, "index": self.indices[index]}]
+        elif kind in {"content_block_delta", "content_block_stop"}:
+            if value["index"] in self.indices:
+                return [{**value, "index": self.indices[value["index"]]}]
+        elif kind not in {"message_delta", "message_stop"}:
             return [value]
         return []
 
     def load(self, value):
         self.envelope = copy.deepcopy(value)
-        self.finish, self.usage = value["stop_reason"], value.get("usage") or {}
-        self.blocks = dict(enumerate(copy.deepcopy(value["content"])))
+        self.finish, self.usage = value.get("stop_reason"), value.get("usage") or {}
+        self.blocks = dict(enumerate(copy.deepcopy(value.get("content") or [])))
         self.visible[0]["content"].extend(
             b for b in self.blocks.values() if b["type"] != "tool_use"
         )
-        self.stopped, self.closed = True, set(self.blocks)
+        self.opened, self.stopped, self.closed = True, True, set(self.blocks)
+
+    def assembled(self):
+        if not self.opened:
+            return None, None
+        return {"role": "assistant", "content": [self.blocks[i] for i in sorted(self.blocks)]}, None
+
+    @staticmethod
+    def has_calls(output):
+        return any(
+            isinstance(b, dict) and b.get("type") == "tool_use"
+            for message in output
+            for b in (message.get("content") if isinstance(message.get("content"), list) else [])
+        )
 
     def end(self):
         if not self.stopped or not self.finish or self.closed != set(self.blocks):

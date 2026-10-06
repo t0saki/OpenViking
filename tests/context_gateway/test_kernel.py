@@ -13,7 +13,6 @@ from openviking_context_gateway.client import VikingError
 from openviking_context_gateway.kernel import token_estimate
 from openviking_context_gateway.models import Policy
 from openviking_context_gateway.protocols import (
-    ResponseCapture,
     classify,
     normalize,
     parse_body,
@@ -22,6 +21,7 @@ from openviking_context_gateway.protocols import (
     text_content,
 )
 from openviking_context_gateway.storage import ManagementStore, SQLiteKernelStore
+from openviking_context_gateway.tool_protocols import ResponseCapture
 
 
 async def prepare(kernel, body, credential, policy, protocol="chat", session="session", **kwargs):
@@ -466,9 +466,7 @@ async def test_lease_is_exclusive_and_old_owner_cannot_ack(setup_kernel):
     assert await store.capture.claim() is None
 
 
-async def test_cut_records_are_inherited_immutable_and_ignore_takeovers(
-    setup_kernel, credential, policy
-):
+async def test_cut_records_are_inherited_and_immutable(setup_kernel, credential, policy):
     kernel, store, _, _ = setup_kernel
     body = {
         "messages": [
@@ -478,11 +476,6 @@ async def test_cut_records_are_inherited_immutable_and_ignore_takeovers(
         ]
     }
     one = await prepare(kernel, body, credential, policy)
-    # A Working Memory takeover record has no source and never cuts the history.
-    await store.replay.put(
-        one.scope, one.session, "replacement", one.chain[1], {"text": "Old takeover"}
-    )
-    assert (await prepare(kernel, body, credential, policy)).body == one.body
     cut = {"source": "compaction", "text": "verified summary", "tokens": 4}
     await store.replay.put(one.scope, "other", "replacement", one.chain[0], cut)
     fork = await prepare(kernel, body, credential, policy, session="fork")

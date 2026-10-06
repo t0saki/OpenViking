@@ -95,17 +95,14 @@ export const QUOTA_LIMIT: NumberRule = {
   unit: 'entries',
 }
 
-/**
- * Save body for `PUT policies/{id}`: known profile fields only, with anything
- * the server omitted filled with defaults.
- */
+/** Save body for `PUT policies/{id}`: known profile fields only. */
 export function toProfileSettings(
   profile: Profile | ProfileSettings,
 ): ProfileSettings {
   return Object.fromEntries(
-    Object.entries(PROFILE_DEFAULTS).map(([field, fallback]) => [
+    Object.keys(PROFILE_DEFAULTS).map((field) => [
       field,
-      profile[field as keyof ProfileSettings] ?? fallback,
+      profile[field as keyof ProfileSettings],
     ]),
   ) as ProfileSettings
 }

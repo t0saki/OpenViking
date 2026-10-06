@@ -29,25 +29,21 @@ from .compaction import (
 from .models import Policy
 from .profile import build_profile
 from .protocols import (
-    append_context,
-    assistant_texts,
     classify,
     clean_text,
     is_user,
-    messages_of,
     plugin_present,
     prefix_chain,
     replays_reasoning,
     session_id,
     strip_thinking,
     text_content,
-    unsigned_thinking,
     unwrap_client,
 )
 from .records import RecordKind as K
 from .state_store import get_state
 from .storage import KernelStore, digest
-from .tool_catalog import TOOL_VERSION, select_tools, tool_block_reason
+from .tool_catalog import select_tools, tool_block_reason
 from .tool_protocols import hidden_chain, replay_hidden, tool_protocol
 from .tool_protocols.common import SummaryError
 from .vendors import parameter_fingerprint
@@ -104,8 +100,9 @@ class MemoryKernel:
 
     @staticmethod
     def degraded_body(body, protocol):
-        if protocol == "anthropic":
-            return {**body, "messages": strip_thinking(body.get("messages", []))}
+        adapter = tool_protocol(protocol)
+        if adapter.signed_thinking:
+            return {**body, adapter.field: strip_thinking(body.get(adapter.field, []))}
         return body
 
     async def enhance(self, body, protocol, *args):
@@ -123,16 +120,19 @@ class MemoryKernel:
         resend it as a text block. Anchors drop thinking, so that text would keep
         every reply from matching its anchors in the next request.
         """
-        if protocol != "anthropic":
-            return messages, []
-        texts = {id(b): THINKING + digest(b["text"]) for m in messages for b in assistant_texts(m)}
+        adapter = tool_protocol(protocol)
+        texts = {
+            id(b): THINKING + digest(b["text"])
+            for m in messages
+            for b in adapter.thinking_as_text(m)
+        }
         known = await self.store.state.read(scope, list(set(texts.values()))) if texts else {}
         if not known:
             return messages, []
         dropped = {block for block, key in texts.items() if key in known}
         return [
             {**m, "content": [b for b in m["content"] if id(b) not in dropped]}
-            if assistant_texts(m)
+            if adapter.thinking_as_text(m)
             else m
             for m in messages
         ], sorted(known)
@@ -145,10 +145,11 @@ class MemoryKernel:
         latest reply it contains, or starts a new one when two sessions produced it.
         """
         sid = session_id(headers)
+        adapter = tool_protocol(protocol)
 
         def chains():
             chain = prefix_chain(messages)
-            if not tool_protocol(protocol).canonicalizes_history:
+            if not adapter.canonicalizes_history:
                 return chain, chain
             return chain, hidden_chain(messages, protocol)
 
@@ -158,14 +159,7 @@ class MemoryKernel:
         else:
             chain, body_chain = chains()
         endpoints = [
-            a
-            for a, m in zip(body_chain, messages, strict=True)
-            if a
-            and (
-                m.get("role") == "assistant"
-                or protocol == "responses"
-                and m.get("type") in {"reasoning", "function_call", "custom_tool_call"}
-            )
+            a for a, m in zip(body_chain, messages, strict=True) if a and adapter.is_reply(m)
         ]
         owners = await self.store.replay.replies(scope, endpoints) if endpoints else {}
         anonymous = sid is None
@@ -189,7 +183,8 @@ class MemoryKernel:
         summarize=None,
     ):
         """Build the upstream body; ``summarize(prepared, body)`` sends a summary request."""
-        sent = messages_of(body, protocol)
+        adapter = tool_protocol(protocol)
+        sent = adapter.messages(body)
         if not isinstance(sent, list) or not all(isinstance(m, dict) for m in sent):
             raise ValueError("invalid message list")
         scope = digest(credential["account"] + "\0" + credential["user_id"] + "\0" + protocol)
@@ -221,8 +216,7 @@ class MemoryKernel:
         # A token count gets gateway tools exactly when the request it measures would.
         owner = not disabled and kind in {"user", "continuation"}
         kind = "count" if counting else kind
-        field = tool_protocol(protocol).field
-        result = {**body, field: [dict(m) for m in sent]}
+        result = {**body, adapter.field: [dict(m) for m in sent]}
         prepared = Prepared(
             result,
             body,
@@ -310,7 +304,6 @@ class MemoryKernel:
                 "",
                 {
                     "upstream_id": upstream["id"],
-                    "tool_version": TOOL_VERSION,
                     "tools": tools,
                     "tool_skip_reason": reason,
                     "policy": policy,
@@ -357,14 +350,14 @@ class MemoryKernel:
         elif policy.gateway_tools:
             request.metrics["tool_skip_reason"] = (
                 tool_block_reason(request.original, request.protocol, request.upstream)
-                or request.root.get("tool_skip_reason")
+                or request.root["tool_skip_reason"]
                 or "tools_not_selected_at_session_start"
             )
 
     @staticmethod
     def replay(request):
-        field = tool_protocol(request.protocol).field
-        messages = request.body[field]
+        adapter = tool_protocol(request.protocol)
+        messages = request.body[adapter.field]
         missing = False
         sent = set(request.observation.value.get("sent", []))
         # A cut removes the messages up to it, together with any lost injection.
@@ -373,17 +366,17 @@ class MemoryKernel:
             decision = request.records.get((K.INJECTION, anchor))
             if decision is not None:
                 if decision["text"]:
-                    append_context(messages[index], decision["text"], request.protocol)
+                    adapter.append_context(messages[index], decision["text"])
                 request.metrics["replay_hits"] += 1
             elif anchor in sent and index > cut:
                 missing = True
         reason = ""
         if request.upstream["id"] != request.root["upstream_id"]:
             reason = "upstream_changed"
-        elif missing and request.protocol == "anthropic":
+        elif missing and adapter.signed_thinking:
             reason = "missing_injection_record"
         if reason:
-            request.body[field] = strip_thinking(messages)
+            request.body[adapter.field] = strip_thinking(messages)
             request.strip_replayed_thinking = True
             request.metrics["degradation"] = reason
         if request.disabled:
@@ -481,8 +474,8 @@ class MemoryKernel:
             await self.settle_recall(request, anchor, decision["tokens"])
         request.records[K.INJECTION, anchor] = decision
         if decision["text"]:
-            field = tool_protocol(request.protocol).field
-            append_context(request.body[field][request.anchor], decision["text"], request.protocol)
+            adapter = tool_protocol(request.protocol)
+            adapter.append_context(request.body[adapter.field][request.anchor], decision["text"])
         request.metrics.update(
             recall_count=len(decision["uris"]),
             recall_ms=round((time.monotonic() - started) * 1000, 2),
@@ -544,11 +537,10 @@ class MemoryKernel:
         """Record what the client's next request is matched by, before the client can send it."""
         if request.relayed:
             return
-        if request.protocol == "anthropic" and response.message:
-            for text in unsigned_thinking(response.message):
-                await self.store.state.swap(request.scope, THINKING + digest(text), Document(), {})
-        if response.message and request.kind in {"user", "continuation"}:
-            output = response.output_items or [response.message]
+        output = response.output
+        for text in tool_protocol(request.protocol).unsigned_thinking(output):
+            await self.store.state.swap(request.scope, THINKING + digest(text), Document(), {})
+        if output and request.kind in {"user", "continuation"}:
             chain = await asyncio.to_thread(
                 hidden_chain, [*request.messages, *output], request.protocol
             )

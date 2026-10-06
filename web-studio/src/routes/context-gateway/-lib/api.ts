@@ -211,8 +211,8 @@ export type Overview = {
   /** Conversations whose latest saving status is retrying or paused. */
   capture_issues: { retrying: number; paused: number }
   sample_limit: number
-  /** Days the request log keeps records; older gateways leave it out. */
-  log_retention_days?: number
+  /** Days the request log keeps records. */
+  log_retention_days: number
 }
 
 /** One request-log record (metadata only); every field but `time` is optional. */

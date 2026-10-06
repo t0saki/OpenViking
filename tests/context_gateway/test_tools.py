@@ -9,13 +9,12 @@ from conftest import MCP_TOOLS, mcp_tool
 
 from openviking_context_gateway.capture import capture_messages
 from openviking_context_gateway.models import Policy, Upstream
-from openviking_context_gateway.protocols import ResponseCapture
 from openviking_context_gateway.proxy import upstream_url
 from openviking_context_gateway.storage import SQLiteKernelStore
 from openviking_context_gateway.tool_catalog import notice_head, select_tools, tool_block_reason
 from openviking_context_gateway.tool_executor import ToolExecutor, attachment_bytes, attachments
 from openviking_context_gateway.tool_loop import HiddenToolLoop
-from openviking_context_gateway.tool_protocols import hidden_chain, tool_protocol
+from openviking_context_gateway.tool_protocols import ResponseCapture, hidden_chain, tool_protocol
 from openviking_context_gateway.tool_protocols.common import NOTICE, notice_tail, sse
 from openviking_context_gateway.vendors import ark_url
 
@@ -99,7 +98,8 @@ def test_file_bytes_and_extracted_text():
                     "content": '<context><source id="1" name="report.pdf">hello &amp; world</source></context>',
                 }
             ]
-        }
+        },
+        "chat",
     )
     assert parts == [{"filename": "report.pdf.txt", "text": "hello & world"}]
 
@@ -617,7 +617,6 @@ async def test_catalog_unavailable_freezes_safe_empty_root(setup_kernel, credent
     headers = {"x-openviking-session": "offline"}
     body = {"messages": [{"role": "user", "content": "Look up my deployment"}]}
     prepared = await kernel.prepare(body, "chat", headers, credential, {"id": "u"}, policy)
-    assert prepared.root["tool_version"] == 2
     assert not prepared.tools_active and prepared.root["tools"] == []
     assert prepared.metrics["tool_skip_reason"] == "tools_unavailable"
     assert prepared.metrics["tools_tokens"] == 0
@@ -729,10 +728,7 @@ async def test_new_tools_preserve_arguments_and_normalize_failed_receipt(
     assert tool_protocol("responses")({}).results([result])[0]["output"] == result["content"]
 
 
-@pytest.mark.parametrize("version,target", [(1, "find"), (2, "search")])
-async def test_saved_root_keeps_its_tools_and_search_mapping(
-    setup_kernel, credential, policy, version, target
-):
+async def test_saved_root_keeps_its_tools(setup_kernel, credential, policy):
     from unittest.mock import AsyncMock
 
     from openviking_context_gateway.storage import digest
@@ -740,7 +736,7 @@ async def test_saved_root_keeps_its_tools_and_search_mapping(
     kernel, store, viking, _ = setup_kernel
     body = {"messages": [{"role": "user", "content": "Find my deployment"}]}
     initial = await kernel.prepare(body, "chat", {}, credential, {"id": "u"}, policy)
-    # A session saved before tools came from MCP: retired policy fields, its own tool list.
+    # A saved session keeps the tool list it froze, whatever the catalog offers now.
     search = {
         "type": "function",
         "function": {
@@ -754,11 +750,7 @@ async def test_saved_root_keeps_its_tools_and_search_mapping(
         },
     }
     saved = {key: value for key, value in initial.root.items() if key != "tool_skip_reason"}
-    saved.update(
-        tool_version=version,
-        tools=[search],
-        policy={**policy, "gateway_tools": True, "allow_write_tools": True, "tool_allowlist": []},
-    )
+    saved.update(tools=[search], policy={**policy, "gateway_tools": True})
     await store.replay.put(initial.scope, digest("saved"), "root", "", saved)
     prepared = await kernel.prepare(
         body, "chat", {"x-openviking-session": "saved"}, credential, {"id": "u"}, policy
@@ -772,21 +764,14 @@ async def test_saved_root_keeps_its_tools_and_search_mapping(
     )
     assert result["content"] == "found" and not result["failed"]
     assert viking.mcp.call_args.args[2] == {
-        "name": target,
+        "name": "search",
         "arguments": {"query": "deploy", "limit": 3},
     }
 
 
-def test_policy_drops_retired_fields_and_storage_metadata():
-    stored = {
-        **Policy(gateway_tools=True).model_dump(),
-        "id": "default",
-        "revision": 4,
-        "allow_write_tools": True,
-        "tool_allowlist": ["search", "write"],
-    }
-    migrated = Policy.model_validate(stored).model_dump()
-    assert migrated == Policy(gateway_tools=True).model_dump()
+def test_policy_accepts_storage_metadata_only():
+    stored = {**Policy(gateway_tools=True).model_dump(), "id": "default", "revision": 4}
+    assert Policy.model_validate(stored) == Policy(gateway_tools=True)
     with pytest.raises(ValueError):
         Policy.model_validate({"unknown_setting": True})
 

@@ -11,6 +11,7 @@ from .common import (
     ToolLoopError,
     ToolProtocol,
     ToolRound,
+    append_text,
     merge_delta,
     sse,
 )
@@ -20,6 +21,15 @@ class ChatProtocol(ToolProtocol):
     id_prefix = "chatcmpl-"
     canonicalizes_history = True
     summary_drops = ("stream_options", "response_format", "stop")
+    reply_ends = frozenset({"stop", "length", "tool_calls", "function_call"})
+
+    @staticmethod
+    def accepts_context(message):
+        return message.get("role") in {"user", "tool"}
+
+    @staticmethod
+    def append_context(message, text):
+        append_text(message, "content", text, "text", joins_strings=True)
 
     @staticmethod
     def wire_tools(tools):
@@ -89,27 +99,40 @@ class ChatProtocol(ToolProtocol):
     def begin(self):
         super().begin()
         self.message, self.fragments = {"role": "assistant"}, {}
+        # Whether the first completion arrived, and how many a nonstreaming response held.
+        self.chosen, self.choices = False, 1
 
     def encode(self, value):
         return super().encode(value) if value is None else sse(value)
 
-    def event(self, value):
+    def accumulate(self, value):
         self.envelope.update({k: v for k, v in value.items() if k not in {"choices", "usage"}})
         if value.get("usage"):
             self.usage.update(value["usage"])
-        choices = value.get("choices") or []
-        if not choices:
-            return [] if value.get("usage") else [{**value, "id": self.identifier}]
-        if len(choices) != 1 or choices[0].get("index", 0) != 0:
-            raise ToolLoopError("Tool mode requires one completion")
-        choice = choices[0]
-        delta = copy.deepcopy(choice.get("delta", {}))
-        for item in delta.pop("tool_calls", []) or []:
+        # Only the first completion is the reply; the tool loop refuses any other.
+        choice = next((c for c in value.get("choices") or [] if c.get("index", 0) == 0), None)
+        if choice is None:
+            return
+        self.chosen = True
+        delta = copy.deepcopy(choice.get("delta") or {})
+        for item in delta.pop("tool_calls", None) or []:
             index = item.pop("index", 0)
             merge_delta(self.fragments.setdefault(index, {}), item)
         merge_delta(self.message, delta)
-        merge_delta(self.visible[0], delta)
         self.finish = choice.get("finish_reason") or self.finish
+
+    def event(self, value):
+        choices = value.get("choices") or []
+        if len(choices) > 1 or (choices and choices[0].get("index", 0) != 0):
+            raise ToolLoopError("Tool mode requires one completion")
+        self.accumulate(value)
+        if not choices:
+            return [] if value.get("usage") else [{**value, "id": self.identifier}]
+        choice = choices[0]
+        delta = {
+            k: copy.deepcopy(v) for k, v in (choice.get("delta") or {}).items() if k != "tool_calls"
+        }
+        merge_delta(self.visible[0], delta)
         if delta or any(k not in {"delta", "finish_reason", "index"} for k in choice):
             return [
                 {
@@ -122,16 +145,33 @@ class ChatProtocol(ToolProtocol):
         return []
 
     def load(self, value):
-        choices = value["choices"]
-        if len(choices) != 1:
-            raise ToolLoopError("Tool mode requires one completion")
-        self.envelope = value
-        self.message = copy.deepcopy(choices[0]["message"])
-        self.finish = choices[0]["finish_reason"]
+        choices = value.get("choices") or []
+        self.envelope, self.choices = value, len(choices)
         self.usage = value.get("usage") or {}
-        merge_delta(self.visible[0], {k: v for k, v in self.message.items() if k != "tool_calls"})
+        if choices and choices[0].get("message"):
+            self.chosen = True
+            self.message = copy.deepcopy(choices[0]["message"])
+            self.finish = choices[0].get("finish_reason")
+            merge_delta(
+                self.visible[0], {k: v for k, v in self.message.items() if k != "tool_calls"}
+            )
+
+    def assembled(self):
+        if not self.chosen:
+            return None, None
+        if not self.fragments:
+            return self.message, None
+        calls = [self.fragments[i] for i in sorted(self.fragments)]
+        return {**self.message, "tool_calls": calls}, None
+
+    @staticmethod
+    def has_calls(output):
+        # Legacy `functions` clients get `function_call` instead of `tool_calls`.
+        return any(m.get("tool_calls") or m.get("function_call") for m in output)
 
     def end(self):
+        if self.choices != 1:
+            raise ToolLoopError("Tool mode requires one completion")
         if not self.finish:
             raise ToolLoopError("Model response ended before finish_reason")
         if self.fragments:

@@ -91,6 +91,7 @@ const EMPTY_OVERVIEW: Overview = {
   recall_ms: 0,
   capture_issues: { retrying: 0, paused: 0 },
   sample_limit: 10000,
+  log_retention_days: 30,
 }
 
 const BUSY_OVERVIEW: Overview = {
@@ -233,7 +234,6 @@ describe('OverviewPage', () => {
       screen.getByText('No requests yet', { selector: 'p.font-medium' }),
     ).toBeTruthy()
     expect(screen.getByText('No degraded requests')).toBeTruthy()
-    // Older gateways don't report retention; the note uses the default.
     expect(
       screen.getByText(
         'Figures cover the latest 10,000 entries of the request log. Entries are kept for 30 days.',

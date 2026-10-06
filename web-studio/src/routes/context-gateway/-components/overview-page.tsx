@@ -42,8 +42,6 @@ const RECENT_LIMIT = 8
  * outnumber model requests while saving retries.
  */
 const RECENT_FETCH = 50
-/** Log retention the gateway uses unless `log_retention_days` is configured. */
-const DEFAULT_RETENTION_DAYS = 30
 
 /** The newest model requests; memory-sync events have their own status. */
 function recentModelRequests(records: LogRecord[]): LogRecord[] {
@@ -188,7 +186,7 @@ export function OverviewPage() {
           <p className="text-xs text-muted-foreground">
             {t('overview.sampleNote', {
               limit: formatNumber(data.sample_limit, locale),
-              count: data.log_retention_days ?? DEFAULT_RETENTION_DAYS,
+              count: data.log_retention_days,
             })}
           </p>
         </>

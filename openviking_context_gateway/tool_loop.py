@@ -10,7 +10,7 @@ import orjson
 
 from .capture import CapturePipeline
 from .compaction import cut_messages
-from .protocols import SSEDecoder, messages_of, replays_reasoning, usage_of
+from .protocols import SSEDecoder, replays_reasoning, usage_of
 from .records import RecordKind as K
 from .tool_catalog import notice_head
 from .tool_protocols import hidden_chain, tool_protocol
@@ -32,7 +32,7 @@ class HiddenToolLoop:
         self.adapter = tool_protocol(self.protocol)(prepared.body)
         self.body = {
             **prepared.body,
-            self.adapter.field: list(messages_of(prepared.body, self.protocol)),
+            self.adapter.field: list(self.adapter.messages(prepared.body)),
         }
         self.policy, self.allowed = prepared.root["policy"], executor.allowed
         self.deadline = time.monotonic() + self.policy.get("tool_total_seconds", 120)
@@ -162,7 +162,7 @@ class HiddenToolLoop:
 
     def reset(self, anchor, value):
         """Continue in the window the model started, cut the way the next request replays it."""
-        start, chain = messages_of(self.prepared.body, self.protocol), self.prepared.capture_chain
+        start, chain = self.adapter.messages(self.prepared.body), self.prepared.capture_chain
         # Only system and developer messages follow the anchor in this request's body.
         index = len(start) - len(chain) + chain.index(anchor)
         self.body[self.adapter.field] = cut_messages(start, index, value["text"])
@@ -209,11 +209,9 @@ class HiddenToolLoop:
         if self.window:
             await CapturePipeline(self.store.capture).confirm_cut(self.prepared, self.window[0])
         self.final = self.adapter.final(self.usage)
+        # The combined reply reads like any relayed one: calls left for the client
+        # hand the turn off, and the continuation that ends it is captured.
         self.capture.nonstream(self.final)
-        if self.round.calls and self.round.tool_handoff:
-            # A successful client-tool handoff is replayable too. The next
-            # continuation replaces this unconfirmed capture tail in place.
-            self.capture.complete = True
         self.prepared.metrics["hidden_rounds"] = self.rounds
 
     def error(self, message: str) -> bytes:
@@ -234,7 +232,7 @@ class HiddenToolLoop:
                             raise ToolLoopError("Model called an unavailable gateway tool")
                         (owned if name in self.allowed else client).append(call)
                     if owned:
-                        if not self.round.tool_handoff:
+                        if not self.round.tool_stop:
                             raise ToolLoopError("Gateway tool call has an invalid stop reason")
                         async for event in self.execute(owned):
                             yield event

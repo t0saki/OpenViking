@@ -8,8 +8,9 @@ from conftest import make_due, replay_records
 
 from openviking_context_gateway.capture import MAX_ATTEMPTS, CaptureWorker
 from openviking_context_gateway.client import VikingError
-from openviking_context_gateway.protocols import ResponseCapture, plugin_present
+from openviking_context_gateway.protocols import plugin_present
 from openviking_context_gateway.storage import ManagementStore, SQLiteKernelStore
+from openviking_context_gateway.tool_protocols import ResponseCapture
 
 
 async def prepare(kernel, credential, policy, messages, **body):
@@ -301,9 +302,9 @@ async def test_hot_read_ignores_unrelated_operational_documents(
     p = await prepare(kernel, credential, policy, history(1)[:1])
     with store.connect() as c:
         c.executemany(
-            "INSERT INTO state(scope,key,value,version) VALUES (?,?,?,1)",
+            "INSERT INTO state(scope,key,value,version,touched) VALUES (?,?,?,1,?)",
             [
-                (p.scope, f"tool:unrelated-{i}", store.encode({"content": "old"}))
+                (p.scope, f"tool:unrelated-{i}", store.encode({"content": "old"}), time.time())
                 for i in range(1500)
             ],
         )

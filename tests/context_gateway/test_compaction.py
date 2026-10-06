@@ -20,9 +20,9 @@ from openviking_context_gateway.compaction import (
     estimate,
     opening_block,
 )
-from openviking_context_gateway.protocols import ResponseCapture, text_content, usage_of
+from openviking_context_gateway.protocols import text_content, usage_of
 from openviking_context_gateway.state_store import get_state
-from openviking_context_gateway.tool_protocols import hidden_chain, tool_protocol
+from openviking_context_gateway.tool_protocols import ResponseCapture, hidden_chain, tool_protocol
 from openviking_context_gateway.tool_protocols.common import SUMMARY_HEADROOM, SummaryError
 
 FIELD = {"chat": "messages", "anthropic": "messages", "responses": "input"}

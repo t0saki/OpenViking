@@ -16,14 +16,7 @@ from dataclasses import dataclass
 from .blocks import block, token_estimate
 from .compaction import active_cut, cut_hint, opening_block
 from .models import Policy
-from .protocols import (
-    accepts_context,
-    append_context,
-    clean_text,
-    is_user,
-    text_content,
-    unwrap_client,
-)
+from .protocols import clean_text, is_user, text_content, unwrap_client
 from .records import RecordKind as K
 from .tool_protocols import tool_protocol
 
@@ -147,12 +140,13 @@ async def remind(store, request, policy):
     index, window = active_cut(request), window_number(request)
     request.metrics["window"] = window
     anchor = (request.chain or [""])[-1]
-    field = tool_protocol(request.protocol).field
+    adapter = tool_protocol(request.protocol)
+    field = adapter.field
     if (
         request.kind != "continuation"
         or not anchor
         or (K.INJECTION, anchor) in request.records
-        or not accepts_context(request.body[field][-1])
+        or not adapter.accepts_context(request.body[field][-1])
     ):
         return
     kind = due(request, policy, index)
@@ -174,7 +168,7 @@ async def remind(store, request, policy):
         },
     )
     request.records[K.INJECTION, anchor] = decision
-    append_context(request.body[field][-1], decision["text"], request.protocol)
+    adapter.append_context(request.body[field][-1], decision["text"])
     request.metrics["window_reminder"] = decision["reminder"]
 
 

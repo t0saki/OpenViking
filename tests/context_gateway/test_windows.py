@@ -18,15 +18,10 @@ from openviking_context_gateway.capture import CapturePipeline
 from openviking_context_gateway.capture_store import Document
 from openviking_context_gateway.compaction import active_cut
 from openviking_context_gateway.models import Policy
-from openviking_context_gateway.protocols import (
-    ResponseCapture,
-    SSEDecoder,
-    append_context,
-    text_content,
-)
+from openviking_context_gateway.protocols import SSEDecoder, text_content
 from openviking_context_gateway.records import RecordKind as K
 from openviking_context_gateway.tool_catalog import select_tools
-from openviking_context_gateway.tool_protocols import hidden_chain
+from openviking_context_gateway.tool_protocols import ResponseCapture, hidden_chain, tool_protocol
 from openviking_context_gateway.tool_protocols.common import sse
 from openviking_context_gateway.windows import (
     ALONE,
@@ -213,8 +208,6 @@ async def send(running_gateway, protocol, streaming, rounds, fail=False, body=No
 def test_native_tools_are_frozen_only_with_agent_windows():
     policy = Policy(gateway_tools=True, disabled_tools=["new_context", NEW_CONTEXT]).model_dump()
     assert not any(t["function"]["name"] in NATIVE_TOOLS for t in select_tools(MCP_TOOLS, policy))
-    # A saved policy from before the setting existed has no such key.
-    del policy["agent_windows"]
     assert len(select_tools(MCP_TOOLS, policy)) == len(MCP_TOOLS)
     policy["agent_windows"] = True
     natives = [t["function"] for t in select_tools(MCP_TOOLS, policy)[len(MCP_TOOLS) :]]
@@ -295,11 +288,11 @@ def test_policy_requires_soft_ratio_below_hard_ratio():
     ],
 )
 def test_context_appends_to_tool_results(protocol, message, expected):
-    append_context(message, "X", protocol)
+    tool_protocol(protocol).append_context(message, "X")
     assert message == expected
 
 
-def test_reminders_fire_once_per_window_and_only_new_style_cuts_count():
+def test_reminders_fire_once_per_window_and_count_cuts():
     policy = Policy()
     records = {(K.INJECTION, "b"): {"text": "x", "reminder": "soft"}}
     request = SimpleNamespace(
@@ -315,9 +308,6 @@ def test_reminders_fire_once_per_window_and_only_new_style_cuts_count():
     assert due(request, policy, -1) == "hard"
     records[K.INJECTION, "d"] = {"text": "x", "reminder": "hard"}
     assert due(request, policy, -1) == ""
-    # Old Working Memory takeovers have no source and are not cuts.
-    records[K.REPLACEMENT, "a"] = {"text": "summary"}
-    assert active_cut(request) == -1 and window_number(request) == 1
     records[K.REPLACEMENT, "b"] = {"source": "compaction", "text": "", "tokens": 0}
     assert active_cut(request) == 1 and window_number(request) == 1
     records[K.REPLACEMENT, "c"] = {"source": "window", "text": "", "tokens": 0}

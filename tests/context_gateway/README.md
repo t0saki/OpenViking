@@ -37,7 +37,10 @@ contracts remain in `test_app.py` and `test_tools.py`.
 `HiddenToolLoop` owns execution, budgets, durable receipts and usage. The three adapters in
 `tool_protocols` own native request/history rules, assemble native output and project
 client-visible events. `ToolProtocol` declares the full adapter contract; `end()` returns
-a `ToolRound` so the loop does not inspect partial protocol state. All event producers
+a `ToolRound` so the loop does not inspect partial protocol state. Relayed replies go
+through the same assemblers via `ResponseCapture`, so completion follows one rule on every
+path: a reply ending in client tool calls hands the turn off (finished, not complete), and
+only a reply that ends the user's turn is staged for capture. All event producers
 return native JSON (or the Chat `[DONE]` marker); only `encode()` returns bytes. No storage
 port or record kind is protocol-specific. A hidden record's required `visible_count` makes an entire
 Responses output array one replayable span. Responses requires full input history and

@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest'
 import type { Profile, ProfileSettings } from './api'
 import {
   PROFILE_DEFAULTS,
-  WRITE_TOOLS,
   duplicateProfile,
   offeredTools,
   toProfileSettings,
@@ -24,14 +23,10 @@ describe('toProfileSettings', () => {
     }
     const settings = toProfileSettings({
       ...stored,
-      allow_write_tools: true,
-      tool_allowlist: ['read'],
       future_setting: 'discard',
     } as Profile)
     expect(settings).not.toHaveProperty('id')
     expect(settings).not.toHaveProperty('revision')
-    expect(settings).not.toHaveProperty('allow_write_tools')
-    expect(settings).not.toHaveProperty('tool_allowlist')
     expect(settings).not.toHaveProperty('future_setting')
     expect(settings).toMatchObject({
       recall: false,
@@ -40,103 +35,18 @@ describe('toProfileSettings', () => {
     })
   })
 
-  it('round-trips every field, filling ones the server left out', () => {
-    const { query_max_chars: _omitted, ...partial } = profile({
+  it('round-trips every field', () => {
+    const stored = profile({
       quotas: { resources: 200 },
       context_window: 128000,
     })
-    const settings = toProfileSettings(partial as ProfileSettings)
-    expect(Object.keys(settings).sort()).toEqual(
-      Object.keys(PROFILE_DEFAULTS).sort(),
-    )
-    expect(settings.query_max_chars).toBe(8000)
-    expect(settings.quotas).toEqual({ resources: 200 })
-    expect(settings.context_window).toBe(128000)
-  })
-
-  it('shows tool calls for profiles saved before the setting existed', () => {
-    const { show_tool_calls: _omitted, ...legacy } = profile()
-    expect(toProfileSettings(legacy as ProfileSettings).show_tool_calls).toBe(
-      true,
-    )
-    expect(
-      toProfileSettings(profile({ show_tool_calls: false })),
-    ).toMatchObject({ show_tool_calls: false })
-  })
-
-  it('fills missing exclusions with the write tools and keeps explicit ones', () => {
-    const { disabled_tools: _omitted, ...legacy } = profile()
-    expect(toProfileSettings(legacy as ProfileSettings).disabled_tools).toEqual(
-      WRITE_TOOLS,
-    )
-    expect(
-      toProfileSettings(profile({ disabled_tools: [] })).disabled_tools,
-    ).toEqual([])
-    expect(
-      toProfileSettings(profile({ disabled_tools: ['forget', 'future_tool'] }))
-        .disabled_tools,
-    ).toEqual(['forget', 'future_tool'])
-  })
-
-  it('drops long-conversation settings that were replaced and defaults the new ones', () => {
-    const {
-      compaction: _compaction,
-      compaction_threshold: _threshold,
-      summary_max_tokens: _summary,
-      agent_windows: _windows,
-      window_soft_ratio: _soft,
-      window_hard_ratio: _hard,
-      ...rest
-    } = profile({ context_window: 200000 })
-    const legacy = {
-      ...rest,
-      takeover: false,
-      takeover_tokens: 30000,
-      keep_recent_turns: 3,
-      archive_wait_seconds: 30,
-    }
-    const settings = toProfileSettings(legacy as unknown as ProfileSettings)
-    for (const field of [
-      'takeover',
-      'takeover_tokens',
-      'keep_recent_turns',
-      'archive_wait_seconds',
-    ]) {
-      expect(settings).not.toHaveProperty(field)
-    }
-    expect(settings).toMatchObject({
-      compaction: true,
-      compaction_threshold: 0.9,
-      summary_max_tokens: 8000,
-      context_window: 200000,
-      agent_windows: false,
-      window_soft_ratio: 0.7,
-      window_hard_ratio: 0.85,
-    })
+    expect(toProfileSettings(stored)).toEqual(stored)
   })
 
   it('duplicates under a new name', () => {
     expect(
       duplicateProfile({ ...profile(), id: 'p', revision: 1 }, 'Copy'),
     ).toEqual({ ...PROFILE_DEFAULTS, name: 'Copy' })
-  })
-
-  it('defaults opening context for older profiles and preserves disabling it', () => {
-    const {
-      profile: _profile,
-      profile_max_tokens: _budget,
-      ...legacy
-    } = profile()
-    expect(toProfileSettings(legacy as ProfileSettings)).toMatchObject({
-      profile: true,
-      profile_max_tokens: 4000,
-    })
-    expect(
-      toProfileSettings(profile({ profile: false, profile_max_tokens: 0 })),
-    ).toMatchObject({
-      profile: false,
-      profile_max_tokens: 0,
-    })
   })
 })
 

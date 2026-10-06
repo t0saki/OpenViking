@@ -1,13 +1,14 @@
 # Copyright (c) 2026 Beijing Volcano Engine Technology Co., Ltd.
 # SPDX-License-Identifier: AGPL-3.0
-"""Pure request/response operations; unknown protocol fields survive unchanged."""
+"""Protocol-independent request operations; unknown protocol fields survive unchanged.
 
-import copy
+What differs between wire protocols lives in their adapters in ``tool_protocols``.
+"""
+
 import hashlib
 import json
 import math
 import re
-from dataclasses import dataclass
 from decimal import Decimal
 from importlib.resources import files
 from typing import Any
@@ -137,8 +138,8 @@ def normalize(value: Any) -> Any:
     return value
 
 
-def prefix_chain(messages: list[dict], version=NORMALIZATION_VERSION) -> list[str]:
-    previous = hashlib.sha256(version.encode()).digest()
+def prefix_chain(messages: list[dict]) -> list[str]:
+    previous = hashlib.sha256(NORMALIZATION_VERSION.encode()).digest()
     result = []
     for message in messages:
         if (
@@ -206,13 +207,6 @@ def plugin_present(body: dict, headers: dict) -> bool:
         if isinstance(name, str) and re.search(r"(^|__)openviking(?:_|__|$)", name, re.I):
             return True
     return False
-
-
-def messages_of(body, protocol):
-    if protocol == "responses":
-        content = body.get("input", [])
-        return [{"role": "user", "content": content}] if isinstance(content, str) else content
-    return body.get("messages", [])
 
 
 def is_user(message):
@@ -285,29 +279,8 @@ def session_id(headers: dict) -> str | None:
     return None
 
 
-TOOL_OUTPUTS = {"function_call_output", "custom_tool_call_output"}
-
-
-def accepts_context(message: dict) -> bool:
-    """Whether append_context can extend the message: a user message or a tool result."""
-    return message.get("role") in {"user", "tool"} or message.get("type") in TOOL_OUTPUTS
-
-
-def append_context(message: dict, text: str, protocol: str) -> None:
-    """Append text to a user message or tool result; Anthropic results get a trailing block."""
-    tool_output = message.get("type") in TOOL_OUTPUTS
-    field = "output" if tool_output else "content"
-    content = message.get(field, "")
-    if (protocol == "chat" or tool_output) and isinstance(content, str):
-        message[field] = content + "\n\n" + text
-        return
-    kind = "input_text" if protocol == "responses" else "text"
-    if isinstance(content, str):
-        content = [{"type": kind, "text": content}]
-    message[field] = [*content, {"type": kind, "text": text}]
-
-
 def strip_thinking(messages: list[dict]) -> list[dict]:
+    """Copies without reasoning, in every form a protocol carries it in messages."""
     result = [dict(message) for message in messages]
     for message in result:
         message.pop("reasoning_content", None)
@@ -321,42 +294,14 @@ def strip_thinking(messages: list[dict]) -> list[dict]:
     return result
 
 
-def unsigned_thinking(message: dict) -> list[str]:
-    """Thinking returned without a signature, as DeepSeek through Ark does."""
-    content = message.get("content")
-    return [
-        block["thinking"]
-        for block in (content if isinstance(content, list) else [])
-        if isinstance(block, dict)
-        and block.get("type") == "thinking"
-        and not block.get("signature")
-        and isinstance(block.get("thinking"), str)
-        and block["thinking"].strip()
-    ]
-
-
-def assistant_texts(message: dict) -> list[dict]:
-    """The text blocks of an assistant message with block content."""
-    content = message.get("content")
-    if message.get("role") != "assistant" or not isinstance(content, list):
-        return []
-    return [b for b in content if isinstance(b, dict) and b.get("type") == "text" and b.get("text")]
-
-
 def replays_reasoning(upstream: dict) -> bool:
     """Whether the gateway restores reasoning clients drop; DeepSeek requires it with tools."""
     value = upstream.get("replay_reasoning")
     return upstream.get("vendor") in REASONING_VENDORS if value is None else value
 
 
-def enhanced_supported(body, protocol):
-    return protocol != "responses" or (
-        body.get("store") is False
-        and not any(body.get(k) for k in ("previous_response_id", "conversation", "background"))
-    )
-
-
 def usage_of(value: dict) -> dict:
+    """Token counts from any protocol's usage, including compatible endpoints that mix forms."""
     usage = value.get("usage") or {}
     details = usage.get("prompt_tokens_details") or usage.get("input_tokens_details") or {}
     cached = usage.get("cache_read_input_tokens", details.get("cached_tokens", 0)) or 0
@@ -399,109 +344,3 @@ class SSEDecoder:
             return value if isinstance(value, dict) else None
         except ValueError:
             return None
-
-
-@dataclass
-class ResponseCapture:
-    protocol: str
-    message: dict | None = None
-    usage: dict | None = None
-    response_id: str = ""
-    complete: bool = False
-    # The reply ended in calls to the client's tools; the turn goes on in the next request.
-    handoff: bool = False
-    output_items: list | None = None
-    context_usage: dict | None = None
-
-    @property
-    def finished(self):
-        """The whole reply arrived, whether it ended the turn or handed it to client tools."""
-        return self.complete or self.handoff
-
-    def nonstream(self, body):
-        self.usage = usage_of(body)
-        self.response_id = body.get("id", "")
-        if self.protocol == "anthropic":
-            self.message = {"role": "assistant", "content": body.get("content", [])}
-            self.complete = body.get("stop_reason") in {"end_turn", "stop_sequence"}
-            self.handoff = body.get("stop_reason") == "tool_use"
-        elif self.protocol == "chat":
-            choices = body.get("choices") or []
-            if choices:
-                self.message = choices[0].get("message")
-                self.complete = choices[0].get("finish_reason") in {"stop", "length"}
-                self.handoff = choices[0].get("finish_reason") in {"tool_calls", "function_call"}
-        else:
-            output = body.get("output", [])
-            self.output_items = output
-            self.message = {
-                "role": "assistant",
-                "content": "\n".join(text_content(x) for x in output),
-            }
-            self.complete = body.get("status") == "completed"
-
-    def event(self, body):
-        kind = body.get("type", "")
-        if body.get("id"):
-            self.response_id = body["id"]
-        if body.get("usage") and self.protocol != "anthropic":
-            self.usage = {**(self.usage or {}), **usage_of(body)}
-        if self.protocol == "responses":
-            if kind == "response.completed":
-                self.nonstream(body["response"])
-        elif self.protocol == "chat":
-            choices = body.get("choices") or []
-            if choices:
-                choice = choices[0]
-                delta = choice.get("delta", {})
-                if self.message is None:
-                    self.message = {"role": "assistant", "content": ""}
-                if isinstance(delta.get("content"), str):
-                    self.message["content"] += delta["content"]
-                if isinstance(delta.get("reasoning_content"), str):
-                    reasoning = self.message.get("reasoning_content", "")
-                    self.message["reasoning_content"] = reasoning + delta["reasoning_content"]
-                for call in delta.get("tool_calls") or []:
-                    calls = self.message.setdefault("tool_calls", [])
-                    index = call.get("index", 0)
-                    calls.extend({} for _ in range(index + 1 - len(calls)))
-                    for key, value in call.items():
-                        if key == "function":
-                            function = calls[index].setdefault("function", {})
-                            for name, part in value.items():
-                                if isinstance(part, str):
-                                    function[name] = function.get(name, "") + part
-                        elif key != "index" and value is not None:
-                            calls[index][key] = value
-                finish = choice.get("finish_reason")
-                self.complete = self.complete or finish in {"stop", "length"}
-                self.handoff = self.handoff or finish in {"tool_calls", "function_call"}
-        elif kind == "message_start":
-            self.message = {"role": "assistant", "content": []}
-            self.usage = usage_of(body.get("message", {}))
-            self.response_id = body.get("message", {}).get("id", "")
-        elif kind == "content_block_start" and self.message is not None:
-            self.message["content"].append(copy.deepcopy(body["content_block"]))
-        elif kind == "content_block_delta" and self.message is not None:
-            index, delta = body.get("index", 0), body.get("delta", {})
-            if index < len(self.message["content"]):
-                block = self.message["content"][index]
-                for key in ("text", "thinking", "signature", "partial_json"):
-                    if key in delta:
-                        block[key] = block.get(key, "") + delta[key]
-        elif kind == "content_block_stop" and self.message is not None:
-            index = body.get("index", 0)
-            if index < len(self.message["content"]):
-                block = self.message["content"][index]
-                if "partial_json" in block:
-                    text = block.pop("partial_json")
-                    try:
-                        block["input"] = orjson.loads(text) if text else {}
-                    except ValueError:
-                        pass
-        elif kind == "message_delta":
-            stop = body.get("delta", {}).get("stop_reason")
-            self.complete = stop in {"end_turn", "stop_sequence"}
-            self.handoff = stop == "tool_use"
-            if self.usage is not None:
-                self.usage["output_tokens"] = body.get("usage", {}).get("output_tokens", 0)

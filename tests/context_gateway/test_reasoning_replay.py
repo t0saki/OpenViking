@@ -6,9 +6,9 @@ from aiohttp import web
 from test_app import completion, enable_tools
 
 from openviking_context_gateway.models import Upstream
-from openviking_context_gateway.protocols import ResponseCapture, replays_reasoning
+from openviking_context_gateway.protocols import replays_reasoning
 from openviking_context_gateway.records import RecordKind as K
-from openviking_context_gateway.tool_protocols import hidden_chain
+from openviking_context_gateway.tool_protocols import ResponseCapture, hidden_chain
 
 QUESTION = {"role": "user", "content": "How do I deploy?"}
 FOLLOW_UP = {"role": "user", "content": "And then?"}

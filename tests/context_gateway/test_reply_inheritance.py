@@ -8,11 +8,10 @@ from aiohttp import web
 from conftest import make_due
 from test_review_regressions import worker_for
 
-from openviking_context_gateway.protocols import ResponseCapture
 from openviking_context_gateway.records import RecordKind as K
 from openviking_context_gateway.state_store import get_state
-from openviking_context_gateway.storage import SQLiteKernelStore
-from openviking_context_gateway.tool_protocols import hidden_chain
+from openviking_context_gateway.storage import SCHEMA_VERSION, ManagementStore, SQLiteKernelStore
+from openviking_context_gateway.tool_protocols import ResponseCapture, hidden_chain
 
 QUESTION = {"role": "user", "content": "How do I deploy?"}
 
@@ -192,6 +191,82 @@ def tool_handoff(protocol):
     return call, result
 
 
+def client_call_reply(protocol):
+    """A reply that ends in a call to the client's tool, as a body and as stream events."""
+    arguments = '{"city":"Paris"}'
+    if protocol == "chat":
+        call = {"id": "c1", "type": "function", "function": {"name": "weather"}}
+        message = {"role": "assistant", "content": None, "tool_calls": [call]}
+        message["tool_calls"][0]["function"]["arguments"] = arguments
+        body = {"id": "chat-1", "choices": [{"message": message, "finish_reason": "tool_calls"}]}
+        return body, tool_call_stream(protocol)
+    if protocol == "anthropic":
+        content = [
+            {"type": "text", "text": "Let me check."},
+            {"type": "tool_use", "id": "t1", "name": "weather", "input": {"city": "Paris"}},
+        ]
+        body = {"id": "m1", "content": content, "stop_reason": "tool_use", "usage": {}}
+        return body, tool_call_stream(protocol)
+    item = {"type": "function_call", "call_id": "c1", "name": "weather", "arguments": arguments}
+    body = {"id": "resp_1", "status": "completed", "output": [item], "usage": {}}
+    events = [
+        {"type": "response.created", "response": {**body, "status": "in_progress", "output": []}},
+        {"type": "response.output_item.added", "output_index": 0, "item": item},
+        {"type": "response.output_item.done", "output_index": 0, "item": item},
+        {"type": "response.completed", "response": body},
+    ]
+    return body, events
+
+
+@pytest.mark.parametrize("streamed", [False, True])
+@pytest.mark.parametrize("protocol", ["chat", "anthropic", "responses"])
+async def test_client_tool_call_reply_hands_off_without_capture_in_every_protocol(
+    setup_kernel, credential, policy, protocol, streamed
+):
+    """The turn goes on after client tools run, so only the continuation's answer is staged."""
+    kernel, store, _, _ = setup_kernel
+    policy.update(recall=False)
+    field = "input" if protocol == "responses" else "messages"
+    body = {"model": "model", field: [{"role": "user", "content": "Weather in Paris?"}]}
+    if protocol == "responses":
+        body["store"] = False
+    request = await kernel.prepare(
+        body, protocol, {"x-openviking-session": "s"}, credential, {"id": "upstream"}, policy
+    )
+    reply, events = client_call_reply(protocol)
+    capture = ResponseCapture(protocol)
+    if streamed:
+        for event in events:
+            capture.event(event)
+    else:
+        capture.nonstream(reply)
+    assert capture.handoff and capture.finished and not capture.complete
+    await kernel.completed(request, credential, capture)
+    # The client resends the reply with its tool results; that request continues this session.
+    owners = await store.replay.replies(request.scope, [request.reply_anchor])
+    assert owners == {request.reply_anchor: {request.session}}
+    staged = (await store.capture.get(request.scope, request.session)).value
+    assert not [turn for turn in staged["pending"] if not turn["confirmed"]]
+
+
+@pytest.mark.parametrize("streamed", [False, True])
+def test_legacy_chat_function_call_hands_off(streamed):
+    """Deprecated `functions` replies continue after the client runs the function."""
+    capture = ResponseCapture("chat")
+    if streamed:
+        for delta in (
+            {"role": "assistant", "content": None, "function_call": {"name": "weather"}},
+            {"function_call": {"arguments": '{"city":"Paris"}'}},
+        ):
+            capture.event({"choices": [{"delta": delta}]})
+        capture.event({"choices": [{"delta": {}, "finish_reason": "function_call"}]})
+    else:
+        call = {"name": "weather", "arguments": '{"city":"Paris"}'}
+        message = {"role": "assistant", "content": None, "function_call": call}
+        capture.nonstream({"choices": [{"message": message, "finish_reason": "function_call"}]})
+    assert capture.handoff and capture.finished and not capture.complete
+
+
 @pytest.mark.parametrize("protocol", ["chat", "anthropic"])
 async def test_streamed_handoff_is_matched_before_bookkeeping_runs(
     running_gateway, monkeypatch, protocol
@@ -280,59 +355,42 @@ async def test_expiry_removes_stale_sessions_records_and_documents(
     assert (await get_state(store.state, b.scope, b.session)).value["recall"]
 
 
-V1 = """
-    CREATE TABLE sessions (
-        scope TEXT, session TEXT, touched REAL NOT NULL, PRIMARY KEY(scope,session));
-    CREATE TABLE replay (
-        scope TEXT, session TEXT, kind TEXT, anchor TEXT, value BLOB NOT NULL,
-        PRIMARY KEY(scope,session,kind,anchor),
-        FOREIGN KEY(scope,session) REFERENCES sessions ON DELETE CASCADE);
-    CREATE INDEX replay_anchors ON replay(scope,session,anchor);
-    CREATE TABLE state (
-        scope TEXT, key TEXT, value BLOB NOT NULL, version INTEGER NOT NULL,
-        PRIMARY KEY(scope,key));
-    CREATE TABLE capture (
-        scope TEXT, session TEXT, value BLOB NOT NULL, version INTEGER NOT NULL,
-        ready REAL, lease REAL NOT NULL DEFAULT 0, owner TEXT,
-        PRIMARY KEY(scope,session),
-        FOREIGN KEY(scope,session) REFERENCES sessions ON DELETE CASCADE);
-    CREATE INDEX capture_ready ON capture(ready,lease);
-    CREATE TABLE deleted_scopes (scope TEXT PRIMARY KEY);
-    PRAGMA user_version=1;
-"""
-
-
-async def test_version_one_storage_migrates_in_place(tmp_path, setup_kernel):
+@pytest.mark.parametrize("old", [1, 2, 3, 4, SCHEMA_VERSION + 1])
+@pytest.mark.parametrize("kind", [SQLiteKernelStore, ManagementStore])
+async def test_storage_rejects_other_schema_versions(tmp_path, setup_kernel, kind, old):
+    """Versions 1-4 were stamped on older pre-release layouts and must not pass."""
     _, _, _, encryption = setup_kernel
-    store = SQLiteKernelStore(tmp_path / "v1" / "kernel.sqlite3", encryption)
+    store = kind(tmp_path / "other" / "store.sqlite3", encryption)
     try:
-        value = store.encode({"text": "kept"})
-        with store.connect() as c:
-            c.executescript(V1)
-            c.executemany(
-                "INSERT INTO sessions VALUES ('scope',?,?)", [("*", time.time()), ("s", 0)]
-            )
-            c.executemany(
-                "INSERT INTO replay VALUES ('scope',?,?,'',?)",
-                [("*", "injection", value), ("s", "root", value)],
-            )
-            c.executemany(
-                "INSERT INTO state VALUES ('scope',?,?,1)",
-                [("prefix:anchor", value), ("s", value)],
-            )
         await store.initialize()
         await store.initialize()
         with store.connect() as c:
-            assert c.execute("PRAGMA user_version").fetchone()[0] == 2
-            assert [r[0] for r in c.execute("SELECT session FROM sessions")] == ["s"]
-            assert [r[0] for r in c.execute("SELECT session FROM replay")] == ["s"]
-            assert [tuple(r) for r in c.execute("SELECT key,touched>0 FROM state")] == [("s", 1)]
-        assert await store.replay.read("scope", "s", [""]) == {(K.ROOT, ""): {"text": "kept"}}
-        await store.expire(time.time() - 100)
-        assert (await get_state(store.state, "scope", "s")).value == {"text": "kept"}
-        with store.connect() as c:
-            c.execute("PRAGMA user_version=3")
-        with pytest.raises(ValueError):
+            assert c.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+            c.execute(f"PRAGMA user_version={old}")
+        with pytest.raises(ValueError, match="fresh storage_path"):
+            await store.initialize()
+    finally:
+        store.close()
+
+
+async def test_kernel_store_rejects_the_first_pre_release_layout(tmp_path, setup_kernel):
+    """A v1 kernel file has a `state` table without `touched`; startup must stop on it."""
+    import sqlite3
+
+    _, _, _, encryption = setup_kernel
+    path = tmp_path / "old" / "kernel.sqlite3"
+    path.parent.mkdir()
+    with sqlite3.connect(path) as c:
+        c.executescript("""
+            CREATE TABLE state (
+                scope TEXT, key TEXT, value BLOB NOT NULL, version INTEGER NOT NULL,
+                PRIMARY KEY(scope,key));
+            PRAGMA user_version=1;
+        """)
+    c.close()
+    store = SQLiteKernelStore(path, encryption)
+    try:
+        with pytest.raises(ValueError, match="Unsupported gateway schema"):
             await store.initialize()
     finally:
         store.close()

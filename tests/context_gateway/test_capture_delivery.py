@@ -13,8 +13,8 @@ from openviking_context_gateway.capture import (
     new_capture,
     reset_capture,
 )
-from openviking_context_gateway.protocols import ResponseCapture
 from openviking_context_gateway.tool_catalog import select_tools
+from openviking_context_gateway.tool_protocols import ResponseCapture
 
 PROTOCOLS = ["chat", "anthropic", "responses"]
 TURN = ["Question 0", "Answer 0", "Fix the build"]

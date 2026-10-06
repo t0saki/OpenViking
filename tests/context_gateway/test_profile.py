@@ -176,8 +176,8 @@ async def test_profile_payloads_cannot_escape_gateway_envelope():
     assert "&lt;/available-skills&gt;" in result["text"]
 
 
-def test_old_policy_defaults_and_profile_budget_validation():
-    policy = Policy.model_validate({"name": "Old policy", "recall": False})
+def test_partial_policy_defaults_and_profile_budget_validation():
+    policy = Policy.model_validate({"name": "Partial policy", "recall": False})
     assert policy.profile is True and policy.profile_max_tokens == 4000
     for budget in (-1, 32001):
         with pytest.raises(ValueError):

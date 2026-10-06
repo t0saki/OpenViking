@@ -63,20 +63,14 @@ class Policy(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def migrate(cls, value):
-        """Drop storage metadata and retired fields that saved policies may still carry."""
+    def drop_storage_metadata(cls, value):
+        """Accept a policy as the management store returns it.
+
+        ``id`` and ``revision`` are storage metadata, not settings; saved
+        policies and the copies frozen into session roots carry them.
+        """
         if isinstance(value, dict):
-            obsolete = {
-                "allow_write_tools",
-                "tool_allowlist",
-                "takeover",
-                "takeover_tokens",
-                "keep_recent_turns",
-                "archive_wait_seconds",
-                "id",
-                "revision",
-            }
-            return {key: item for key, item in value.items() if key not in obsolete}
+            return {key: item for key, item in value.items() if key not in {"id", "revision"}}
         return value
 
     @model_validator(mode="after")

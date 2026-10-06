@@ -72,9 +72,7 @@ def window_size(request, policy):
 def active_cut(request):
     """Index of the latest cut in the request's history, or -1."""
     for index in range(len(request.capture_chain) - 1, -1, -1):
-        record = request.records.get((K.REPLACEMENT, request.capture_chain[index]))
-        # Working Memory takeovers left records without a source; they are not cuts.
-        if record and record.get("source"):
+        if (K.REPLACEMENT, request.capture_chain[index]) in request.records:
             return index
     return -1
 

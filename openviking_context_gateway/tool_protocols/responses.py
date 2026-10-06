@@ -5,7 +5,7 @@
 import copy
 import uuid
 
-from ..protocols import messages_of, text_content
+from ..protocols import text_content
 from .common import (
     PREFIX,
     SUMMARY_HEADROOM,
@@ -13,24 +13,57 @@ from .common import (
     ToolLoopError,
     ToolProtocol,
     ToolRound,
+    append_text,
     call,
 )
 
 CLIENT_CALLS = {"function_call", "custom_tool_call"}
+TOOL_OUTPUTS = {"function_call_output", "custom_tool_call_output"}
 
 
 class ResponsesProtocol(ToolProtocol):
     field = "input"
     id_prefix = "resp_"
     summary_drops = ("text.format",)
+    reply_ends = frozenset({"completed"})
+
+    @classmethod
+    def messages(cls, body):
+        content = body.get("input", [])
+        return [{"role": "user", "content": content}] if isinstance(content, str) else content
+
+    @staticmethod
+    def enhanced_supported(body):
+        # Stored or server-side history is not in the body.
+        return body.get("store") is False and not any(
+            body.get(k) for k in ("previous_response_id", "conversation", "background")
+        )
+
+    @staticmethod
+    def is_reply(message):
+        return message.get("role") == "assistant" or message.get("type") in {
+            "reasoning",
+            *CLIENT_CALLS,
+        }
+
+    @staticmethod
+    def accepts_context(message):
+        return message.get("role") == "user" or message.get("type") in TOOL_OUTPUTS
+
+    @staticmethod
+    def append_context(message, text):
+        if message.get("type") in TOOL_OUTPUTS:
+            append_text(message, "output", text, "input_text", joins_strings=True)
+        else:
+            append_text(message, "content", text, "input_text")
 
     @staticmethod
     def wire_tools(tools):
         return [{"type": "function", **t["function"], "strict": False} for t in tools]
 
-    @staticmethod
-    def block_reason(body):
-        if any(m.get("type") == "item_reference" for m in messages_of(body, "responses")):
+    @classmethod
+    def block_reason(cls, body):
+        if any(m.get("type") == "item_reference" for m in cls.messages(body)):
             return "tools_require_full_history"
         return ToolProtocol.block_reason(body)
 
@@ -107,7 +140,22 @@ class ResponsesProtocol(ToolProtocol):
             value["tools"] = [t for t in value["tools"] if not t.get("name", "").startswith(PREFIX)]
         return value
 
+    def accumulate(self, value):
+        kind = value.get("type")
+        if kind in {"response.completed", "response.incomplete"}:
+            self.envelope = copy.deepcopy(value["response"])
+            self.finish = self.envelope.get("status")
+            self.usage = self.envelope.get("usage") or {}
+            self.output = self.envelope.get("output") or []
+            self.completed = True
+        elif kind in {"response.output_item.added", "response.output_item.done"}:
+            index = value["output_index"]
+            self.items[index] = copy.deepcopy(value["item"])
+            if kind == "response.output_item.done":
+                self.closed.add(index)
+
     def event(self, value):
+        self.accumulate(value)
         kind = value["type"]
         if kind in {"response.created", "response.in_progress"}:
             if self.announce:
@@ -116,29 +164,20 @@ class ResponsesProtocol(ToolProtocol):
                 return [{**value, "response": {**value["response"], "output": []}}]
             return []
         if kind in {"response.completed", "response.incomplete"}:
-            self.envelope = copy.deepcopy(value["response"])
-            self.finish = self.envelope["status"]
-            self.usage = self.envelope.get("usage") or {}
-            self.output = self.envelope["output"]
-            self.completed = True
             return []
         if kind == "response.failed":
             raise ToolLoopError("Model response failed")
         if "output_index" in value:
             index = value["output_index"]
             if kind == "response.output_item.added":
-                item = value["item"]
-                self.items[index] = copy.deepcopy(item)
+                item = self.items[index]
                 if item["type"] in CLIENT_CALLS:
                     self.buffered[index] = []
                 else:
                     self.indices[index] = len(self.visible)
                     self.visible.append(copy.deepcopy(item))
-            if kind == "response.output_item.done":
-                self.closed.add(index)
-                self.items[index] = copy.deepcopy(value["item"])
-                if index in self.indices:
-                    self.visible[self.indices[index]] = self.items[index]
+            if kind == "response.output_item.done" and index in self.indices:
+                self.visible[self.indices[index]] = self.items[index]
             if index in self.buffered:
                 self.buffered[index].append(value)
                 return []
@@ -148,10 +187,21 @@ class ResponsesProtocol(ToolProtocol):
 
     def load(self, value):
         self.envelope = copy.deepcopy(value)
-        self.finish, self.usage = value["status"], value.get("usage") or {}
-        self.output = copy.deepcopy(value["output"])
+        self.finish, self.usage = value.get("status"), value.get("usage") or {}
+        self.output = copy.deepcopy(value.get("output") or [])
         self.visible.extend(item for item in self.output if item["type"] not in CLIENT_CALLS)
         self.completed = True
+
+    def assembled(self):
+        # Only the terminal response carries the whole output.
+        if not self.completed:
+            return None, None
+        text = "\n".join(text_content(item) for item in self.output)
+        return {"role": "assistant", "content": text}, self.output
+
+    @staticmethod
+    def has_calls(output):
+        return any(item.get("type") in CLIENT_CALLS for item in output)
 
     def end(self):
         if not self.completed or self.finish not in {"completed", "incomplete"}:

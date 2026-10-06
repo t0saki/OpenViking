@@ -12,8 +12,8 @@ from openviking_context_gateway.capture import reset_capture
 from openviking_context_gateway.capture_store import Document
 from openviking_context_gateway.client import VikingClient, VikingError
 from openviking_context_gateway.kernel import THINKING
-from openviking_context_gateway.protocols import ResponseCapture
 from openviking_context_gateway.storage import digest
+from openviking_context_gateway.tool_protocols import ResponseCapture
 
 
 @pytest.mark.parametrize("terminal", ["completed", "failed"])

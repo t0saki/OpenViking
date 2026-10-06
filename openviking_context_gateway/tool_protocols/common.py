@@ -2,8 +2,10 @@
 # SPDX-License-Identifier: AGPL-3.0
 """Wire adapters preserve native history; only executable calls are normalized.
 
-Adapters assemble one upstream response and project visible events. They do not
-execute tools, own budgets, or access storage. The shared loop owns those steps.
+Adapters hold everything the gateway knows about one wire protocol. They assemble
+upstream replies, for relayed responses as well as the hidden tool loop, and
+project the loop's visible events. They do not execute tools, own budgets, or
+access storage. The shared loop owns those steps.
 """
 
 import copy
@@ -15,7 +17,7 @@ from dataclasses import dataclass
 
 import orjson
 
-from ..protocols import prefix_chain
+from ..protocols import prefix_chain, usage_of
 
 PREFIX = "openviking_"
 # None is the Chat Completions [DONE] marker; all other events are native JSON.
@@ -51,7 +53,7 @@ def merge_delta(target, delta):
             if not isinstance(target.get(key), dict):
                 target[key] = {}
             merge_delta(target[key], value)
-        elif isinstance(value, str) and key not in {"role", "type"}:
+        elif isinstance(value, str) and key not in {"role", "type", "id"}:
             target[key] = (target.get(key) or "") + value
         elif isinstance(value, list):
             target.setdefault(key, []).extend(copy.deepcopy(value))
@@ -77,6 +79,17 @@ def without(value, path):
     if not rest:
         return {k: v for k, v in value.items() if k != key}
     return {**value, key: without(value[key], rest)}
+
+
+def append_text(message, field, text, kind, joins_strings=False):
+    """Append text to ``message[field]``; string content becomes text blocks unless joined."""
+    content = message.get(field, "")
+    if joins_strings and isinstance(content, str):
+        message[field] = content + "\n\n" + text
+        return
+    if isinstance(content, str):
+        content = [{"type": kind, "text": content}]
+    message[field] = [*content, {"type": kind, "text": text}]
 
 
 def sse(value):
@@ -129,16 +142,19 @@ class ToolRound:
     output: list[dict]
     calls: list[dict]
     usage: dict
-    tool_handoff: bool
+    # The upstream stopped to have tools run, so the round's calls are complete.
+    tool_stop: bool
 
 
 class ToolProtocol(ABC):
     """Native request/history rules and a per-request response assembler.
 
-    ``visible`` is the cumulative client-visible history. ``end`` returns the
-    completed round; the loop never inspects the assembler's partial state.
-    Event producers return native JSON (or the Chat DONE marker); only encode
-    turns events into bytes. Adapters never execute tools or access storage.
+    ``accumulate`` and ``load`` assemble one upstream reply, and ``reply`` reads
+    it; relayed responses and the hidden tool loop share them. ``visible`` is the
+    cumulative client-visible history. ``end`` returns the completed round; the
+    loop never inspects the assembler's partial state. Event producers return
+    native JSON (or the Chat DONE marker); only encode turns events into bytes.
+    Adapters never execute tools or access storage.
     """
 
     field = "messages"
@@ -146,12 +162,56 @@ class ToolProtocol(ABC):
     canonicalizes_history = False
     # Dotted body paths a summary request drops: output formats, stop sequences, stream options.
     summary_drops: tuple[str, ...] = ()
+    # Finish reasons of a reply that ended the way the model meant it to, not cut off.
+    reply_ends: frozenset[str] = frozenset()
+    # Thinking signatures cover the history before them, so history the gateway
+    # cannot resend exactly must go upstream without its thinking.
+    signed_thinking = False
 
     def __init__(self, body: dict):
         self.body = body
         self.identifier = self.id_prefix + "ovcg-" + uuid.uuid4().hex
         self.visible: list[dict] = []
         self.started = False
+
+    @classmethod
+    def messages(cls, body: dict) -> list:
+        """The body's history; may be malformed, which the caller checks."""
+        return body.get(cls.field, [])
+
+    @staticmethod
+    def enhanced_supported(body: dict) -> bool:
+        """Whether the body carries the whole history, which recall and replay need."""
+        return True
+
+    @staticmethod
+    def auth_header(key: str) -> dict:
+        return {"authorization": "Bearer " + key}
+
+    @staticmethod
+    def is_reply(message: dict) -> bool:
+        """Whether a history item belongs to a model reply, so a reply can end at it."""
+        return message.get("role") == "assistant"
+
+    @staticmethod
+    def accepts_context(message: dict) -> bool:
+        """Whether append_context can extend the message: a user message or a tool result."""
+        return message.get("role") == "user"
+
+    @staticmethod
+    def append_context(message: dict, text: str) -> None:
+        """Append text to a user message or tool result as a trailing text block."""
+        append_text(message, "content", text, "text")
+
+    @staticmethod
+    def thinking_as_text(message: dict) -> list[dict]:
+        """Text blocks of a reply that may be its unsigned thinking, resent by the client as text."""
+        return []
+
+    @staticmethod
+    def unsigned_thinking(output: list[dict]) -> list[str]:
+        """Thinking the reply carries without a signature, which clients may resend as text."""
+        return []
 
     @staticmethod
     def tool_choice(body: dict):
@@ -241,12 +301,45 @@ class ToolProtocol(ABC):
         self.finish = None
 
     @abstractmethod
+    def accumulate(self, value: dict) -> None:
+        """Add an upstream event to the reply; events it does not know are ignored."""
+
+    @abstractmethod
     def event(self, value: dict) -> list[dict]:
-        """Consume an upstream event and return any client-visible events."""
+        """Accumulate an upstream event and return any client-visible events."""
 
     @abstractmethod
     def load(self, value: dict) -> None:
         """Consume a nonstreaming response."""
+
+    @abstractmethod
+    def assembled(self) -> tuple[dict | None, list[dict] | None]:
+        """The reply so far as one message, and as output items where the protocol has them."""
+
+    @staticmethod
+    @abstractmethod
+    def has_calls(output: list[dict]) -> bool:
+        """Whether the reply calls tools."""
+
+    def reply(self) -> dict:
+        """The reply so far, as ``ResponseCapture`` holds it.
+
+        Every path reads completion here. A reply that ended in tool calls hands
+        the turn to the client's tools: it is finished, but the user's turn goes
+        on in the next request. Any other reply that ended completes the turn.
+        """
+        message, items = self.assembled()
+        output = items or ([message] if message else [])
+        ended = self.finish in self.reply_ends
+        handoff = ended and self.has_calls(output)
+        return {
+            "message": message,
+            "output_items": items,
+            "usage": usage_of({"usage": self.usage}) if self.usage else None,
+            "response_id": self.envelope.get("id") or "",
+            "complete": ended and not handoff,
+            "handoff": handoff,
+        }
 
     @abstractmethod
     def end(self) -> ToolRound:

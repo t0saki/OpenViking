@@ -14,6 +14,30 @@ PATHS = {"responses": "/v1/responses", "anthropic": "/v1/messages"}
 
 
 def native_response(protocol, number, *, owned=False, mixed=False, custom=False):
+    if protocol == "chat":
+        calls = []
+        if owned:
+            function = {"name": "openviking_search", "arguments": '{"query":"blue"}'}
+            calls.append({"id": f"gateway-{number}", "type": "function", "function": function})
+        if mixed:
+            function = {"name": "shell", "arguments": '{"command":"pwd"}'}
+            calls.append({"id": "client-1", "type": "function", "function": function})
+        message = {"role": "assistant", "content": f"answer-{number}"}
+        if calls:
+            message["tool_calls"] = calls
+        return {
+            "id": f"chatcmpl-{number}",
+            "object": "chat.completion",
+            "model": "model",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": message,
+                    "finish_reason": "tool_calls" if calls else "stop",
+                }
+            ],
+            "usage": {"prompt_tokens": 110000, "completion_tokens": 20, "total_tokens": 110020},
+        }
     if protocol == "anthropic":
         output = [
             {
@@ -229,6 +253,14 @@ async def wire_response(request, protocol, value, streaming):
 
 def request_body(protocol, streaming):
     messages = [{"role": "user", "content": "Find blue"}]
+    if protocol == "chat":
+        function = {"name": "shell", "parameters": {"type": "object"}}
+        return {
+            "model": "model",
+            "messages": messages,
+            "stream": streaming,
+            "tools": [{"type": "function", "function": function}],
+        }
     if protocol == "anthropic":
         return {
             "model": "model",
@@ -729,8 +761,8 @@ async def test_native_text_streams_before_round_finishes_and_cancel_closes(proto
     import asyncio
     from types import SimpleNamespace
 
-    from openviking_context_gateway.protocols import ResponseCapture
     from openviking_context_gateway.tool_loop import HiddenToolLoop
+    from openviking_context_gateway.tool_protocols import ResponseCapture
 
     value = native_response(protocol, 1, owned=True)
     events = native_events(protocol, value)
@@ -919,8 +951,8 @@ async def test_hidden_round_with_no_visible_anchor_does_not_write_a_root_record(
 ):
     from types import SimpleNamespace
 
-    from openviking_context_gateway.protocols import ResponseCapture
     from openviking_context_gateway.tool_loop import HiddenToolLoop
+    from openviking_context_gateway.tool_protocols import ResponseCapture
 
     kernel, store, _, _ = setup_kernel
     policy.update(gateway_tools=True, recall=False)
@@ -941,6 +973,34 @@ async def test_hidden_round_with_no_visible_anchor_does_not_write_a_root_record(
     assert prepared.metrics["degradation"] == "hidden_reply_without_anchor"
 
 
+@pytest.mark.parametrize("mixed", [False, True])
+@pytest.mark.parametrize("protocol", ["chat", "responses", "anthropic"])
+async def test_tool_loop_reply_reads_like_a_relayed_one(
+    setup_kernel, credential, policy, protocol, mixed
+):
+    """Calls left for the client hand the turn off; only a final answer completes it."""
+    from types import SimpleNamespace
+
+    from openviking_context_gateway.tool_loop import HiddenToolLoop
+    from openviking_context_gateway.tool_protocols import ResponseCapture
+
+    kernel, store, _, _ = setup_kernel
+    policy.update(gateway_tools=True, recall=False)
+    prepared = await kernel.prepare(
+        request_body(protocol, False), protocol, {}, credential, {"id": "u"}, policy
+    )
+    loop = HiddenToolLoop(
+        prepared, SimpleNamespace(allowed={"openviking_search"}), store, ResponseCapture(protocol)
+    )
+    loop.adapter.begin()
+    loop.adapter.load(native_response(protocol, 1, mixed=mixed))
+    loop.round = loop.adapter.end()
+    loop.adapter.publish_calls(loop.round.calls)
+    await loop.persist()
+    assert loop.capture.finished
+    assert (loop.capture.handoff, loop.capture.complete) == (mixed, not mixed)
+
+
 @pytest.mark.parametrize("protocol", ["responses", "anthropic"])
 def test_native_file_attachments_preserve_bytes(protocol):
     from openviking_context_gateway.tool_executor import attachment_bytes, attachments
@@ -957,7 +1017,7 @@ def test_native_file_attachments_preserve_bytes(protocol):
     body = {
         "input" if protocol == "responses" else "messages": [{"role": "user", "content": [part]}]
     }
-    assert attachment_bytes(attachments(body)[0], 100) == ("note.txt", b"hello")
+    assert attachment_bytes(attachments(body, protocol)[0], 100) == ("note.txt", b"hello")
 
 
 @pytest.mark.parametrize("blocked", ["disabled", "forced", "collision"])

@@ -15,10 +15,11 @@ from fastapi import HTTPException
 from fastapi.responses import Response, StreamingResponse
 from starlette.background import BackgroundTask
 
-from .protocols import ResponseCapture, SSEDecoder, enhanced_supported, parse_body
+from .protocols import SSEDecoder, parse_body
 from .storage import digest
 from .tool_executor import ToolExecutor
 from .tool_loop import HiddenToolLoop, ToolLoopError
+from .tool_protocols import ResponseCapture, tool_protocol
 from .tool_protocols.common import SummaryError
 from .vendors import ARK_PATHS, ARK_VENDORS, apply_vendor, ark_url
 
@@ -85,10 +86,7 @@ def upstream_headers(upstream, incoming):
         )
     if not key:
         raise HTTPException(401, "Upstream API key is missing")
-    if upstream["protocol"] == "anthropic":
-        headers["x-api-key"] = key
-    else:
-        headers["authorization"] = "Bearer " + key
+    headers.update(tool_protocol(upstream["protocol"]).auth_header(key))
     headers["accept-encoding"] = "identity"
     return headers
 
@@ -219,7 +217,7 @@ class ProxyRequest:
         if (
             self.protocol
             and self.body
-            and enhanced_supported(self.body, self.protocol)
+            and tool_protocol(self.protocol).enhanced_supported(self.body)
             and not self.request.headers.get("content-encoding")
         ):
             policy = await self.management.get(

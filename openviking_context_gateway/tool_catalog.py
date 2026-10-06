@@ -6,12 +6,11 @@ import copy
 
 import orjson
 
-from .protocols import enhanced_supported, replays_reasoning
+from .protocols import replays_reasoning
 from .tool_protocols import tool_protocol
 from .tool_protocols.common import PREFIX
 from .windows import native_definitions
 
-TOOL_VERSION = 2
 # Only what the gateway adds to MCP: the arguments a notice names, in order of
 # preference, and the attachment upload hook with its usage note.
 TOOL_OVERRIDES = {
@@ -47,7 +46,8 @@ def tool_block_reason(body, protocol, upstream, restores_reasoning=True):
     ``restores_reasoning`` is false when this request's replies go upstream without
     the reasoning the gateway would otherwise restore.
     """
-    if not enhanced_supported(body, protocol):
+    adapter = tool_protocol(protocol)
+    if not adapter.enhanced_supported(body):
         return "tools_require_full_history"
     if not upstream.get("allow_gateway_tools", True):
         return "upstream_tools_disabled"
@@ -61,7 +61,7 @@ def tool_block_reason(body, protocol, upstream, restores_reasoning=True):
     )
     if output_format.get("type", "text") != "text":
         return "tools_structured_output"
-    reason = tool_protocol(protocol).block_reason(body)
+    reason = adapter.block_reason(body)
     if reason:
         return reason
     # With tools, DeepSeek rejects history whose replies lack their reasoning.

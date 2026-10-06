@@ -12,10 +12,10 @@ from openviking_context_gateway.capture import CaptureWorker
 from openviking_context_gateway.capture_store import Document, LeaseLost
 from openviking_context_gateway.kernel import MemoryKernel
 from openviking_context_gateway.models import Policy
-from openviking_context_gateway.protocols import ResponseCapture
 from openviking_context_gateway.records import RecordKind as K
 from openviking_context_gateway.replay_store import INHERITED
 from openviking_context_gateway.storage import ManagementStore, digest
+from openviking_context_gateway.tool_protocols import ResponseCapture
 
 
 class KVReplay:

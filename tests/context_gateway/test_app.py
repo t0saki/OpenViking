@@ -7,7 +7,6 @@ import pytest
 from aiohttp import web
 from conftest import MCP_TOOLS
 
-from openviking_context_gateway.models import WRITE_TOOLS
 from openviking_context_gateway.protocols import normalize
 from openviking_context_gateway.tool_loop import REFUSED
 
@@ -1159,33 +1158,6 @@ async def test_admin_tools_skip_rejected_keys_and_report_failures_cleanly(runnin
     response = await client.get("/admin/tools", headers=admin)
     assert response.status_code == 200 and len(response.json()) == len(MCP_TOOLS)
     assert backend["tools_calls"][-1] == "second-key"
-
-
-async def test_profiles_with_retired_tool_fields_still_save(running_gateway):
-    _, client, admin, _, _, _ = running_gateway
-    response = await client.put(
-        "/admin/policies/old",
-        headers=admin,
-        json={
-            "name": "Old",
-            "gateway_tools": True,
-            "allow_write_tools": True,
-            "tool_allowlist": ["search"],
-            "takeover": True,
-            "takeover_tokens": 30000,
-            "keep_recent_turns": 3,
-            "archive_wait_seconds": 30,
-            "id": "old",
-            "revision": 3,
-        },
-    )
-    assert response.status_code == 200, response.text
-    saved = response.json()
-    assert saved["gateway_tools"] and saved["disabled_tools"] == list(WRITE_TOOLS)
-    assert (
-        not {"allow_write_tools", "tool_allowlist", "takeover", "keep_recent_turns"} & saved.keys()
-    )
-    assert saved["compaction"] and saved["summary_max_tokens"] == 8000
 
 
 async def test_model_restricted_key_rejects_bodies_without_a_readable_model(running_gateway):

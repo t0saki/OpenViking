@@ -221,7 +221,7 @@ class CapturePipeline:
         )
 
     async def stage(self, request, response, policy):
-        messages = [*request.messages, *(response.output_items or [response.message])]
+        messages = [*request.messages, *response.output]
         chain = await asyncio.to_thread(hidden_chain, messages, request.protocol)
         while True:
             old = await self.queue.get(request.scope, request.session)

@@ -17,10 +17,10 @@ import orjson
 
 from .capture_store import Document
 from .client import VikingError
-from .protocols import messages_of
 from .state_store import get_state
 from .storage import digest
 from .tool_catalog import PREFIX, TOOL_OVERRIDES
+from .tool_protocols import tool_protocol
 from .windows import NATIVE_TOOLS
 
 UPLOAD_URL = re.compile(
@@ -40,9 +40,9 @@ def has_shell(body):
     )
 
 
-def attachments(body):
+def attachments(body, protocol):
     output = []
-    for message in messages_of(body, "responses" if "input" in body else "chat"):
+    for message in tool_protocol(protocol).messages(body):
         if message.get("role") not in {"user", "system"}:
             continue
         content = message.get("content", [])
@@ -158,8 +158,7 @@ class ToolExecutor:
         self.public_url, self.max_upload_bytes = public_url.rstrip("/"), max_upload_bytes
         self.policy = prepared.root["policy"]
         self.schemas = {
-            t["function"]["name"]: t["function"]["parameters"]
-            for t in prepared.root.get("tools", [])
+            t["function"]["name"]: t["function"]["parameters"] for t in prepared.root["tools"]
         }
         self.allowed = set(self.schemas)
 
@@ -202,7 +201,7 @@ class ToolExecutor:
                             return {
                                 **result,
                                 "content": saved.value["content"],
-                                "failed": saved.value.get("failed", False),
+                                "failed": saved.value["failed"],
                             }
                         if time.time() - claim["time"] > timeout:
                             raise asyncio.TimeoutError
@@ -242,7 +241,7 @@ class ToolExecutor:
         index = args.pop("attachment_index", None) if upload else None
         file = None
         if index is not None:
-            parts = attachments(self.request.original)
+            parts = attachments(self.request.original, self.request.protocol)
             if type(index) is not int or index < 0 or index >= len(parts):
                 raise ValueError("Attachment is unavailable")
             file = attachment_bytes(parts[index], self.max_upload_bytes)
@@ -258,8 +257,6 @@ class ToolExecutor:
                 self.request.original
             ):
                 raise ValueError("A local path requires a client shell or attachment")
-        if self.request.root.get("tool_version", 1) < 2 and name == "search":
-            name = "find"
         value = await self.viking.mcp("tools/call", self.key, {"name": name, "arguments": args})
         token = upload_token(value) if upload else ""
         if file:
