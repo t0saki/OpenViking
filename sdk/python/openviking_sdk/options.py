@@ -30,13 +30,15 @@ class FindOptions(_ExtraOptions, total=False):
     level: Level
     read_content: bool
     telemetry: Any
+    events_time_decay_protection: Optional[str]
 
 
 class SearchOptions(FindOptions, total=False):
-    pass
+    search_type: Literal["semantic", "keywords"]
 
 
 class SearchContextOptions(_ExtraOptions, total=False):
+    search_type: Literal["semantic", "keywords"]
     image: Any
     node_limit: int
     score_threshold: float
@@ -47,6 +49,7 @@ class SearchContextOptions(_ExtraOptions, total=False):
     since: str
     until: str
     time_field: TimeField
+    events_time_decay_protection: Optional[str]
     query_expansion: Literal["off", "auto"]
     max_tokens: int
     quotas: Dict[str, int]

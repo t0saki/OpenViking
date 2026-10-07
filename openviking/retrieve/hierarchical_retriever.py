@@ -7,11 +7,17 @@ Global vector retrieval with optional reranking of the recalled candidates.
 import asyncio
 import math
 import time
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from openviking.core.context import ContextLevel
 from openviking.core.retrieval_targets import default_target_directories
-from openviking.models.embedder.base import EmbedResult, embed_compat
+from openviking.core.retrieval_types import SearchType
+from openviking.models.embedder.base import (
+    EmbedResult,
+    embed_compat,
+    embedder_supports_multimodal,
+)
 from openviking.models.rerank import RerankClient
 from openviking.retrieve.retrieval_stats import get_stats_collector
 from openviking.server.identity import RequestContext
@@ -20,6 +26,7 @@ from openviking.storage.expr import FilterExpr
 from openviking.storage.vikingdb_manager import VikingDBManager, VikingDBManagerProxy
 from openviking.telemetry import get_current_telemetry
 from openviking.utils.tags import normalize_search_tags
+from openviking.utils.time_decay import parse_duration_ms
 from openviking.utils.token_estimation import (
     estimate_text_tokens,
     truncate_text_to_token_budget,
@@ -92,6 +99,9 @@ class HierarchicalRetriever:
         score_gte: bool = False,
         scope_dsl: Optional[FilterExpr | Dict[str, Any]] = None,
         level: Optional[List[int]] = None,
+        events_time_decay_protection: Optional[str] = None,
+        request_now: Optional[datetime] = None,
+        search_type: SearchType = "semantic",
     ) -> QueryResult:
         """
         Run one global vector search, then optionally rerank its candidates.
@@ -114,6 +124,15 @@ class HierarchicalRetriever:
         use_rerank = (
             mode == RetrieverMode.THINKING and self._rerank_client is not None and not image_query
         )
+        decay_kwargs = {}
+        if events_time_decay_protection is not None:
+            parse_duration_ms(
+                events_time_decay_protection, parameter_name="events_time_decay_protection"
+            )
+            decay_kwargs = {
+                "events_time_decay_protection": events_time_decay_protection,
+                "request_now": request_now or datetime.now(timezone.utc),
+            }
         if image_query and level is None:
             level = [2]
 
@@ -136,8 +155,10 @@ class HierarchicalRetriever:
         # Generate query vectors once to avoid duplicate embedding calls
         query_vector = None
         sparse_query_vector = None
-        if self.embedder:
-            if image_query and not getattr(self.embedder, "supports_multimodal", False):
+        if search_type == "semantic" and self.embedder:
+            # Hot path: the capability comes from the in-memory account config and
+            # cached embedder resource (no I/O, no model call, nothing borrowed).
+            if image_query and not await embedder_supports_multimodal(self.embedder):
                 raise InvalidArgumentError("Image search requires a multimodal embedding model.")
             with telemetry.measure("search.embed_query"):
                 embedding_input = getattr(query, "embedding_input", None) or query.query
@@ -161,20 +182,32 @@ class HierarchicalRetriever:
 
         search_limit = limit * self.RERANK_CANDIDATE_MULTIPLIER if use_rerank else limit
         with telemetry.measure("search.vector_retrieval"):
-            vector_results = await vector_proxy.search_in_tenant(
-                query_vector=query_vector,
-                sparse_query_vector=sparse_query_vector,
-                context_type=context_type,
-                target_directories=target_dirs,
-                extra_filter=scope_dsl,
-                level=level,
-                limit=search_limit,
-            )
+            if search_type == "keywords":
+                vector_results = await vector_proxy.search_by_keywords_in_tenant(
+                    query=query.query,
+                    context_type=context_type,
+                    target_directories=target_dirs,
+                    extra_filter=scope_dsl,
+                    level=level,
+                    limit=search_limit,
+                )
+            else:
+                vector_results = await vector_proxy.search_in_tenant(
+                    query_vector=query_vector,
+                    sparse_query_vector=sparse_query_vector,
+                    context_type=context_type,
+                    target_directories=target_dirs,
+                    extra_filter=scope_dsl,
+                    level=level,
+                    limit=search_limit,
+                    **decay_kwargs,
+                )
         telemetry.count("vector.searches", 1)
         telemetry.count("vector.scored", len(vector_results))
         telemetry.count("vector.scanned", len(vector_results))
 
-        # Keep the highest vector-scored hit for each URI before reranking.
+        # Recall scores already include event decay from the vector engine.
+        # Keep the highest-scored hit for each URI before model reranking.
         collected_by_uri: Dict[str, Dict[str, Any]] = {}
         for result in vector_results:
             uri = result.get("uri", "")
@@ -325,6 +358,8 @@ class HierarchicalRetriever:
                     category=c.get("category", ""),
                     score=final_score,
                     search_tags=normalize_search_tags(c.get("search_tags"), discard_invalid=True),
+                    origin_score=c.get("_origin_score"),
+                    time_score=c.get("_time_score"),
                 )
             )
 

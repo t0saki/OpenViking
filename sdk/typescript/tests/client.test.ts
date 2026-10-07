@@ -48,7 +48,11 @@ describe("OpenVikingClient", () => {
       actorPeerId: "peer",
       fetch: fetcher,
     });
-    await client.find("hello", { targetUri: "viking://resources", limit: 5 });
+    await client.find("hello", {
+      targetUri: "viking://resources",
+      limit: 5,
+      eventsTimeDecayProtection: "2d",
+    });
     const [url, init] = fetcher.mock.calls[0]!;
     expect(String(url)).toBe("https://example.com/api/v1/search/find");
     expect(new Headers(init?.headers).get("X-OpenViking-Actor-Peer")).toBe(
@@ -58,6 +62,7 @@ describe("OpenVikingClient", () => {
       query: "hello",
       target_uri: "viking://resources",
       limit: 5,
+      events_time_decay_protection: "2d",
     });
   });
 
@@ -104,19 +109,23 @@ describe("OpenVikingClient", () => {
     await expect(
       client.searchContext("continue refactor", {
         sessionId: "session-1",
+        searchType: "keywords",
         purpose: "coding",
         maxTokens: 3000,
         dedupTurns: 5,
+        eventsTimeDecayProtection: "2d",
       }),
     ).resolves.toMatchObject({ rendered: "<memory />" });
 
     expect(JSON.parse(String(fetcher.mock.calls[0]![1]?.body))).toEqual({
       query: "continue refactor",
       mode: "context",
+      search_type: "keywords",
       session_id: "session-1",
       purpose: "coding",
       max_tokens: 3000,
       dedup_turns: 5,
+      events_time_decay_protection: "2d",
     });
     await expect(
       client.searchContext("query", { extra: { mode: "list" } }),
@@ -279,6 +288,23 @@ describe("OpenVikingClient", () => {
 
     expect(JSON.parse(String(fetcher.mock.calls[0]![1]?.body))).toEqual({
       query: "hello",
+    });
+  });
+
+  it("forwards the search type", async () => {
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(ok({ resources: [] }));
+    const client = new OpenVikingClient({
+      baseUrl: "https://example.com",
+      fetch: fetcher,
+    });
+
+    await client.search("OAuth token", { searchType: "keywords" });
+
+    expect(JSON.parse(String(fetcher.mock.calls[0]![1]?.body))).toEqual({
+      query: "OAuth token",
+      search_type: "keywords",
     });
   });
 

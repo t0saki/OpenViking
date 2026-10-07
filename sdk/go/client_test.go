@@ -130,6 +130,9 @@ func TestFindSendsHeadersQueryAndBody(t *testing.T) {
 		if got := body["time_field"]; got != "created_at" {
 			t.Fatalf("time_field = %#v", got)
 		}
+		if got := body["events_time_decay_protection"]; got != "2d" {
+			t.Fatalf("events_time_decay_protection = %#v", got)
+		}
 		levels, ok := body["level"].([]any)
 		if !ok || len(levels) != 2 || levels[0] != float64(0) || levels[1] != float64(2) {
 			t.Fatalf("level = %#v", body["level"])
@@ -147,14 +150,15 @@ func TestFindSendsHeadersQueryAndBody(t *testing.T) {
 	defer closeServer()
 
 	result, err := client.Find(context.Background(), "auth", &FindOptions{
-		TargetURI:   "resources/docs",
-		Limit:       5,
-		ContextType: []string{"resource"},
-		Since:       "2026-06-01",
-		Until:       "2026-06-18",
-		TimeField:   "created_at",
-		Level:       []int{0, 2},
-		Tags:        []string{"topic=docs", "kind=api"},
+		TargetURI:                 "resources/docs",
+		Limit:                     5,
+		ContextType:               []string{"resource"},
+		Since:                     "2026-06-01",
+		Until:                     "2026-06-18",
+		TimeField:                 "created_at",
+		Level:                     []int{0, 2},
+		Tags:                      []string{"topic=docs", "kind=api"},
+		EventsTimeDecayProtection: "2d",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -173,7 +177,7 @@ func TestFindOmitsSearchFiltersWhenUnset(t *testing.T) {
 			t.Fatalf("path = %s", r.URL.Path)
 		}
 		body := readJSONBody(t, r)
-		requireBodyKeysAbsent(t, body, "since", "until", "time_field", "level", "tags", "agent_id", "agent_uri")
+		requireBodyKeysAbsent(t, body, "search_type", "since", "until", "time_field", "level", "tags", "agent_id", "agent_uri")
 		writeOK(t, w, map[string]any{"resources": []any{}})
 	}))
 	defer closeServer()
@@ -658,6 +662,9 @@ func TestSearchSendsSessionAndSearchFilters(t *testing.T) {
 		if got := body["session_id"]; got != "session-1" {
 			t.Fatalf("session_id = %#v", got)
 		}
+		if got := body["search_type"]; got != "keywords" {
+			t.Fatalf("search_type = %#v", got)
+		}
 		if got := body["target_uri"]; got != "viking://resources/docs" {
 			t.Fatalf("target_uri = %#v", got)
 		}
@@ -685,6 +692,7 @@ func TestSearchSendsSessionAndSearchFilters(t *testing.T) {
 	if _, err := client.Search(context.Background(), "auth", &SearchOptions{
 		TargetURI: "resources/docs",
 		SessionID: "session-1",
+		SearchType: "keywords",
 		Since:     "1d",
 		Until:     "2026-06-18",
 		TimeField: "updated_at",
@@ -723,8 +731,14 @@ func TestSearchContextSendsContextOptionsAndRejectsModeOverride(t *testing.T) {
 		if body["session_id"] != "session-1" || body["purpose"] != "coding" {
 			t.Fatalf("context fields = %#v", body)
 		}
+		if body["search_type"] != "keywords" {
+			t.Fatalf("search_type = %#v", body["search_type"])
+		}
 		if body["max_tokens"] != float64(3000) || body["dedup_turns"] != float64(5) {
 			t.Fatalf("budget fields = %#v", body)
+		}
+		if body["events_time_decay_protection"] != "2d" {
+			t.Fatalf("events_time_decay_protection = %#v", body["events_time_decay_protection"])
 		}
 		writeOK(t, w, map[string]any{
 			"rendered": "<memory />",
@@ -735,10 +749,12 @@ func TestSearchContextSendsContextOptionsAndRejectsModeOverride(t *testing.T) {
 	defer closeServer()
 
 	result, err := client.SearchContext(context.Background(), "continue refactor", &SearchContextOptions{
-		SessionID:  "session-1",
-		Purpose:    "coding",
-		MaxTokens:  Int(3000),
-		DedupTurns: Int(5),
+		SessionID:                 "session-1",
+		SearchType:                "keywords",
+		Purpose:                   "coding",
+		MaxTokens:                 Int(3000),
+		DedupTurns:                Int(5),
+		EventsTimeDecayProtection: "2d",
 	})
 	if err != nil {
 		t.Fatal(err)

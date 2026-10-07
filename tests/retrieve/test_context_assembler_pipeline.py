@@ -178,6 +178,7 @@ async def test_query_expansion_fans_out_planned_queries(monkeypatch):
 
     async def fake_find(**kwargs):
         queries_seen.append(kwargs["query"])
+        assert kwargs["events_time_decay_protection"] == "2d"
         return _FakeFindResult()
 
     async def fake_get(session_id, ctx, *, auto_create=False):
@@ -200,6 +201,7 @@ async def test_query_expansion_fans_out_planned_queries(monkeypatch):
         ctx=_ctx(),
         params=AssembleParams(
             query="short",
+            events_time_decay_protection="2d",
             session_id="s1",
             query_expansion="auto",
             peer_scope="actor",
@@ -752,6 +754,34 @@ async def test_excluding_a_package_drops_a_hit_on_any_file_inside_it():
 
     assert result.entries == []
     assert result.stats["excluded"] == 1
+
+
+async def test_exclude_uris_directory_prefix_excludes_subtree():
+    """Passing a directory URI to exclude_uris should exclude all files under it."""
+    hits = [
+        {
+            "uri": f"{USER_ROOT}/memories/events/old.md",
+            "score": 0.8,
+            "abstract": "old event",
+        },
+        {
+            "uri": f"{USER_ROOT}/memories/preferences/lang.md",
+            "score": 0.7,
+            "abstract": "language pref",
+        },
+    ]
+    result = await assemble_context(
+        service=_service(hits=hits, bodies={}),
+        ctx=_ctx(),
+        params=AssembleParams(
+            query="test",
+            exclude_uris=[f"{USER_ROOT}/memories/events"],
+        ),
+    )
+
+    uris = [e.uri for e in result.entries]
+    assert f"{USER_ROOT}/memories/events/old.md" not in uris
+    assert f"{USER_ROOT}/memories/preferences/lang.md" in uris
 
 
 async def test_a_pinned_detail_reads_the_package_skill_md():
