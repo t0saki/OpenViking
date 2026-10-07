@@ -178,14 +178,14 @@ export function registerOpenVikingMemoryTools(deps: OpenVikingMemoryToolsDeps): 
             deps.logger.warn(
               `openviking: memory_store committed but 0 memories extracted (sessionId=${sessionId}), ` +
                 `trace_id=${commitResult.trace_id ?? "none"}. ` +
-                "No memory was created or updated. Check memory.extraction_enabled, VLM configuration/API keys, or whether the text was judged not durable.",
+                "No memory was created or updated. Check memory.extraction_enabled, VLM configuration/API keys, or whether the content is already stored.",
             );
             return {
               content: [{
                 type: "text",
                 text: `Memory extraction completed for session ${sessionId}, but created or updated no memory. ` +
-                  "The content may already be stored, memory extraction may be disabled, or it was judged not worth keeping. " +
-                  "Do not tell the user it was saved." +
+                  "The content may already be stored, memory extraction may be disabled, or the extractor found nothing new to store. " +
+                  "Tell the user no new memory was created." +
                   (commitResult.trace_id ? ` (trace_id=${commitResult.trace_id})` : ""),
               }],
               details: {

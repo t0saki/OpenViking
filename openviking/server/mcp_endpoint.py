@@ -1164,7 +1164,7 @@ class StoreMessage(BaseModel):
 @_mcp_error_results()
 @mcp.tool(annotations=_DESTRUCTIVE_TOOL_ANNOTATIONS)
 async def remember(messages: list[StoreMessage]) -> str:
-    """Submit information for OpenViking long-term memory extraction. Use when the user says 'remember this', shares preferences, important facts, or decisions worth persisting. Extraction runs in the background and may decide not to keep the content, so do not tell the user it has been saved."""
+    """Submit information for OpenViking long-term memory extraction. Use when the user says 'remember this', shares preferences, important facts, or decisions worth persisting. Extraction runs in the background and decides which memories to create or update."""
     import uuid
 
     from openviking.message.part import TextPart
@@ -1189,8 +1189,8 @@ async def remember(messages: list[StoreMessage]) -> str:
         return f"Nothing was committed for memory extraction (reason: {reason})."
     return (
         f"Submitted {added} message(s) for memory extraction (session {session_id}, "
-        f"task_id={task_id}). Extraction is still running in the background and may decide "
-        "not to keep this content, so do not tell the user it has been saved."
+        f"task_id={task_id}). Extraction runs in the background and decides which memories "
+        "to create or update."
     )
 
 

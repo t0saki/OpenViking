@@ -311,7 +311,7 @@ Against a current server, that is these 15:
 | `openviking_read`           | Read one or more `viking://` file URIs, with line-based `offset`/`limit` |
 | `openviking_list`           | List one sorted page under a `viking://` directory                      |
 | `openviking_tree`           | Show a recursive directory tree, optionally with abstracts              |
-| `openviking_remember`       | Submit messages for long-term memory extraction; returns the background `task_id` right away, and extraction may keep nothing |
+| `openviking_remember`       | Submit messages for long-term memory extraction; returns the background extraction `task_id` right away |
 | `openviking_write`          | Write text to a `viking://` file                                        |
 | `openviking_edit`           | Replace an exact string in an existing `viking://` file                 |
 | `openviking_add_resource`   | Ingest a URL, repository or local file as a resource                    |

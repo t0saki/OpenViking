@@ -563,7 +563,7 @@ describe("Tool: memory_store (behavioral)", () => {
     });
 
     expect(result.content[0].text).toContain("created or updated no memory");
-    expect(result.content[0].text).toContain("Do not tell the user it was saved");
+    expect(result.content[0].text).toContain("no new memory was created");
     expect(result.content[0].text).toContain("trace_id=trace-zero");
     expect(result.content[0].text).not.toContain("Stored");
     expect(result.details).toMatchObject({

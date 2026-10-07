@@ -243,7 +243,7 @@ Use it as a complement to auto-capture, not a replacement:
 
 - auto-capture still preserves ordinary conversation flow and batches extraction for cost and latency
 - `memory_store` is for explicit durable-memory intent such as "remember my main project is X" or "save this preference"
-- if `memory_store` commits but extracts 0 memories, it returns `action: "failed"` with `error: "no_memories_extracted"` so the agent does not report the fact as saved; check the OpenViking server extraction/model configuration, or whether the extractor judged the text not worth keeping
+- if `memory_store` commits but extracts 0 memories, it returns `action: "failed"` with `error: "no_memories_extracted"` and the agent tells the user no new memory was created; possible causes are that the content is already stored, extraction is disabled, or the extraction/model configuration needs checking
 
 ### What `compact()` does
 

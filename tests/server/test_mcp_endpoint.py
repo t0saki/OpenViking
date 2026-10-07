@@ -1291,7 +1291,7 @@ async def test_store_single_message(service):
     result = await remember(messages=[StoreMessage(role="user", content="The sky is blue")])
     assert "Submitted 1 message(s) for memory extraction" in result
     assert "task_id=" in result
-    assert "do not tell the user it has been saved" in result
+    assert "decides which memories to create or update" in result
 
 
 async def test_store_batch_messages(service):
@@ -1316,9 +1316,8 @@ async def test_store_reports_extraction_in_progress(service, monkeypatch):
     assert "Submitted 1 message(s) for memory extraction" in result
     assert "task_id=task-123" in result
     assert "session mcp-store-" in result
-    assert "still running in the background" in result
-    assert "may decide not to keep" in result
-    assert "do not tell the user it has been saved" in result
+    assert "runs in the background" in result
+    assert "decides which memories to create or update" in result
     assert "committed for memory extraction" not in result
 
 
