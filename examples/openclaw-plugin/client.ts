@@ -845,9 +845,9 @@ export class OpenVikingClient {
       enableWorkingMemory?: boolean;
       timeoutMs?: number;
       /**
-       * Number of most-recent messages the server keeps live after commit.
-       * Forwarded as `keep_recent_count` in the POST body when above 0;
-       * 0 (default) archives everything.
+       * WM v2: number of most-recent messages to keep live after commit.
+       * Forwarded as `keep_recent_count` in the POST body. 0 (default)
+       * preserves the pre-v2 "archive everything" behavior.
       */
       keepRecentCount?: number;
       /** Start empty context in the same session after archiving. */

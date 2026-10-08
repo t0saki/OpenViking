@@ -10,6 +10,7 @@ import { enqueue, listPending } from "../shared/pending-queue.mjs";
 function config(overrides = {}) {
   return {
     commitTokenThreshold: 20000,
+    commitKeepRecentCount: 10,
     captureAssistantTurns: true,
     captureToolMaxChars: 2000,
     captureMaxLength: 24000,

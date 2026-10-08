@@ -339,7 +339,6 @@ describe("context-engine lifecycle service seam", () => {
     const client = {
       addSessionMessage: vi.fn().mockResolvedValue(undefined),
       getSession: vi.fn().mockResolvedValue({ pending_tokens: 25000 }),
-      getSessionContext: vi.fn().mockResolvedValue({ latest_archive_overview: "", pre_archive_abstracts: [], messages: [] }),
       commitSession: vi.fn().mockResolvedValue({
         status: "accepted",
         archived: false,
@@ -364,7 +363,6 @@ describe("context-engine lifecycle service seam", () => {
       runtimeContext: { senderId: "telegram:123", agentId: "runtime-agent" },
       cfg: {
         autoCapture: true,
-        contextManagementMode: "openviking",
         commitTokenThresholdRatio: 0.2,
         commitKeepRecentCount: 7,
         logFindRequests: false,
@@ -393,11 +391,9 @@ describe("context-engine lifecycle service seam", () => {
       undefined,
     );
     expect(client.getSession).toHaveBeenCalledWith(ovSessionId);
-    expect(client.getSessionContext).toHaveBeenCalledWith(ovSessionId, 100000);
     expect(client.commitSession).toHaveBeenCalledWith(ovSessionId, {
       wait: false,
-      enableWorkingMemory: true,
-      keepRecentCount: 0,
+      keepRecentCount: 7,
     });
     expect(diag).toHaveBeenCalledWith("afterTurn_commit", ovSessionId, expect.objectContaining({
       pendingTokens: 25000,

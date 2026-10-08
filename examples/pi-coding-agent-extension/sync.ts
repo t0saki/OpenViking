@@ -58,6 +58,18 @@ export class SyncManager {
   /** `HTTP <status>: <server message>` of the last failed commit; empty after a success. */
   get lastCommitError(): string { return this.lastCommitFailure; }
 
+  /**
+   * How many payloads the capture path would actually send for a slice of the
+   * branch — the exact `keep_recent_count` the server expects, which is a
+   * message count with system/custom/filtered entries excluded, not a user-turn
+   * count. Runs the same extraction takeover trims to, from a zero watermark so
+   * it measures the slice itself.
+   */
+  captureCount(branchSlice: any[]): number {
+    const extracted = extractBranchCapturePayloads(branchSlice, 0, this.config);
+    return extracted.payloads.length;
+  }
+
   restoreWatermark(n: number): void {
     const next = Math.max(0, Math.floor(Number(n) || 0));
     this.syncedEntryCount = next;
@@ -277,7 +289,7 @@ export class SyncManager {
   }
 
   async commit(
-    opts: { queueOnFailure?: boolean; timeoutMs?: number; enableWorkingMemory?: boolean } = {},
+    opts: { queueOnFailure?: boolean; keepRecentCount?: number; timeoutMs?: number; enableWorkingMemory?: boolean } = {},
   ): Promise<any | null> {
     if (!this.ovSessionId) {
       this.lastCommitFailure = "no OpenViking session yet";
@@ -285,6 +297,7 @@ export class SyncManager {
     }
     const response = await this.client.commitSessionResponse(
       this.ovSessionId,
+      opts.keepRecentCount,
       opts.timeoutMs,
       opts.enableWorkingMemory,
     );
@@ -299,7 +312,9 @@ export class SyncManager {
         error: response.error?.message || response.error?.code || "unknown",
       });
       if (opts.queueOnFailure !== false) {
-        await enqueue("commitSession", this.ovSessionId, { keep_recent_count: 0 });
+        await enqueue("commitSession", this.ovSessionId, {
+          keep_recent_count: opts.keepRecentCount ?? 0,
+        });
       }
       return null;
     }

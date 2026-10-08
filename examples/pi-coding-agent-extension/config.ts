@@ -40,6 +40,7 @@ export interface OVConfig {
   resumeContextBudget: number;
   resumeArchiveInject: boolean;
   commitTokenThreshold: number;
+  commitKeepRecentCount: number;
   takeoverEnabled: boolean;
   takeoverTokenThreshold: number;
   takeoverKeepRecentTurns: number;

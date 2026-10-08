@@ -91,10 +91,10 @@ for (const enabled of [true, false, undefined]) {
     await withFetch(async () => ({
       body: { status: "ok", result: { effective_enable_working_memory: enabled ?? false } },
     }), async (calls) => {
-      const response = await makeClient().commitSessionResponse("s", 5000, enabled);
+      const response = await makeClient().commitSessionResponse("s", 3, 5000, enabled);
       assert.equal(response.result.effective_enable_working_memory, enabled ?? false);
       assert.deepEqual(JSON.parse(calls[0].init.body), {
-        keep_recent_count: 0,
+        keep_recent_count: 3,
         ...(enabled === undefined ? {} : { enable_working_memory: enabled }),
       });
     });

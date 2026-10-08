@@ -293,7 +293,7 @@ Injected context is wrapped in fixed tags such as `<openviking-context>`, and ca
 
 - **Sessions are created implicitly.** The server creates a session when it receives the first message for it, or on the first context-mode recall with that session ID. DSH is the only integration that creates its sessions explicitly.
 - **A commit has two phases.** `POST /api/v1/sessions/{id}/commit` returns after phase 1 archives the messages. Its response includes a `task_id` for phase 2, memory extraction, which runs in the background. A successful commit response does not mean extraction has finished.
-- **`keep_recent_count`** sets how many recent messages a commit leaves live in the session. The server default is 0, which archives everything. Every integration sends 0. Claude Code, Codex, OpenCode, DSH, and pi keep recent turns in their own transcripts, so the server needs to hold none back. OpenClaw also sends 0 on its threshold commit; in `openviking` context mode the plugin itself keeps the last `commitKeepRecentCount` (default 10) messages in memory and places them before the server's messages at assembly.
+- **`keep_recent_count`** sets how many recent messages a commit leaves live in the session. The server default is 0, which archives everything. Claude Code, Codex, OpenCode, DSH, Cursor, TRAE, TRAE CN, ZCode, and Hermes send 0; pi sends the exact message count of its last 3 user turns in takeover mode and 0 otherwise; OpenClaw sends 10 on its threshold commit and 0 on reset, `memory_store`, and compaction.
 - **Server auto-commit is off by default.** `memory.session_auto_commit.enabled` defaults to `false`, and the idle scanner does not start while it is off. A new session can still get a policy from `server.user_config_defaults.auto_commit_policy`, or explicitly through `POST /api/v1/sessions`, `PATCH /api/v1/sessions/{id}/config`, the SDK, or `ov session new --auto-commit-policy-json` and `ov session config set`. A policy's defaults are 150,000 pending tokens (strictly greater than), 100 messages, an 86,400-second idle timeout, `keep_recent_count` 0, and no minimum interval. The idle timeout also needs `memory.session_auto_commit.enabled=true`. The memory plugins send no policy, so without one of these settings the client is the only thing that commits.
 - **Writes are batched.** The shared plugins send up to 100 messages per `POST /messages/batch`, matching the server limit, and fall back to one message at a time when the batch endpoint returns 404 or 405.
 - **Large tool output is stored separately.** The server moves tool output above 20,000 characters into a separate record and leaves a `tool_output_ref`. Plugins raise their own limit (`captureToolMaxChars`) to 1,000,000 only as a safety net.
@@ -402,7 +402,7 @@ When the host shortens its context, most integrations make sure the dropped mess
 ### pi takeover
 
 - **What it changes.** pi's own history is not modified. The extension rewrites the messages sent in each `context` event: everything before a boundary becomes one synthetic user message, `[OpenViking Session Context]`, holding the archive overview cut to 3,000 tokens. Its timestamp is just before the first kept message, so the provider request stays stable and prompt caching keeps working.
-- **When it runs.** On token pressure, not on pi's compaction event: about 30,000 tokens with the last 3 user turns kept. The commit archives every message (`keep_recent_count` 0); the `context` hook keeps those 3 turns verbatim from pi's own branch, so the archive overview may overlap them.
+- **When it runs.** On token pressure, not on pi's compaction event: about 30,000 tokens with the last 3 user turns kept. The commit sends the exact message count of those 3 turns as `keep_recent_count`.
 - **Where the summary comes from.** The overview of the archive that commit produced, polled up to 15 times at 2-second intervals. The boundary is stored in pi's branch as an `ov-takeover` entry, so it survives a restart.
 - **When it falls back.** On a fingerprint mismatch, a history shorter than the boundary, or a missing overview, pi gets its full history. If the overview stays empty, the boundary does not move and the pending count resets until it builds up again.
 - **pi's own compaction.** When it succeeds, `session_before_compact` returns the OpenViking summary to pi. Without a `firstKeptEntryId`, pi runs its default compaction.
@@ -412,7 +412,7 @@ When the host shortens its context, most integrations make sure the dropped mess
 ### OpenClaw context engine
 
 - OpenClaw registers the plugin as its context engine with `ownsCompaction: true`, so the host no longer writes its own summary.
-- Context assembly has two parts. `transformContext` only adds recall, behind five passthrough checks. The main assembly calls `getSessionContext(tokenBudget)` and replaces the host's live history with the server's response, preceded by the recent messages the plugin kept from its last auto-commit, split across four budget tiers, behind three passthrough checks and a message-cleaning step.
+- Context assembly has two parts. `transformContext` only adds recall, behind five passthrough checks. The main assembly calls `getSessionContext(tokenBudget)` and replaces the host's live history with the server's response, split across four budget tiers, behind three passthrough checks and a message-cleaning step.
 - `compact()` commits with `keep_recent_count` 0, polls every 500 ms for up to 5 minutes, and returns the archive overview as the summary.
 - `ingest()` and `ingestBatch()` do nothing on purpose; turns are captured after each turn.
 - When an archive exists, a short guide is added to the system prompt. It tells the model to reread the summary before saying it has no information, and to try at least two keyword sets with `ov_archive_search`.
@@ -424,7 +424,7 @@ When the host shortens its context, most integrations make sure the dropped mess
 | | pi takeover | OpenClaw context engine |
 |---|---|---|
 | Host contract | Rewrites messages in the `context` event | Context engine with `ownsCompaction: true` |
-| Source of history | pi's local branch | The server's session context, plus the recent messages the plugin kept in memory |
+| Source of history | pi's local branch | The server's session context |
 | Trigger | Client token threshold (30,000, last 3 user turns kept) | Each host call to assemble or compact |
 | Result | One synthetic user message, up to 3,000 tokens | A rebuilt message list plus a compaction summary |
 | On failure | Full history | The host's live messages |

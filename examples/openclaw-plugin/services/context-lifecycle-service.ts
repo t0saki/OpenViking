@@ -19,7 +19,6 @@ import {
   toRoleId,
   type AgentMessage,
 } from "./context-message-adapter.js";
-import { deleteRetainedTail, getRetainedTail, mergeTail, setRetainedTail } from "./retained-tail.js";
 
 type ExtractedTurnMessage = ReturnType<typeof extractNewTurnMessages>["messages"][number];
 
@@ -125,7 +124,7 @@ export type CompactOpenVikingSessionParams = {
   diag: (stage: string, sessionId: string, data: Record<string, unknown>) => void;
 };
 
-type AfterTurnClient = Pick<OpenVikingClient, "addSessionMessage" | "getSession" | "getSessionContext" | "commitSession" | "getTask">;
+type AfterTurnClient = Pick<OpenVikingClient, "addSessionMessage" | "getSession" | "commitSession" | "getTask">;
 
 export type AfterTurnOpenVikingSessionParams = {
   /** Durable delivery must reject failed writes so the host retains its outbox row. */
@@ -251,8 +250,7 @@ function buildSystemPromptAddition(): string {
     "   The summary is lossy: specific details (exact dates, numbers, names,",
     "   small events) may have been compressed away.",
     "",
-    "2. **Active messages** — The most recent turns, verbatim. The oldest of",
-    "   them may repeat the end of the Summary.",
+    "2. **Active messages** — The most recent uncompressed turns.",
     "",
     "**Rules:**",
     "- When active messages conflict with the Summary, trust active messages",
@@ -399,8 +397,6 @@ export async function commitOpenVikingSession({
   } catch (err) {
     logger.warn?.(`openviking: commit failed for session=${sessionId}: ${String(err)}`);
     return false;
-  } finally {
-    deleteRetainedTail(ovId);
   }
 }
 
@@ -672,13 +668,10 @@ async function assembleSessionContext(params: AssembleOpenVikingSessionParams): 
   try {
     const client = await getClient();
     const ctx = await client.getSessionContext(ovSessionId, tokenBudget);
-    const ctxMessages = ctx?.messages ?? [];
-    const ovMessages = mergeTail(getRetainedTail(ovSessionId) ?? [], ctxMessages);
-    const retainedTailMessages = ovMessages.length - ctxMessages.length;
 
     const preAbstracts = ctx?.pre_archive_abstracts ?? [];
     const hasArchives = !!ctx?.latest_archive_overview || preAbstracts.length > 0;
-    const activeCount = ovMessages.length;
+    const activeCount = ctx?.messages?.length ?? 0;
 
     // A completed WM-off archive can leave a non-empty active tail. That tail
     // alone cannot replace the host's earlier history in explicit OV mode.
@@ -699,21 +692,21 @@ async function assembleSessionContext(params: AssembleOpenVikingSessionParams): 
         extra: { archiveCount: 0, activeCount: 0 },
       });
     }
-    if (!hasArchives && activeCount < messages.length) {
+    if (!hasArchives && ctx.messages.length < messages.length) {
       return assemblePassthrough({
         diag,
         ovSessionId,
         reason: "ov_msgs_fewer_than_input",
         liveMessages: messages,
         originalTokens,
-        extra: { archiveCount: 0, activeCount, retainedTailMessages },
+        extra: { archiveCount: 0, activeCount },
       });
     }
 
     const { sanitized, archive, session, budgets, instruction } = buildAssembledContext(
       ctx.latest_archive_overview,
       preAbstracts,
-      ovMessages,
+      ctx.messages,
       tokenBudget,
       ovSessionId,
       logger,
@@ -727,7 +720,7 @@ async function assembleSessionContext(params: AssembleOpenVikingSessionParams): 
         reason: "sanitized_empty",
         liveMessages: messages,
         originalTokens,
-        extra: { archiveCount: preAbstracts.length, activeCount, retainedTailMessages },
+        extra: { archiveCount: preAbstracts.length, activeCount },
       });
     }
 
@@ -739,7 +732,6 @@ async function assembleSessionContext(params: AssembleOpenVikingSessionParams): 
       passthrough: false,
       archiveCount: preAbstracts.length,
       activeCount,
-      retainedTailMessages,
       outputMessagesCount: sanitized.length,
       inputTokenEstimate: originalTokens,
       estimatedTokens: assembledTokens,
@@ -1059,28 +1051,13 @@ export async function afterTurnOpenVikingSession({
       return;
     }
 
-    const turnBudgetMode = cfg.commitRetentionMode === "turn_budget";
-    const tailSize = turnBudgetMode || cfg.contextManagementMode !== "openviking" ? 0 : cfg.commitKeepRecentCount;
-    let tail: OVMessage[] | undefined;
-    if (tailSize > 0) {
-      try {
-        const before = await client.getSessionContext(ovSessionId, tokenBudget);
-        tail = mergeTail(getRetainedTail(ovSessionId) ?? [], before?.messages ?? []).slice(-tailSize);
-      } catch (err) {
-        logger.warn?.(`openviking: afterTurn tail capture failed for session=${ovSessionId}: ${String(err)}`);
-      }
-    }
-
-    deleteRetainedTail(ovSessionId);
     const commitResult = await client.commitSession(ovSessionId, {
       wait: false,
       ...(cfg.contextManagementMode === "openviking" ? { enableWorkingMemory: true } : {}),
-      ...(turnBudgetMode ? { retentionMode: "turn_budget" as const } : { keepRecentCount: 0 }),
+      ...(cfg.commitRetentionMode === "turn_budget"
+        ? { retentionMode: "turn_budget" as const }
+        : { keepRecentCount: cfg.commitKeepRecentCount }),
     });
-    const retainedTail = commitResult.archived ? tail ?? [] : [];
-    if (retainedTail.length > 0) {
-      setRetainedTail(ovSessionId, retainedTail);
-    }
     logger.info(
       `openviking: committed session=${ovSessionId}, ` +
         `status=${commitResult.status}, archived=${commitResult.archived ?? false}, ` +
@@ -1096,7 +1073,6 @@ export async function afterTurnOpenVikingSession({
       status: commitResult.status,
       archived: commitResult.archived ?? false,
       taskId: commitResult.task_id ?? null,
-      retainedTailMessages: retainedTail.length,
       extractedMemories: totalExtractedMemories(commitResult.memories_extracted),
       senderIdFound: sender.found,
       senderId: sender.senderId ?? null,
@@ -1224,7 +1200,6 @@ export async function compactOpenVikingSession({
   }
 
   const tokensBefore = tokensBeforeOriginal ?? preCommitEstimatedTokens ?? -1;
-  const retainedTailMessages = getRetainedTail(ovSessionId)?.length ?? 0;
 
   try {
     logger.info(
@@ -1274,7 +1249,7 @@ export async function compactOpenVikingSession({
       `openviking: compact committed session=${ovSessionId}, archived=${commitResult.archived ?? false}, memories=${memCount}, task_id=${commitResult.task_id ?? "none"}, trace_id=${commitResult.trace_id ?? "none"}`,
     );
 
-    if (!commitResult.archived && retainedTailMessages === 0) {
+    if (!commitResult.archived) {
       logger.info(
         `openviking: compact no archive for session=${ovSessionId}, ` +
           `tokensBefore=${tokensBefore}, tokensAfter=${tokensBefore}`,
@@ -1384,7 +1359,6 @@ export async function compactOpenVikingSession({
       tokensAfter: tokensAfter ?? null,
       latestArchiveId: firstKeptEntryId || null,
       summaryPresent: summary.length > 0,
-      retainedTailMessages,
     });
 
     return {
@@ -1430,7 +1404,5 @@ export async function compactOpenVikingSession({
       error: errorMessage,
     });
     return compactFailureResult("commit_error", tokensBefore, { error: errorMessage });
-  } finally {
-    deleteRetainedTail(ovSessionId);
   }
 }

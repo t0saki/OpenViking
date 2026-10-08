@@ -139,6 +139,7 @@ test("auto-capture commits when pending tokens cross threshold", async () => {
           OPENVIKING_CLI_CONFIG_FILE: join(stateDir, "missing-ovcli.conf"),
           OPENVIKING_CREDENTIAL_SOURCE: "env",
           OPENVIKING_COMMIT_TOKEN_THRESHOLD: "1000",
+          OPENVIKING_COMMIT_KEEP_RECENT_COUNT: "7",
           OPENVIKING_MIN_QUERY_LENGTH: "1",
           OPENVIKING_WRITE_PATH_ASYNC: "0",
           OPENVIKING_TIMEOUT_MS: "5000",

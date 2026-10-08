@@ -293,7 +293,7 @@ Claude Code 和 Codex 默认 `auto`，其他集成默认 `off`。支持服务端
 
 - **会话隐式创建**。服务端收到某个会话的第一条消息时创建该会话；带该会话 ID 的第一次 context 模式召回也会创建。DSH 是唯一显式创建会话的集成。
 - **提交分两个阶段**。`POST /api/v1/sessions/{id}/commit` 在第一阶段归档消息后返回。响应中带有第二阶段（记忆抽取）的 `task_id`，抽取在后台运行。提交请求成功不代表抽取已经完成。
-- **`keep_recent_count`** 决定提交后会话中保留多少条最近的消息。服务端默认 0，即全部归档。所有集成都发送 0。Claude Code、Codex、OpenCode、DSH 和 pi 在自己的 transcript 中保留最近的对话，服务端无需再留。OpenClaw 的阈值提交同样发送 0；在 `openviking` 上下文模式下，插件自己在内存中保留最近 `commitKeepRecentCount`（默认 10）条消息，组装时放在服务端返回的消息之前。
+- **`keep_recent_count`** 决定提交后会话中保留多少条最近的消息。服务端默认 0，即全部归档。Claude Code、Codex、OpenCode、DSH、Cursor、TRAE、TRAE CN、ZCode 和 Hermes 发送 0；pi 在 takeover 模式下发送最近 3 个用户轮对应的确切消息数，其他情况发送 0；OpenClaw 在阈值提交时发送 10，在 reset、`memory_store` 和压缩时发送 0。
 - **服务端自动提交默认关闭**。`memory.session_auto_commit.enabled` 默认 `false`，关闭时空闲扫描器不会启动。新会话仍可以从 `server.user_config_defaults.auto_commit_policy` 获得策略，也可以通过 `POST /api/v1/sessions`、`PATCH /api/v1/sessions/{id}/config`、SDK，或 `ov session new --auto-commit-policy-json` 与 `ov session config set` 显式设置。策略的默认值是：待提交 token 150,000（严格大于）、100 条消息、86,400 秒空闲超时、`keep_recent_count` 0、无最小间隔。空闲超时还需要 `memory.session_auto_commit.enabled=true`。记忆插件不发送策略，所以没有上述设置时，只有客户端会提交。
 - **批量写入**。共享插件每次 `POST /messages/batch` 最多发送 100 条消息，与服务端上限一致；批量接口返回 404 或 405 时改为逐条发送。
 - **大块工具输出单独存放**。服务端把超过 20,000 字符的工具输出移到单独的记录中，留下 `tool_output_ref`。插件把自己的上限（`captureToolMaxChars`）提高到 1,000,000，只作为兜底。
@@ -402,7 +402,7 @@ Claude Code 和 Codex 默认 `auto`，其他集成默认 `off`。支持服务端
 ### pi takeover
 
 - **改变了什么**。pi 自己的历史不会被修改。扩展改写每次 `context` 事件中发送的消息：边界之前的内容合并成一条合成用户消息 `[OpenViking Session Context]`，内容是截到 3,000 token 的归档概览。它的时间戳取第一条保留消息之前的时刻，让发给 provider 的请求保持稳定，prompt 缓存继续生效。
-- **何时运行**。由 token 压力触发，而不是 pi 的压缩事件：约 30,000 token，保留最近 3 个用户轮。提交归档全部消息（`keep_recent_count` 0），`context` 钩子从 pi 自己的 branch 原样保留这 3 轮，因此归档概览可能与它们重叠。
+- **何时运行**。由 token 压力触发，而不是 pi 的压缩事件：约 30,000 token，保留最近 3 个用户轮。提交时把这 3 轮对应的确切消息数作为 `keep_recent_count` 发送。
 - **摘要来源**。该次提交产生的归档概览，每 2 秒轮询一次，最多 15 次。边界作为 `ov-takeover` 条目存在 pi 的 branch 中，重启后仍然有效。
 - **何时回退**。指纹不匹配、历史短于边界或缺少概览时，pi 使用完整历史。如果概览一直为空，边界不移动，待提交计数归零，重新累积后再试。
 - **pi 自己的压缩**。takeover 成功时，`session_before_compact` 把 OpenViking 摘要返回给 pi。没有 `firstKeptEntryId` 时，pi 执行默认压缩。
@@ -412,7 +412,7 @@ Claude Code 和 Codex 默认 `auto`，其他集成默认 `off`。支持服务端
 ### OpenClaw 上下文引擎
 
 - OpenClaw 把插件注册为上下文引擎，并设置 `ownsCompaction: true`，宿主不再自己生成摘要。
-- 上下文组装分两部分。`transformContext` 只添加召回，前面有五道 passthrough 检查。主组装调用 `getSessionContext(tokenBudget)`，用服务端的返回替换宿主的实时历史，并在前面放上插件在上次自动提交时保留的最近消息，按四档预算切分，前面有三道 passthrough 检查和一个消息清洗步骤。
+- 上下文组装分两部分。`transformContext` 只添加召回，前面有五道 passthrough 检查。主组装调用 `getSessionContext(tokenBudget)`，用服务端的返回替换宿主的实时历史，按四档预算切分，前面有三道 passthrough 检查和一个消息清洗步骤。
 - `compact()` 以 `keep_recent_count` 0 提交，每 500 ms 轮询一次，最多 5 分钟，然后把归档概览作为摘要返回。
 - `ingest()` 和 `ingestBatch()` 有意不做任何事；对话在每轮结束后捕获。
 - 存在归档时，system prompt 会加入一段简短指引，要求模型在回答“没有相关信息”之前先重读摘要，并用 `ov_archive_search` 至少尝试两组关键词。
@@ -424,7 +424,7 @@ Claude Code 和 Codex 默认 `auto`，其他集成默认 `off`。支持服务端
 | | pi takeover | OpenClaw 上下文引擎 |
 |---|---|---|
 | 宿主契约 | 在 `context` 事件中改写消息 | 上下文引擎，`ownsCompaction: true` |
-| 历史来源 | pi 本地的 branch | 服务端的会话上下文，加上插件在内存中保留的最近消息 |
+| 历史来源 | pi 本地的 branch | 服务端的会话上下文 |
 | 触发 | 客户端 token 阈值（30,000，保留最近 3 个用户轮） | 宿主每次调用 assemble 或 compact |
 | 结果 | 一条合成用户消息，最多 3,000 token | 重建的消息列表，加上压缩摘要 |
 | 失败时 | 完整历史 | 宿主的实时消息 |

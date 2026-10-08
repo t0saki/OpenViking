@@ -122,12 +122,13 @@ export class OVClient {
   /** POST /api/v1/sessions/{id}/commit — commit session for archiving + extraction */
   async commitSessionResponse(
     sessionId: string,
+    keepRecentCount = 0,
     timeoutMs = 30000,
     enableWorkingMemory?: boolean,
   ): Promise<OVCommitResponse> {
     const res = await this.fetchJSON<OVCommitResult>(
       `/api/v1/sessions/${encodeURIComponent(sessionId)}/commit`,
-      { method: "POST", body: JSON.stringify({ keep_recent_count: 0, enable_working_memory: enableWorkingMemory }) },
+      { method: "POST", body: JSON.stringify({ keep_recent_count: keepRecentCount, enable_working_memory: enableWorkingMemory }) },
       { timeoutMs },
     );
     if (res.ok && res.result && !res.result.trace_id && res.traceId) {
