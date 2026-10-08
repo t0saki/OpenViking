@@ -364,6 +364,7 @@ describe("context-engine lifecycle service seam", () => {
       runtimeContext: { senderId: "telegram:123", agentId: "runtime-agent" },
       cfg: {
         autoCapture: true,
+        contextManagementMode: "openviking",
         commitTokenThresholdRatio: 0.2,
         commitKeepRecentCount: 7,
         logFindRequests: false,
@@ -395,6 +396,7 @@ describe("context-engine lifecycle service seam", () => {
     expect(client.getSessionContext).toHaveBeenCalledWith(ovSessionId, 100000);
     expect(client.commitSession).toHaveBeenCalledWith(ovSessionId, {
       wait: false,
+      enableWorkingMemory: true,
       keepRecentCount: 0,
     });
     expect(diag).toHaveBeenCalledWith("afterTurn_commit", ovSessionId, expect.objectContaining({

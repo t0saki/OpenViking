@@ -369,6 +369,7 @@ describe("context engine retained tail", () => {
       archive_uri: null,
       archived: false,
       reason: "no_messages",
+      effective_enable_working_memory: true,
     });
     const result = await engine.compact({ sessionId: session, sessionFile: "", tokenBudget: 4096, force: true });
 
@@ -402,6 +403,7 @@ describe("context engine retained tail", () => {
       task_id: "task-2",
       archive_uri: `viking://session/${session}/history/archive_002`,
       archived: true,
+      effective_enable_working_memory: true,
     });
     const result = await engine.compact({ sessionId: session, sessionFile: "", tokenBudget: 4096, force: true });
 

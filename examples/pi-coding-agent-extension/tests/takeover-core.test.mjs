@@ -497,7 +497,7 @@ test("keepRecentTurns zero archives every captured message and cuts at the tip",
   const { core, calls } = makeCore({ config: { takeoverKeepRecentTurns: 0 } });
   const branch = branchOf(user("one"), assistant("answer"));
   assert.equal(await core.onTurnSynced(120, branch), true);
-  assert.deepEqual(Object.keys(calls.lastCommitOpts).sort(), ["queueOnFailure", "timeoutMs"]);
+  assert.deepEqual(Object.keys(calls.lastCommitOpts).sort(), ["enableWorkingMemory", "queueOnFailure", "timeoutMs"]);
   assert.equal(core.state.coveredThroughEntryId, branch[1].id);
   assert.equal(core.state.coveredUserTurns, 1);
 
@@ -806,7 +806,7 @@ test("handleBeforeCompact uses pi's keep position, archives all messages, and ho
     branch,
   );
   assert.equal(result.compaction.firstKeptEntryId, "pi-kept");
-  assert.deepEqual(Object.keys(normal.calls.lastCommitOpts).sort(), ["queueOnFailure", "timeoutMs"]);
+  assert.deepEqual(Object.keys(normal.calls.lastCommitOpts).sort(), ["enableWorkingMemory", "queueOnFailure", "timeoutMs"]);
   assert.equal(normal.calls.lastSyncBranch, branch);
 
   const cancelled = makeCore();
