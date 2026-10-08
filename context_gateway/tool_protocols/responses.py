@@ -5,6 +5,7 @@
 import copy
 import uuid
 
+from ..notices import without_recall_notice
 from ..protocols import text_content
 from .common import (
     PREFIX,
@@ -15,7 +16,7 @@ from .common import (
     ToolRound,
     append_text,
     call,
-    without_recall_content,
+    edit_replies,
 )
 
 CLIENT_CALLS = {"function_call", "custom_tool_call"}
@@ -64,23 +65,15 @@ class ResponsesProtocol(ToolProtocol):
         return [{"type": "function", **t["function"], "strict": False} for t in tools]
 
     @classmethod
-    def strip_recall_notice(cls, messages):
-        # A reply is a run of output items; only the first item of each run can be the notice.
-        result, changed = [], False
-        for index, message in enumerate(messages):
-            content = (
-                without_recall_content(message.get("content"))
-                if message.get("role") == "assistant"
-                and not (index and cls.is_reply(messages[index - 1]))
-                else None
-            )
-            if content is not None:
-                changed = True
-                if not content:
-                    continue  # The gateway's own message item.
-                message = {**message, "content": content}
-            result.append(message)
-        return result if changed else messages
+    def strip_lead(cls, messages):
+        # A reply is a run of output items: only the first item of each run can hold the
+        # lead, and an item that held nothing else was the gateway's own.
+        def rebuild(message, content, previous):
+            if cls.is_reply(previous):
+                return message
+            return {**message, "content": content} if content else None
+
+        return edit_replies(messages, without_recall_notice, rebuild, first=True)
 
     @classmethod
     def block_reason(cls, body):

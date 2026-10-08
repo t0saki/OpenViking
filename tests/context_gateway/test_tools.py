@@ -9,13 +9,14 @@ from conftest import MCP_TOOLS, mcp_tool
 
 from context_gateway.capture import capture_messages
 from context_gateway.models import Policy, Upstream
+from context_gateway.notices import TOOL_NOTICE, tool_tail
 from context_gateway.proxy import upstream_url
 from context_gateway.storage import SQLiteKernelStore
 from context_gateway.tool_catalog import notice_head, select_tools, tool_block_reason
 from context_gateway.tool_executor import ToolExecutor, attachment_bytes, attachments
 from context_gateway.tool_loop import HiddenToolLoop
 from context_gateway.tool_protocols import ResponseCapture, hidden_chain, tool_protocol
-from context_gateway.tool_protocols.common import NOTICE, notice_tail, sse
+from context_gateway.tool_protocols.common import sse
 from context_gateway.vendors import ark_url
 
 
@@ -231,7 +232,7 @@ async def test_stream_text_precedes_tool_completion_and_cancel_closes():
         root={"policy": {}},
         metrics={},
         tools_active=True,
-        recall_notice="",
+        reply_lead="",
     )
     loop = HiddenToolLoop(
         prepared, SimpleNamespace(allowed={"openviking_search"}), None, ResponseCapture("chat")
@@ -287,7 +288,7 @@ def test_notice_names_each_call_target(name, arguments, expected):
     assert head == expected
     # Capture must recognize every rendered line, whatever its outcome.
     for outcome in ("done", "failed", "skipped"):
-        assert NOTICE.fullmatch(head + " — " + outcome)
+        assert TOOL_NOTICE.fullmatch(head + " — " + outcome)
 
 
 @pytest.mark.parametrize(
@@ -300,7 +301,7 @@ def test_notice_names_each_call_target(name, arguments, expected):
     ],
 )
 def test_notice_outcome(failed, skipped, expected):
-    assert notice_tail(failed, skipped) == expected
+    assert tool_tail(failed, skipped) == expected
 
 
 async def test_notices_stream_around_each_gateway_call():
@@ -320,7 +321,7 @@ async def test_notices_stream_around_each_gateway_call():
         metrics={},
         tools_active=True,
         tools_closed=False,
-        recall_notice="",
+        reply_lead="",
     )
     executor = SimpleNamespace(allowed={"openviking_search"}, execute=execute)
     loop = HiddenToolLoop(prepared, executor, None, ResponseCapture("chat"))
@@ -358,7 +359,7 @@ async def test_notices_off_leave_the_reply_unchanged():
         metrics={},
         tools_active=True,
         tools_closed=False,
-        recall_notice="",
+        reply_lead="",
     )
     executor = SimpleNamespace(allowed={"openviking_search"}, execute=execute)
     loop = HiddenToolLoop(prepared, executor, None, ResponseCapture("chat"))
@@ -729,7 +730,7 @@ async def test_new_tools_preserve_arguments_and_normalize_failed_receipt(
     )
     assert await ToolExecutor(viking, store, prepared, credential, "", 1024).execute(call) == result
     assert viking.mcp.await_count == 1
-    assert notice_tail(result["failed"], False) == " — failed"
+    assert tool_tail(result["failed"], False) == " — failed"
     assert "failed" not in tool_protocol("chat")({}).results([result])[0]
     anthropic = tool_protocol("anthropic")({})
     assert anthropic.results([result])[0]["content"][0]["is_error"] is True

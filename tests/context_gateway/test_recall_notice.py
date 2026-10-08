@@ -13,10 +13,10 @@ from context_gateway.blocks import gateway_note
 from context_gateway.capture import capture_messages
 from context_gateway.client import VikingError
 from context_gateway.models import Policy
+from context_gateway.notices import RECALL_NOTICE, recall_notice
 from context_gateway.protocols import SSEDecoder
-from context_gateway.recall_notice import render
 from context_gateway.tool_protocols import ResponseCapture, tool_protocol
-from context_gateway.tool_protocols.common import RECALL_NOTICE, merge_delta, sse
+from context_gateway.tool_protocols.common import merge_delta, sse
 
 PATHS = {"chat": "/v1/chat/completions", "anthropic": "/v1/messages", "responses": "/v1/responses"}
 # What the test gateway's search returns: one memory without a category.
@@ -38,24 +38,24 @@ def test_recall_line_counts_categories_and_names():
         entry("viking://resources/docs/guide/", "resources"),
         entry("viking://user/a/memories/events/launch.md", "events"),
     ]
-    assert render([], "recalled", entries) == (
+    assert recall_notice([], "recalled", entries) == (
         "> OpenViking recall: 4 items (3 memories, 1 resource) — "
         "booking_duplicate_handling, user_lang_pref, guide, +1 more\n\n"
     )
     # One of each is singular; without a category the URI decides, else only the total counts.
     one = [entry("viking://user/a/memories/x.md")]
-    assert render([], "recalled", one) == "> OpenViking recall: 1 item (1 memory) — x\n\n"
+    assert recall_notice([], "recalled", one) == "> OpenViking recall: 1 item (1 memory) — x\n\n"
     mixed = [entry("viking://agent/skills/deploy/"), entry("viking://other/thing")]
-    assert render([], "recalled", mixed) == (
+    assert recall_notice([], "recalled", mixed) == (
         "> OpenViking recall: 2 items (1 skill) — deploy, thing\n\n"
     )
-    assert render([], "recalled", []) == "> OpenViking recall: context added\n\n"
+    assert recall_notice([], "recalled", []) == "> OpenViking recall: context added\n\n"
 
 
 def test_recall_line_clips_names_and_stays_short():
     long = "n" * 100
     entries = [entry(f"viking://user/a/memories/{long}{i}\n.md", "memories") for i in range(10)]
-    notice = render([], "recalled", entries)
+    notice = recall_notice([], "recalled", entries)
     [line] = notice.splitlines()[:-1]
     assert len(line) < 200 and line.endswith(", +7 more") and "…" in line
     assert RECALL_NOTICE.fullmatch(notice)
@@ -73,17 +73,17 @@ def test_recall_line_clips_names_and_stays_short():
     ],
 )
 def test_failed_recall_is_named(reason, text):
-    assert render([], reason, []) == f"> OpenViking recall failed: {text}\n\n"
+    assert recall_notice([], reason, []) == f"> OpenViking recall failed: {text}\n\n"
 
 
 @pytest.mark.parametrize("reason", ["empty", "disabled", "budget", "reminder"])
 def test_quiet_reasons_show_nothing(reason):
-    assert render([], reason, []) == ""
-    assert render(["history"], reason, []) == "> OpenViking context: earlier sessions\n\n"
+    assert recall_notice([], reason, []) == ""
+    assert recall_notice(["history"], reason, []) == "> OpenViking context: earlier sessions\n\n"
 
 
 def test_session_start_lists_injected_parts_in_order():
-    notice = render(["skills", "history", "profile", "memories"], "recalled", [entry("a/x")])
+    notice = recall_notice(["skills", "history", "profile", "memories"], "recalled", [entry("a/x")])
     assert notice == (
         "> OpenViking context: user profile, memory index, skill list, earlier sessions\n"
         "> OpenViking recall: 1 item — x\n\n"
@@ -110,18 +110,23 @@ def test_anthropic_strip_drops_the_lead_block(trimmed):
         {"role": "assistant", "content": [{"type": "text", "text": text}, *reply]},
     ]
     adapter = tool_protocol("anthropic")
-    assert adapter.strip_recall_notice(messages) == [
+    assert adapter.strip_lead(messages) == [
         messages[0],
         {"role": "assistant", "content": reply},
     ]
+    # A client that moves thinking ahead of the lead block still loses the whole block.
+    moved = [
+        {"role": "assistant", "content": [reply[0], {"type": "text", "text": text}, *reply[1:]]}
+    ]
+    assert adapter.strip_lead(moved)[0]["content"] == reply
     # A client that merges text blocks, or sends a string, loses only the prefix.
     merged = [{"role": "assistant", "content": [reply[0], {"type": "text", "text": SHOWN + "A."}]}]
-    assert adapter.strip_recall_notice(merged)[0]["content"] == [
+    assert adapter.strip_lead(merged)[0]["content"] == [
         reply[0],
         {"type": "text", "text": "A."},
     ]
     string = [{"role": "assistant", "content": SHOWN + "A."}]
-    assert adapter.strip_recall_notice(string) == [{"role": "assistant", "content": "A."}]
+    assert adapter.strip_lead(string) == [{"role": "assistant", "content": "A."}]
 
 
 @pytest.mark.parametrize("protocol", ["chat", "anthropic", "responses"])
@@ -140,7 +145,7 @@ def test_strip_leaves_other_text_alone(protocol):
         # A line that only resembles a notice.
         {"role": "assistant", "content": "> OpenViking recall: x\nno blank line"},
     ]
-    assert tool_protocol(protocol).strip_recall_notice(messages) is messages
+    assert tool_protocol(protocol).strip_lead(messages) is messages
 
 
 def test_chat_strip_restores_the_content_upstream_sent():
@@ -152,7 +157,7 @@ def test_chat_strip_restores_the_content_upstream_sent():
         {"role": "assistant", "content": SHOWN.strip()},
         {"role": "assistant", "content": [{"type": "text", "text": SHOWN + "A."}]},
     ]
-    assert adapter.strip_recall_notice(messages) == [
+    assert adapter.strip_lead(messages) == [
         {"role": "assistant", "content": "Answer."},
         {"role": "assistant", "content": None, "tool_calls": calls},
         {"role": "assistant", "content": ""},
@@ -183,7 +188,7 @@ def test_responses_strip_drops_the_first_item_of_each_reply():
         {"role": "user", "content": "Again"},
         message(SHOWN + "Merged."),
     ]
-    stripped = tool_protocol("responses").strip_recall_notice(messages)
+    stripped = tool_protocol("responses").strip_lead(messages)
     assert stripped == [
         *messages[:1],
         *messages[2:6],
@@ -262,17 +267,17 @@ async def test_notice_is_part_of_the_immutable_decision(setup_kernel, credential
         "> OpenViking context: user profile\n> OpenViking recall: 1 item (1 memory) — deploy\n\n"
     )
     decision = (await replay_records(store, one, "injection"))["injection", one.chain[0]]
-    assert decision["notice"] == one.recall_notice == expected
+    assert decision["notice"] == one.reply_lead == expected
     # A retry shows the same notice without recalling again.
     again = await prepare(kernel, body, credential, policy)
-    assert again.recall_notice == expected and len(viking.recalls) == 1
+    assert again.reply_lead == expected and len(viking.recalls) == 1
     # Counting tokens, several choices or structured output get no notice.
     for request, extra in [
         ({**body, "n": 2}, {}),
         ({**body, "response_format": {"type": "json_object"}}, {}),
         (body, {"counting": True}),
     ]:
-        assert (await prepare(kernel, request, credential, policy, **extra)).recall_notice == ""
+        assert (await prepare(kernel, request, credential, policy, **extra)).reply_lead == ""
     # The client resends the notice; the next turn reads exactly as if it had not.
     shown, plain = (
         {
@@ -288,7 +293,7 @@ async def test_notice_is_part_of_the_immutable_decision(setup_kernel, credential
     assert two.body == (await prepare(kernel, plain, credential, policy)).body
     assert two.messages[1] == {"role": "assistant", "content": "Use blue."}
     # The only memory is in context already, so this turn recalls nothing to show.
-    assert two.recall_notice == ""
+    assert two.reply_lead == ""
     # A continuation after a client tool shows none.
     calls = [{"id": "c-1", "type": "function", "function": {"name": "shell", "arguments": "{}"}}]
     tool = {
@@ -299,7 +304,7 @@ async def test_notice_is_part_of_the_immutable_decision(setup_kernel, credential
         ]
     }
     three = await prepare(kernel, tool, credential, policy)
-    assert three.kind == "continuation" and three.recall_notice == ""
+    assert three.kind == "continuation" and three.reply_lead == ""
     assert three.body["messages"][1]["content"] is None
 
 
@@ -308,13 +313,13 @@ async def test_failed_recall_and_flag_off(setup_kernel, credential, policy):
     body = {"messages": [{"role": "user", "content": "How do I deploy?"}]}
     off = await prepare(kernel, body, credential, policy)
     decision = (await replay_records(store, off, "injection"))["injection", off.chain[0]]
-    assert "notice" not in decision and off.recall_notice == ""
+    assert "notice" not in decision and off.reply_lead == ""
     viking.failure = VikingError("openviking_unavailable")
     policy.update(show_recall=True)
     failed = await kernel.prepare(
         body, "chat", {"x-openviking-session": "t"}, credential, {"id": "upstream"}, policy
     )
-    assert failed.recall_notice == "> OpenViking recall failed: OpenViking unavailable\n\n"
+    assert failed.reply_lead == "> OpenViking recall failed: OpenViking unavailable\n\n"
 
 
 # Through the gateway

@@ -163,7 +163,7 @@ class ProxyRequest:
         # Only the tool loop rewrites a reply, so the recall notice goes through it too.
         if (
             self.prepared
-            and (self.prepared.tools_active or self.prepared.recall_notice)
+            and (self.prepared.tools_active or self.prepared.reply_lead)
             and self.response.status < 300
             and not self.path.endswith("count_tokens")
         ):

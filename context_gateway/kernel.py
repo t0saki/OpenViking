@@ -27,6 +27,7 @@ from .compaction import (
     window_size,
 )
 from .models import Policy
+from .notices import recall_notice
 from .profile import build_profile
 from .protocols import (
     classify,
@@ -40,7 +41,6 @@ from .protocols import (
     text_content,
     unwrap_client,
 )
-from .recall_notice import render as render_notice
 from .records import RecordKind as K
 from .state_store import get_state
 from .storage import KernelStore, digest
@@ -93,8 +93,8 @@ class Prepared:
     # The reply's anchor; ``relayed`` records it once it succeeds.
     relayed: bool = False
     reply_anchor: str = ""
-    # What the reply starts with for the user: the summary of this turn's injection.
-    recall_notice: str = ""
+    # What the reply starts with for the user: the recall notice of this turn's injection.
+    reply_lead: str = ""
 
 
 class MemoryKernel:
@@ -190,9 +190,9 @@ class MemoryKernel:
         sent = adapter.messages(body)
         if not isinstance(sent, list) or not all(isinstance(m, dict) for m in sent):
             raise ValueError("invalid message list")
-        # Recall notices are the gateway's, not the model's: the client resends them, but
-        # nothing matches, captures or forwards them, as replies were recorded without them.
-        sent = adapter.strip_recall_notice(sent)
+        # The lead is the gateway's, not the model's: the client resends it, but nothing
+        # matches, captures or forwards it, as replies were recorded without it.
+        sent = adapter.strip_lead(sent)
         scope = digest(credential["account"] + "\0" + credential["user_id"] + "\0" + protocol)
         # Anchors, capture and recall read the history as the gateway relayed it;
         # the upstream still gets exactly what the client sent.
@@ -290,7 +290,7 @@ class MemoryKernel:
         ):
             # A retry of the turn shows the same notice: it is part of the immutable decision.
             decision = prepared.records.get((K.INJECTION, chain[anchor]), {})
-            prepared.recall_notice = decision.get("notice", "")
+            prepared.reply_lead = decision.get("notice", "")
         self.assemble(prepared)
         if isinstance(body.get("input"), str) and result.get("input") == sent:
             result["input"] = body["input"]
@@ -489,7 +489,7 @@ class MemoryKernel:
             decision["reminder"] = reminder
         if policy.show_recall:
             # Replay reads only text, so the notice never changes what the model gets.
-            decision["notice"] = render_notice(parts, decision["reason"], entries)
+            decision["notice"] = recall_notice(parts, decision["reason"], entries)
         anchor = request.chain[request.anchor]
         decision = await self.store.replay.put(
             request.scope, request.session, K.INJECTION, anchor, decision

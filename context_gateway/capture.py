@@ -22,10 +22,10 @@ import orjson
 from .archives import TERMINAL, observe_archive
 from .capture_store import Document, LeaseLost
 from .models import Policy
+from .notices import without_notices
 from .protocols import clean_text, is_user, text_content, unwrap_client
 from .records import RecordKind as K
 from .tool_protocols import hidden_chain
-from .tool_protocols.common import NOTICE, RECALL_LINES
 
 logger = logging.getLogger(__name__)
 MAX_ATTEMPTS = 5
@@ -450,7 +450,7 @@ def capture_messages(messages, chain):
         if message.get("role") == "assistant":
             # Tool and recall notices are the gateway's, not the model's. Replies are
             # recorded without the recall notice already; this also catches merged text.
-            text = RECALL_LINES.sub("", NOTICE.sub("", text))
+            text = without_notices(text)
         text = clean_text(unwrap_client(text))
         parts = [{"type": "text", "text": text}] if text else []
         calls = list(message.get("tool_calls") or [])

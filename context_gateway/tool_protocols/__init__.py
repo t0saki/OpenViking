@@ -50,7 +50,7 @@ class ResponseCapture:
         it before anything is matched, so every reader of the reply goes without it too.
         """
         output = self.output_items or ([self.message] if self.message else [])
-        return tool_protocol(self.protocol).strip_recall_notice(output)
+        return tool_protocol(self.protocol).strip_lead(output)
 
     def nonstream(self, body):
         adapter = tool_protocol(self.protocol)({})

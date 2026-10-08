@@ -10,32 +10,19 @@ access storage. The shared loop owns those steps.
 
 import copy
 import functools
-import re
+import itertools
 import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
 import orjson
 
+from ..notices import TOOL_NOTICE, without_recall_notice
 from ..protocols import prefix_chain, usage_of
 
 PREFIX = "openviking_"
 # None is the Chat Completions [DONE] marker; all other events are native JSON.
 StreamEvent = dict | None
-# One rendered notice line, with the blank lines that separate it. Capture
-# strips exactly these lines, so this pattern must follow notice_head/tail.
-NOTICE = re.compile(r"^> OpenViking \w+(?:: [^\n]+)? — (?:done|failed|skipped)$\n*", re.M)
-# The recall notice (``recall_notice.render``) is one or more of these lines, each ending
-# in a newline, then one more newline. It is the gateway's, not the model's: every reader
-# strips it from the start of a reply before anchors, capture or the upstream see the
-# reply, so this grammar must follow render exactly.
-RECALL_LINE = r"> OpenViking (?:context|recall|recall failed): [^\n]+"
-# A reply that starts with a rendered notice; the match is the prefix to remove.
-RECALL_NOTICE = re.compile(rf"(?:{RECALL_LINE}\n)+\n")
-# A text part that is only a notice, after a client trimmed its whitespace.
-RECALL_TEXT = re.compile(rf"{RECALL_LINE}(?:\n{RECALL_LINE})*")
-RECALL_LINES = re.compile(rf"^{RECALL_LINE}$\n*", re.M)
-TEXT_PARTS = {"text", "output_text", "input_text"}
 # Reasoning counts against these output caps, and some models reason without being
 # asked, so a summary request first asks for this room beyond its own text. Models
 # with a smaller output limit reject that cap, and the kernel retries without it.
@@ -115,77 +102,59 @@ def call(identifier, name, arguments):
     }
 
 
-def notice_tail(failed, skipped):
-    """The outcome that completes a notice line once the call has run."""
-    if skipped:
-        return " — skipped"
-    return " — failed" if failed else " — done"
+def edit_text(content, edit, first=False):
+    """``content`` with ``edit`` applied to its text, or ``content`` itself if unchanged.
+
+    A string is edited whole. In a list ``edit`` gets the text of every part that has some,
+    or with ``first`` only of the first such part, and a part the edit empties is dropped.
+    """
+    if isinstance(content, str):
+        edited = edit(content)
+        return content if edited == content else edited
+    if not isinstance(content, list):
+        return content
+    parts, changed, offered = [], False, False
+    for part in content:
+        text = part.get("text") if isinstance(part, dict) else None
+        if isinstance(text, str) and not (first and offered):
+            offered, edited = True, edit(text)
+            if edited != text:
+                changed = True
+                if not edited.strip():
+                    continue
+                part = {**part, "text": edited}
+        parts.append(part)
+    return parts if changed else content
+
+
+def edit_replies(messages, edit, rebuild, first=False):
+    """``messages`` with ``edit`` applied to assistant text, or ``messages`` itself if unchanged.
+
+    ``edit_text`` says which text ``edit`` gets. ``rebuild(message, content, previous)``
+    returns an edited message with its new content, None to drop it, or ``message`` to keep
+    the edit out; ``previous`` is the item before it, ``{}`` for the first.
+    """
+    result, changed = [], False
+    for previous, message in itertools.pairwise([{}, *messages]):
+        if isinstance(message, dict) and message.get("role") == "assistant":
+            content = edit_text(message.get("content"), edit, first)
+            if content is not message.get("content"):
+                rebuilt = rebuild(message, content, previous)
+                changed = changed or rebuilt is not message
+                if rebuilt is None:
+                    continue
+                message = rebuilt
+        result.append(message)
+    return result if changed else messages
 
 
 def strip_notices(messages):
-    """Remove tool notices from echoed assistant text, dropping emptied text parts."""
-    result = []
-    for message in messages:
-        content = message.get("content")
-        if message.get("role") == "assistant" and isinstance(content, str):
-            message = {**message, "content": NOTICE.sub("", content)}
-        elif message.get("role") == "assistant" and isinstance(content, list):
-            parts = []
-            for part in content:
-                text = part.get("text") if isinstance(part, dict) else None
-                if isinstance(text, str) and NOTICE.search(text):
-                    text = NOTICE.sub("", text)
-                    if not text.strip():
-                        continue
-                    part = {**part, "text": text}
-                parts.append(part)
-            if not parts and content:
-                continue
-            message = {**message, "content": parts}
-        result.append(message)
-    return result
+    """Remove tool notices from echoed assistant text, dropping emptied text parts and messages."""
 
+    def rebuild(message, content, previous):
+        return {**message, "content": content} if content != [] else None
 
-def without_recall_text(text):
-    """``text`` without a leading recall notice, ``""`` when it is only one, else None."""
-    # Bounded, so relaying a long reply never copies it to look.
-    if not isinstance(text, str) or not text[:64].lstrip().startswith("> OpenViking "):
-        return None
-    if RECALL_TEXT.fullmatch(text.strip()):
-        return ""
-    match = RECALL_NOTICE.match(text)
-    return text[match.end() :] if match else None
-
-
-def without_recall_content(content):
-    """Message content without a leading recall notice, or None when it has none.
-
-    A first text part that is only the notice is dropped. Otherwise the first text
-    part, or string content, loses the notice prefix a client merged into it.
-    """
-    if isinstance(content, str):
-        return without_recall_text(content)
-    if not isinstance(content, list) or not content:
-        return None
-    first = content[0]
-    if (
-        isinstance(first, dict)
-        and first.get("type") in TEXT_PARTS
-        and without_recall_text(first.get("text")) == ""
-    ):
-        return content[1:]
-    index = next(
-        (
-            i
-            for i, part in enumerate(content)
-            if isinstance(part, dict) and part.get("type") in TEXT_PARTS
-        ),
-        None,
-    )
-    rest = None if index is None else without_recall_text(content[index].get("text"))
-    if not rest:
-        return None
-    return [*content[:index], {**content[index], "text": rest}, *content[index + 1 :]]
+    return edit_replies(messages, lambda text: TOOL_NOTICE.sub("", text), rebuild)
 
 
 @dataclass(frozen=True)
@@ -315,26 +284,20 @@ class ToolProtocol(ABC):
         return [message]
 
     @classmethod
-    def strip_recall_notice(cls, messages: list[dict]) -> list[dict]:
-        """The history without the recall notices the gateway put at the start of replies.
+    def strip_lead(cls, messages: list[dict]) -> list[dict]:
+        """The history without the recall notice the gateway put at the start of replies.
 
-        Only an assistant message's start can hold one; a user quoting a notice keeps it.
-        Returns ``messages`` itself when nothing changed.
+        Only an assistant message's first text can hold this lead; a user quoting it keeps
+        it. Returns ``messages`` itself when nothing changed.
         """
-        result, changed = [], False
-        for message in messages:
-            content = (
-                without_recall_content(message.get("content"))
-                if isinstance(message, dict) and message.get("role") == "assistant"
-                else None
-            )
-            if content is not None:
-                # A reply of tool calls alone had no content before the notice.
-                if content == "" and message.get("tool_calls"):
-                    content = None
-                message, changed = {**message, "content": content}, True
-            result.append(message)
-        return result if changed else messages
+
+        def rebuild(message, content, previous):
+            # A reply of tool calls alone had no content before the lead.
+            if content == "" and message.get("tool_calls"):
+                content = None
+            return {**message, "content": content}
+
+        return edit_replies(messages, without_recall_notice, rebuild, first=True)
 
     # Whether omit_hidden_history removes reasoning, so none is restored before it.
     omits_reasoning = False

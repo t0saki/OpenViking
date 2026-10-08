@@ -6,6 +6,7 @@ import copy
 
 import orjson
 
+from .notices import clip, tool_head
 from .protocols import replays_reasoning
 from .tool_protocols import tool_protocol
 from .tool_protocols.common import PREFIX
@@ -108,11 +109,6 @@ def select_tools(catalog, policy):
     return [*selected, *native_definitions(selected, policy)]
 
 
-def clip(value, limit=80):
-    value = " ".join(value.split())
-    return value if len(value) <= limit else value[: limit - 1] + "…"
-
-
 def notice_head(item):
     """The visible line for one gateway-run call, shown before it runs."""
     short = item["function"]["name"].removeprefix(PREFIX)
@@ -138,4 +134,4 @@ def notice_head(item):
                 target = "SKILL.md text"
         if target:
             break
-    return "> OpenViking " + short + (": " + target if target else "")
+    return tool_head(short, target)

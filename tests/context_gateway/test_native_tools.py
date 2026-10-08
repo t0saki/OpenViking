@@ -789,7 +789,7 @@ async def test_native_text_streams_before_round_finishes_and_cancel_closes(proto
         root={"policy": {}},
         metrics={},
         tools_active=True,
-        recall_notice="",
+        reply_lead="",
     )
     loop = HiddenToolLoop(
         prepared, SimpleNamespace(allowed={"openviking_search"}), None, ResponseCapture(protocol)
