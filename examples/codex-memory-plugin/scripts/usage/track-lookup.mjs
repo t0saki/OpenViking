@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { loadConfig } from "../config.mjs";
 import { usageEnabled } from "./settings.mjs";
 import { runHook } from "./hook-io.mjs";
 import {
@@ -11,7 +12,7 @@ import {
 import { writeLookup } from "./state.mjs";
 
 await runHook(async (input) => {
-  if (!usageEnabled()) return {};
+  if (!usageEnabled(loadConfig(input.cwd || undefined))) return {};
   const sessionId = input.session_id;
   const turnId = input.turn_id;
   if (!sessionId || !turnId) return {};
