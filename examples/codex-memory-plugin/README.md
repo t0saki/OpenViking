@@ -550,9 +550,9 @@ uses the deterministic fallback for that turn; later turns use the server.
 
 ## OV-Usage source summaries
 
-OV-Usage is built into the memory plugin; no separate plugin is needed. Independent
-`PostToolUse` and `Stop` hooks summarize automatic recall and explicit OpenViking
-lookups; the recall hook also supplies a footer for turns with recall alone.
+OV-Usage is built into the memory plugin; no separate plugin is needed. A
+`PostToolUse` hook records explicit OpenViking lookups, and the `Stop` hook
+summarizes them together with automatic recall.
 A typical summary is:
 
 ```text
@@ -579,11 +579,13 @@ OPENVIKING_USAGE_VIEW=expanded codex
 ```
 
 Usage uses one display channel per client. In terminal mode, the Stop hook emits
-an informational `systemMessage`; recall and lookup hooks do not request an answer
-footer. In desktop mode, recall and lookup hooks supply `additionalContext` for a
-model-rendered answer footer, and Stop does not emit a second message. Later
-lookups replace earlier snapshots. Higher-priority formatting requirements can
-suppress the footer. Interactive expand/collapse controls are not implemented.
+an informational `systemMessage`; the recall hook does not request an answer
+footer. In desktop mode, the recall hook supplies `additionalContext` for a
+model-rendered answer footer covering automatic recall, and Stop does not emit a
+second message. The lookup hook never returns `additionalContext`: Codex would
+insert it between the outputs of parallel tool calls, which strict model
+providers reject. Higher-priority formatting requirements can suppress the footer.
+Interactive expand/collapse controls are not implemented.
 
 Set `OPENVIKING_USAGE_OUTPUT=terminal` or `desktop` to select the channel explicitly.
 The default `auto` selects terminal when `TERM_PROGRAM` or a non-`dumb` `TERM` is

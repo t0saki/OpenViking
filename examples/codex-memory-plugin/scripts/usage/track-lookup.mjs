@@ -8,9 +8,7 @@ import {
   successfulResponseText,
   urisIn,
 } from "./sources.mjs";
-import { readTurn, writeLookup, writeRecall } from "./state.mjs";
-import { readTranscriptRecall } from "./transcript.mjs";
-import { answerContext } from "./display.mjs";
+import { writeLookup } from "./state.mjs";
 
 await runHook(async (input) => {
   if (!usageEnabled()) return {};
@@ -33,10 +31,7 @@ await runHook(async (input) => {
     isError: toolResponseFailed(input.tool_response) && (!wrapped || !responseText),
   };
   await writeLookup(sessionId, turnId, input.tool_use_id, lookup);
-  const recalled = await readTranscriptRecall(input.transcript_path, turnId);
-  await writeRecall(sessionId, turnId, recalled);
-  const additionalContext = answerContext(await readTurn(sessionId, turnId), turnId);
-  return additionalContext ? {
-    hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext },
-  } : {};
+  // Codex injects PostToolUse additionalContext as a developer message right after
+  // this tool's output, which splits parallel function_call_outputs; record only.
+  return {};
 }, "track-lookup");
