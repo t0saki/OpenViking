@@ -25,6 +25,17 @@ StreamEvent = dict | None
 # One rendered notice line, with the blank lines that separate it. Capture
 # strips exactly these lines, so this pattern must follow notice_head/tail.
 NOTICE = re.compile(r"^> OpenViking \w+(?:: [^\n]+)? — (?:done|failed|skipped)$\n*", re.M)
+# The recall notice (``recall_notice.render``) is one or more of these lines, each ending
+# in a newline, then one more newline. It is the gateway's, not the model's: every reader
+# strips it from the start of a reply before anchors, capture or the upstream see the
+# reply, so this grammar must follow render exactly.
+RECALL_LINE = r"> OpenViking (?:context|recall|recall failed): [^\n]+"
+# A reply that starts with a rendered notice; the match is the prefix to remove.
+RECALL_NOTICE = re.compile(rf"(?:{RECALL_LINE}\n)+\n")
+# A text part that is only a notice, after a client trimmed its whitespace.
+RECALL_TEXT = re.compile(rf"{RECALL_LINE}(?:\n{RECALL_LINE})*")
+RECALL_LINES = re.compile(rf"^{RECALL_LINE}$\n*", re.M)
+TEXT_PARTS = {"text", "output_text", "input_text"}
 # Reasoning counts against these output caps, and some models reason without being
 # asked, so a summary request first asks for this room beyond its own text. Models
 # with a smaller output limit reject that cap, and the kernel retries without it.
@@ -135,6 +146,48 @@ def strip_notices(messages):
     return result
 
 
+def without_recall_text(text):
+    """``text`` without a leading recall notice, ``""`` when it is only one, else None."""
+    # Bounded, so relaying a long reply never copies it to look.
+    if not isinstance(text, str) or not text[:64].lstrip().startswith("> OpenViking "):
+        return None
+    if RECALL_TEXT.fullmatch(text.strip()):
+        return ""
+    match = RECALL_NOTICE.match(text)
+    return text[match.end() :] if match else None
+
+
+def without_recall_content(content):
+    """Message content without a leading recall notice, or None when it has none.
+
+    A first text part that is only the notice is dropped. Otherwise the first text
+    part, or string content, loses the notice prefix a client merged into it.
+    """
+    if isinstance(content, str):
+        return without_recall_text(content)
+    if not isinstance(content, list) or not content:
+        return None
+    first = content[0]
+    if (
+        isinstance(first, dict)
+        and first.get("type") in TEXT_PARTS
+        and without_recall_text(first.get("text")) == ""
+    ):
+        return content[1:]
+    index = next(
+        (
+            i
+            for i, part in enumerate(content)
+            if isinstance(part, dict) and part.get("type") in TEXT_PARTS
+        ),
+        None,
+    )
+    rest = None if index is None else without_recall_text(content[index].get("text"))
+    if not rest:
+        return None
+    return [*content[:index], {**content[index], "text": rest}, *content[index + 1 :]]
+
+
 @dataclass(frozen=True)
 class ToolRound:
     """The validated result of one upstream call, independent of wire format."""
@@ -173,6 +226,8 @@ class ToolProtocol(ABC):
         self.identifier = self.id_prefix + "ovcg-" + uuid.uuid4().hex
         self.visible: list[dict] = []
         self.started = False
+        # Text the reply starts with, shown before any upstream content.
+        self.lead = ""
 
     @classmethod
     def messages(cls, body: dict) -> list:
@@ -258,6 +313,28 @@ class ToolProtocol(ABC):
         A message that still carries reasoning comes back unchanged.
         """
         return [message]
+
+    @classmethod
+    def strip_recall_notice(cls, messages: list[dict]) -> list[dict]:
+        """The history without the recall notices the gateway put at the start of replies.
+
+        Only an assistant message's start can hold one; a user quoting a notice keeps it.
+        Returns ``messages`` itself when nothing changed.
+        """
+        result, changed = [], False
+        for message in messages:
+            content = (
+                without_recall_content(message.get("content"))
+                if isinstance(message, dict) and message.get("role") == "assistant"
+                else None
+            )
+            if content is not None:
+                # A reply of tool calls alone had no content before the notice.
+                if content == "" and message.get("tool_calls"):
+                    content = None
+                message, changed = {**message, "content": content}, True
+            result.append(message)
+        return result if changed else messages
 
     # Whether omit_hidden_history removes reasoning, so none is restored before it.
     omits_reasoning = False
@@ -359,6 +436,17 @@ class ToolProtocol(ABC):
 
     def close_notice(self) -> list[dict]:
         return []
+
+    def lead_with(self, text: str) -> None:
+        """Start the visible reply with ``text``; the adapter shows it before upstream content."""
+        self.lead = text
+
+    def lead_notice(self) -> list[dict]:
+        """Put the pending lead text first in visible history and return its events, once."""
+        text, self.lead = self.lead, ""
+        if not text:
+            return []
+        return [*self.open_notice(), *self.notice(text), *self.close_notice()]
 
     @abstractmethod
     def results(self, receipts: list[dict]) -> list[dict]:

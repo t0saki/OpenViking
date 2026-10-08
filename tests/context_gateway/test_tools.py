@@ -226,7 +226,12 @@ async def test_stream_text_precedes_tool_completion_and_cancel_closes():
         close=lambda: closed.append(True),
     )
     prepared = SimpleNamespace(
-        body={"messages": [], "stream": True}, protocol="chat", root={"policy": {}}, metrics={}
+        body={"messages": [], "stream": True},
+        protocol="chat",
+        root={"policy": {}},
+        metrics={},
+        tools_active=True,
+        recall_notice="",
     )
     loop = HiddenToolLoop(
         prepared, SimpleNamespace(allowed={"openviking_search"}), None, ResponseCapture("chat")
@@ -313,7 +318,9 @@ async def test_notices_stream_around_each_gateway_call():
         protocol="chat",
         root={"policy": {"tool_total_tokens": 1000}},
         metrics={},
+        tools_active=True,
         tools_closed=False,
+        recall_notice="",
     )
     executor = SimpleNamespace(allowed={"openviking_search"}, execute=execute)
     loop = HiddenToolLoop(prepared, executor, None, ResponseCapture("chat"))
@@ -349,7 +356,9 @@ async def test_notices_off_leave_the_reply_unchanged():
         protocol="chat",
         root={"policy": {"show_tool_calls": False}},
         metrics={},
+        tools_active=True,
         tools_closed=False,
+        recall_notice="",
     )
     executor = SimpleNamespace(allowed={"openviking_search"}, execute=execute)
     loop = HiddenToolLoop(prepared, executor, None, ResponseCapture("chat"))

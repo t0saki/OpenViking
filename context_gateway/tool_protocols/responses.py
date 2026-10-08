@@ -15,10 +15,12 @@ from .common import (
     ToolRound,
     append_text,
     call,
+    without_recall_content,
 )
 
 CLIENT_CALLS = {"function_call", "custom_tool_call"}
 TOOL_OUTPUTS = {"function_call_output", "custom_tool_call_output"}
+ANNOUNCEMENTS = {"response.created", "response.in_progress"}
 
 
 class ResponsesProtocol(ToolProtocol):
@@ -60,6 +62,25 @@ class ResponsesProtocol(ToolProtocol):
     @staticmethod
     def wire_tools(tools):
         return [{"type": "function", **t["function"], "strict": False} for t in tools]
+
+    @classmethod
+    def strip_recall_notice(cls, messages):
+        # A reply is a run of output items; only the first item of each run can be the notice.
+        result, changed = [], False
+        for index, message in enumerate(messages):
+            content = (
+                without_recall_content(message.get("content"))
+                if message.get("role") == "assistant"
+                and not (index and cls.is_reply(messages[index - 1]))
+                else None
+            )
+            if content is not None:
+                changed = True
+                if not content:
+                    continue  # The gateway's own message item.
+                message = {**message, "content": content}
+            result.append(message)
+        return result if changed else messages
 
     @classmethod
     def block_reason(cls, body):
@@ -156,8 +177,14 @@ class ResponsesProtocol(ToolProtocol):
 
     def event(self, value):
         self.accumulate(value)
+        # The lead is output item 0, after the announcements; upstream items follow it.
+        lead = [] if value["type"] in ANNOUNCEMENTS else self.lead_notice()
+        return [*lead, *self.project(value)]
+
+    def project(self, value):
+        """The client-visible events for one accumulated upstream event."""
         kind = value["type"]
-        if kind in {"response.created", "response.in_progress"}:
+        if kind in ANNOUNCEMENTS:
             if self.announce:
                 self.envelope = copy.deepcopy(value["response"])
                 self.started = True
@@ -189,6 +216,7 @@ class ResponsesProtocol(ToolProtocol):
         self.envelope = copy.deepcopy(value)
         self.finish, self.usage = value.get("status"), value.get("usage") or {}
         self.output = copy.deepcopy(value.get("output") or [])
+        self.lead_notice()
         self.visible.extend(item for item in self.output if item["type"] not in CLIENT_CALLS)
         self.completed = True
 

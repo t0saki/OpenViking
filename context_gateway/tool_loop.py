@@ -34,8 +34,16 @@ class HiddenToolLoop:
             **prepared.body,
             self.adapter.field: list(self.adapter.messages(prepared.body)),
         }
-        self.policy, self.allowed = prepared.root["policy"], executor.allowed
-        self.deadline = time.monotonic() + self.policy.get("tool_total_seconds", 120)
+        self.policy = prepared.root["policy"]
+        # A request without gateway tools comes here only to show the recall notice: every
+        # call is the client's, nothing runs, and the reply takes as long as it takes.
+        self.allowed = executor.allowed if prepared.tools_active else set()
+        self.deadline = (
+            time.monotonic() + self.policy.get("tool_total_seconds", 120)
+            if prepared.tools_active
+            else None
+        )
+        self.adapter.lead_with(prepared.recall_notice)
         self.transcript, self.usage = [], {}
         self.final, self.hidden, self.window = None, False, None
         self.rounds, self.token_cost, self.refused = 0, 0, False
@@ -172,7 +180,9 @@ class HiddenToolLoop:
         self.prepared.metrics.update(window=window_number(self.prepared), window_reset=True)
 
     async def persist(self):
-        visible = self.adapter.visible
+        # The next request strips the recall notice before matching, so the anchor,
+        # the visible count and the replaced span all go without it.
+        visible = self.adapter.strip_recall_notice(self.adapter.visible)
         anchor = (
             hidden_chain([*self.prepared.messages, *visible], self.protocol)[-1] if visible else ""
         )
@@ -227,6 +237,11 @@ class HiddenToolLoop:
                     self.observe()
                     owned, client = [], []
                     for call in self.round.calls:
+                        if not self.prepared.tools_active:
+                            # Every call is the client's, whatever its shape: a Chat custom
+                            # tool call has no `function` (such tools keep gateway tools out).
+                            client.append(call)
+                            continue
                         name = call["function"]["name"]
                         if name.startswith(PREFIX) and name not in self.allowed:
                             raise ToolLoopError("Model called an unavailable gateway tool")
