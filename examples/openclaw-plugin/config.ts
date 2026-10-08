@@ -42,6 +42,7 @@ export type MemoryOpenVikingConfig = {
   userId?: string;
   targetUri?: string;
   timeoutMs?: number;
+  contextManagementMode?: "native" | "openviking";
   autoCapture?: boolean;
   captureMode?: "semantic" | "keyword";
   captureMaxLength?: number;
@@ -514,6 +515,9 @@ export const memoryOpenVikingConfigSchema = {
       value = {};
     }
     const cfg = value as Record<string, unknown>;
+    if (cfg.contextManagementMode !== undefined && !["native", "openviking"].includes(String(cfg.contextManagementMode))) {
+      throw new Error("contextManagementMode must be native or openviking");
+    }
     assertAllowedKeys(
       cfg,
       [
@@ -528,6 +532,7 @@ export const memoryOpenVikingConfigSchema = {
         "userId",
         "targetUri",
         "timeoutMs",
+        "contextManagementMode",
         "autoCapture",
         "captureMode",
         "captureMaxLength",
@@ -655,6 +660,7 @@ export const memoryOpenVikingConfigSchema = {
       userId,
       targetUri: typeof cfg.targetUri === "string" ? cfg.targetUri : DEFAULT_TARGET_URI,
       timeoutMs: Math.max(1000, Math.floor(toNumber(cfg.timeoutMs, DEFAULT_TIMEOUT_MS))),
+      contextManagementMode: cfg.contextManagementMode === "openviking" ? "openviking" : "native",
       autoCapture: cfg.autoCapture !== false,
       captureMode: captureMode ?? DEFAULT_CAPTURE_MODE,
       captureMaxLength: Math.max(
@@ -949,7 +955,7 @@ export const memoryOpenVikingConfigSchema = {
       advanced: true,
       help:
         "Recent messages the plugin holds in memory after an afterTurn commit (which archives every message) " +
-        "and places verbatim in the assembled context. 0 disables. Ignored in turn_budget mode. Compact and reset drop them.",
+        "and places verbatim in the assembled context. 0 disables. Only used when contextManagementMode is openviking; ignored in turn_budget mode. Compact and reset drop them.",
     },
     emitStandardDiagnostics: {
       label: "Standard diagnostics (diag JSON lines)",

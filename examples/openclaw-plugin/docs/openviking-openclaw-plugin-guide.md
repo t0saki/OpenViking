@@ -125,7 +125,7 @@ transformContext auto recall 流程：
 5. 逐条调用 `POST /api/v1/sessions/{sessionId}/messages`：`context-engine.ts:1378`、`client.ts:703`。
 6. 调 `GET /api/v1/sessions/{sessionId}` 读取 `pending_tokens`：`context-engine.ts:1389`、`client.ts:770`。
 7. 若 `pending_tokens < tokenBudget × commitTokenThresholdRatio`，本轮结束。
-8. 否则在 `message_count` 模式下（且 `commitKeepRecentCount > 0`）先调 `GET /api/v1/sessions/{sessionId}/context`，与上次保留的消息合并后取最近 `commitKeepRecentCount` 条；这次读取失败只记日志，不影响 commit。
+8. 否则在 `message_count` 模式下（且 `contextManagementMode` 为 `openviking`、`commitKeepRecentCount > 0`）先调 `GET /api/v1/sessions/{sessionId}/context`，与上次保留的消息合并后取最近 `commitKeepRecentCount` 条；这次读取失败只记日志，不影响 commit。
 9. 调用 `commitSession(wait=false, keepRecentCount=0)` 归档全部消息，服务端 Phase 2 记忆抽取异步继续执行。上次保留的消息在每次自动 commit 前清空，只有 commit 产生 archive 且第 8 步读取成功时，才换成第 8 步取到的消息：`services/context-lifecycle-service.ts`。`turn_budget` 模式跳过第 8 步，改传 `retention_mode=turn_budget`，由服务端保留最近几轮。
 10. 开启 `logFindRequests` 时，插件轮询 task 结果并打印 Phase 2 抽取状态：`context-engine.ts:1424`。
 

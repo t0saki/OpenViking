@@ -2,7 +2,7 @@ export const TAKEOVER_ENTRY_TYPE = "ov-takeover";
 export const OVERVIEW_MARKER = "[OpenViking Session Context]";
 
 const DEFAULT_CONFIG = {
-  takeoverEnabled: true,
+  takeoverEnabled: false,
   takeoverTokenThreshold: 30000,
   takeoverKeepRecentTurns: 3,
   takeoverOverviewBudget: 3000,
@@ -30,7 +30,7 @@ function numberOr(value, fallback) {
 
 function takeoverConfig(config = {}) {
   return {
-    takeoverEnabled: config.takeoverEnabled !== false,
+    takeoverEnabled: config.takeoverEnabled === true,
     takeoverTokenThreshold: Math.max(0, numberOr(config.takeoverTokenThreshold, DEFAULT_CONFIG.takeoverTokenThreshold)),
     takeoverKeepRecentTurns: Math.max(0, numberOr(config.takeoverKeepRecentTurns, DEFAULT_CONFIG.takeoverKeepRecentTurns)),
     takeoverOverviewBudget: Math.max(1, numberOr(config.takeoverOverviewBudget, DEFAULT_CONFIG.takeoverOverviewBudget)),
@@ -657,7 +657,11 @@ export class TakeoverCore {
       this.log("takeover: handler budget spent before commit; commit postponed");
       return this.fail("ran out of time delivering messages; retry");
     }
-    const committed = await this.io.commit({ queueOnFailure: false, timeoutMs: left - READ_RESERVE_MS });
+    const committed = await this.io.commit({
+      queueOnFailure: false,
+      enableWorkingMemory: true,
+      timeoutMs: left - READ_RESERVE_MS,
+    });
     const outcome = commitOutcome(committed);
     if (!outcome.accepted) {
       // No archive was written: hold the boundary, keep the token pressure so
@@ -674,6 +678,10 @@ export class TakeoverCore {
       }
       this.log(`takeover: commit returned no usable archive (${outcome.reason}); boundary held`);
       return this.fail(`the server returned no archive (${outcome.reason})`);
+    }
+
+    if (committed.effective_enable_working_memory !== true) {
+      return this.fail("Working Memory was not enabled for this commit; using native context");
     }
 
     const archive = {
@@ -915,7 +923,9 @@ export class TakeoverCore {
         this.log("takeover: handler budget spent before native compaction commit; using pi compaction");
         return undefined;
       }
-      const committed = await this.io.commit({ queueOnFailure: false, timeoutMs: left - READ_RESERVE_MS });
+      const committed = await this.io.commit({
+        queueOnFailure: false, enableWorkingMemory: true, timeoutMs: left - READ_RESERVE_MS,
+      });
       const outcome = commitOutcome(committed);
       if (!outcome.accepted) {
         if (outcome.reason === "no_result") {
@@ -928,8 +938,15 @@ export class TakeoverCore {
         return undefined;
       }
 
+      // Older servers may ignore the request field. Never trim native history
+      // unless the server confirmed the policy used by this exact commit.
+      if (committed.effective_enable_working_memory !== true) {
+        this.log("takeover: Working Memory was not enabled; using pi compaction");
+        return undefined;
+      }
       const historyUri = deriveHistoryUri(outcome.archiveUri);
-      const overview = await this.pollArchiveOverview(outcome.archiveUri, preparation.signal, until);
+      const { overview, terminal } = await this.pollArchiveOverview(outcome.archiveUri, preparation.signal, until);
+      if (!overview && terminal) return undefined;
       if (!overview || this.remaining(until) <= 0) {
         // The server accepted the archive, but this compaction attempt cannot
         // wait any longer. Remember it so ordinary takeover will not create a
@@ -1050,11 +1067,11 @@ export class TakeoverCore {
   }
 
   /** One read of an archive's `.overview.md`; "" until its non-empty body lands. */
-  async readOverviewOnce(archiveUri) {
+  async readOverviewOnce(archiveUri, timeoutMs = READ_RESERVE_MS) {
     const uri = String(archiveUri || "").trim();
     if (!uri) return "";
     try {
-      const value = await this.io.readArchiveOverview(uri);
+      const value = await this.io.readArchiveOverview(uri, timeoutMs);
       return typeof value === "string" ? value.trim() : "";
     } catch (error) {
       this.log(`takeover: archive overview read failed for ${uri} (${errorMessage(error)})`);
@@ -1068,15 +1085,25 @@ export class TakeoverCore {
    */
   async pollArchiveOverview(archiveUri, signal, until = Infinity) {
     for (let i = 0; i < this.config.takeoverOverviewPollMax; i++) {
-      if (signal?.aborted) return "";
-      const overview = await this.readOverviewOnce(archiveUri);
-      if (signal?.aborted) return "";
-      if (overview) return overview;
+      if (signal?.aborted || this.remaining(until) <= 0) break;
+      const overview = await this.readOverviewOnce(archiveUri, Math.min(READ_RESERVE_MS, this.remaining(until)));
+      if (signal?.aborted) break;
+      if (overview) return { overview, terminal: false };
+      if (this.remaining(until) <= 0) break;
+      const state = await this.io.archiveState(archiveUri, Math.min(2 * READ_RESERVE_MS, this.remaining(until)));
+      if (signal?.aborted) break;
+      if (TERMINAL_ARCHIVE_STATES.has(state)) {
+        // The summary may land between the first read and the terminal marker.
+        // A final read closes that race; a terminal archive must not stay pending.
+        if (this.remaining(until) <= 0) return { overview: "", terminal: true };
+        const finalOverview = await this.readOverviewOnce(archiveUri, Math.min(READ_RESERVE_MS, this.remaining(until)));
+        return { overview: signal?.aborted ? "" : finalOverview, terminal: true };
+      }
       if (i === this.config.takeoverOverviewPollMax - 1 || this.config.takeoverOverviewPollMs <= 0) break;
       if (this.remaining(until) < this.config.takeoverOverviewPollMs + READ_RESERVE_MS) break;
       await this.io.sleep(this.config.takeoverOverviewPollMs);
     }
-    return "";
+    return { overview: "", terminal: false };
   }
 
   log(message) {

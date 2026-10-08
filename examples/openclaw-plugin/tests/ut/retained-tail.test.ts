@@ -64,6 +64,7 @@ function makeEngine(
       baseUrl: "http://127.0.0.1:1933",
       autoCapture: true,
       autoRecall: false,
+      contextManagementMode: "openviking",
       commitKeepRecentCount: 3,
       emitStandardDiagnostics: true,
       ...opts.cfg,
@@ -146,7 +147,7 @@ describe("context engine retained tail", () => {
     expect(client.getSessionContext).toHaveBeenCalledWith(session, 128_000);
     expect(client.getSessionContext.mock.invocationCallOrder[0])
       .toBeLessThan(client.commitSession.mock.invocationCallOrder[0]);
-    expect(client.commitSession).toHaveBeenCalledWith(session, { wait: false, keepRecentCount: 0 });
+    expect(client.commitSession).toHaveBeenCalledWith(session, { wait: false, enableWorkingMemory: true, keepRecentCount: 0 });
     expect(ids(getRetainedTail(session)!)).toEqual(["m4", "m5", "m6"]);
     expect(lastDiag(logger, "afterTurn_commit")).toMatchObject({ archived: true, retainedTailMessages: 3 });
   });
@@ -257,7 +258,7 @@ describe("context engine retained tail", () => {
     await engine.afterTurn!(afterTurnParams(session));
 
     expect(client.getSessionContext).not.toHaveBeenCalled();
-    expect(client.commitSession).toHaveBeenCalledWith(session, { wait: false, keepRecentCount: 0 });
+    expect(client.commitSession).toHaveBeenCalledWith(session, { wait: false, enableWorkingMemory: true, keepRecentCount: 0 });
     expect(getRetainedTail(session)).toBeUndefined();
   });
 
@@ -269,7 +270,19 @@ describe("context engine retained tail", () => {
     await engine.afterTurn!(afterTurnParams(session));
 
     expect(client.getSessionContext).not.toHaveBeenCalled();
-    expect(client.commitSession).toHaveBeenCalledWith(session, { wait: false, retentionMode: "turn_budget" });
+    expect(client.commitSession).toHaveBeenCalledWith(session, { wait: false, enableWorkingMemory: true, retentionMode: "turn_budget" });
+    expect(getRetainedTail(session)).toBeUndefined();
+  });
+
+  it("keeps no tail and skips the capture read in native context mode", async () => {
+    const session = uniqueSession();
+    const client = makeClient();
+    const { engine } = makeEngine(client, { cfg: { contextManagementMode: "native" } });
+
+    await engine.afterTurn!(afterTurnParams(session));
+
+    expect(client.getSessionContext).not.toHaveBeenCalled();
+    expect(client.commitSession).toHaveBeenCalledWith(session, { wait: false, keepRecentCount: 0 });
     expect(getRetainedTail(session)).toBeUndefined();
   });
 
@@ -295,7 +308,7 @@ describe("context engine retained tail", () => {
 
     await engine.afterTurn!(afterTurnParams(session));
 
-    expect(client.commitSession).toHaveBeenCalledWith(session, { wait: false, keepRecentCount: 0 });
+    expect(client.commitSession).toHaveBeenCalledWith(session, { wait: false, enableWorkingMemory: true, keepRecentCount: 0 });
     expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("tail capture failed"));
     expect(getRetainedTail(session)).toBeUndefined();
   });
@@ -309,7 +322,7 @@ describe("context engine retained tail", () => {
     await expect(engine.commitTurn({ advancementKey: "k1", sessionId: session, messages: turn }))
       .resolves.toEqual({ status: "committed" });
 
-    expect(client.commitSession).toHaveBeenCalledWith(session, { wait: false, keepRecentCount: 0 });
+    expect(client.commitSession).toHaveBeenCalledWith(session, { wait: false, enableWorkingMemory: true, keepRecentCount: 0 });
     expect(getRetainedTail(session)).toBeUndefined();
   });
 

@@ -1,5 +1,7 @@
 # OpenViking for OpenClaw
 
+> **Working memory is now opt-in.** Update installed plugins separately from the OV server, then restart the host. Existing explicit settings still take precedence. See the [default-off upgrade guide](../../docs/en/guides/working-memory-default-off.md) for native history, re-enabling WM, and old-conversation handoffs.
+
 Use [OpenViking](https://github.com/volcengine/OpenViking) as OpenClaw's long-term context engine: automatic recall, session archive, memory extraction, semantic search, and RAG over a remote OpenViking server.
 
 ## Quick Start
@@ -227,7 +229,7 @@ After that, the plugin checks `pending_tokens`. Once it reaches `commitTokenThre
 
 Memory extraction on this automatic path is commit-dependent. Short but important facts can stay only in the live session until a threshold commit, `/compact`, or an explicit store happens.
 
-Auto-commit archives every message. The plugin keeps the most recent 10 messages (`commitKeepRecentCount`) in memory and places them verbatim after the archive summary when it assembles the next turns' context. This count-based window can start mid-turn. With a server that supports turn-aware retention, set `"commitRetentionMode": "turn_budget"` in the plugin config to have the server keep recent turns live instead:
+Auto-commit archives every message. With `contextManagementMode: "openviking"`, the plugin keeps the most recent 10 messages (`commitKeepRecentCount`) in memory and places them verbatim after the archive summary when it assembles the next turns' context. This count-based window can start mid-turn. With a server that supports turn-aware retention, set `"commitRetentionMode": "turn_budget"` in the plugin config to have the server keep recent turns live instead:
 
 - `commitKeepRecentCount` is ignored. The server defaults apply: up to 3 recent user turns, a 12,000-token retention budget, and at least the final assistant/tool step.
 - For an oversized newest turn, the server retains its user question and recent steps and checkpoints the archived prefix. The mandatory tail can exceed the retention budget.
@@ -243,7 +245,7 @@ Use it as a complement to auto-capture, not a replacement:
 
 - auto-capture still preserves ordinary conversation flow and batches extraction for cost and latency
 - `memory_store` is for explicit durable-memory intent such as "remember my main project is X" or "save this preference"
-- if `memory_store` commits but extracts 0 memories, check the OpenViking server extraction/model configuration; the explicit path triggered extraction, but the extractor did not produce a memory
+- if `memory_store` commits but extracts 0 memories, it returns `action: "failed"` with `error: "no_memories_extracted"` and the agent tells the user no new memory was created; possible causes are that the content is already stored, extraction is disabled, or the extraction/model configuration needs checking
 
 ### What `compact()` does
 
@@ -319,17 +321,9 @@ The plugin operates exclusively in remote mode as a pure HTTP client:
 
 The OpenViking service must be deployed and running independently before the plugin can connect to it.
 
-## Relationship to the Older Design Draft
+## Context lifecycle reference
 
-The repo also contains a more future-looking design draft at `docs/design/openclaw-context-engine-refactor.md`. It is important not to conflate the two:
-
-- this README describes current implemented behavior
-- the older draft discusses a stronger future move into context-engine-owned lifecycle control
-- in the current version, the main automatic recall path lives in `assemble()`: preflight rebuilds history, transformContext injects long-term memories
-- in the current version, `afterTurn()` already appends to the OpenViking session, but commit remains threshold-triggered and asynchronous on that path
-- in the current version, `compact()` already uses `commit(wait=true)`, but it is still focused on synchronous commit plus readback rather than owning every orchestration concern
-
-That distinction matters, otherwise the future design draft is easy to misread as already shipped behavior.
+For the current assemble, recall, capture, and compaction behavior, see the [OpenClaw integration guide](../../docs/en/agent-integrations/03-openclaw.md#how-assemble-builds-context). The guide also explains the retained `agentExperience` settings and their current limits.
 
 ## Operator and Debugging Surfaces
 
