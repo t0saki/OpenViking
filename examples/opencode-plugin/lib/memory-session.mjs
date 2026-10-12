@@ -89,6 +89,7 @@ export function createMemorySessionManager({ config, pluginRoot }) {
         sessions.set(opencodeSessionId, deserializeSessionState(persisted))
       }
       log("INFO", "persistence", "Session state loaded", { count: sessions.size, pruned })
+      if (pruned > 0) await enqueueSave()
     } catch (error) {
       log("ERROR", "persistence", "Failed to load session state", { error: error?.message })
       if (fs.existsSync(statePath)) {
@@ -141,8 +142,7 @@ export function createMemorySessionManager({ config, pluginRoot }) {
     }
   }
 
-  // A stale session whose messages are all captured holds nothing left to send,
-  // and a resumed one re-derives the same ovSessionId from its OpenCode id.
+  // A stale session whose messages are all captured holds nothing left to send.
   function isPrunable(persisted, staleBefore) {
     if ((persisted.lastActivityAt ?? 0) >= staleBefore) return false
     return (persisted.messages ?? []).every(([, message]) => message.captured)

@@ -460,7 +460,12 @@ test("startup prunes stale sessions with nothing pending and keeps the rest", as
     const statePath = join(dir, "openviking-session-state.json")
     const stale = Date.now() - 30 * 24 * 60 * 60 * 1000
     const recent = Date.now() - 60 * 1000
-    const session = (lastActivityAt, messages) => ({ ovSessionId: "oc-x", createdAt: lastActivityAt, lastActivityAt, messages })
+    const session = (lastActivityAt, messages) => ({
+      ovSessionId: "oc-x",
+      createdAt: lastActivityAt,
+      lastActivityAt,
+      messages,
+    })
     const captured = ["msg-done", { role: "user", captured: true, parts: [] }]
     const pending = ["msg-pending", { role: "user", captured: false, parts: [["part-1", { type: "text", text: "unsent" }]] }]
     fs.writeFileSync(statePath, JSON.stringify({
@@ -478,10 +483,9 @@ test("startup prunes stale sessions with nothing pending and keeps the rest", as
       pluginRoot: dir,
     })
     await manager.init({ deferNetwork: true })
-    await manager.flushAll({ commit: false })
-    await manager.waitForBackground()
 
     const data = JSON.parse(await fs.promises.readFile(statePath, "utf8"))
+    await manager.waitForBackground()
     assert.deepEqual(Object.keys(data.sessions).sort(), ["recent-done", "stale-pending"])
     assert.equal(new Map(data.sessions["stale-pending"].messages).get("msg-pending").parts.length, 1)
   })
