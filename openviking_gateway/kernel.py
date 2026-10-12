@@ -32,6 +32,7 @@ from .profile import build_profile
 from .protocols import (
     classify,
     clean_text,
+    client_openviking_tools,
     is_user,
     plugin_present,
     prefix_chain,
@@ -46,7 +47,7 @@ from .state_store import get_state
 from .storage import KernelStore, digest
 from .tool_catalog import reply_block_reason, select_tools, tool_block_reason
 from .tool_protocols import hidden_chain, replay_hidden, tool_protocol
-from .tool_protocols.common import SummaryError
+from .tool_protocols.common import PREFIX, SummaryError
 from .vendors import parameter_fingerprint
 from .windows import remind, status_line
 
@@ -346,9 +347,8 @@ class MemoryKernel:
             reason = tool_block_reason(
                 request.original, request.protocol, request.upstream, restores
             )
-            names = {t["function"]["name"] for t in tools}
-            collision = any(
-                t.get("function", t).get("name") in names for t in request.original.get("tools", [])
+            collision = client_openviking_tools(
+                request.original, [t["function"]["name"].removeprefix(PREFIX) for t in tools]
             )
             hidden = any((K.HIDDEN, anchor) in request.records for anchor in request.body_chain)
             if reason or collision:

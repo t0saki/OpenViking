@@ -1025,7 +1025,7 @@ def test_native_file_attachments_preserve_bytes(protocol):
     assert attachment_bytes(attachments(body, protocol)[0], 100) == ("note.txt", b"hello")
 
 
-@pytest.mark.parametrize("blocked", ["disabled", "forced", "collision"])
+@pytest.mark.parametrize("blocked", ["disabled", "forced", "collision", "renamed_mcp"])
 async def test_anthropic_blocked_tools_preserve_client_thinking(
     setup_kernel, credential, policy, blocked
 ):
@@ -1056,8 +1056,16 @@ async def test_anthropic_blocked_tools_preserve_client_thinking(
         upstream["allow_gateway_tools"] = False
     elif blocked == "forced":
         body["tool_choice"] = {"type": "tool", "name": "shell"}
-    else:
+    elif blocked == "collision":
         body["tools"].append({"name": "openviking_search", "input_schema": {"type": "object"}})
+    else:
+        body["tools"].append(
+            {
+                "name": "mcp__ov__read",
+                "description": "Read viking:// URIs",
+                "input_schema": {"type": "object"},
+            }
+        )
     for _ in range(2):
         result = await kernel.prepare(body, "anthropic", header, credential, upstream, policy)
         assert not result.tools_active

@@ -14,6 +14,7 @@ from openviking_gateway.kernel import token_estimate
 from openviking_gateway.models import Policy
 from openviking_gateway.protocols import (
     classify,
+    client_openviking_tools,
     normalize,
     parse_body,
     plugin_present,
@@ -560,6 +561,68 @@ def test_classification_and_plugin_namespaces():
         },
         {},
     )
+
+
+OV_NAMES = ["read", "ls", "glob", "search", "add_resource"]
+
+
+@pytest.mark.parametrize(
+    "tools, detected",
+    [
+        ([{"name": "openviking_search"}], True),
+        ([{"name": "mcp__claude_ai_OpenViking__search"}], True),
+        ([{"name": "mcp__plugin_openviking-memory_openviking__find"}], True),
+        (
+            [
+                {
+                    "type": "function",
+                    "function": {"name": "mcp__ov__read", "description": "Read viking://a"},
+                }
+            ],
+            True,
+        ),
+        (
+            [{"name": "ov_ls", "input_schema": {"properties": {"uri": {"default": "viking://"}}}}],
+            True,
+        ),
+        (
+            [{"namespace": "mcp__kb", "tools": [{"name": "glob", "description": "VIKING://user"}]}],
+            True,
+        ),
+        ([{"type": "mcp", "server_label": "OpenViking", "server_url": "https://x/mcp"}], True),
+        ([{"type": "mcp_toolset", "mcp_server_name": "openviking"}], True),
+        ([{"name": "Read", "description": "Read a local file"}, {"name": "WebSearch"}], False),
+        ([{"name": "openvikingish_search"}, {"name": "mcp__myopenviking__find"}], False),
+        # A skill list quoting an OpenViking skill is not an OpenViking tool.
+        (
+            [
+                {
+                    "name": "skill",
+                    "description": "<available_skills>viking://resources/</available_skills>",
+                }
+            ],
+            False,
+        ),
+        ([{"name": "mcp__kb__fetch", "description": "Fetch viking://a"}], False),
+    ],
+)
+def test_client_openviking_tools(tools, detected):
+    assert client_openviking_tools({"tools": tools}, OV_NAMES) == detected
+    assert client_openviking_tools({"additional_tools": tools}, OV_NAMES) == detected
+    item = {"type": "additional_tools", "tools": tools}
+    assert client_openviking_tools({"input": [item]}, OV_NAMES) == detected
+
+
+def test_client_openviking_tools_outside_tool_list():
+    servers = {"mcp_servers": [{"type": "url", "url": "https://x/mcp", "name": "openviking"}]}
+    assert client_openviking_tools(servers, OV_NAMES)
+    deferred = (
+        "<system-reminder>Deferred tools:\nmcp__claude_ai_OpenViking__search\n</system-reminder>"
+    )
+    assert client_openviking_tools({"messages": [{"role": "user", "content": deferred}]}, OV_NAMES)
+    reply = {"role": "assistant", "content": "mcp__openviking__search"}
+    assert not client_openviking_tools({"messages": [reply]}, OV_NAMES)
+    assert not client_openviking_tools({"tools": [{"name": "Read"}]}, [])
 
 
 def test_capture_pairs_tools_and_strips_noise():

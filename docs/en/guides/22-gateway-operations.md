@@ -515,7 +515,7 @@ Whether a conversation gets tools is decided at its first request and kept, so p
 | `tools_non_function` | The Chat Completions client sent a tool of a type other than function. |
 | `tools_forced_choice` | `tool_choice` is `required` or names a specific tool. |
 | `deepseek_reasoning_history_required` | The upstream's provider is DeepSeek, the request does not turn thinking off (`"thinking": {"type": "disabled"}`), and earlier replies would reach it without their reasoning: **Restore reasoning the client drops** is off, or this request cannot restore it because the conversation moved upstream, lost its memory record or has thinking resent as text. Standard Responses requests have no `thinking` field, so they count as thinking on. |
-| `tool_name_collision` | The client defines a tool with one of the `openviking_*` names. |
+| `tool_name_collision` | The client already has OpenViking tools: an MCP server or tool name contains the word `openviking` (such as `mcp__claude_ai_OpenViking__search`), including deferred tools the client lists only by name, or a tool named after an OpenViking tool (such as `mcp__ov__read`) mentions `viking://`. |
 | `tools_unavailable` | OpenViking could not provide its tool list and no previously loaded list was available. Start a new conversation after connectivity recovers. |
 | `tools_not_selected_at_session_start` | The profile has tools on, but the conversation's first request could not use them (for one of the reasons above), so the conversation has none. |
 

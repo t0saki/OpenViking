@@ -163,6 +163,22 @@ def prefix_chain(messages: list[dict]) -> list[str]:
     return result
 
 
+def client_texts(body: dict) -> list[str]:
+    """The system prompt and the client-written messages, without replies or tool output."""
+    texts = [text_content({"content": body.get("system", "")}), body.get("instructions", "")]
+    for field in ("messages", "input"):
+        messages = body.get(field, [])
+        if isinstance(messages, str):
+            texts.append(messages)
+        elif isinstance(messages, list):
+            texts.extend(
+                text_content(m)
+                for m in messages
+                if isinstance(m, dict) and m.get("role") in {"user", "system", "developer"}
+            )
+    return [text for text in texts if isinstance(text, str)]
+
+
 def plugin_present(body: dict, headers: dict) -> bool:
     if headers.get("x-openviking-plugin"):
         return True
@@ -184,18 +200,7 @@ def plugin_present(body: dict, headers: dict) -> bool:
         )
         return any(re.search(rf"<{re.escape(tag)}(?:\s|>)", text, re.I) for tag in PLUGIN_TAGS)
 
-    texts = [text_content({"content": body.get("system", "")}), body.get("instructions", "")]
-    for field in ("messages", "input"):
-        messages = body.get(field, [])
-        if isinstance(messages, str):
-            texts.append(messages)
-        elif isinstance(messages, list):
-            texts.extend(
-                text_content(m)
-                for m in messages
-                if isinstance(m, dict) and m.get("role") in {"user", "system", "developer"}
-            )
-    if any(marked(text) for text in texts if isinstance(text, str)):
+    if any(marked(text) for text in client_texts(body)):
         return True
     # Only tool definitions identify plugin ownership. File names, tool results
     # and assistant prose must never permanently disable a session.
@@ -207,6 +212,53 @@ def plugin_present(body: dict, headers: dict) -> bool:
         if isinstance(name, str) and re.search(r"(^|__)openviking(?:_|__|$)", name, re.I):
             return True
     return False
+
+
+OPENVIKING_WORD = r"(?<![a-z0-9])openviking(?![a-z0-9])"
+
+
+def client_openviking_tools(body: dict, names) -> bool:
+    """Whether the client already exposes OpenViking tools, whatever its MCP server is named.
+
+    ``names`` are the bare OpenViking tool names, such as ``read`` and ``add_resource``.
+    """
+    pending = [
+        *body.get("tools", []),
+        *body.get("additional_tools", []),
+        *body.get("mcp_servers", []),
+    ]
+    if isinstance(body.get("input"), list):
+        for item in body["input"]:
+            if isinstance(item, dict) and item.get("type") == "additional_tools":
+                pending.extend(item.get("tools") or [])
+    ending = re.compile(rf"(?<![a-z0-9])(?:{'|'.join(map(re.escape, names))})$", re.I)
+    while pending:
+        tool = pending.pop()
+        if not isinstance(tool, dict):
+            continue
+        definition = tool.get("function", tool)
+        if not isinstance(definition, dict):
+            continue
+        if isinstance(definition.get("tools"), list):
+            pending.extend(definition["tools"])
+        labels = [
+            definition.get(key)
+            for key in ("name", "namespace", "server_label", "mcp_server_name")
+            if isinstance(definition.get(key), str)
+        ]
+        if any(re.search(OPENVIKING_WORD, label, re.I) for label in labels):
+            return True
+        # A renamed server's tools keep their names and mention viking:// URIs, while
+        # a container such as a skill list may quote an OpenViking description too.
+        if (
+            names
+            and any(ending.search(label) for label in labels)
+            and "viking://" in orjson.dumps(definition).decode().lower()
+        ):
+            return True
+    # Deferred MCP tools, as in Claude Code's tool search, are listed only by name.
+    deferred = rf"\bmcp__[\w-]*?{OPENVIKING_WORD}[\w-]*__\w"
+    return any(re.search(deferred, text, re.I) for text in client_texts(body))
 
 
 def is_user(message):
