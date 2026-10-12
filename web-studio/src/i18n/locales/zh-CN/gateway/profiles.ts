@@ -1,4 +1,5 @@
 const profiles = {
+  inUseHelp: '请先吊销这些密钥或改用其他上下文配置。',
   description:
     '决定对话如何使用 OpenViking 的记忆和工具。保存后的修改只对之后开始的对话生效。',
   defaultName: '默认',

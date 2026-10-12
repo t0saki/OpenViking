@@ -113,16 +113,32 @@ describe('gatewayErrorMessage', () => {
         new GatewayError(
           'Revoke or update dependent keys before deleting this object',
           409,
+          undefined,
+          'in_use',
+          { key_count: 3 },
         ),
       ),
-    ).toBe('Keys still use this. Revoke those keys first.')
+    ).toBe('3 keys still use this.')
     expect(
-      gatewayErrorMessage(zhT, new GatewayError('root_key_not_allowed', 403)),
+      gatewayErrorMessage(
+        zhT,
+        new GatewayError(
+          'root_key_not_allowed',
+          403,
+          undefined,
+          'root_key_not_allowed',
+        ),
+      ),
     ).toBe('不接受 Root 密钥，请使用本账号下的用户密钥。')
     expect(
       gatewayErrorMessage(
         t,
-        new GatewayError('OpenViking key belongs to another account', 403),
+        new GatewayError(
+          'OpenViking key belongs to another account',
+          403,
+          undefined,
+          'other_account',
+        ),
       ),
     ).toBe('This OpenViking key belongs to another account.')
   })
@@ -134,7 +150,12 @@ describe('gatewayErrorMessage', () => {
     expect(
       gatewayErrorMessage(
         t,
-        new GatewayError('OpenViking Gateway is not enabled', 503),
+        new GatewayError(
+          'OpenViking Gateway is not enabled',
+          503,
+          undefined,
+          'not_enabled',
+        ),
       ),
     ).toBe('The OpenViking Gateway is turned off on this server.')
     expect(gatewayErrorMessage(t, new Error('socket hang up'))).toBe(

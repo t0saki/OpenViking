@@ -8,6 +8,16 @@ const overview = {
   sampleNote_other:
     'Figures cover the latest {{limit}} entries of the request log. Entries are kept for {{count}} days.',
   setup: {
+    providedUpstreams: 'Your gateway admin has provided {{count}} upstreams',
+    importedUpstreams:
+      '{{count}} upstreams available from OpenViking model settings',
+    waitUpstreams: 'Waiting for your gateway admin to add upstreams',
+    providedProfiles: 'Your gateway admin has provided {{count}} profiles',
+    waitProfiles: 'Waiting for your gateway admin to add profiles',
+    codingPlan:
+      '{{name}} is a Coding Plan upstream and needs confirmation before use',
+    confirm: 'Review',
+
     title: 'Get started',
     description:
       'Four steps to the first conversation with memory. This card goes away once a client sends its first request.',
@@ -78,14 +88,6 @@ const overview = {
     description:
       'Finds memory for new messages and stores saved conversations.',
     version: 'Version',
-    authMode: 'Authentication',
-    authModes: {
-      api_key: 'API key mode',
-      trusted: 'Trusted mode',
-      dev: 'Development mode',
-      oidc: 'OIDC mode',
-      ldap: 'LDAP mode',
-    },
     unreachable:
       "While OpenViking can't be reached, requests still go to the model without memory, and saving conversations is retried until it's back.",
     starting:

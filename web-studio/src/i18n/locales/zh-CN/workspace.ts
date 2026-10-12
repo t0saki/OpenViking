@@ -750,6 +750,18 @@ const workspace = {
     },
   },
   settings: {
+    gatewayConnection: {
+      title: '登录 OpenViking 网关',
+      openvikingUrl: '连接的 OpenViking：{{url}}',
+      apiKey: 'OpenViking API 密钥',
+      keyHint: '用户、账号管理员或 Root 的 API 密钥都可以。',
+      wrongKey:
+        '请输入 OpenViking API 密钥。网关密钥和网关管理密钥不能用于登录。',
+      invalidKey:
+        '登录失败，请检查 OpenViking API 密钥及与 OpenViking 的连接。',
+      connect: '连接',
+      connecting: '正在连接…',
+    },
     pageTitle: '设置',
     tabs: { connection: '连接设置', configuration: '服务端配置' },
     models: {

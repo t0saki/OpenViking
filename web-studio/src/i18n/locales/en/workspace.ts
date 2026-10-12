@@ -782,6 +782,18 @@ const workspace = {
     },
   },
   settings: {
+    gatewayConnection: {
+      title: 'Log in to OpenViking Gateway',
+      openvikingUrl: 'Connected OpenViking: {{url}}',
+      apiKey: 'OpenViking API key',
+      keyHint: 'You can use a user, account admin, or Root API key.',
+      wrongKey:
+        'Enter an OpenViking API key. Gateway keys and gateway management keys cannot be used to log in.',
+      invalidKey:
+        'Could not sign in. Check your OpenViking API key and the connection to OpenViking.',
+      connect: 'Connect',
+      connecting: 'Connecting…',
+    },
     pageTitle: 'Settings',
     tabs: { connection: 'Connection', configuration: 'Server configuration' },
     models: {

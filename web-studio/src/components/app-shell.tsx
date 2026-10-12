@@ -59,8 +59,10 @@ import {
   AppConnectionProvider,
   useAppConnection,
 } from '#/hooks/use-app-connection'
+import type { ConnectionRole } from '#/hooks/use-app-connection'
 import type { ServerMode } from '#/hooks/use-server-mode'
 import { cn } from '#/lib/utils'
+import { useAccess } from '#/routes/gateway/-lib/use-gateway'
 import { resolveStudioManagementCapabilities } from '#/lib/studio-permissions'
 
 type NavItem = {
@@ -295,6 +297,28 @@ export function ConnectionScopedRouteContent({
   return serverMode === 'checking' ? null : children
 }
 
+export function shouldShowGatewayNavigation({
+  isGatewayHost,
+  serverMode,
+  role,
+  hasCredential,
+  accessStatus,
+}: {
+  isGatewayHost: boolean
+  serverMode: ServerMode
+  role: ConnectionRole
+  hasCredential: boolean
+  accessStatus?: number
+}): boolean {
+  return (
+    isGatewayHost ||
+    (serverMode !== 'checking' &&
+      serverMode !== 'offline' &&
+      (serverMode === 'dev' || hasCredential || role !== 'unknown') &&
+      (accessStatus !== 404 || role === 'admin' || role === 'root'))
+  )
+}
+
 function AppShellInner({ children }: { children: React.ReactNode }) {
   const { i18n, t } = useTranslation(['appShell', 'common'])
   const navigate = useNavigate()
@@ -313,8 +337,13 @@ function AppShellInner({ children }: { children: React.ReactNode }) {
   }/api/01-overview`
   const [crossDeviceVerifyOpen, setCrossDeviceVerifyOpen] =
     React.useState(false)
-  const { connection, connectionRole, isConnectionRoleLoading, serverMode } =
-    useAppConnection()
+  const {
+    connection,
+    connectionRole,
+    isConnectionRoleLoading,
+    isGatewayHost,
+    serverMode,
+  } = useAppConnection()
   const settingsActive = pathname === '/settings'
   const usersActive = pathname === '/users' || pathname.startsWith('/users/')
   const gatewayActive =
@@ -327,6 +356,14 @@ function AppShellInner({ children }: { children: React.ReactNode }) {
   })
   const crossDeviceVerifyActive =
     pathname === '/oauth/verify' || pathname.startsWith('/oauth/verify/')
+  const gatewayAccess = useAccess()
+  const showGateway = shouldShowGatewayNavigation({
+    isGatewayHost,
+    serverMode,
+    role: connectionRole,
+    hasCredential: Boolean(connection.adminApiKey || connection.apiKey),
+    accessStatus: gatewayAccess.error?.status,
+  })
   const visibleNavItems = NAV_ITEMS
 
   function openCrossDeviceVerify(): void {
@@ -363,7 +400,7 @@ function AppShellInner({ children }: { children: React.ReactNode }) {
         </SidebarHeader>
 
         <SidebarContent className="gap-0 py-1">
-          {NAV_SECTIONS.map((section) => (
+          {(isGatewayHost ? [] : NAV_SECTIONS).map((section) => (
             <SidebarGroup key={section.id} className="pb-1">
               <SidebarGroupLabel className="h-7 px-2 pt-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-sidebar-foreground/45">
                 {t(section.titleKey, { ns: 'appShell' })}
@@ -432,7 +469,7 @@ function AppShellInner({ children }: { children: React.ReactNode }) {
                     <span>{t('footer.connection', { ns: 'appShell' })}</span>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
-                {canManageUsers ? (
+                {showGateway ? (
                   <SidebarMenuItem>
                     <SidebarMenuButton
                       render={<Link to="/gateway" />}
@@ -451,7 +488,7 @@ function AppShellInner({ children }: { children: React.ReactNode }) {
                     </SidebarMenuBadge>
                   </SidebarMenuItem>
                 ) : null}
-                {canManageUsers ? (
+                {!isGatewayHost && canManageUsers ? (
                   <SidebarMenuItem>
                     <SidebarMenuButton
                       render={<Link to="/users" />}
@@ -464,84 +501,88 @@ function AppShellInner({ children }: { children: React.ReactNode }) {
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                 ) : null}
-                <SidebarMenuItem>
-                  <SidebarMenuButton
-                    onClick={openCrossDeviceVerify}
-                    isActive={crossDeviceVerifyActive}
-                    tooltip={t('navigation.crossDeviceVerify.title', {
-                      ns: 'appShell',
-                    })}
-                    className="h-9"
-                  >
-                    <KeyRoundIcon />
-                    <span>
-                      {t('navigation.crossDeviceVerify.title', {
+                {!isGatewayHost && (
+                  <SidebarMenuItem>
+                    <SidebarMenuButton
+                      onClick={openCrossDeviceVerify}
+                      isActive={crossDeviceVerifyActive}
+                      tooltip={t('navigation.crossDeviceVerify.title', {
                         ns: 'appShell',
                       })}
-                    </span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
+                      className="h-9"
+                    >
+                      <KeyRoundIcon />
+                      <span>
+                        {t('navigation.crossDeviceVerify.title', {
+                          ns: 'appShell',
+                        })}
+                      </span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                )}
               </SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>
 
-          <SidebarGroup className="pb-1">
-            <SidebarGroupLabel className="h-7 px-2 pt-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-sidebar-foreground/45">
-              {t('sidebar.groups.resources', { ns: 'appShell' })}
-            </SidebarGroupLabel>
-            <SidebarGroupContent>
-              <SidebarMenu>
-                <SidebarMenuItem>
-                  <SidebarMenuButton
-                    render={
-                      <a
-                        href="https://docs.openviking.ai/"
-                        target="_blank"
-                        rel="noreferrer"
-                      />
-                    }
-                    tooltip={t('footer.docs', { ns: 'appShell' })}
-                    className="h-9"
-                  >
-                    <BookOpenIcon />
-                    <span>{t('footer.docs', { ns: 'appShell' })}</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-                <SidebarMenuItem>
-                  <SidebarMenuButton
-                    render={
-                      <a href={sdkApiHref} target="_blank" rel="noreferrer" />
-                    }
-                    tooltip={t('footer.sdkApi', { ns: 'appShell' })}
-                    className="h-9"
-                  >
-                    <BracesIcon />
-                    <span>{t('footer.sdkApi', { ns: 'appShell' })}</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-                <SidebarMenuItem>
-                  <SidebarMenuButton
-                    render={
-                      <a
-                        href={agentIntegrationsHref}
-                        target="_blank"
-                        rel="noreferrer"
-                      />
-                    }
-                    tooltip={t('footer.agentIntegrations', {
-                      ns: 'appShell',
-                    })}
-                    className="h-9"
-                  >
-                    <BotIcon />
-                    <span>
-                      {t('footer.agentIntegrations', { ns: 'appShell' })}
-                    </span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
+          {!isGatewayHost && (
+            <SidebarGroup className="pb-1">
+              <SidebarGroupLabel className="h-7 px-2 pt-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-sidebar-foreground/45">
+                {t('sidebar.groups.resources', { ns: 'appShell' })}
+              </SidebarGroupLabel>
+              <SidebarGroupContent>
+                <SidebarMenu>
+                  <SidebarMenuItem>
+                    <SidebarMenuButton
+                      render={
+                        <a
+                          href="https://docs.openviking.ai/"
+                          target="_blank"
+                          rel="noreferrer"
+                        />
+                      }
+                      tooltip={t('footer.docs', { ns: 'appShell' })}
+                      className="h-9"
+                    >
+                      <BookOpenIcon />
+                      <span>{t('footer.docs', { ns: 'appShell' })}</span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                  <SidebarMenuItem>
+                    <SidebarMenuButton
+                      render={
+                        <a href={sdkApiHref} target="_blank" rel="noreferrer" />
+                      }
+                      tooltip={t('footer.sdkApi', { ns: 'appShell' })}
+                      className="h-9"
+                    >
+                      <BracesIcon />
+                      <span>{t('footer.sdkApi', { ns: 'appShell' })}</span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                  <SidebarMenuItem>
+                    <SidebarMenuButton
+                      render={
+                        <a
+                          href={agentIntegrationsHref}
+                          target="_blank"
+                          rel="noreferrer"
+                        />
+                      }
+                      tooltip={t('footer.agentIntegrations', {
+                        ns: 'appShell',
+                      })}
+                      className="h-9"
+                    >
+                      <BotIcon />
+                      <span>
+                        {t('footer.agentIntegrations', { ns: 'appShell' })}
+                      </span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                </SidebarMenu>
+              </SidebarGroupContent>
+            </SidebarGroup>
+          )}
         </SidebarContent>
       </Sidebar>
 
@@ -608,7 +649,7 @@ function AppShellInner({ children }: { children: React.ReactNode }) {
 
             <div className="h-6 w-px bg-border/80" aria-hidden="true" />
 
-            <CurrentUserMenu />
+            {!isGatewayHost && <CurrentUserMenu />}
           </div>
         </header>
 
@@ -619,11 +660,13 @@ function AppShellInner({ children }: { children: React.ReactNode }) {
         </ScrollArea>
       </SidebarInset>
 
-      <CrossDeviceVerifyDialog
-        open={crossDeviceVerifyOpen}
-        onOpenChange={setCrossDeviceVerifyOpen}
-      />
-      <GeneratedCredentialDialog />
+      {!isGatewayHost && (
+        <CrossDeviceVerifyDialog
+          open={crossDeviceVerifyOpen}
+          onOpenChange={setCrossDeviceVerifyOpen}
+        />
+      )}
+      {!isGatewayHost && <GeneratedCredentialDialog />}
     </SidebarProvider>
   )
 }

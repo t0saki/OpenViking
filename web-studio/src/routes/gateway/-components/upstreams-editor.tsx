@@ -19,6 +19,8 @@ import {
 } from '../-lib/upstream-schema'
 import { useGateway, useKeys, useUpstreams } from '../-lib/use-gateway'
 import { isValid } from '../-lib/validation'
+import { ReadOnlyProvider } from './read-only'
+import { Notice } from './notice'
 import { EditorFooter } from './editor-footer'
 import { EmptyState, ErrorState, LoadingState } from './empty-state'
 import { BackLink, SectionHeader } from './section-header'
@@ -41,16 +43,32 @@ export function UpstreamEditorPage() {
 /** Loads the upstream (unless creating one) and shows the editor or a state. */
 export function UpstreamEditor({ upstreamId }: { upstreamId: string }) {
   const { t } = useTranslation('gateway')
+  const { access } = useGateway()
   const isNew = upstreamId === NEW_ID
   const upstreams = useUpstreams({ enabled: !isNew })
   const keys = useKeys({ enabled: !isNew })
 
+  if (isNew && !access?.can_write_objects)
+    return (
+      <Notice
+        tone="info"
+        action={
+          <BackLink
+            to="/gateway/upstreams"
+            label={t('upstreams.editor.back')}
+          />
+        }
+      >
+        {t('upstreams.readOnly.description')}
+      </Notice>
+    )
   if (isNew) return <UpstreamEditorForm />
 
   const stored = upstreams.data?.find((item) => item.id === upstreamId)
   if (stored) {
     return (
       <UpstreamEditorForm
+        key={`${stored.id}:${stored.revision}:${Boolean(access?.can_write_objects)}`}
         stored={stored}
         usedBy={keysUsing(keys.data, { upstreamId: stored.id })}
       />
@@ -117,7 +135,8 @@ type UpstreamEditorFormProps = {
 function UpstreamEditorForm({ stored, usedBy }: UpstreamEditorFormProps) {
   const { t } = useTranslation('gateway')
   const navigate = useNavigate()
-  const { connection, invalidate } = useGateway()
+  const { connection, invalidate, access } = useGateway()
+  const readOnly = !access?.can_write_objects
   const [id] = React.useState(() => stored?.id ?? newObjectId())
   const [initial] = React.useState(() =>
     stored ? toUpstreamInput(stored) : UPSTREAM_DEFAULTS,
@@ -185,7 +204,7 @@ function UpstreamEditorForm({ stored, usedBy }: UpstreamEditorFormProps) {
     onError: (error) => toast.error(gatewayErrorMessage(t, error)),
   })
 
-  const canSave = dirty && valid && !save.isPending
+  const canSave = !readOnly && dirty && valid && !save.isPending
   const missing = Object.keys(errors)
     .map((field) => UPSTREAM_FIELD_LABELS[field as UpstreamField])
     .filter((label): label is string => Boolean(label))
@@ -213,12 +232,14 @@ function UpstreamEditorForm({ stored, usedBy }: UpstreamEditorFormProps) {
           }
           title={stored ? stored.name : t('upstreams.editor.newTitle')}
           description={t(
-            stored
-              ? 'upstreams.editor.editDescription'
-              : 'upstreams.editor.newDescription',
+            readOnly
+              ? 'upstreams.readOnly.description'
+              : stored
+                ? 'upstreams.editor.editDescription'
+                : 'upstreams.editor.newDescription',
           )}
           actions={
-            stored ? (
+            stored && !readOnly ? (
               <>
                 <UpstreamTest
                   upstream={stored}
@@ -234,26 +255,46 @@ function UpstreamEditorForm({ stored, usedBy }: UpstreamEditorFormProps) {
           }
         />
 
-        <UpstreamForm
-          draft={draft}
-          stored={stored}
-          onChange={change}
-          onFill={fill}
-          onBlur={visit}
-          error={errorFor}
-        />
+        <ReadOnlyProvider value={readOnly}>
+          <fieldset disabled={readOnly} className="min-w-0">
+            <UpstreamForm
+              draft={draft}
+              stored={stored}
+              onChange={change}
+              onFill={fill}
+              onBlur={visit}
+              error={readOnly ? () => undefined : errorFor}
+            />
+          </fieldset>
+        </ReadOnlyProvider>
 
-        <EditorFooter
-          status={
-            dirty && missing
-              ? t('upstreams.editor.missing', { fields: missing })
-              : undefined
-          }
-          cancelTo="/gateway/upstreams"
-          saveLabel={t(stored ? 'actions.save' : 'upstreams.editor.create')}
-          saving={save.isPending}
-          disabled={!canSave}
-        />
+        {readOnly ? (
+          <div className="flex items-center justify-between gap-3">
+            <Button
+              type="button"
+              nativeButton={false}
+              variant="outline"
+              render={<Link to="/gateway/upstreams" />}
+            >
+              {t('upstreams.readOnly.back')}
+            </Button>
+            {stored ? (
+              <UpstreamTest upstream={stored} variant="header" />
+            ) : null}
+          </div>
+        ) : (
+          <EditorFooter
+            status={
+              dirty && missing
+                ? t('upstreams.editor.missing', { fields: missing })
+                : undefined
+            }
+            cancelTo="/gateway/upstreams"
+            saveLabel={t(stored ? 'actions.save' : 'upstreams.editor.create')}
+            saving={save.isPending}
+            disabled={!canSave}
+          />
+        )}
       </form>
       <DeleteUpstreamDialog
         upstream={deleting}

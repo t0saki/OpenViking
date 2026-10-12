@@ -1,3 +1,4 @@
+import { useReadOnly } from './read-only'
 import * as React from 'react'
 import { PlusIcon, XIcon } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
@@ -38,13 +39,16 @@ export function TagInput({
   suggestions = [],
   placeholder,
   id,
-  disabled,
+  disabled: explicitlyDisabled,
   ...aria
 }: TagInputProps) {
+  const readOnly = useReadOnly()
+  const disabled = explicitlyDisabled || readOnly
   const { t } = useTranslation('gateway')
   const [text, setText] = React.useState('')
 
   function add(items: string[]) {
+    if (disabled) return
     const next = [...value]
     for (const item of items) if (!next.includes(item)) next.push(item)
     if (next.length !== value.length) onChange(next)
@@ -92,6 +96,7 @@ export function TagInput({
             <span className="truncate">{item}</span>
             <button
               type="button"
+              disabled={disabled}
               aria-label={t('tags.remove', { value: item })}
               className="rounded-sm text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
               onClick={() => onChange(value.filter((other) => other !== item))}
@@ -123,6 +128,7 @@ export function TagInput({
             <button
               key={item}
               type="button"
+              disabled={disabled}
               className="inline-flex h-6 items-center gap-1 rounded-full border border-dashed px-2 font-mono text-xs text-muted-foreground transition-colors hover:border-solid hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
               onClick={() => add([item])}
             >

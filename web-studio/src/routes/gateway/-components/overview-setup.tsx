@@ -1,3 +1,5 @@
+import { ManagementUnlockButton } from './access-notices'
+import { Notice } from './notice'
 import type * as React from 'react'
 import { Link } from '@tanstack/react-router'
 import { ArrowRightIcon, CheckIcon, ListChecksIcon } from 'lucide-react'
@@ -15,7 +17,12 @@ import {
 import { cn } from '#/lib/utils'
 
 import { NEW_ID } from '../-lib/search'
-import { useKeys, useProfiles, useUpstreams } from '../-lib/use-gateway'
+import {
+  useGateway,
+  useKeys,
+  useProfiles,
+  useUpstreams,
+} from '../-lib/use-gateway'
 import { RecommendedProfileButton } from './recommended-profile-button'
 
 type StepState = 'done' | 'current' | 'todo'
@@ -92,6 +99,8 @@ function SetupStep({
  */
 export function OverviewSetup() {
   const { t } = useTranslation('gateway')
+  const { access } = useGateway()
+  const readOnly = !access?.can_write_objects
   const upstreams = useUpstreams()
   const profiles = useProfiles()
   const keys = useKeys()
@@ -103,7 +112,13 @@ export function OverviewSetup() {
   const done = [...counts.map((count) => Boolean(count)), false]
   const current = loaded ? done.indexOf(false) : -1
   const stateOf = (index: number): StepState =>
-    done[index] ? 'done' : index === current ? 'current' : 'todo'
+    done[index]
+      ? 'done'
+      : readOnly && index < 2
+        ? 'todo'
+        : index === current
+          ? 'current'
+          : 'todo'
   const variantOf = (index: number) =>
     index === current ? 'default' : 'outline'
   const [upstreamCount = 0, profileCount = 0, keyCount = 0] = counts
@@ -151,12 +166,29 @@ export function OverviewSetup() {
             title={t('overview.setup.upstream.title')}
             description={
               done[0]
-                ? t('overview.setup.upstream.done', { count: upstreamCount })
-                : t('overview.setup.upstream.description')
+                ? t(
+                    readOnly
+                      ? 'overview.setup.providedUpstreams'
+                      : upstreams.data?.some((item) =>
+                            item.id.startsWith('vlm-'),
+                          )
+                        ? 'overview.setup.importedUpstreams'
+                        : 'overview.setup.upstream.done',
+                    { count: upstreamCount },
+                  )
+                : t(
+                    readOnly
+                      ? 'overview.setup.waitUpstreams'
+                      : 'overview.setup.upstream.description',
+                  )
             }
           >
             {done[0] ? (
               viewButton('/gateway/upstreams')
+            ) : readOnly ? (
+              access?.managed ? (
+                <ManagementUnlockButton />
+              ) : null
             ) : (
               <Button
                 size="sm"
@@ -172,6 +204,31 @@ export function OverviewSetup() {
                 {t('overview.setup.upstream.action')}
               </Button>
             )}
+            {upstreams.data
+              ?.filter((item) => item.coding_plan && !item.allow_coding_plan)
+              .map((item) => (
+                <Notice
+                  key={item.id}
+                  tone="warning"
+                  action={
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      nativeButton={false}
+                      render={
+                        <Link
+                          to="/gateway/upstreams/$upstreamId"
+                          params={{ upstreamId: item.id }}
+                        />
+                      }
+                    >
+                      {t('overview.setup.confirm')}
+                    </Button>
+                  }
+                >
+                  {t('overview.setup.codingPlan', { name: item.name })}
+                </Notice>
+              ))}
           </SetupStep>
           <SetupStep
             number={2}
@@ -179,12 +236,25 @@ export function OverviewSetup() {
             title={t('overview.setup.profile.title')}
             description={
               done[1]
-                ? t('overview.setup.profile.done', { count: profileCount })
-                : t('overview.setup.profile.description')
+                ? t(
+                    readOnly
+                      ? 'overview.setup.providedProfiles'
+                      : 'overview.setup.profile.done',
+                    { count: profileCount },
+                  )
+                : t(
+                    readOnly
+                      ? 'overview.setup.waitProfiles'
+                      : 'overview.setup.profile.description',
+                  )
             }
           >
             {done[1] ? (
               viewButton('/gateway/profiles')
+            ) : readOnly ? (
+              access?.managed ? (
+                <ManagementUnlockButton />
+              ) : null
             ) : (
               <>
                 <RecommendedProfileButton

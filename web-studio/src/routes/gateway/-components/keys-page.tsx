@@ -37,6 +37,7 @@ import { deleteUserData, revokeKey } from '../-lib/api'
 import type { GatewayKey, IssuedKey, Profile, Upstream } from '../-lib/api'
 import { formatDateTime, formatRelativeTime, shortenId } from '../-lib/format'
 import { gatewayErrorMessage, protocolLabel } from '../-lib/localize'
+import { requestManagementUnlock } from '../-lib/management-key'
 import { NEW_ID } from '../-lib/search'
 import {
   useConnectionInfo,
@@ -50,6 +51,7 @@ import { EmptyState, ErrorState, LoadingState } from './empty-state'
 import { ExplainedButton } from './explained-button'
 import { KeysIssueDialog } from './keys-issue-dialog'
 import { KeysSecretDialog } from './keys-secret-dialog'
+import { Notice } from './notice'
 import { SectionHeader } from './section-header'
 import { ToneBadge, protocolTint } from './status-badges'
 
@@ -68,7 +70,10 @@ type Missing = 'upstream' | 'profile' | 'both'
 /** Issue and revoke gateway keys. */
 export function KeysPage() {
   const { t } = useTranslation('gateway')
-  const { connection, invalidate } = useGateway()
+  const { connection, invalidate, access, devMode } = useGateway()
+  const canManageUsers =
+    !devMode && ['admin', 'root'].includes(access?.role ?? '')
+  const readOnly = Boolean(access?.managed && !access.can_write_objects)
   const keysQuery = useKeys()
   const profilesQuery = useProfiles()
   const upstreamsQuery = useUpstreams()
@@ -138,9 +143,59 @@ export function KeysPage() {
   const issueButton = (
     <IssueButton
       disabled={!canIssue}
-      reason={missing ? t(`keys.prerequisites.${missing}`) : undefined}
+      reason={
+        missing
+          ? t(
+              access?.managed
+                ? 'keys.prerequisites.managed'
+                : `keys.prerequisites.${missing}`,
+            )
+          : undefined
+      }
       onClick={openIssue}
     />
+  )
+
+  const prerequisiteActions = (
+    <>
+      {!readOnly && (missing === 'upstream' || missing === 'both') ? (
+        <Button
+          variant="outline"
+          size="sm"
+          nativeButton={false}
+          render={
+            <Link
+              to="/gateway/upstreams/$upstreamId"
+              params={{ upstreamId: NEW_ID }}
+            />
+          }
+        >
+          <ServerIcon />
+          {t('keys.prerequisites.addUpstream')}
+        </Button>
+      ) : null}
+      {!readOnly && (missing === 'profile' || missing === 'both') ? (
+        <Button
+          variant="outline"
+          size="sm"
+          nativeButton={false}
+          render={
+            <Link
+              to="/gateway/profiles/$profileId"
+              params={{ profileId: NEW_ID }}
+            />
+          }
+        >
+          <SlidersHorizontalIcon />
+          {t('keys.prerequisites.createProfile')}
+        </Button>
+      ) : null}
+      {missing && readOnly ? (
+        <Button variant="outline" size="sm" onClick={requestManagementUnlock}>
+          {t('keys.prerequisites.unlock')}
+        </Button>
+      ) : null}
+    </>
   )
 
   return (
@@ -167,6 +222,16 @@ export function KeysPage() {
         }
       />
 
+      {missing && keys.length > 0 ? (
+        <Notice tone="info" action={prerequisiteActions}>
+          {t(
+            access?.managed
+              ? 'keys.prerequisites.managed'
+              : `keys.prerequisites.${missing}`,
+          )}
+        </Notice>
+      ) : null}
+
       <Card className="overflow-hidden py-0">
         <CardContent className="p-0">
           {keysQuery.isPending ? (
@@ -187,45 +252,18 @@ export function KeysPage() {
                   <span className="block">{t('keys.empty.description')}</span>
                   {missing ? (
                     <span className="mt-2 block font-medium text-foreground">
-                      {t(`keys.prerequisites.${missing}`)}
+                      {t(
+                        access?.managed
+                          ? 'keys.prerequisites.managed'
+                          : `keys.prerequisites.${missing}`,
+                      )}
                     </span>
                   ) : null}
                 </>
               }
               action={
                 <>
-                  {missing === 'upstream' || missing === 'both' ? (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      nativeButton={false}
-                      render={
-                        <Link
-                          to="/gateway/upstreams/$upstreamId"
-                          params={{ upstreamId: NEW_ID }}
-                        />
-                      }
-                    >
-                      <ServerIcon />
-                      {t('keys.prerequisites.addUpstream')}
-                    </Button>
-                  ) : null}
-                  {missing === 'profile' || missing === 'both' ? (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      nativeButton={false}
-                      render={
-                        <Link
-                          to="/gateway/profiles/$profileId"
-                          params={{ profileId: NEW_ID }}
-                        />
-                      }
-                    >
-                      <SlidersHorizontalIcon />
-                      {t('keys.prerequisites.createProfile')}
-                    </Button>
-                  ) : null}
+                  {prerequisiteActions}
                   {issueButton}
                 </>
               }
@@ -238,9 +276,11 @@ export function KeysPage() {
                   <TableHead className={DESKTOP_ONLY}>
                     {t('keys.table.key')}
                   </TableHead>
-                  <TableHead className={DESKTOP_ONLY}>
-                    {t('keys.table.user')}
-                  </TableHead>
+                  {canManageUsers ? (
+                    <TableHead className={DESKTOP_ONLY}>
+                      {t('keys.table.user')}
+                    </TableHead>
+                  ) : null}
                   <TableHead className={DESKTOP_ONLY}>
                     {t('keys.table.profile')}
                   </TableHead>
@@ -266,7 +306,11 @@ export function KeysPage() {
                     profiles={profilesQuery.isSuccess ? profiles : undefined}
                     upstreams={upstreamsQuery.isSuccess ? upstreams : undefined}
                     onRevoke={() => setRevokeTarget(key)}
-                    onDeleteUser={() => setUserTarget(key.user_id)}
+                    onDeleteUser={
+                      canManageUsers
+                        ? () => setUserTarget(key.user_id)
+                        : undefined
+                    }
                   />
                 ))}
               </TableBody>
@@ -400,7 +444,7 @@ function KeyRow({
   profiles?: Profile[]
   upstreams?: Upstream[]
   onRevoke: () => void
-  onDeleteUser: () => void
+  onDeleteUser?: () => void
 }) {
   const { t, i18n } = useTranslation('gateway')
   const locale = i18n.resolvedLanguage
@@ -416,7 +460,7 @@ function KeyRow({
           className="block max-w-56 truncate font-mono text-xs text-muted-foreground md:hidden"
           title={key.user_id}
         >
-          {`${key.prefix}… · ${key.user_id}`}
+          {onDeleteUser ? `${key.prefix}… · ${key.user_id}` : `${key.prefix}…`}
         </span>
       </TableCell>
       <TableCell
@@ -424,14 +468,16 @@ function KeyRow({
       >
         {`${key.prefix}…`}
       </TableCell>
-      <TableCell className={DESKTOP_ONLY}>
-        <span
-          className="block max-w-40 truncate font-mono text-xs"
-          title={key.user_id}
-        >
-          {key.user_id}
-        </span>
-      </TableCell>
+      {onDeleteUser ? (
+        <TableCell className={DESKTOP_ONLY}>
+          <span
+            className="block max-w-40 truncate font-mono text-xs"
+            title={key.user_id}
+          >
+            {key.user_id}
+          </span>
+        </TableCell>
+      ) : null}
       <TableCell className={DESKTOP_ONLY}>
         {profile ? (
           <Link
@@ -533,27 +579,29 @@ function KeyRow({
             <Trash2Icon />
             {t('actions.revoke')}
           </Button>
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              render={
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  className="text-muted-foreground"
-                  aria-label={t('keys.actions.more', { name: key.name })}
-                />
-              }
-            >
-              <EllipsisIcon />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-auto min-w-48">
-              <DropdownMenuItem variant="destructive" onClick={onDeleteUser}>
-                <UserXIcon />
-                {t('keys.actions.deleteUserData')}
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          {onDeleteUser ? (
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                render={
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    className="text-muted-foreground"
+                    aria-label={t('keys.actions.more', { name: key.name })}
+                  />
+                }
+              >
+                <EllipsisIcon />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-auto min-w-48">
+                <DropdownMenuItem variant="destructive" onClick={onDeleteUser}>
+                  <UserXIcon />
+                  {t('keys.actions.deleteUserData')}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ) : null}
         </div>
       </TableCell>
     </TableRow>

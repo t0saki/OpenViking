@@ -1,3 +1,4 @@
+import { useReadOnly } from './read-only'
 import * as React from 'react'
 import { PlusIcon, Trash2Icon } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
@@ -9,6 +10,7 @@ import { PLAIN_INPUT_PROPS } from '#/lib/form-input'
 type Row = { id: number; key: string; value: string }
 
 type CommonProps = {
+  disabled?: boolean
   keyPlaceholder: string
   valuePlaceholder: string
   /** Label of the add button; defaults to "Add". */
@@ -55,6 +57,8 @@ function sameRecord(a: object, b: object): boolean {
  * out of the value; when a name repeats, the last row wins and is flagged.
  */
 export function KeyValueEditor(props: KeyValueEditorProps) {
+  const readOnly = useReadOnly()
+  const disabled = props.disabled || readOnly
   const { t } = useTranslation('gateway')
   const { storedKeys = [], maskValues } = props
   const [rows, setRows] = React.useState(() => toRows(props.value))
@@ -75,6 +79,7 @@ export function KeyValueEditor(props: KeyValueEditorProps) {
   }
 
   function update(next: Row[]) {
+    if (disabled) return
     setRows(next)
     const entries = next
       .filter((row) => row.key.trim())
@@ -105,6 +110,7 @@ export function KeyValueEditor(props: KeyValueEditorProps) {
           <div key={row.id} className="grid gap-1">
             <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] items-center gap-2">
               <Input
+                disabled={disabled}
                 {...PLAIN_INPUT_PROPS}
                 value={row.key}
                 placeholder={props.keyPlaceholder}
@@ -116,6 +122,7 @@ export function KeyValueEditor(props: KeyValueEditorProps) {
                 }
               />
               <Input
+                disabled={disabled}
                 {...PLAIN_INPUT_PROPS}
                 type={
                   maskValues ? 'password' : props.numeric ? 'number' : 'text'
@@ -134,6 +141,7 @@ export function KeyValueEditor(props: KeyValueEditorProps) {
                 }
               />
               <Button
+                disabled={disabled}
                 type="button"
                 variant="ghost"
                 size="icon-sm"
@@ -156,6 +164,7 @@ export function KeyValueEditor(props: KeyValueEditorProps) {
       })}
       <div>
         <Button
+          disabled={disabled}
           type="button"
           variant="outline"
           size="sm"

@@ -37,8 +37,8 @@ import {
 } from '#/components/ui/table'
 import { cn } from '#/lib/utils'
 
-import { keysUsing, saveUpstream } from '../-lib/api'
-import type { Upstream } from '../-lib/api'
+import { importVlm, keysUsing, saveUpstream, toGatewayError } from '../-lib/api'
+import type { Upstream, VlmImportResult } from '../-lib/api'
 import { formatNumber, hostFromUrl } from '../-lib/format'
 import {
   authModeLabel,
@@ -54,6 +54,7 @@ import {
   useUpstreams,
 } from '../-lib/use-gateway'
 import { EmptyState, ErrorState, LoadingState } from './empty-state'
+import { Notice } from './notice'
 import { SectionHeader } from './section-header'
 import { EmptyValue, ProtocolBadge, ToneBadge } from './status-badges'
 import { DeleteUpstreamDialog, UpstreamTest } from './upstreams-actions'
@@ -118,6 +119,28 @@ function useToggleUpstream() {
 /** Model providers the gateway forwards requests to. */
 export function UpstreamsPage() {
   const { t } = useTranslation('gateway')
+  const { connection, access, invalidate, scope } = useGateway()
+  const canWrite = Boolean(access?.can_write_objects)
+  const [importResult, setImportResult] =
+    React.useState<VlmImportResult | null>(null)
+  const [importForbidden, setImportForbidden] = React.useState(false)
+  React.useEffect(() => {
+    setImportResult(null)
+    setImportForbidden(false)
+  }, [scope])
+  const importer = useMutation({
+    mutationFn: () => importVlm(connection),
+    onSuccess: async (result) => {
+      setImportResult(result)
+      await invalidate('upstreams')
+    },
+    onError: async (error) => {
+      if (toGatewayError(error).reason === 'vlm_import_forbidden') {
+        setImportForbidden(true)
+        await invalidate('access')
+      }
+    },
+  })
   const upstreams = useUpstreams()
   const keys = useKeys()
   const { toggle, pending: toggling } = useToggleUpstream()
@@ -130,7 +153,7 @@ export function UpstreamsPage() {
   )
   const refreshing = upstreams.isFetching || keys.isFetching
 
-  const addButton = (
+  const addButton = canWrite ? (
     <Button
       size="sm"
       nativeButton={false}
@@ -144,7 +167,26 @@ export function UpstreamsPage() {
       <PlusIcon />
       {t('upstreams.add')}
     </Button>
-  )
+  ) : null
+  const importButton = (empty = false) =>
+    access?.can_import_vlm && !importForbidden ? (
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        disabled={importer.isPending}
+        title={t('upstreams.import.hint')}
+        onClick={() => importer.mutate()}
+      >
+        {t(
+          importer.isPending
+            ? 'upstreams.import.running'
+            : empty
+              ? 'upstreams.import.useSettings'
+              : 'upstreams.import.action',
+        )}
+      </Button>
+    ) : null
 
   let body: React.ReactNode
   if (upstreams.isPending) {
@@ -163,8 +205,15 @@ export function UpstreamsPage() {
       <EmptyState
         icon={<ServerIcon />}
         title={t('upstreams.empty.title')}
-        description={t('upstreams.empty.description')}
-        action={addButton}
+        description={t(
+          canWrite ? 'upstreams.empty.description' : 'upstreams.readOnly.empty',
+        )}
+        action={
+          <div className="flex flex-wrap gap-2">
+            {importButton(true)}
+            {addButton}
+          </div>
+        }
       />
     )
   } else {
@@ -204,6 +253,7 @@ export function UpstreamsPage() {
             <UpstreamRow
               key={upstream.id}
               upstream={upstream}
+              readOnly={!canWrite}
               usedBy={keysUsing(keys.data, { upstreamId: upstream.id })}
               toggling={toggling.has(upstream.id)}
               onToggle={(enabled) => toggle({ upstream, enabled })}
@@ -236,10 +286,72 @@ export function UpstreamsPage() {
               />
               {t('actions.refresh')}
             </Button>
+            {importButton()}
             {addButton}
           </>
         }
       />
+      {importer.isError ? (
+        <Notice
+          tone="danger"
+          action={
+            toGatewayError(importer.error).reason === 'vlm_import_unavailable'
+              ? addButton
+              : undefined
+          }
+        >
+          {gatewayErrorMessage(t, importer.error)}
+        </Notice>
+      ) : null}
+      {importResult ? (
+        <Notice
+          tone={
+            importResult.needs_confirmation.length ||
+            importResult.skipped.length
+              ? 'warning'
+              : 'info'
+          }
+        >
+          <div className="flex items-start justify-between gap-3">
+            <p>
+              {t('upstreams.import.summary', {
+                imported: importResult.imported.length,
+                confirmation: importResult.needs_confirmation.length,
+                skipped: importResult.skipped.length,
+              })}
+            </p>
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              onClick={() => setImportResult(null)}
+            >
+              {t('upstreams.import.dismiss')}
+            </Button>
+          </div>
+          {importResult.needs_confirmation.map((item) => (
+            <p key={item.id}>
+              {item.name}{' '}
+              <Link
+                className="underline"
+                to="/gateway/upstreams/$upstreamId"
+                params={{ upstreamId: item.id }}
+              >
+                {t('upstreams.import.confirm')}
+              </Link>
+            </p>
+          ))}
+          {importResult.skipped.map((item) => (
+            <p key={item.id}>
+              {item.id}:{' '}
+              {t(
+                `upstreams.import.reasons.${['openai_codex', 'azure', 'litellm_no_api_base', 'invalid_configuration'].includes(item.reason) ? item.reason : 'unknown'}`,
+              )}
+            </p>
+          ))}
+          <p className="text-xs">{t('upstreams.import.repeat')}</p>
+        </Notice>
+      ) : null}
       <Card className="gap-0 overflow-hidden py-0">
         <CardContent className="p-0">{body}</CardContent>
       </Card>
@@ -255,6 +367,7 @@ export function UpstreamsPage() {
 
 type UpstreamRowProps = {
   upstream: Upstream
+  readOnly: boolean
   /** Keys that use this upstream; undefined while keys are loading. */
   usedBy: number | undefined
   toggling: boolean
@@ -264,6 +377,7 @@ type UpstreamRowProps = {
 
 function UpstreamRow({
   upstream,
+  readOnly,
   usedBy,
   toggling,
   onToggle,
@@ -340,7 +454,7 @@ function UpstreamRow({
         <Switch
           size="sm"
           checked={upstream.enabled}
-          disabled={toggling}
+          disabled={readOnly || toggling}
           aria-label={t(
             upstream.enabled
               ? 'upstreams.toggle.disable'
@@ -353,49 +467,52 @@ function UpstreamRow({
       <TableCell className="pr-4">
         <div className="flex items-center justify-end gap-1">
           <UpstreamTest upstream={upstream} />
-          <Button
-            size="sm"
-            variant="ghost"
-            className="h-8 px-2 text-xs"
-            nativeButton={false}
-            render={editLink}
-          >
-            <PencilIcon />
-            <span className="max-md:sr-only">{t('actions.edit')}</span>
-          </Button>
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              render={
-                <Button
-                  type="button"
-                  size="icon-sm"
-                  variant="ghost"
-                  aria-label={t('actions.more')}
-                  title={t('actions.more')}
-                />
-              }
-            >
-              <EllipsisIcon />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-auto min-w-48">
-              <DropdownMenuItem
-                variant="destructive"
-                disabled={Boolean(usedBy)}
-                className="items-start"
-                onClick={onDelete}
+          {!readOnly ? (
+            <>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-8 px-2 text-xs"
+                nativeButton={false}
+                render={editLink}
               >
-                <Trash2Icon className="mt-0.5" />
-                <span className="grid gap-0.5">
-                  <span>{t('upstreams.delete.action')}</span>
-                  {usedBy ? (
-                    <span className="text-xs">
-                      {t('upstreams.delete.blocked', { count: usedBy })}
+                <PencilIcon />
+                <span className="max-md:sr-only">{t('actions.edit')}</span>
+              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  render={
+                    <Button
+                      type="button"
+                      size="icon-sm"
+                      variant="ghost"
+                      aria-label={t('actions.more')}
+                      title={t('actions.more')}
+                    />
+                  }
+                >
+                  <EllipsisIcon />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-auto min-w-48">
+                  <DropdownMenuItem
+                    variant="destructive"
+                    className="items-start"
+                    onClick={onDelete}
+                  >
+                    <Trash2Icon className="mt-0.5" />
+                    <span className="grid gap-0.5">
+                      <span>{t('upstreams.delete.action')}</span>
+                      {usedBy ? (
+                        <span className="text-xs">
+                          {t('upstreams.delete.blocked', { count: usedBy })}
+                        </span>
+                      ) : null}
                     </span>
-                  ) : null}
-                </span>
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </>
+          ) : null}
         </div>
       </TableCell>
     </TableRow>

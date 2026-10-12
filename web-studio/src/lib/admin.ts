@@ -1,4 +1,6 @@
 import axios from 'axios'
+import { fetchServerHealth } from '#/hooks/use-server-mode'
+import type { ServerMode } from '#/hooks/use-server-mode'
 
 import { createClient } from '#/gen/ov-client/client'
 import {
@@ -91,7 +93,8 @@ export type ProbeConnectionInput = {
   adminApiKey: string
   apiKey: string
   baseUrl: string
-  serverMode: 'api_key' | 'trusted' | 'dev' | 'checking' | 'offline'
+  isGatewayHost?: boolean
+  serverMode: ServerMode
   userId: string
 }
 
@@ -305,6 +308,24 @@ async function probeDataAccess(
 export async function probeStudioConnection(
   input: ProbeConnectionInput,
 ): Promise<StudioConnectionProbe> {
+  const headers: Record<string, string> = {}
+  setApiKeyHeader(headers, input.adminApiKey || input.apiKey)
+  setOptionalHeader(headers, 'X-OpenViking-Account', input.accountId)
+  setOptionalHeader(headers, 'X-OpenViking-User', input.userId)
+  if (input.isGatewayHost) {
+    if (input.serverMode !== 'dev' && !input.adminApiKey && !input.apiKey) {
+      return {
+        admin: { state: 'skipped' },
+        data: { state: 'skipped', detailCode: 'dataKeyRequired' },
+      }
+    }
+    try {
+      await fetchServerHealth(input.baseUrl, headers)
+      return { admin: { state: 'skipped' }, data: { state: 'ok' } }
+    } catch (error) {
+      return { admin: { state: 'skipped' }, data: probeError(error) }
+    }
+  }
   const [admin, data] = await Promise.all([
     probeAdminAccess(input),
     probeDataAccess(input),

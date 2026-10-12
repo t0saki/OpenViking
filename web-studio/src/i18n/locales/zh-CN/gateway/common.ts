@@ -31,6 +31,8 @@ const common = {
     retry: '重试',
     revoke: '吊销',
     save: '保存',
+    view: '查看',
+    back: '返回',
     viewAll: '查看全部',
   },
   states: {
@@ -46,41 +48,52 @@ const common = {
     failed: '复制失败，请选中文本后手动复制。',
   },
   access: {
-    title: '需要账号管理员权限',
-    description:
-      '管理 OpenViking 网关需要本账号的账号管理员密钥或 Root 密钥。请先在连接设置中填写。',
+    title: '先连接 OpenViking',
+    invalid: 'OpenViking API 密钥无效',
+    description: '网关用你的 OpenViking API 密钥确认你是谁。',
     action: '打开连接设置',
+  },
+  management: {
+    title: '输入网关管理密钥',
+    label: '网关管理密钥',
+    description:
+      '网关管理密钥由部署这台网关的人设置，用来修改上游和上下文配置。它不是 OpenViking API 密钥，也不是客户端用的网关密钥。',
+    where: '在哪里找？',
+    prefix: 'openviking-server init 生成的值以 ovgm_ 开头。',
+    session: '只保存在当前浏览器标签页，关闭后自动锁定。',
+    wrongKey: '这是网关密钥（给客户端用的），请输入网关管理密钥。',
+    invalid:
+      '网关管理密钥不正确。请向部署这台网关的人确认；注意这里不是 OpenViking 的管理员 API 密钥。',
+    unlock: '解锁',
+    unlocked: '已解锁',
+    lock: '锁定',
+    editing: '可修改上游和上下文配置',
+    expired: '网关管理密钥已失效，已自动锁定。',
+    readOnly:
+      '上游和上下文配置由网关管理员统一提供。你可以查看、测试连接，并在签发密钥时选用。',
+    adminReadOnly: 'OpenViking 的管理员和 Root 也需要网关管理密钥才能修改。',
+    shared:
+      '你正在修改本账号所有用户共用的配置，保存后立即对使用它的密钥生效。',
+    publicTitle: '这台网关对所有 OpenViking 商业版用户开放',
+    publicDescription:
+      '它连接的是公共 OpenViking 服务，并且没有设置网关管理密钥。任何持有商业版 API 密钥的人都能登录这台网关，用它转发模型请求，并修改所在账号的上游。如果你是部署者，并且这台网关只给你自己或团队使用，请设置网关管理密钥后重启。',
+    generate: '可以用以下命令生成：',
+    dismiss: '关闭提示',
   },
   unavailable: {
     notEnabled: {
-      title: 'OpenViking 网关未开启',
+      title: '这台 OpenViking 没有开启网关',
       description:
-        '这台服务器没有开启 OpenViking 网关。请在 ov.conf 中开启它，重启 OpenViking，再启动网关。',
+        '在 openviking-server init 中选 Update gateway，或在 ov.conf 写入以下配置后重启。',
     },
-    tokenMissing: {
-      title: '缺少管理令牌',
-      description:
-        'OpenViking 需要和网关使用同一个管理令牌才能管理网关。请为 OpenViking 和网关设置下面的环境变量（至少 32 个字符），然后重启两者。',
+    contact: '请联系部署者开启网关。',
+    trusted: {
+      title: '网关不支持 Trusted 模式',
+      description: '请在 ov.conf 中改为 API 密钥模式后重启。',
     },
-    tokenMismatch: {
-      title: '管理令牌不一致',
-      description:
-        'OpenViking 和网关启动时用的管理令牌不同，所以网关拒绝了 OpenViking 的请求。请把下面的环境变量设成同一个值，然后重启两者。',
-    },
-    unsupported: {
-      title: '这台 OpenViking 服务器无法管理 OpenViking 网关',
-      description:
-        'Studio 连接的 OpenViking 服务器不支持 OpenViking 网关。请升级 OpenViking Server 并重启，然后重试。',
-    },
-    devMode: {
-      title: 'OpenViking 运行在开发模式',
-      description:
-        '开发模式下每个密钥都以 Root 身份操作，而网关不接受 Root 密钥，所以签发不了网关密钥。请把 OpenViking 切换到 API 密钥模式并重启，再到连接设置中填写账号管理员密钥。',
-    },
-    unreachable: {
-      title: 'OpenViking 连不上网关',
-      description:
-        '网关没有运行，或者 ov.conf 里的 gateway.url 指向了错误的地址。请启动网关，并确认 OpenViking 能访问这个地址。',
+    openvikingUnreachable: {
+      title: '网关连不上 OpenViking（{{url}}）',
+      description: '检查启动参数 --openviking-url，然后重试。',
     },
     failed: {
       title: '无法加载 OpenViking 网关',
@@ -92,12 +105,17 @@ const common = {
   },
   errors: {
     reasons: {
+      management_key_required:
+        '上游和上下文配置由网关管理员统一提供，你没有修改权限。',
+      management_key_invalid: '网关管理密钥不正确，请向部署这台网关的人确认。',
+      vlm_import_forbidden: '你没有导入 OpenViking 模型配置的权限。',
+      vlm_import_unavailable:
+        '这台网关不在 OpenViking 服务内运行，读不到服务端的模型配置，请手动添加上游。',
+      in_use: '仍有 {{count}} 个密钥在使用它。',
+      trusted_mode_unsupported: '网关不支持 Trusted 模式。',
+      openviking_unreachable: '网关连不上 OpenViking。',
+
       not_enabled: '这台服务器没有开启 OpenViking 网关。',
-      token_missing: '没有设置管理令牌，OpenViking 无法管理网关。',
-      token_mismatch:
-        '网关拒绝了 OpenViking 的管理令牌，两者必须使用同一个令牌。',
-      unreachable: 'OpenViking 连不上网关。',
-      unsupported: '这台 OpenViking 服务器不支持 OpenViking 网关。',
       conflict: '这项修改与现有配置冲突。',
       invalid: '网关拒绝了这些设置，请检查填写的值后重试。',
       forbidden: '没有执行此操作的权限。',
@@ -117,6 +135,8 @@ const common = {
     subscriptionKey: '不支持 Claude 订阅登录，请使用模型 API Key。',
   },
   validation: {
+    anthropicBaseUrl:
+      'Anthropic 的 base_url 不需要 /v1，网关会自动拼接 /v1/messages。',
     required: '必填',
     number: '请输入数字',
     integer: '请输入整数',

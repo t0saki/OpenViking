@@ -22,8 +22,12 @@ const state = vi.hoisted(() => ({
   role: 'admin',
   roleLoading: false,
   serverMode: 'api_key',
+  credential: 'admin-key',
 }))
-const api = vi.hoisted(() => ({ getConnectionInfo: vi.fn() }))
+const api = vi.hoisted(() => ({
+  getConnectionInfo: vi.fn(),
+  getAccess: vi.fn(),
+}))
 
 vi.mock('#/hooks/use-app-connection', () => ({
   useAppConnection: () => ({
@@ -32,7 +36,7 @@ vi.mock('#/hooks/use-app-connection', () => ({
       accountId: 'acme',
       userId: 'admin',
       apiKey: '',
-      adminApiKey: 'admin-key',
+      adminApiKey: state.credential,
     },
     connectionRole: state.role,
     isConnectionRoleLoading: state.roleLoading,
@@ -49,6 +53,7 @@ vi.mock('react-i18next', async (importOriginal) => ({
 vi.mock('./-lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof Api>()),
   getConnectionInfo: api.getConnectionInfo,
+  getAccess: api.getAccess,
 }))
 
 describe('routes', () => {
@@ -87,7 +92,22 @@ describe('layout gates', () => {
     state.role = 'admin'
     state.roleLoading = false
     state.serverMode = 'api_key'
-    api.getConnectionInfo.mockReset()
+    api.getConnectionInfo.mockResolvedValue({
+      base_url: 'https://gateway.example.com',
+      public_url_configured: true,
+    })
+    state.credential = 'admin-key'
+    api.getAccess.mockReset()
+    api.getAccess.mockResolvedValue({
+      managed: false,
+      can_write_objects: true,
+      can_import_vlm: true,
+      can_issue_for_others: true,
+      role: 'admin',
+      account_id: 'acme',
+      user_id: 'admin',
+      warnings: [],
+    })
   })
   afterEach(cleanup)
 
@@ -114,8 +134,9 @@ describe('layout gates', () => {
     )
   }
 
-  it('asks for an account administrator key', async () => {
+  it('asks for an OpenViking key if none is configured', async () => {
     state.role = 'user'
+    state.credential = ''
     renderLayout()
     expect(await screen.findByText('access.title')).toBeTruthy()
     expect(screen.queryByText('tabs.overview')).toBeNull()
@@ -123,44 +144,47 @@ describe('layout gates', () => {
   })
 
   it('explains how to turn the gateway on', async () => {
-    api.getConnectionInfo.mockRejectedValue(
-      new GatewayError('OpenViking Gateway is not enabled', 503),
+    api.getAccess.mockRejectedValue(
+      new GatewayError(
+        'OpenViking Gateway is not enabled',
+        404,
+        undefined,
+        'not_enabled',
+      ),
     )
     renderLayout()
     expect(await screen.findByText('unavailable.notEnabled.title')).toBeTruthy()
-    expect(screen.getByText(/"enabled": true/)).toBeTruthy()
-    expect(screen.getByText('unavailable.docs')).toBeTruthy()
+    expect(screen.getByText(/"enabled":true/)).toBeTruthy()
     expect(screen.queryByText('tabs.overview')).toBeNull()
   })
 
-  it('explains development mode instead of asking for a key', async () => {
+  it('shows gateway pages in development mode without credentials', async () => {
     state.serverMode = 'dev'
     state.role = 'root'
+    state.credential = ''
     renderLayout()
-    expect(await screen.findByText('unavailable.devMode.title')).toBeTruthy()
-    expect(screen.getByText(/"auth_mode": "api_key"/)).toBeTruthy()
+    expect(await screen.findByText('tabs.overview')).toBeTruthy()
     expect(screen.queryByText('access.title')).toBeNull()
-    expect(api.getConnectionInfo).not.toHaveBeenCalled()
   })
 
   it.each([
     [
-      new GatewayError('Invalid gateway management credential', 401),
-      'unavailable.tokenMismatch.title',
+      new GatewayError('trusted', 409, undefined, 'trusted_mode_unsupported'),
+      'unavailable.trusted.title',
     ],
     [
-      new GatewayError('Not Found', 404, undefined, 'unsupported'),
-      'unavailable.unsupported.title',
+      new GatewayError('Not Found', 404, undefined, 'not_enabled'),
+      'unavailable.notEnabled.title',
     ],
   ])('shows a setup card for %s', async (error, title) => {
-    api.getConnectionInfo.mockRejectedValue(error)
+    api.getAccess.mockRejectedValue(error)
     renderLayout()
     expect(await screen.findByText(title)).toBeTruthy()
     expect(screen.getByText('actions.retry')).toBeTruthy()
   })
 
   it('shows other failures as an error with retry', async () => {
-    api.getConnectionInfo.mockRejectedValue(new GatewayError('Network Error'))
+    api.getAccess.mockRejectedValue(new GatewayError('Network Error'))
     renderLayout()
     expect(await screen.findByText('unavailable.failed.title')).toBeTruthy()
     expect(screen.getByText('Network Error')).toBeTruthy()

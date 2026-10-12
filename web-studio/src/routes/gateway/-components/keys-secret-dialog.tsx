@@ -121,6 +121,12 @@ export function KeysSecretDialog({
                   size="icon-sm"
                 />
               </div>
+              <p className="text-sm">
+                {t('keys.secret.identity', { user: issued.user_id })}
+              </p>
+              <Notice tone="info">
+                {t('keys.secret.dependency', { user: issued.user_id })}
+              </Notice>
               <dl className="flex flex-wrap gap-x-6 gap-y-1 text-sm">
                 <div className="flex min-w-0 items-baseline gap-2">
                   <dt className="text-muted-foreground">

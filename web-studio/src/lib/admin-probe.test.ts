@@ -71,3 +71,32 @@ describe('trusted connection probes', () => {
     },
   )
 })
+
+it('validates a gateway login with health only, including a root key in the single key field', async () => {
+  const requests: string[] = []
+  const server = createServer((req, res) => {
+    requests.push(req.url || '')
+    expect(req.headers['x-api-key']).toBe('root-key')
+    res.setHeader('Content-Type', 'application/json')
+    res.end(JSON.stringify({ service: 'openviking-gateway', role: 'root' }))
+  })
+  server.listen(0, '127.0.0.1')
+  await once(server, 'listening')
+  const { port } = server.address() as { port: number }
+  try {
+    const result = await probeStudioConnection({
+      baseUrl: `http://127.0.0.1:${port}`,
+      serverMode: 'api_key',
+      isGatewayHost: true,
+      accountId: 'default',
+      userId: 'root',
+      apiKey: 'root-key',
+      adminApiKey: '',
+    })
+    expect(result.data.state).toBe('ok')
+    expect(result.admin.state).toBe('skipped')
+    expect(requests).toEqual(['/health'])
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()))
+  }
+})
