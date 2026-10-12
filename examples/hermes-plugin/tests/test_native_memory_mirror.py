@@ -109,7 +109,10 @@ def test_replace_updates_the_same_openviking_uri_and_registry(mirror):
     _wait_for(lambda: len(client.snapshot()) == 1)
     create = client.snapshot()[0]
     uri = create[2]["uri"]
-    assert create[2]["content"].startswith("Preferred provider is DeepInfra\n\n")
+    assert _memory_fields(create[2]["content"]) == (
+        "Preferred provider is DeepInfra",
+        {"user": "default", "topic": "hermes_user_memory"},
+    )
 
     provider.on_memory_write(
         "replace",
