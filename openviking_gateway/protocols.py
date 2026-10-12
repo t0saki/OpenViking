@@ -225,27 +225,30 @@ def client_openviking_tools(body: dict, names) -> bool:
     pending = []
     for key in ("tools", "additional_tools", "mcp_servers"):
         if isinstance(body.get(key), list):
-            pending.extend(body[key])
+            pending.extend(("", tool) for tool in body[key])
     if isinstance(body.get("input"), list):
         for item in body["input"]:
             if isinstance(item, dict) and item.get("type") == "additional_tools":
                 if isinstance(item.get("tools"), list):
-                    pending.extend(item["tools"])
-    ending = re.compile(rf"(?<![a-z0-9])(?:{'|'.join(map(re.escape, names))})$", re.I)
+                    pending.extend(("", tool) for tool in item["tools"])
+    # Prefixed like mcp__ov__read or ov_read; a bare Read is a client's own tool.
+    ending = re.compile(rf"[^a-z0-9](?:{'|'.join(map(re.escape, names))})$", re.I)
     while pending:
-        tool = pending.pop()
+        parent, tool = pending.pop()
         if not isinstance(tool, dict):
             continue
         definition = tool.get("function", tool)
         if not isinstance(definition, dict):
             continue
-        if isinstance(definition.get("tools"), list):
-            pending.extend(definition["tools"])
         labels = [
-            definition.get(key)
+            parent + definition[key]
             for key in ("name", "namespace", "server_label", "mcp_server_name")
             if isinstance(definition.get(key), str)
         ]
+        if isinstance(definition.get("tools"), list):
+            # A namespace's tools are named without it, as in mcp__kb + glob.
+            prefix = (labels[0] + "__") if labels else ""
+            pending.extend((prefix, child) for child in definition["tools"])
         if any(re.search(OPENVIKING_WORD, label, re.I) for label in labels):
             return True
         # A renamed server's tools keep their names and mention viking:// URIs, while
@@ -256,9 +259,10 @@ def client_openviking_tools(body: dict, names) -> bool:
             and "viking://" in orjson.dumps(definition).decode().lower()
         ):
             return True
-    # Deferred MCP tools, as in Claude Code's tool search, are listed only by name.
-    deferred = rf"\bmcp__[\w-]*?{OPENVIKING_WORD}[\w-]*__\w"
-    return any(re.search(deferred, text, re.I) for text in client_texts(body))
+    # Deferred MCP tools, as in Claude Code's tool search, are listed only by name, one
+    # per line; a name mentioned in prose is not a tool.
+    deferred = rf"^[ \t]*mcp__[\w-]*?{OPENVIKING_WORD}[\w-]*__\w+[ \t]*$"
+    return any(re.search(deferred, text, re.I | re.M) for text in client_texts(body))
 
 
 def is_user(message):

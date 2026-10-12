@@ -1065,6 +1065,35 @@ async def test_anthropic_blocked_tools_preserve_client_thinking(
         assert result.metrics.get("degradation") != "hidden_tool_history_unavailable"
 
 
+def test_exact_tool_name_clash_skips_replayed_gateway_tools():
+    from types import SimpleNamespace
+
+    from openviking_gateway.kernel import MemoryKernel
+    from openviking_gateway.models import Policy
+    from openviking_gateway.records import RecordKind as K
+
+    tool = {"type": "function", "function": {"name": "openviking_search", "parameters": {}}}
+    body = {"model": "m", "messages": [], "tools": [{"name": "openviking_search"}]}
+    request = SimpleNamespace(
+        root={"tools": [tool]},
+        metrics={},
+        protocol="anthropic",
+        disabled=True,
+        strip_replayed_thinking=False,
+        thinking_as_text=False,
+        original=body,
+        body=copy.deepcopy(body),
+        upstream={},
+        records={(K.HIDDEN, "a"): {}},
+        body_chain=["a"],
+        tools_active=False,
+        hidden_history_unavailable=False,
+    )
+    MemoryKernel.configure_tools(request, Policy(), owner=False)
+    assert request.metrics["tool_skip_reason"] == "tool_name_collision"
+    assert request.body["tools"] == body["tools"]
+
+
 async def test_client_openviking_tools_are_decided_at_session_start(
     setup_kernel, credential, policy
 ):

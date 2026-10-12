@@ -604,6 +604,7 @@ OV_NAMES = ["read", "ls", "glob", "search", "add_resource"]
             False,
         ),
         ([{"name": "mcp__kb__fetch", "description": "Fetch viking://a"}], False),
+        ([{"name": "Read", "description": "Read a file or viking:// URI"}], False),
     ],
 )
 def test_client_openviking_tools(tools, detected):
@@ -620,6 +621,8 @@ def test_client_openviking_tools_outside_tool_list():
         "<system-reminder>Deferred tools:\nmcp__claude_ai_OpenViking__search\n</system-reminder>"
     )
     assert client_openviking_tools({"messages": [{"role": "user", "content": deferred}]}, OV_NAMES)
+    prose = "Why does mcp__openviking__search fail?"
+    assert not client_openviking_tools({"messages": [{"role": "user", "content": prose}]}, OV_NAMES)
     reply = {"role": "assistant", "content": "mcp__openviking__search"}
     assert not client_openviking_tools({"messages": [reply]}, OV_NAMES)
     assert not client_openviking_tools({"tools": [{"name": "Read"}]}, [])

@@ -515,7 +515,7 @@ server {
 | `tools_non_function` | Chat Completions 客户端传入了 function 以外类型的工具。 |
 | `tools_forced_choice` | `tool_choice` 为 `required`，或者指定了某个工具。 |
 | `deepseek_reasoning_history_required` | 上游的服务商是 DeepSeek，请求没有关闭思考模式（`"thinking": {"type": "disabled"}`），而之前的回复发到上游时会缺少推理内容：关闭了**补全推理内容回传**，或者这个请求补不回推理内容，因为对话换了上游、丢了记忆记录，或者思考内容被当作正文发回。标准的 Responses 请求没有 `thinking` 字段，按开启思考模式处理。 |
-| `tool_name_collision` | 对话的首个请求显示客户端已接入 OpenViking 工具：MCP 服务名或工具名中含有单词 `openviking`（如 `mcp__claude_ai_OpenViking__search`），包括客户端只列出名字的延迟加载工具；或以 OpenViking 工具名结尾的工具（如 `mcp__ov__read`）在定义中出现 `viking://`。 |
+| `tool_name_collision` | 客户端已接入 OpenViking 工具。对话首个请求中满足以下任一条件即算：工具名、namespace 或 MCP 服务名（`server_label`、`mcp_server_name`、`mcp_servers[].name`）含有单词 `openviking`，如 `mcp__claude_ai_OpenViking__search`；独占一行列出的延迟加载工具名符合上述规则；带前缀、以 OpenViking 工具名结尾的工具（如 `mcp__ov__read`）在定义中出现 `viking://`。此外，任一请求中客户端工具与网关工具同名也算，因为上游会拒绝重名工具。 |
 | `tools_unavailable` | 无法从 OpenViking 加载工具清单，也没有之前加载成功的清单。连接恢复后请开始新对话。 |
 | `tools_not_selected_at_session_start` | 上下文配置开启了工具，但对话的第一个请求因为上面某个原因用不了工具，所以整段对话都没有工具。 |
 
