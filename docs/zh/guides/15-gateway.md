@@ -18,7 +18,7 @@ description: 把任何使用 API Key 的模型客户端指向 OpenViking 网关�
 
 网关支持三种常用的模型 API：Anthropic Messages、OpenAI Chat Completions 和 OpenAI Responses（要求每个请求都带完整历史）。它把每个请求转发给你配置的模型服务商，这里称为**上游**；请求用哪种 API 发来，就用同一种 API 转发，网关不做转换。
 
-> **注意**：OpenViking 网关是一个单独运行的进程 `openviking-gateway`，不在 OpenViking Server 进程里。它和 VikingBot Gateway（`vikingbot gateway` 命令）是两个不同的组件：后者是 VikingBot 的长期运行入口，负责远程访问和接入聊天平台。
+> **注意**：OpenViking 网关可以在 Server 内运行，也可用 `openviking-gateway` 独立运行。VikingBot Gateway（`vikingbot gateway`）是负责远程访问和聊天平台接入的另一组件。
 
 网关目前处于 Beta 阶段。本页介绍网关的工作方式和客户端接入方法。为团队部署网关和日常运维，见[OpenViking 网关部署与运维](22-gateway-operations.md)。
 
@@ -33,13 +33,17 @@ description: 把任何使用 API Key 的模型客户端指向 OpenViking 网关�
 
 ## 一张图看懂架构
 
-![OpenViking 网关架构：客户端只改 Base URL 和 API Key，经反向代理把模型请求发给网关；网关用用户自己的 OpenViking 密钥搜索 OpenViking、保存对话，再用同一种 API 把请求转发给上游模型服务商；会话和记忆的正本在 OpenViking，网关本机只有两个加密的 SQLite 文件](../../images/gateway/architecture.zh.svg)
+```text
+Client → OpenViking Server :1933 → embedded Gateway → model provider
+                                      ↓
+                              OpenViking memory APIs
+```
 
-- **运行在哪**：网关是独立的服务，可以和 OpenViking 装在同一台机器、放在同一个 Pod，也可以分开部署（见[部署方式](22-gateway-operations.md#部署方式)）。共享部署时网关端口不对外开放，由反向代理把模型 API 和工具上传路径转发给网关，其余路径转发给 OpenViking；只在本机试用时可以省掉反向代理。
+- **运行在哪**：嵌入 Server 共用端口，或独立连接已有 OpenViking 服务。两者客户端路径相同，见[部署方式](22-gateway-operations.md#部署方式)。
 - **和 OpenViking 的关系**：网关只调用 OpenViking 的公开接口，向量化和记忆提取都在 OpenViking 里完成。
 - **数据在哪**：会话和记忆的正本在 OpenViking。网关本机只有两个加密的 SQLite 文件，一个存上游、密钥和配置，一个存对话状态；对话闲置 30 天后，网关删除它的状态。删除和隔离方式见[安全与数据](22-gateway-operations.md#安全与数据)。
 - **出故障时**：OpenViking 不可用时对话照常进行，只是不带记忆，保存对话会自动重试。网关停止服务时，经过它的模型调用全部失败。
-- **谁来管**：账号管理员在 Studio 里给每位用户签发网关密钥。每个密钥绑定一位 OpenViking 用户、一份**上下文配置**（召回预算、是否保存对话、是否开放 OpenViking 工具等记忆设置）和一组**上游**（请求转发到的模型服务地址和 API Key）。
+- **谁来管**：用户可自行签发网关密钥，管理员可为本账号用户签发，root 可切换账号。每把密钥绑定 OpenViking 用户、上下文配置和上游；可选网关管理密钥控制共享上游和上下文配置的修改。
 
 ## 接入后，对话会发生什么
 
@@ -194,136 +198,25 @@ Claude Code、Codex 和 pi 如果需要按项目区分记忆，或者要求每�
 
 ## 快速开始
 
-下面的流程在一台机器上运行 OpenViking Server、网关和测试客户端。你需要：
+先准备好能正常使用 embedding 和 VLM 的 OpenViking 配置。网关依赖已包含在核心包中。
 
-- 一套能正常工作的 OpenViking，`ov.conf` 中已经配置好 embedding 和 VLM 模型（见[快速开始](../getting-started/02-quickstart.md)）；
-- Python 3.10 或更高版本；
-- 一个模型服务商的 API Key。订阅登录和 Coding Plan 密钥无法通过网关使用。
-
-### 1. 安装网关
-
-把 `gateway` 可选依赖安装到 OpenViking 所在的环境：
-
-::: code-group
-
-```bash [pip]
-pip install "openviking[gateway]"
-```
-
-```bash [uv]
-uv tool install "openviking[gateway]" --upgrade
-```
-
-:::
-
-安装后，`openviking-gateway --help` 会打印命令用法。在 Linux 和 macOS 上，还可以加装 `gateway-fast`（`"openviking[gateway,gateway-fast]"`），换用更快的事件循环和 HTTP 解析器。
-
-### 2. 生成加密密钥和管理令牌
-
-网关需要两样东西：一个加密密钥，用来加密它存储的数据；一个管理令牌，OpenViking Server 凭它代你调用网关的管理接口。两者各生成一次，保存在只有你能读取的文件里：
+1. 运行 `openviking-server init`，选择在同一端口启用网关；已有配置选择 **Update gateway**。也可以在 `ov.conf` 中设置 `"gateway": {"enabled": true}`。
+2. 启动或重启 `openviking-server`，打开 `http://127.0.0.1:1933/studio/` 并进入网关。本地 dev 无需 API 密钥；没有上游时会从 VLM 创建上游和默认上下文配置。导入的 Coding Plan 上游需先确认才能使用。
+3. 远程部署用 OpenViking API 密钥登录。缺少上游或上下文配置时自行添加；若为只读，请部署者提供，或输入网关管理密钥解锁。普通用户可给自己签发密钥；admin/root 可选择目标用户，root 先选择账号。用户凭证只存哈希时需要粘贴其 API 密钥。
+4. 签发网关密钥，选择上下文配置和上游，并在首次展示时复制 `ovgw_…` 值。密钥仅展示一次，按所选用户权限访问记忆；该用户的 OpenViking API 密钥重新生成后，网关密钥会失效。
+5. 使用签发的网关密钥测试：
 
 ```bash
-mkdir -p ~/.openviking
-cat > ~/.openviking/gateway.env <<EOF
-export OPENVIKING_GATEWAY_ENCRYPTION_KEY="$(python3 -c 'import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())')"
-export OPENVIKING_GATEWAY_ADMIN_TOKEN="$(python3 -c 'import secrets; print(secrets.token_urlsafe(48))')"
-EOF
-chmod 600 ~/.openviking/gateway.env
+export GATEWAY_KEY='<ovgw_key>'
+curl http://127.0.0.1:1933/v1/models -H "Authorization: Bearer $GATEWAY_KEY"
+curl http://127.0.0.1:1933/v1/chat/completions \
+  -H "Authorization: Bearer $GATEWAY_KEY" -H "Content-Type: application/json" \
+  -d '{"model":"<your-model>","messages":[{"role":"user","content":"请记住我喜欢简洁的回复。"}]}'
 ```
 
-OpenViking Server 和网关都要读取这两个环境变量，所以启动它们的每个终端都要先加载这个文件。加密密钥务必保留好：一旦更换，网关就读不出之前存储的数据。
+在 Studio 请求日志中检查召回和保存。新账号可能尚无记忆，需等待对话提交和处理。
 
-### 3. 开启 API Key 认证和网关
-
-网关用每个人自己的 OpenViking 密钥访问记忆，所以 OpenViking 必须运行在 API Key 模式。把下面的设置合并进 `~/.openviking/ov.conf`，root key 用一个足够长的随机值：
-
-```json
-{
-  "server": {
-    "auth_mode": "api_key",
-    "root_api_key": "<root-key>"
-  },
-  "gateway": {
-    "enabled": true,
-    "public_url": "http://127.0.0.1:1935"
-  }
-}
-```
-
-其余设置保持默认：网关监听 `127.0.0.1:1935`，通过 `http://127.0.0.1:1933` 访问 OpenViking，数据存放在 `~/.openviking/gateway`。`public_url` 是客户端使用的地址，Studio 的接入说明会显示它。
-
-### 4. 启动 OpenViking Server
-
-```bash
-source ~/.openviking/gateway.env
-openviking-server
-```
-
-如果服务已经在运行，就从这个终端重新启动它，让它同时读到新配置和管理令牌。
-
-### 5. 创建账号和用户密钥
-
-在另一个终端里，用 root key 创建一个账号及其首位管理员，做法见[认证](04-authentication.md)：
-
-```bash
-curl -X POST http://127.0.0.1:1933/api/v1/admin/accounts \
-  -H "X-API-Key: <root-key>" \
-  -H "Content-Type: application/json" \
-  -d '{"account_id": "acme", "admin_user_id": "alice"}'
-# 返回：{"result": {"account_id": "acme", "admin_user_id": "alice", "user_key": "..."}}
-```
-
-保存 alice 的 `user_key`。在这个流程里它有两个用途：在 Studio 里以账号管理员身份登录，以及作为网关访问 alice 记忆时使用的 OpenViking 密钥。团队使用时，给每个人单独创建用户密钥（调用 `POST /api/v1/admin/accounts/acme/users`，并指定 `"role": "user"`）。
-
-### 6. 启动网关
-
-```bash
-source ~/.openviking/gateway.env
-openviking-gateway --config ~/.openviking/ov.conf
-```
-
-检查它能否连上 OpenViking：
-
-```bash
-curl -s http://127.0.0.1:1935/health
-# {"status":"ok","service":"openviking-gateway","openviking":{"status":"ok","healthy":true,"version":"…","auth_mode":"api_key"}}
-```
-
-刚启动时，`openviking` 可能还显示 `{"status":"starting"}`。如果显示 `"status":"degraded"`，见[故障排查](22-gateway-operations.md#故障排查)。
-
-### 7. 在 Studio 中完成设置
-
-打开 <http://127.0.0.1:1933/studio>，进入**连接设置**，把 alice 的密钥同时填入**用户 API 密钥**和**管理员 API 密钥**。然后在侧边栏的“设置”分组里选择**OpenViking 网关**。第一个请求到达之前，“概览”标签页会显示**快速开始**清单，步骤与下面相同：
-
-1. **添加上游。** 在“上游”标签页选择**添加上游**。填写名称，选择服务商，再选择客户端使用的协议（本流程用 Chat Completions）。Studio 会填入服务商的 Base URL，例如 OpenAI 为 `https://api.openai.com/v1`；选*通用*时需要自己填写。保持选中**由网关保管 API Key**，再粘贴服务商的 API Key。保存后在上游列表里点**测试**，确认网关能连上服务商。
-2. **创建上下文配置。** 在“上下文配置”标签页选择**使用推荐设置创建**，会创建一份名为“默认”的配置，其中 OpenViking 工具只勾选了只读工具。
-3. **签发网关密钥。** 在“密钥”标签页选择**签发密钥**。填写名称，在 **OpenViking 用户**中选择 alice（账号里只有她一个用户时已经自动选好），再选择“默认”配置和刚添加的上游，然后签发。**复制网关密钥**对话框只显示一次完整的 `ovgw_…` 密钥，关闭之前先复制好。
-4. **接入客户端。** “接入”标签页列出了每种客户端的配置，并已填好你的网关地址。下文[接入客户端](#接入客户端)也列出了同样的配置。
-
-### 8. 发送测试请求
-
-```bash
-export GATEWAY_KEY='ovgw_...'
-
-curl -s http://127.0.0.1:1935/v1/models -H "Authorization: Bearer $GATEWAY_KEY"
-# {"object":"list","data":[{"id":"…","object":"model","owned_by":"openviking-gateway"}]}
-
-curl -s http://127.0.0.1:1935/v1/chat/completions \
-  -H "Authorization: Bearer $GATEWAY_KEY" \
-  -H "Content-Type: application/json" \
-  -H "X-OpenViking-Session: quickstart-1" \
-  -d '{"model": "<model>", "messages": [{"role": "user", "content": "记住：我喜欢简短的回答。"}]}'
-```
-
-模型列表里是你在上游中填写的模型和别名；如果上游的模型列表留空，这里也是空的。第二条命令应该返回服务商的一次正常回复。
-
-### 9. 确认记忆生效
-
-- **请求经过了网关。** 打开“请求日志”标签页，刚才的请求显示为**新消息**，状态为 200。OpenViking 中有相关内容时，**记忆**列会显示补充的条数（例如 `+3`）；全新账号下这一列为空。
-- **对话已保存。** 用同一个 `X-OpenViking-Session` 请求头再发一条消息。第二条消息一到，第一轮就会保存；最后一轮在停顿 10 分钟后保存。之后，以 alice 身份连接 Studio 时，这段对话会以 `gateway-…` 会话的形式出现在**会话**页面。
-- **记忆已提取。** 会话提交之后，OpenViking 才会提取记忆：对话停顿 10 分钟时提交一次，待提交内容累计到 20,000 token 时也会提交。提取在后台进行，需要稍等片刻。然后换一个会话请求头的值开始新对话，问一个依赖这条记忆的问题，例如“你的回答应该多长？”。**记忆**列会显示召回的条数，回复也应该用上了这些记忆。
-
-试用阶段想更快看到效果，可以另建一份上下文配置，把**最新回复等待时长**调短，用它签发一个密钥，再用这个密钥开始新对话。上下文配置的修改只对之后开始的对话生效。
+独立连接已有服务时，运行 `openviking-gateway --openviking-url <OV 地址>`，打开 `http://127.0.0.1:1935/studio/` 并用 OpenViking API 密钥登录，无需修改服务端配置。独立配置、管理密钥、加密存储和迁移见[部署与运维](22-gateway-operations.md)。
 
 ## 接入客户端
 

@@ -1,215 +1,129 @@
 # OpenViking Gateway Management API
 
-OpenViking Server forwards OpenViking Gateway management calls below `/api/v1/admin/gateway`. Studio's OpenViking Gateway page uses these endpoints to manage upstreams, context profiles and gateway keys, and to read request logs. Model traffic does not go through this API; clients send it to the gateway's own port (see [OpenViking Gateway](../guides/15-gateway.md)).
+The gateway owns `/api/v1/admin/gateway/*` in both embedded and standalone deployments. Embedded requests use the server port (normally 1933); standalone requests use the gateway port (normally 1935). No shared admin token or server HTTP proxy is involved. Model clients use `/v1/*`, `/api/v3/*` or `/api/compatible/v1/*` with a gateway key instead.
 
-**Prerequisites**:
+## Credentials and account scope
 
-- `gateway.enabled` is `true` in `ov.conf`, and the gateway process is reachable at `gateway.url`.
-- OpenViking Server and the gateway share the admin token (`OPENVIKING_GATEWAY_ADMIN_TOKEN` by default, at least 32 characters).
-- The caller uses an ADMIN key or the root key. USER keys get `403`.
+Send an OpenViking API key in `X-API-Key` or `Authorization: Bearer`. The gateway verifies identity through OpenViking `/health`, caching successful results by credential digest for 30 seconds. Local dev uses root identity `default/default`; trusted authentication is unsupported.
 
-**Code entry points**:
+Upstreams and context profiles (`policies`) belong to an account. `account_id` is an optional query parameter, defaulting to the caller's account. Root can select any account. Admins and users remain in their own account for identity-dependent operations.
 
-- `openviking/server/routers/gateway.py` - OpenViking Server proxy, role check and account scoping
-- `openviking_gateway/app.py` - gateway management routes
-- `openviking_gateway/models.py` - upstream, context profile and key models
+The optional management key goes in `X-OpenViking-Gateway-Management-Key`. It controls object changes independently of OpenViking roles. A wrong supplied key always returns 401 `management_key_invalid`; the request is not silently downgraded to read-only.
 
-## How the proxy works
+| Operation | No management key configured | Management key configured |
+| --- | --- | --- |
+| Read/test upstreams and read profiles | Any authenticated identity in its account | Same; management-key-only requests may choose any account |
+| Create/update/delete upstreams or profiles | Any authenticated identity in its account | Valid management key required, including for admin/root |
+| Import VLM configuration | Embedded root/dev only | Valid management key and embedded VLM source required |
+| Issue/revoke/read gateway keys; reset capture | User: own keys; admin: account; root: selected account | Same; management key grants no extra rights |
+| Logs and overview | User: own records; admin/root: account records | Same; OpenViking identity required |
+| Delete user data | Admin in own account or root | Same |
+| Delete account data | Root | Same |
 
-| Method | Path | Description |
-|--------|------|-------------|
-| GET / POST / PUT / DELETE | `/api/v1/admin/gateway/{path}` | Forwarded to `{gateway.url}/admin/{path}` for the caller's account |
+A management key can be used **without** an OpenViking key for object operations and `/access`, selecting any account through `account_id`. It cannot grant access to memory, logs, overview, or gateway key issuance. Combining credentials does not elevate those identity-dependent operations. Changing the configured management key does not invalidate existing gateway keys.
 
-Every request to `/api/v1/admin/gateway/{path}` is sent to `{gateway.url}/admin/{path}` with the same method, query string and body. OpenViking Server replaces the caller's credentials with the admin token and adds `X-OpenViking-Account` set to the caller's account, so every call reads and changes only that account's gateway objects. An account admin cannot reach another account's data, and the caller cannot choose the destination.
+## Access and discovery
 
-Only these first path segments are forwarded: `overview`, `logs`, `guides`, `upstreams`, `policies`, `keys`, `users` and `tools`. Any other path, or a path containing `..`, returns `404`. The gateway's response status and body are returned unchanged.
-
-## API Reference
-
-Paths in the tables are relative to `/api/v1/admin/gateway/`. The management API calls context profiles `policies`.
-
-### Overview and logs
+All operations below use the `/api/v1/admin/gateway/` prefix.
 
 | Method | Path | Description |
-|--------|------|-------------|
-| GET | `overview` | Usage summary of the latest 10,000 log records: request count, output tokens, cache hit ratios for first calls and continuations, degradations, recall statistics and saving problems, plus OpenViking health and `log_retention_days` |
-| GET | `logs?limit=200` | Newest request log records; `limit` is 1–1000, default 200 |
-| GET | `guides` | Address clients should use: `base_url` and `public_url_configured` |
-| GET | `tools` | OpenViking tools a context profile can offer: `name`, `description` and, when present, `annotations` |
+| --- | --- | --- |
+| GET | `/api/v1/admin/gateway/access` | Permissions: `managed`, `can_write_objects`, `can_import_vlm`, `can_issue_for_others`, `role`, `account_id`, `user_id`, `warnings` |
+| GET | `/api/v1/admin/gateway/overview` | Summary of latest 10,000 visible logs: usage, cache, recall, capture issues, OpenViking health and log retention |
+| GET | `/api/v1/admin/gateway/logs` | Newest visible logs; limit defaults to 200 and is clamped to 1–1000 |
+| GET | `/api/v1/admin/gateway/guides` | `base_url` and `public_url_configured`; falls back to request origin |
+| GET | `/api/v1/admin/gateway/tools` | Tool names, descriptions and annotations, fetched using the caller’s own OpenViking credential |
 
-`tools` reads the tool list with the OpenViking key bound to one of the account's gateway keys. It returns an empty list while the account has no gateway keys, and an error when none of them can read it.
-
-**HTTP API**
+`warnings` may include `public_openviking_without_management_key` when a public OpenViking service is configured without a management key. This is a warning, not an access restriction.
 
 ```bash
-curl http://localhost:1933/api/v1/admin/gateway/overview \
-  -H "X-API-Key: your-admin-key"
+curl "$GATEWAY_URL/api/v1/admin/gateway/access" \
+  -H "X-API-Key: $OPENVIKING_API_KEY"
 ```
 
-**Response Example**
-
-```json
-{
-  "requests": 128,
-  "last_request_at": 1785000000.0,
-  "output_tokens": 45210,
-  "cache": {
-    "first_call": {"requests": 40, "input_tokens": 320000, "cached_tokens": 250000, "cache_hit_ratio": 0.78},
-    "continuation": {"requests": 88, "input_tokens": 910000, "cached_tokens": 860000, "cache_hit_ratio": 0.95}
-  },
-  "degradations": {},
-  "recall_count": 96,
-  "recall_requests": 40,
-  "recall_ms": 182.5,
-  "capture_issues": {"retrying": 0, "paused": 0},
-  "sample_limit": 10000,
-  "openviking": {"status": "ok", "healthy": true, "version": "0.4.16", "auth_mode": "api_key"},
-  "log_retention_days": 30
-}
-```
-
-### Upstreams and context profiles
+## Upstreams and profiles
 
 | Method | Path | Description |
-|--------|------|-------------|
-| GET | `upstreams` | List upstreams |
-| PUT | `upstreams/{upstream_id}` | Create or replace an upstream |
-| DELETE | `upstreams/{upstream_id}` | Delete an upstream |
-| POST | `upstreams/{upstream_id}/test` | Check that the gateway can reach the provider's model list |
-| GET | `policies` | List context profiles |
-| PUT | `policies/{policy_id}` | Create or replace a context profile |
-| DELETE | `policies/{policy_id}` | Delete a context profile |
+| --- | --- | --- |
+| GET | `/api/v1/admin/gateway/upstreams` | List upstreams |
+| GET | `/api/v1/admin/gateway/upstreams/{identifier}` | Read one upstream |
+| PUT | `/api/v1/admin/gateway/upstreams/{identifier}` | Create or replace upstream |
+| DELETE | `/api/v1/admin/gateway/upstreams/{identifier}` | Delete unused upstream |
+| POST | `/api/v1/admin/gateway/upstreams/{identifier}/test` | Test the model-list endpoint |
+| POST | `/api/v1/admin/gateway/upstreams/import-vlm` | Import embedded server model settings |
+| GET | `/api/v1/admin/gateway/policies` | List profiles |
+| GET | `/api/v1/admin/gateway/policies/{identifier}` | Read one profile |
+| PUT | `/api/v1/admin/gateway/policies/{identifier}` | Create or replace profile |
+| DELETE | `/api/v1/admin/gateway/policies/{identifier}` | Delete unused profile |
 
-The caller chooses `upstream_id` and `policy_id`. A `PUT` body is the complete object, and unknown fields are rejected. For every field, its default and limits, see the upstream and context profile settings in the [configuration reference](../guides/22-gateway-operations.md#configuration-reference).
+Choose IDs yourself. `PUT` takes a complete object; unknown fields fail validation. Field defaults and limits are in the [configuration reference](../guides/22-gateway-operations.md#configuration-reference).
 
-Upstream `api_key` and `headers` values are write-only. Responses replace them with `has_api_key` and `header_names`. On `PUT`, a blank `api_key` keeps the stored key; omitting `headers` keeps every stored header, and a blank header value keeps the stored value for that name.
-
-Deleting an upstream or context profile that a gateway key still uses returns `409`; revoke or update those keys first.
-
-**HTTP API**
-
-```bash
-curl http://localhost:1933/api/v1/admin/gateway/upstreams \
-  -H "X-API-Key: your-admin-key"
-```
-
-**Response Example**
-
-```json
-[
-  {
-    "id": "openai",
-    "revision": 2,
-    "name": "OpenAI",
-    "protocol": "chat",
-    "vendor": "openai",
-    "base_url": "https://api.openai.com/v1",
-    "auth_mode": "managed",
-    "has_api_key": true,
-    "header_names": [],
-    "models": ["gpt-5"],
-    "aliases": {},
-    "context_windows": {},
-    "priority": 0,
-    "enabled": true,
-    "allow_gateway_tools": true,
-    "coding_plan": false,
-    "allow_coding_plan": false,
-    "cache_min_tokens": 1024
-  }
-]
-```
-
-`upstreams/{upstream_id}/test` returns `{"ok": true, "status": 200}` with the provider's status, or `{"ok": false, "reason": "upstream_unavailable"}` when the provider cannot be reached within 10 seconds.
-
-### Gateway keys
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `keys` | List gateway keys without their secrets |
-| POST | `keys` | Issue a gateway key; the secret appears only in this response |
-| DELETE | `keys/{key_id}` | Revoke a gateway key |
-| POST | `keys/{key_id}/capture/reset` | Make conversation saving for one session resync from the next request |
-
-`POST keys` body:
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `name` | string | Yes | Display name |
-| `openviking_key` | string | Conditional | OpenViking key of the user the gateway key acts for; send this or `user_id` |
-| `user_id` | string | Conditional | User in the caller's account; OpenViking Server reads that user's key. Only account admins can use it |
-| `policy_id` | string | Yes | Context profile |
-| `upstream_ids` | string[] | Yes | At least one upstream |
-| `models` | string[] | No | Allowed models; empty allows every model the upstreams serve |
-
-The OpenViking key must belong to a USER or ADMIN of the caller's account. `user_id` works only when OpenViking Server can read stored user keys; with key hashing enabled, send `openviking_key` instead. Root callers must also send `openviking_key`, because the root key may resolve to a different account than the one Studio shows.
-
-Existing keys cannot be edited; `PUT keys/{key_id}` returns `405`. Issue a replacement and revoke the old key.
-
-**HTTP API**
+API keys and header values are write-only. Writable upstream views return `has_api_key` and `header_names`; read-only views retain `has_api_key` and `auth_mode` but hide headers and their names. A blank/omitted `api_key` keeps the stored key **only if `base_url` is unchanged**. When changing the base, submit a new API key; otherwise the old key is cleared. When the base is unchanged, omitted `headers` preserve stored headers; supplied names replace the set, and blank values keep existing values for those names. Changing `base_url` also clears retained headers: re-enter every custom header value required at the new destination.
 
 ```bash
-curl -X POST http://localhost:1933/api/v1/admin/gateway/keys \
+curl -X PUT "$GATEWAY_URL/api/v1/admin/gateway/upstreams/openai?account_id=team" \
+  -H "X-OpenViking-Gateway-Management-Key: $GATEWAY_MANAGEMENT_KEY" \
   -H "Content-Type: application/json" \
-  -H "X-API-Key: your-admin-key" \
-  -d '{"name":"alice laptop","user_id":"alice","policy_id":"default","upstream_ids":["openai"]}'
+  -d '{"name":"OpenAI","protocol":"chat","base_url":"https://api.openai.com/v1","api_key":"<provider-key>"}'
 ```
 
-**Response Example**
+Deleting an object still referenced by keys returns 409 `in_use` with `key_count`. Revoke those keys first, or disable an upstream to stop requests immediately. Existing gateway keys cannot be edited.
 
-```json
-{
-  "id": "3f6c…",
-  "revision": 1,
-  "name": "alice laptop",
-  "policy_id": "default",
-  "upstream_ids": ["openai"],
-  "models": [],
-  "user_id": "alice",
-  "prefix": "ovgw_Xk3p9Q",
-  "created_at": 1785000000.0,
-  "key": "ovgw_Xk3p9Q…"
-}
-```
+Connection tests return `{ok, status, reason, url}` (network failures omit `status`). 2xx with a `data` array passes (`passed`); 2xx failure bodies and 401/403 return `upstream_key_rejected`; 404/405 are reachable with no model list (`models_unavailable`, `ok: true`, key unverified); 429 is reachable (`rate_limited`, `ok: true`); network/5xx failures return `upstream_unavailable`. Tests time out after 10 seconds and remain available in read-only views.
 
-`keys/{key_id}/capture/reset` takes `{"session": "<session>", "protocol": "chat"}`, where `protocol` is `anthropic`, `chat` or `responses`. `session` is either the session header value the client sent, such as `X-OpenViking-Session`, or the `session` field of the request's log record; a session without a header can only be named by the latter. It returns `{"status": "ready", "message": "…"}`, or `404` when the key or session does not exist.
+VLM imports return `{imported, needs_confirmation, skipped}`. Entries use stable `vlm-<credential id>` IDs; repeat imports update them. Coding/Plan endpoints require `allow_coding_plan` confirmation. Skipped reasons include `openai_codex` (refreshing OAuth token), `azure` (requires api-version) and `litellm_no_api_base` (set api_base before retrying). Standalone gateways return `vlm_import_unavailable`.
 
-### User data
+## Gateway keys
 
 | Method | Path | Description |
-|--------|------|-------------|
-| DELETE | `users/{user_id}/data` | Revoke all of a user's gateway keys and delete their conversation state in the gateway |
+| --- | --- | --- |
+| GET | `/api/v1/admin/gateway/keys` | List visible keys without secrets |
+| GET | `/api/v1/admin/gateway/keys/{identifier}` | Read one visible key |
+| POST | `/api/v1/admin/gateway/keys` | Issue key; returns secret once in `key` |
+| DELETE | `/api/v1/admin/gateway/keys/{identifier}` | Revoke key, preserving user data |
+| POST | `/api/v1/admin/gateway/keys/{identifier}/capture/reset` | Reset one session’s capture state |
+| DELETE | `/api/v1/admin/gateway/users/{user_id}/data` | Delete user keys, conversation state and logs |
+| DELETE | `/api/v1/admin/gateway/account/data` | Root: delete account gateway objects, keys, state and logs |
 
-Sessions already saved to OpenViking are not affected.
+`POST keys` accepts required `name`, `policy_id`, and nonempty `upstream_ids`; optional `models` restricts model names (empty means all), `user_id` selects the target user, and `openviking_key` supplies a user's credential. For self-issuance, the caller's user/admin credential is used by default. Admin/root may select another user within their scope; the gateway fetches that user's key using the caller's credentials. If the server stores only hashes, 409 `user_key_unreadable` asks for an explicit `openviking_key`. A supplied `user_id` must match that key's identity. Root API keys cannot be bound to gateway keys; local dev is the exception with `default/default`.
+
+```bash
+curl -X POST "$GATEWAY_URL/api/v1/admin/gateway/keys?account_id=team" \
+  -H "X-API-Key: $OPENVIKING_API_KEY" -H "Content-Type: application/json" \
+  -d '{"name":"Alice laptop","user_id":"alice","policy_id":"default","upstream_ids":["openai"]}'
+```
+
+Copy the returned `key` (`ovgw_…`) immediately; subsequent reads show only its prefix and metadata. `PUT keys/{id}` returns 405 `replacement_key_required`: issue a replacement and revoke the original. Regenerating or revoking the bound OpenViking key invalidates the gateway key after identity-cache expiry (up to 30 seconds); this does not delete stored user data.
+
+Capture reset takes `{"session":"<header value or logged session>","protocol":"chat"}`, where protocol is `chat`, `anthropic` or `responses`. It returns `{"status":"ready","message":"…"}` or 404 `not_found`.
+
+Explicit data deletion removes pending conversation content and logs in the gateway. Sessions and memories already saved in OpenViking are unaffected. Embedded deployments also clean up gateway data through OpenViking's account/user deletion hooks; standalone data otherwise remains until explicit deletion or TTL expiry.
 
 ## Errors
 
-Errors raised by OpenViking Server itself use the standard error envelope:
+Gateway failures contain a stable top-level `reason`, for example `{"reason":"in_use","detail":"in_use","key_count":2}`. Credential/service failures may also include `error: {message, reason}`. Match `reason`, not message text. An embedded server with Gateway disabled has no management route (404); Studio presents this as `not_enabled`.
 
-| Status | Code | Cause |
-|--------|------|-------|
-| 400 | `INVALID_ARGUMENT` | Root sent `user_id` in `POST keys`; unknown `user_id` |
-| 400 | `INVALID_ARGUMENT` | `POST keys` sent both `user_id` and `openviking_key` (original status 422) |
-| 403 | `PERMISSION_DENIED` | Caller is not ROOT or ADMIN |
-| 404 | `NOT_FOUND` | Path outside the forwarded resources |
-| 409 | `CONFLICT` | The chosen user's key cannot be read on the server |
-| 503 | `UNAVAILABLE` | OpenViking Gateway is not enabled, the admin token is not configured, or the gateway cannot be reached (original status 502) |
+| HTTP | reason | Next step |
+| --- | --- | --- |
+| 401 | `management_key_invalid` | Wrong management key; unlock with current value |
+| 403 | `management_key_required` | Object writes require management key |
+| 409 | `user_key_unreadable` | Paste target user’s OpenViking API key |
+| 403 | `root_key_not_allowed` | Bind a user/admin API key instead |
+| 403 | `other_account` | Choose an account inside caller scope |
+| 401 | `openviking_http_401` | OpenViking rejected credential; reconnect |
+| 502 / 503 | `openviking_unavailable / openviking_unreachable` | Check service connectivity and standalone --openviking-url |
+| 503 | `openviking_version_mismatch` | Upgrade to min_server_version or later |
+| 403 | `trusted_mode_unsupported` | Use API key authentication |
+| 409 | `in_use` | key_count keys reference the object |
+| 403 | `vlm_import_forbidden` | Recheck /access and import authority |
+| 404 | `vlm_import_unavailable` | Add upstream manually on standalone host |
+| 400 | `unknown_user / unknown_policy / unknown_upstream` | Choose existing user or object |
+| 403 | `forbidden` | Operation outside caller role/user scope |
+| 404 | `not_found` | Resource missing or not visible |
+| 405 | `replacement_key_required` | Issue a replacement key |
+| 422 | `invalid_configuration` | Fix body or base URL; submitted secrets are not echoed |
+| 401 | `openviking_identity_missing` | Credential did not resolve to a user |
 
-Errors from the gateway pass through with its own status and a body such as `{"detail": "Unknown context policy"}`:
+Other OpenViking HTTP failures use `openviking_http_<status>`; generic gateway HTTP errors use `gateway_http_<status>`. Model-client 401 errors can mean a missing, wrong or revoked `ovgw_` key, or an invalidated bound OpenViking key. Check the client key and reissue it with a current user key.
 
-| Status | Cause |
-|--------|-------|
-| 400 | `POST keys` names an unknown context profile or upstream |
-| 403 | The OpenViking key belongs to another account |
-| 404 | Unknown resource, key or session |
-| 405 | `PUT keys/{key_id}` |
-| 409 | Deleting an upstream or context profile that keys still use |
-| 422 | Invalid body. The message does not echo submitted values, because they can contain secrets |
-
-When the gateway cannot verify an OpenViking key, the body is `{"error": {"message": "<reason>"}}` with reasons listed in [Issuing a key fails](../guides/22-gateway-operations.md#issuing-a-key-fails).
-
-## Related Documentation
-
-- [OpenViking Gateway](../guides/15-gateway.md) - how the gateway works and how to connect clients
-- [OpenViking Gateway deployment and operations](../guides/22-gateway-operations.md) - deployment, Studio management and configuration reference
-- [Admin](08-admin.md) - accounts, users and roles
+See [Deployment and operations](../guides/22-gateway-operations.md) for configuration, migration and URL rules.

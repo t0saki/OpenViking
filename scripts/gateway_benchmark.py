@@ -24,7 +24,7 @@ from cryptography.fernet import Fernet
 from gateway_profile import RuntimeProfile
 
 from openviking_gateway.app import create_app
-from openviking_gateway.config import OpenVikingGatewayConfig
+from openviking_gateway.config import GatewayConfig
 from openviking_gateway.kernel import MemoryKernel
 from openviking_gateway.models import Policy, Upstream
 from openviking_gateway.protocols import parse_body
@@ -203,14 +203,11 @@ async def benchmark(args):
         await site.start()
         base = f"http://127.0.0.1:{site._server.sockets[0].getsockname()[1]}"
         os.environ["OVGW_BENCH_ENCRYPTION"] = encryption
-        os.environ["OVGW_BENCH_ADMIN"] = "synthetic-benchmark-admin-token-000000"
-        config = OpenVikingGatewayConfig(
+        config = GatewayConfig(
             storage_path=directory,
-            openviking_url=base,
             encryption_key_env="OVGW_BENCH_ENCRYPTION",
-            admin_token_env="OVGW_BENCH_ADMIN",
         )
-        app = create_app(config)
+        app = create_app(config, openviking_url=base)
         listener = socket.socket()
         listener.bind(("127.0.0.1", 0))
         listener.listen(2048)

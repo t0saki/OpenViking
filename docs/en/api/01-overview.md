@@ -534,12 +534,29 @@ This catalog follows the routes actually mounted by the server. Each group headi
 
 ### [OpenViking Gateway Management](25-gateway.md)
 
+Available on the server port when embedded and on the gateway port when standalone. OpenViking identity controls account scope; the optional gateway management key separately controls upstream/profile writes. Users can issue their own keys. See the linked reference for the access matrix and stable error reasons.
+
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/v1/admin/gateway/{path}` | Read gateway overview, logs, upstreams, context profiles, keys or tools for the caller's account |
-| POST | `/api/v1/admin/gateway/{path}` | Issue a gateway key, test an upstream or reset conversation saving |
-| PUT | `/api/v1/admin/gateway/{path}` | Create or replace an upstream or context profile |
-| DELETE | `/api/v1/admin/gateway/{path}` | Delete an upstream or context profile, revoke a key or delete a user's gateway data |
+| GET | `/api/v1/admin/gateway/access` | Read permissions and configuration warnings |
+| GET | `/api/v1/admin/gateway/guides` | Read client connection origin |
+| GET | `/api/v1/admin/gateway/tools` | Read caller’s OpenViking tool catalog |
+| GET | `/api/v1/admin/gateway/upstreams/{identifier}` | Read one upstream |
+| GET | `/api/v1/admin/gateway/policies/{identifier}` | Read one profile |
+| GET | `/api/v1/admin/gateway/keys/{identifier}` | Read one visible key |
+| GET | `/api/v1/admin/gateway/overview` | Read usage summary in caller scope |
+| GET | `/api/v1/admin/gateway/logs` | Read visible request logs |
+| GET | `/api/v1/admin/gateway/upstreams` | List account upstreams |
+| PUT / DELETE | `/api/v1/admin/gateway/upstreams/{identifier}` | Create/replace or delete an upstream |
+| POST | `/api/v1/admin/gateway/upstreams/{identifier}/test` | Test an upstream connection |
+| POST | `/api/v1/admin/gateway/upstreams/import-vlm` | Import embedded VLM credentials |
+| GET | `/api/v1/admin/gateway/policies` | List account profiles |
+| PUT / DELETE | `/api/v1/admin/gateway/policies/{identifier}` | Create/replace or delete a profile |
+| GET / POST | `/api/v1/admin/gateway/keys` | List or issue visible gateway keys |
+| DELETE | `/api/v1/admin/gateway/keys/{identifier}` | Revoke a gateway key |
+| POST | `/api/v1/admin/gateway/keys/{identifier}/capture/reset` | Reset session saving |
+| DELETE | `/api/v1/admin/gateway/users/{user_id}/data` | Admin/root: delete user gateway data |
+| DELETE | `/api/v1/admin/gateway/account/data` | Root: delete account gateway data |
 
 ### [OpenViking Assets](22-openviking-assets.md), [WebDAV](20-webdav.md), [Agent Runtime API](23-agent-runtime.md), and [VikingBot API](24-vikingbot.md)
 

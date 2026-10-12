@@ -1,6 +1,9 @@
 {{- $config := deepCopy .Values.config }}
 {{- if .Values.gateway.enabled }}
-{{- $gateway := dict "enabled" true "host" "0.0.0.0" "port" .Values.gateway.port "workers" .Values.gateway.workers "url" (printf "http://127.0.0.1:%v" .Values.gateway.port) "openviking_url" (printf "http://127.0.0.1:%v" (.Values.config.server.port | default 1933)) "storage_path" (printf "%s/gateway" .Values.persistence.mountPath) }}
+{{- $gateway := dict "enabled" true "storage_path" (printf "%s/gateway" .Values.persistence.mountPath) }}
+{{- if .Values.gateway.managementKey.existingSecret }}
+{{- $_ := set $gateway "management_key" "$OPENVIKING_GATEWAY_MANAGEMENT_KEY" }}
+{{- end }}
 {{- $_ := set $config "gateway" (mergeOverwrite $gateway ($config.gateway | default dict)) }}
 {{- end }}
 {{- if empty $config.storage.workspace }}

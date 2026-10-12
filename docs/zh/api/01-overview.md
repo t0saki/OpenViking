@@ -529,12 +529,29 @@ JSON 输出 - 错误：
 
 ### [OpenViking 网关管理](25-gateway.md)
 
+嵌入时从 Server 端口访问，独立时从 Gateway 端口访问。OpenViking 身份决定账号范围，可选网关管理密钥另外控制上游/上下文配置写入；普通用户可以给自己签发密钥。完整权限矩阵和稳定错误原因见链接中的接口文档。
+
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | `/api/v1/admin/gateway/{path}` | 读取调用方账号的网关概览、日志、上游、上下文配置、密钥或工具 |
-| POST | `/api/v1/admin/gateway/{path}` | 签发网关密钥、测试上游或重置对话保存 |
-| PUT | `/api/v1/admin/gateway/{path}` | 创建或替换上游、上下文配置 |
-| DELETE | `/api/v1/admin/gateway/{path}` | 删除上游或上下文配置、吊销密钥或删除用户的网关数据 |
+| GET | `/api/v1/admin/gateway/access` | 读取权限与配置告警 |
+| GET | `/api/v1/admin/gateway/guides` | 读取客户端接入地址 |
+| GET | `/api/v1/admin/gateway/tools` | 读取调用方的 OpenViking 工具目录 |
+| GET | `/api/v1/admin/gateway/upstreams/{identifier}` | 读取单个上游 |
+| GET | `/api/v1/admin/gateway/policies/{identifier}` | 读取单个上下文配置 |
+| GET | `/api/v1/admin/gateway/keys/{identifier}` | 读取单个可见密钥 |
+| GET | `/api/v1/admin/gateway/overview` | 读取身份范围内的用量概览 |
+| GET | `/api/v1/admin/gateway/logs` | 读取可见请求日志 |
+| GET | `/api/v1/admin/gateway/upstreams` | 列出账号上游 |
+| PUT / DELETE | `/api/v1/admin/gateway/upstreams/{identifier}` | 创建/替换或删除上游 |
+| POST | `/api/v1/admin/gateway/upstreams/{identifier}/test` | 测试上游连接 |
+| POST | `/api/v1/admin/gateway/upstreams/import-vlm` | 导入嵌入宿主 VLM 凭证 |
+| GET | `/api/v1/admin/gateway/policies` | 列出账号上下文配置 |
+| PUT / DELETE | `/api/v1/admin/gateway/policies/{identifier}` | 创建/替换或删除上下文配置 |
+| GET / POST | `/api/v1/admin/gateway/keys` | 列出或签发可见网关密钥 |
+| DELETE | `/api/v1/admin/gateway/keys/{identifier}` | 吊销网关密钥 |
+| POST | `/api/v1/admin/gateway/keys/{identifier}/capture/reset` | 重置会话保存 |
+| DELETE | `/api/v1/admin/gateway/users/{user_id}/data` | admin/root：删除用户网关数据 |
+| DELETE | `/api/v1/admin/gateway/account/data` | root：删除账号网关数据 |
 
 ### [OpenViking Assets](22-openviking-assets.md)、[WebDAV](20-webdav.md)、[Agent Runtime API](23-agent-runtime.md) 与 [VikingBot API](24-vikingbot.md)
 

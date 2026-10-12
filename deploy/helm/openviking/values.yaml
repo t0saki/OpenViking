@@ -2,15 +2,14 @@
 
 replicaCount: 1
 
-# Same pod, separate process and port. Multiple workers share local SQLite WAL.
-# Create a Secret with encryption-key (Fernet) and admin-token (32+ characters).
-# Requires authenticated OpenViking; dev mode only permits a loopback gateway.
+# Gateway runs inside the server on the same port.
+# Secrets are optional; without an encryption Secret the key is saved on the data volume.
 gateway:
   enabled: false
-  workers: 2
-  port: 1935
-  existingSecret: ""
-  resources: {}
+  encryptionKey:
+    existingSecret: "" # Secret entry: encryption-key (Fernet)
+  managementKey:
+    existingSecret: "" # Secret entry: management-key (32+ characters)
 
 image:
   # Prefer ghcr.io. If it is hard to reach, use the mirror:

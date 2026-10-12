@@ -83,11 +83,21 @@ const internalRouterFiles = new Set([
   'stats.py',
   'user_settings.py',
 ])
-for (const file of fs.readdirSync(routerDir).filter((name) => name.endsWith('.py'))) {
-  if (internalRouterFiles.has(file)) continue
-  const source = fs.readFileSync(path.join(routerDir, file), 'utf8')
+const routerFiles = fs.readdirSync(routerDir)
+  .filter((name) => name.endsWith('.py') && !internalRouterFiles.has(name))
+  .map((name) => path.join(routerDir, name))
+// Gateway management is a public API owned by its ASGI application, including
+// when that application is embedded in the server.
+const gatewayManagement = path.join(repoRoot, 'openviking_gateway/management.py')
+routerFiles.push(gatewayManagement)
+for (const routerFile of routerFiles) {
+  const file = path.basename(routerFile)
+  const isGateway = routerFile === gatewayManagement
+  const source = fs.readFileSync(routerFile, 'utf8')
+  const prefixConstant = source.match(/^PREFIX\s*=\s*["']([^"']+)["']/m)?.[1]
   const routerPrefix =
-    source.match(/router\s*=\s*APIRouter\([^)]*prefix=["']([^"']+)/s)?.[1] ?? ''
+    source.match(/router\s*=\s*APIRouter\([^)]*prefix=["']([^"']+)/s)?.[1] ??
+    (source.match(/router\s*=\s*APIRouter\([^)]*prefix=PREFIX\b/s) ? prefixConstant : '') ?? ''
   const mountPrefix = file === 'bot.py' ? '/bot/v1' : ''
   const decorators = [
     ...Array.from(
@@ -137,8 +147,28 @@ for (const file of fs.readdirSync(routerDir).filter((name) => name.endsWith('.py
       ) continue
       query.set(defaultMatch[1], false)
     }
-    for (const method of decorator.methods) {
-      routes.set(`${method} ${normalizePath(routePath)}`, { query, pathParameters })
+    // The caller dependency consumes account_id directly from query_params.
+    if (isGateway) query.set('account_id', false)
+    let concretePaths = [routePath]
+    if (isGateway && routePath.includes('{kind}')) {
+      const nextDecorator = decorators.find((entry) => entry.index > decorator.index)
+      const body = source.slice(closing + 1, nextDecorator?.index ?? source.length)
+      const allowedKinds = body.match(/if kind not in\s*\{([^}]+)\}/)?.[1]
+      if (!allowedKinds) throw new Error(`Gateway route ${routePath} has no kind allowlist`)
+      concretePaths = Array.from(allowedKinds.matchAll(/["']([^"']+)["']/g),
+        (match) => routePath.replace('{kind}', match[1]))
+    }
+    for (const concretePath of concretePaths) {
+      const concreteParameters = new Set(
+        Array.from(concretePath.matchAll(/\{([^}:]+)(?::[^}]+)?\}/g), (item) => item[1])
+      )
+      for (const method of decorator.methods) {
+        // Keys are immutable: this shared handler deliberately returns 405.
+        if (isGateway && method === 'PUT' && concretePath.includes('/keys/')) continue
+        routes.set(`${method} ${normalizePath(concretePath)}`, {
+          query, pathParameters: concreteParameters,
+        })
+      }
     }
   }
 }

@@ -8,309 +8,148 @@ description: 用 Docker Compose、Helm 或自建反向代理部署 OpenViking �
 
 网关目前处于 Beta 阶段，设置和接口可能随版本调整，升级前请先阅读发布说明。
 
-网关是独立于 OpenViking Server 的进程，默认监听 1935 端口。客户端把模型请求发给网关；管理网关则在 Studio 中进行，Studio 由 OpenViking Server 提供，管理操作经 OpenViking Server 转发给网关。两者之间只走 HTTP：网关调用 OpenViking 的公开接口搜索记忆、保存对话和执行工具，OpenViking Server 则调用网关的管理接口。下图是对外只开一个 HTTPS 地址时的请求路径：
 
-```text
-                       客户端
-                         |
-                         v
-          反向代理 (https://ov.example.com)
-             |                                  |
-             | /v1/*                            | 其他路径：
-             | /api/v3/*                        | /studio、/api/v1、
-             | /api/compatible/v1/*             | /mcp、/health 等
-             | /gateway/uploads                 |
-             v                                  v
-      OpenViking 网关 :1935 <----- 管理 ---- OpenViking Server :1933
-         |        |                                  ^
-         |        +-------- 搜索、保存、工具 --------+
-         v
-      模型服务商 (上游)
-```
+OpenViking 网关可以嵌入 OpenViking Server，在同一进程、同一端口（默认 1933）运行，也可以通过 `openviking-gateway` 独立连接已有的 OpenViking 服务。两种方式的模型接口和管理接口路径相同。嵌入部署不需要第二个进程或按路径分流的反向代理。
 
 ## 环境要求
 
-- **OpenViking Server 0.4.16 或更高版本，并运行在 API Key 模式**（`server.auth_mode: "api_key"`，同时配置 `root_api_key`）。网关用每个人自己的 OpenViking 密钥，以这个人的身份访问 OpenViking。dev 模式下任何密钥都按 root 身份处理，而网关不接受 root 身份，所以一个网关密钥也签发不了。
-- **网关本身**：在 Python 3.10 或更高版本上安装 `openviking[gateway]` 可选依赖，或者使用官方 OpenViking Docker 镜像，镜像里已经包含 `openviking-gateway` 命令。
-- **用于 Studio 的账号管理员密钥。** 你在 Studio 中配置的内容，都属于登录所用密钥所在的账号。root key 也能用，但它管理的是它解析到的那个账号，所以优先使用账号管理员的密钥。
-- **每位领取网关密钥的人都要是同一账号中的 OpenViking 用户**，普通用户和管理员都可以，root 不行。签发时由 OpenViking Server 读取这个用户的 OpenViking 密钥；如果它只保存密钥哈希，就需要这个用户自己提供密钥。
-- **模型服务商的 API Key。** 订阅登录会被拒绝；Coding Plan 密钥默认也会被拒绝，除非你明确允许。
-- **单台主机上的本地磁盘**，用于网关存储（默认 `~/.openviking/gateway`）。不支持网络文件系统，也不支持在多台主机之间共享存储。同一时间只运行一个网关实例；需要更多处理能力时增加工作进程，见[扩展](#扩展)。
-- **加密密钥和管理令牌**，见下一节。
+- OpenViking Server 0.4.16 或更高版本，使用 `api_key` 或本地 `dev` 认证；不支持 trusted 模式。
+- 当前版本的 OpenViking。网关依赖已并入核心包，`gateway-fast` 仍是可选性能依赖。
+- 远程使用需要 OpenViking API 密钥；普通用户、账号管理员和 root 都能登录 Studio。本地 dev 模式无需密钥，固定使用 `default/default` 身份。
+- 模型服务商凭证和本地磁盘。SQLite 数据库只供一个主机使用，不支持网络文件系统或跨主机共享存储。
 
-## 加密密钥和管理令牌
+## 加密密钥和管理密钥
 
-| 名称 | 环境变量 | 谁需要 | 作用 |
-| --- | --- | --- | --- |
-| 加密密钥 | `OPENVIKING_GATEWAY_ENCRYPTION_KEY` | 网关 | 加密网关存储的全部数据：上游 API Key 和请求头、绑定到网关密钥的 OpenViking 密钥、对话状态和请求日志。必须是 Fernet 密钥，即 32 字节随机数的 URL 安全 base64 编码。 |
-| 管理令牌 | `OPENVIKING_GATEWAY_ADMIN_TOKEN` | 网关和 OpenViking Server | 你在 Studio 中操作时，OpenViking Server 用它向网关的管理接口证明身份。至少 32 个字符。 |
+| 凭证 | 用途 | 使用位置 |
+| --- | --- | --- |
+| OpenViking API 密钥 | 登录 Studio，确定读写记忆的账号和用户 | 管理请求的 `X-API-Key` 或 `Authorization: Bearer` |
+| 网关密钥（`ovgw_…`） | 客户端接入，绑定用户、上下文配置和上游 | 客户端 API Key 输入框 |
+| 网关管理密钥 | 允许修改上游和上下文配置；不授予记忆访问或签发权限 | `gateway.management_key`，请求头 `X-OpenViking-Gateway-Management-Key` |
+| 上游 API Key | 调用模型服务商 | 上游编辑器 |
 
-两者各生成一次：
+管理密钥可选，设置时至少 32 个字符。在 `openviking-server init` 中选择限制配置权限时，会生成以 `ovgm_` 开头的值。也可以用 `openssl rand -base64 32` 生成。嵌入配置支持 `"management_key": "$OPENVIKING_GATEWAY_MANAGEMENT_KEY"`；独立运行还会直接读取 `OPENVIKING_GATEWAY_MANAGEMENT_KEY`。不提供传入管理密钥的命令行参数。
 
-```bash
-# 加密密钥（格式与 cryptography 包中 Fernet.generate_key() 的输出相同）
-python3 -c 'import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())'
+另有一把**加密密钥**保护已存的凭证和对话状态。优先使用 `OPENVIKING_GATEWAY_ENCRYPTION_KEY`；未设置时，网关以原子方式创建 `storage_path/encryption.key`，权限为 0600。备份数据库时必须一起备份此文件。已有数据库但既无密钥文件也无环境变量时，启动会失败；请恢复原密钥，换密钥不会重新加密旧数据。
 
-# 管理令牌
-python3 -c 'import secrets; print(secrets.token_urlsafe(48))'
-```
-
-把它们放进密钥管理系统或部署环境，不要写进 `ov.conf`，也不要提交到代码仓库。如果要从其他名称的环境变量读取，在 `gateway` 中设置 `encryption_key_env` 和 `admin_token_env`。
-
-- **加密密钥不能更换。** 网关不会重新加密已存储的数据，换了密钥就读不出原来的内容。请把密钥和网关存储一起备份。密钥丢失后，只能把 `storage_path` 指向一个空目录，重新配置上游、上下文配置和密钥。
-- **管理令牌可以轮换。** 给两个进程设置相同的新值，然后都重启。它只保护管理接口，不加密任何数据。
-- 缺少有效的加密密钥或管理令牌时，网关在启动阶段就会退出。OpenViking Server 没有管理令牌也能启动，但 Studio 的 OpenViking 网关页面会提示缺少管理令牌。
+修改、设置或取消管理密钥后需要重启，但不会吊销网关密钥或修改已存对象。Studio 只在当前标签页的 sessionStorage 中保留输入的管理密钥；点击**锁定**、关闭标签页或收到密钥失效响应后，会重新锁定编辑权限。
 
 ## 部署
 
 ### 部署方式
 
-网关和 OpenViking 之间只走 HTTP，所以可以装在同一台机器、放在同一个 Pod，也可以分开部署。无论哪种形态，都要满足[环境要求](#环境要求)：OpenViking 0.4.16 或更高版本并开启 API Key 认证，网关存储放在一台主机的本地磁盘上，同一时间只运行一个网关实例，网关持有加密密钥，两个进程配置同一个管理令牌。负载均衡、故障转移和限流交给接在网关后面的 LiteLLM 或 new-api。
-
-| 形态 | 适合 | 怎么部署 | 要留意 |
-| --- | --- | --- | --- |
-| 单机 | 个人试用 | 安装 `openviking[gateway]`，运行 `openviking-gateway`，和 OpenViking 读取同一份 `ov.conf`，步骤见[快速开始](15-gateway.md#快速开始)。 | 只在本机使用时可以不配反向代理。 |
-| [Docker Compose](#docker-compose) | 小团队、单台服务器 | 网关是单独的容器，自带的 Caddy 在 1934 端口按路径分流。 | 网关端口不映射到主机；加密密钥只传给网关容器。 |
-| [Helm](#helm) | Kubernetes | 网关作为 OpenViking Pod 里的第二个容器，共用存储卷和 `ov.conf`。 | 保持一个副本；Chart 不支持把网关拆成单独的 Pod。 |
-| [分开部署](#分开部署) | 网关和 OpenViking 在不同的机器或 Pod | 自己编写 Deployment 或服务定义，两边的 `ov.conf` 放同一份 `gateway` 配置。 | 两边互相要能访问；链路上传输用户的 OpenViking 密钥；网络延迟会占用召回的等待时间。 |
-
-两个进程读取同一个 `ov.conf` 中的 `gateway` 部分。OpenViking Server 用它找到网关，供 Studio 和数据删除使用；网关则用到整个部分。这一部分有几条规则：
-
-- 网关读取 `--config` 指定的文件，没有指定时读取 `OPENVIKING_CONFIG_FILE`，再没有就读取 `~/.openviking/ov.conf`。与 OpenViking Server 不同，它不会回退到 `/etc/openviking/ov.conf`。
-- 网关不展开 `$VAR` 或 `${VAR}` 占位符。`gateway` 中请写字面值，密钥和令牌放在上面的环境变量里。
-- 未知的键会报错。OpenViking Server 报告 `Unknown config field 'gateway.<name>'`，网关则拒绝启动。
-- 修改这一部分后，要重启 OpenViking Server。
-
-其中三个地址容易混淆：
-
-| 设置 | 谁使用 | 常见取值 |
+| 方式 | 设置 | 客户端地址 |
 | --- | --- | --- |
-| `url` | OpenViking Server，用来访问网关的管理接口 | `http://127.0.0.1:1935`；Docker Compose 中为 `http://gateway:1935` |
-| `openviking_url` | 网关，用来访问 OpenViking Server | `http://127.0.0.1:1933`；Docker Compose 中为 `http://openviking:1933` |
-| `public_url` | 客户端。Studio 的接入说明显示这个地址，OpenViking 工具也用它生成上传链接。 | `https://ov.example.com` |
+| 嵌入，包括 Compose 和 Helm | 在服务端配置中开启 `gateway.enabled` | Server 地址，通常为 `http://127.0.0.1:1933` |
+| 独立 | `openviking-gateway --openviking-url <OV 地址>` | Gateway 地址，通常为 `http://127.0.0.1:1935` |
+
+### 嵌入启用与 init
+
+运行 `openviking-server init`，选择在同一端口启用网关，再启动或重启服务。已有配置时选择 **Update gateway**。远程配置会询问是否允许用户自行配置上游；选否即生成管理密钥。也可以把下面内容合并进 `ov.conf` 后重启：
+
+```json
+{
+  "gateway": {
+    "enabled": true
+  }
+}
+```
+
+打开服务端的 `/studio/`，选择网关。dev 模式下，首次启动时若默认账号没有上游，会导入可用的 VLM 凭证并创建 `default` 上下文配置。Coding Plan 导入后需确认才可使用；没有可导入凭证时，请手动添加上游。
+
+**Agent 修改配置的流程。** 用服务端 root API 密钥调用 `GET /api/v1/admin/configuration?source=file`，读取 `result.content` 和 `result.revision`，修改完整配置文本后，向 `PATCH /api/v1/admin/configuration?source=file` 提交 `{"content":"<修改后的完整文本>","revision":"<读取的版本>"}`。从保存响应读取新 revision，再调用 `POST /api/v1/admin/restart`，请求体为 `{"revision":"<新版本>"}`。revision 过期会被拒绝，需重新读取。远程重启仅支持单 worker 的 `openviking-server` CLI；多 worker 请通过进程管理器重启。这些服务端配置接口不在独立网关上提供。
 
 ### 路由
 
-让 OpenViking Server 和网关共用同一个公网 HTTPS 地址，由反向代理按路径分流：
+嵌入宿主把以下前缀原样交给网关：
 
-| 路径 | 转发到 | 用途 |
-| --- | --- | --- |
-| `/v1/*` | 网关 | Anthropic Messages、Chat Completions、Responses 和模型列表 |
-| `/api/v3/*` | 网关 | 方舟路径（火山方舟和 BytePlus 方舟）下的 Chat Completions、Responses 和模型列表 |
-| `/api/compatible/v1/*` | 网关 | 方舟的 Anthropic 兼容路径 |
-| `/gateway/uploads` | 网关 | OpenViking 工具的一次性文件上传 |
-| 其他所有路径 | OpenViking Server | Studio、REST API、MCP、OAuth、`/health` |
+| 前缀 | 用途 |
+| --- | --- |
+| `/v1/` | 模型 API 和模型列表 |
+| `/api/v3/` | 方舟兼容客户端路径 |
+| `/api/compatible/v1/` | 方舟兼容 Anthropic 客户端路径 |
+| `/gateway/` | 工具上传 |
+| `/api/v1/admin/gateway/` | 带认证的管理 REST API |
 
-按这种布局，`public_url` 就填这个公网地址，例如 `https://ov.example.com`。Anthropic 客户端直接使用这个地址，OpenAI 风格的客户端在后面加上 `/v1`。
+`/health` 仍是 Server 的健康检查；嵌入网关不单独暴露 `/health` 或旧 `/admin`。独立网关的 `/health` 返回 `service: "openviking-gateway"`、`auth_mode`、`openviking_url`，带凭证时还返回调用方身份；根地址跳转到 `/studio/`。
 
-> **安全**：不要从公网入口转发网关的 `/admin/*` 路径，也不要直接暴露网关端口。网关的管理接口只认管理令牌，持有令牌就能管理任何账号。Studio 经由 OpenViking Server 访问管理接口，OpenViking Server 会确认你是账号管理员，并把每次调用限制在你自己的账号内。只转发上面四组路径，1933 和 1935 端口都留在代理后面，不对外开放。
-
-不管用哪种代理，网关路径都要按长时间的流式模型调用来配置：
-
-- **关闭响应缓冲**，流式回复才能边生成边送达客户端。
-- **请求体上限至少 32 MiB**（`max_body_bytes`）。带工具输出的长对话请求体很大，nginx 默认的 1 MB 会让这些请求失败。
-- **读超时至少 600 秒**（`upstream_timeout_seconds`）。
-- **`/gateway/uploads` 的访问日志不记录查询字符串**，因为里面带有一次性上传令牌。网关本身不写访问日志。
+共享部署把 `public_url` 设为对外地址。未设置时，接入指南使用请求来源地址。Anthropic 客户端使用这个地址，OpenAI 风格客户端在其后加 `/v1`。
 
 ### Docker Compose
 
-仓库自带的 `docker-compose.yml` 在 `gateway` profile 下定义了 `gateway` 服务。它与 OpenViking Server 使用同一个镜像、同一个 `~/.openviking` 挂载和同一个 `ov.conf`。它的 1935 端口只在 Compose 网络内可达，客户端通过自带的 Caddy 访问网关，Caddy 已经在 1934 端口把网关路径转发过去。
+在挂载的 `ov.conf` 中开启 `gateway.enabled` 后，运行 `docker compose up -d`。网关在 `openviking` 服务内运行，不再需要 `gateway` profile 或单独服务。修改配置后执行 `docker compose restart openviking`，启动错误见 `docker compose logs openviking`。
 
-1. **把加密密钥和管理令牌写进 `.env`**，放在 `docker-compose.yml` 旁边：
-
-   ```dotenv
-   OPENVIKING_GATEWAY_ENCRYPTION_KEY=<encryption-key>
-   OPENVIKING_GATEWAY_ADMIN_TOKEN=<admin-token>
-   ```
-
-   Compose 把管理令牌传给两个容器，加密密钥只传给网关。其中任何一个为空，网关都会退出，Compose 则会不停地重启它。
-
-2. **把以下设置合并进 `~/.openviking/ov.conf`：**
-
-   ```json
-   {
-     "server": {
-       "auth_mode": "api_key",
-       "root_api_key": "<root-key>"
-     },
-     "gateway": {
-       "enabled": true,
-       "host": "0.0.0.0",
-       "url": "http://gateway:1935",
-       "openviking_url": "http://openviking:1933",
-       "public_url": "http://<your-host>:1934"
-     }
-   }
-   ```
-
-   客户端还在访问自带 Caddy 的端口时，使用 `http://<your-host>:1934`；配好 HTTPS 地址之后改用它。`storage_path` 可以保持默认：在容器内它解析为 `/app/.openviking/gateway`，正好位于挂载卷中。
-
-3. **带上 profile 启动：**
-
-   ```bash
-   docker compose --profile gateway up -d
-   ```
-
-   之后执行 `up` 时也要带上 `--profile gateway`。修改 `ov.conf` 后，用 `docker compose --profile gateway restart openviking gateway` 重启两个容器。
-
-4. **检查路由。** 不带密钥的请求应该到达网关并被拒绝：
-
-   ```bash
-   curl -s http://127.0.0.1:1934/v1/models
-   # {"detail":"Invalid or revoked OpenViking Gateway key"}
-   ```
-
-   然后打开 Studio，确认“概览”标签页显示 OpenViking 已连接。启动错误可以用 `docker compose logs gateway` 查看。
-
-如果网关启动时 OpenViking Server 还没有就绪，网关会先在不带记忆的状态下运行，直到下一次检查 OpenViking，最多等 60 秒（`health_interval_seconds`）。这段时间里发出的消息不带记忆直接发给模型。
-
-**HTTPS。** 按[公网访问与反向代理](12-public-access.md#添加-https公网访问)中的方式 A 设置 `OPENVIKING_PUBLIC_BASE_URL`、开放 80 和 443 端口并添加 Caddy 卷，但 `Caddyfile` 中的域名块改用下面这段，让网关路径转发到网关：
-
-```caddyfile
-{$OPENVIKING_PUBLIC_BASE_URL} {
-    @gateway path /v1/* /api/v3/* /api/compatible/v1/* /gateway/uploads
-    handle @gateway {
-        reverse_proxy gateway:1935 {
-            flush_interval -1
-        }
-    }
-    handle {
-        reverse_proxy openviking:{$OPENVIKING_SERVER_PORT:1933}
-    }
-}
-```
-
-然后把 `gateway.public_url` 设为同一个地址，并写成字面值（例如 `https://ov.example.com`），再重启。
+Caddy 将所有路径转发到 `openviking:1933`。可以保留兼容端口 1934，也可以直接从 Server 的 1933 访问模型接口。HTTPS 配置见[公网访问](12-public-access.md)；一条 `reverse_proxy openviking:1933` 即可承载 Studio、管理接口和模型流量。把 `gateway.public_url` 设为公网地址。
 
 ### Helm
 
-Chart 把网关作为 OpenViking Pod 中的第二个容器运行，与 OpenViking 共用存储卷和 `ov.conf`。
+在 chart values 中设置 `gateway.enabled: true`。网关嵌入 server 容器，数据保存在 `<persistence.mountPath>/gateway`；Service 和 Ingress 都使用 Server 端口。保持 `replicaCount: 1`。
 
-1. **创建 Secret。** 键名 `encryption-key` 和 `admin-token` 是固定的：
+```yaml
+gateway:
+  enabled: true
+  encryptionKey:
+    existingSecret: "" # 可选 Secret 字段：encryption-key
+  managementKey:
+    existingSecret: "" # 可选 Secret 字段：management-key
+config:
+  gateway:
+    public_url: https://ov.example.com
+```
 
-   ```bash
-   kubectl create secret generic openviking-gateway \
-     --from-literal=encryption-key="$(python3 -c 'import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())')" \
-     --from-literal=admin-token="$(python3 -c 'import secrets; print(secrets.token_urlsafe(48))')"
-   ```
-
-2. **在 values 中启用网关。** 下面的 NGINX Ingress 注解是针对流式响应和大请求的推荐配置，Chart 不会自动设置：
-
-   ```yaml
-   gateway:
-     enabled: true
-     existingSecret: openviking-gateway
-     workers: 2
-
-   config:
-     server:
-       auth_mode: api_key
-       # 按 Chart README 的说明从 Secret 传入 root_api_key。
-     gateway:
-       public_url: https://ov.example.com
-
-   ingress:
-     enabled: true
-     className: nginx
-     annotations:
-       nginx.ingress.kubernetes.io/proxy-buffering: "off"
-       nginx.ingress.kubernetes.io/proxy-request-buffering: "off"
-       nginx.ingress.kubernetes.io/proxy-body-size: 32m
-       nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
-       nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
-     hosts:
-       - host: ov.example.com
-         paths:
-           - path: /
-             pathType: Prefix
-     tls:
-       - secretName: ov-example-com-tls
-         hosts:
-           - ov.example.com
-   ```
-
-values 中的 `gateway.enabled` 为 true 时，Chart 会：
-
-- 生成 `gateway` 部分的其余设置：`enabled`、`host: 0.0.0.0`、`port`、`workers`、`url: http://127.0.0.1:<port>`、`openviking_url: http://127.0.0.1:<config.server.port>` 和 `storage_path: <persistence.mountPath>/gateway`。你在 `config.gateway` 下写的值优先。`public_url` 就在那里设置，并写成字面值。
-- 把管理令牌传给两个容器，把加密密钥传给网关容器。网关容器不接收 `extraEnv`。
-- 在 Service 上添加 `gateway` 端口。启用 Ingress 时，把 `/v1`、`/api/v3`、`/api/compatible/v1` 和 `/gateway/uploads` 路由到这个端口，并排在你自己的路径之前。
-- 为网关的 `/health` 添加就绪探针。`gateway.resources` 设置网关容器的资源请求和限制。
-
-保持 `replicaCount: 1`。网关的存储位于 ReadWriteOnce 卷上，只能由一台主机使用；需要更多处理能力时，调大 `gateway.workers`。如何从 Secret 传入 root key 和模型密钥，见 [Chart README](https://github.com/volcengine/OpenViking/blob/main/deploy/helm/README.md)。
+未提供加密 Secret 时会自动生成持久化密钥文件。提供管理 Secret 时，chart 将 `management_key` 设置为 `$OPENVIKING_GATEWAY_MANAGEMENT_KEY`。Secret 创建和服务端认证配置见 [chart README](https://github.com/volcengine/OpenViking/blob/main/deploy/helm/README.md)。
 
 ### 分开部署
 
-网关和 OpenViking 运行在不同的机器或 Pod 上时，Chart 和 Compose 文件不再适用，需要自己编写部署定义。两边的 `ov.conf` 放同一份 `gateway` 配置，并注意以下几点：
+独立网关不读取 `ov.conf`，必须提供 OpenViking URL，无需修改已有开源版或商业版服务的配置：
 
-- **两个方向的地址都要填。** 网关通过 `openviking_url` 访问 OpenViking；OpenViking Server 通过 `url` 访问网关，Studio 的管理操作和删除用户数据都经过这个地址。两个地址都应该是内网地址，网关的 `host` 要监听对方能访问的网卡。
-- **保护两者之间的链路。** 网关调用 OpenViking 时带着用户自己的 OpenViking 密钥，管理请求也带着管理令牌，所以这段链路要走内网或 TLS。
-- **留意延迟。** 每条新消息的召回最多等上下文配置中的**超时时间**（默认 2 秒），网关到 OpenViking 的网络延迟也算在里面。延迟较高时，召回更容易超时，消息就不带记忆发给模型。
-- **注意版本匹配。** 两边分别升级时，先升级 OpenViking，再升级网关，见[升级](#升级)。
+```bash
+openviking-gateway --openviking-url http://127.0.0.1:1933 --port 1935
+# 或读取独立 JSON 配置：
+openviking-gateway --config gateway.conf
+```
+
+```json
+{
+  "openviking_url": "https://ov.example.com",
+  "host": "127.0.0.1",
+  "port": 1935,
+  "storage_path": "~/.openviking/gateway"
+}
+```
+
+打开网关的 `/studio/`，用 OpenViking 用户、管理员或 root API 密钥登录。连接页显示已配置的 OpenViking 地址；独立 Studio 只有网关和连接页面，无法导入远端服务的 VLM 配置。
+
+参数包括 `--config`、`--openviking-url`、`--host`、`--port`、`--workers`、`--storage-path`。默认 host 为 `127.0.0.1`、port 为 `1935`、workers 为 `1`。优先级：命令行参数 → `OPENVIKING_GATEWAY_<字段大写>` 环境变量 → JSON 文件。`OPENVIKING_GATEWAY_CONFIG_FILE` 可以代替 `--config` 指定文件。独立文件根层直接放网关字段，不含 `gateway` 包装或 `enabled`。
+
+独立启动前会同步探测 OpenViking，dev 认证下拒绝绑定非回环地址。商业版 `/health` 返回 401 表示可达但需认证，不会因此关闭召回；签发密钥和恢复保存时使用带认证请求检查版本。跨主机连接应使用 TLS 或私有网络。
+
+连接 `https://api.vikingdb.cn-beijing.volces.com/openviking` 且未设置管理密钥时，启动日志和 Studio 会显示 `public_openviking_without_management_key` 告警：该公共服务的有效用户都能配置自己账号内的上游。设置 `OPENVIKING_GATEWAY_MANAGEMENT_KEY` 并重启可限制对象修改；这不会限制谁能登录或签发自己的网关密钥。
 
 ### 自建反向代理
 
-nginx 与两个进程在同一台主机上时，把网关路径写在兜底的 location 之前：
+把整个站点转发到 Server（嵌入）或 Gateway（独立）。例如：
 
-```nginx
-server {
-    listen 443 ssl;
-    http2 on;  # nginx < 1.25.1：删掉这一行，改用 `listen 443 ssl http2;`
-    server_name ov.example.com;
-
-    ssl_certificate     /etc/letsencrypt/live/ov.example.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/ov.example.com/privkey.pem;
-
-    # 模型 API：流式回复、很长的历史、响应慢的模型。
-    location ~ ^/(v1|api/v3|api/compatible/v1)/ {
-        proxy_pass http://127.0.0.1:1935;
-        proxy_http_version 1.1;
-        proxy_buffering off;
-        proxy_request_buffering off;
-        client_max_body_size 32m;
-        proxy_read_timeout 600s;
-        proxy_send_timeout 600s;
-        proxy_set_header Host              $host;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-
-    # 一次性文件上传。查询字符串里带着上传令牌。
-    location = /gateway/uploads {
-        proxy_pass http://127.0.0.1:1935;
-        proxy_http_version 1.1;
-        proxy_request_buffering off;
-        client_max_body_size 32m;
-        proxy_read_timeout 120s;
-        access_log off;
-    }
-
-    # Studio、REST API、MCP 和其他所有路径。
-    location / {
-        proxy_pass http://127.0.0.1:1933;
-        proxy_http_version 1.1;
-        proxy_buffering off;
-        proxy_read_timeout 300s;
-        proxy_set_header Host              $host;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_set_header X-Forwarded-Host  $host;
+```caddyfile
+ov.example.com {
+    reverse_proxy 127.0.0.1:1933 {
+        flush_interval -1
     }
 }
 ```
 
-如果调大了 `max_body_bytes` 或 `upstream_timeout_seconds`，`client_max_body_size` 和各项超时也要一起调大。其他代理同样按这四组路径和[路由](#路由)一节列出的设置来配置。
+关闭响应缓冲以支持流式输出，允许至少 32 MiB 请求体和至少 600 秒读取超时。不要记录 `/gateway/uploads` 的查询字符串，其中含一次性上传令牌。对外发布前配置认证，见[公网访问](12-public-access.md)。
 
 ### 扩展
 
-- **工作进程。** `workers`（1–64；默认 1，Helm Chart 中为 2）决定主机上运行几个网关进程。它们共用存储文件，每个进程还会在后台保存对话。
-- **单台主机。** 不支持在多台主机上运行网关，也不支持网络文件系统。使用 Helm 时保持一个副本。
-- **变更传播。** 吊销密钥或编辑上游后，其他工作进程大约 2 秒内跟上。
-- **健康状态按进程计算。** 每个工作进程独立检查 OpenViking，所以“概览”标签页上的 OpenViking 状态来自恰好响应这次查询的那个进程。
-- **没有负载均衡和限流。** 每段对话固定在一个上游上，网关不会换一个上游重试，也不限流；服务商返回的 429 原样传给客户端。需要负载均衡、故障转移或配额时，在网关后面接 LiteLLM 或 new-api，再把它添加为上游。
+每份存储目录只供一个主机上的一套部署使用。嵌入网关跟随 Server 的 worker 设置；独立 `--workers` 支持 1–64。不要让嵌入和独立网关使用同一目录。需要服务商负载均衡、故障转移或限流时，可把 LiteLLM 等兼容服务添加为上游。
 
 ## 在 Studio 中管理网关
 
-在 OpenViking Server 上打开 `/studio`，进入**连接设置**，把账号管理员密钥填入**管理员 API 密钥**。侧边栏的“设置”分组里随即出现**OpenViking 网关**，只有账号管理员和 root 能看到它。这些页面上的所有内容都属于该密钥所在的账号。页面顶部显示客户端应该使用的网关地址，即 `public_url`；`public_url` 为空时显示 `url`，“接入”标签页会提示客户端可能连不上这个地址。
+用 OpenViking API 密钥连接后打开网关。普通用户能给自己签发密钥，管理员能给本账号用户签发，root 先切换账号再操作。上游和上下文配置由整个账号共享。
 
-如果网关没有配置好或者无法访问，页面会显示一张设置卡片，指出要修改哪项配置，见 [Studio 显示设置卡片](#studio-显示设置卡片)。否则页面有六个标签页：**概览**、**上游**、**上下文配置**、**密钥**、**请求日志**和**接入**。初次设置就按这个顺序：添加上游，创建上下文配置，签发网关密钥，最后按“接入”标签页的说明接入客户端。
+未配置管理密钥时，通过认证的用户都能修改本账号对象。配置后，上游和上下文配置为只读，点击**输入网关管理密钥**后才能编辑；OpenViking 管理员和 root 也需解锁。测试连接和签发个人网关密钥仍可使用。只读详情隐藏 API Key、请求头和请求头名称。对象修改立即影响使用它的密钥。
+
+Studio 通过 `GET /api/v1/admin/gateway/access` 判断权限，完整权限矩阵和所有操作见[管理 API](../api/25-gateway.md)。
 
 ### 上游
 
@@ -324,8 +163,8 @@ server {
 | Anthropic | Anthropic Messages | `https://api.anthropic.com` |
 | OpenAI | Chat Completions、Responses | `https://api.openai.com/v1` |
 | DeepSeek | 三种都有 | `https://api.deepseek.com`；Anthropic Messages 为 `https://api.deepseek.com/anthropic` |
-| 火山方舟 | 三种都有 | `https://ark.cn-beijing.volces.com` |
-| BytePlus 方舟（海外站） | 三种都有 | `https://ark.ap-southeast.bytepluses.com` |
+| 火山方舟 | 三种都有 | Chat / Responses: `https://ark.cn-beijing.volces.com/api/v3`; Anthropic: `https://ark.cn-beijing.volces.com/api/compatible` |
+| BytePlus 方舟（海外站） | 三种都有 | Chat / Responses: `https://ark.ap-southeast.bytepluses.com/api/v3`; Anthropic: `https://ark.ap-southeast.bytepluses.com/api/compatible` |
 
 上游编辑页分为四部分。
 
@@ -334,18 +173,18 @@ server {
 - **服务商**决定可以选哪些协议，并让网关适配各家服务商的差异。编辑页只提供服务商支持的协议，见上表。列表里没有的服务商、LiteLLM 和 new-api 这类兼容代理，以及 [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) 这类把订阅账号包装成 API 的反向代理，都选*通用*（见[自定义上游](15-gateway.md#自定义上游)；用订阅额度时是否合规请自行确认）。
   - *通用*、*Anthropic* 和 *OpenAI* 转发请求的方式相同。
   - *DeepSeek*：请求带工具时，DeepSeek 要求历史里之前每条回复都带着推理内容，而很多聊天应用不会把推理内容发回来。DeepSeek 上游默认开启**补全推理内容回传**（见下文“路由”），所以请求保持思考模式也能得到 OpenViking 工具。关闭这项设置后，只有请求关闭了思考模式（`"thinking": {"type": "disabled"}`）时才提供 OpenViking 工具；标准的 Responses 请求没有 `thinking` 字段，这时也得不到工具。记忆照常补充。
-  - *火山方舟*和它的海外站 *BytePlus 方舟*行为相同：请求发往方舟自己的路径。Chat Completions 和 Responses 的每段对话都使用一个固定的 `prompt_cache_key`，方舟的前缀缓存就能跟着对话走。如果请求的模型、思考模式、采样参数、系统提示词或工具与对话的第一个请求不同，就会被标记为**缓存参数有变化**（`ark_cache_parameters_changed`），因为这些参数一变，方舟就会重新建立缓存。
-- **协议**决定上游能处理哪些客户端请求，也决定网关如何发送密钥：Anthropic Messages 用 `x-api-key`，另外两种用 `Authorization: Bearer`。
-- **Base URL。** 选择服务商后，编辑页会填入上表中的默认地址。切换服务商或协议时，只有地址为空或仍是之前的默认地址，才会换成新的默认地址，自己填写的地址不会被覆盖；地址与默认地址不同时，点输入框下方的**使用默认地址**即可恢复。网关把客户端的请求路径拼接在后面，并去掉重复的 `/v1`，所以 `https://api.openai.com/v1` 和 `https://api.anthropic.com` 都能用。编辑页会显示请求实际发往的地址。火山方舟和 BytePlus 方舟请填写不带路径的地址，例如 `https://ark.cn-beijing.volces.com`，它适用于全部三种协议；以 `/api/v3` 结尾的地址只适用于 Chat Completions 和 Responses，以 `/api/compatible/v1` 结尾的只适用于 Anthropic Messages。API 路径不以 `/v1` 结尾的服务商（例如 `…/api/paas/v4`）不能直接使用，需要在中间加一个 LiteLLM 之类的兼容代理。
+  - *火山方舟*和它的海外站 *BytePlus 方舟*行为相同：Chat Completions 和 Responses 的每段对话都使用一个固定的 `prompt_cache_key`，方舟的前缀缓存就能跟着对话走。如果请求的模型、思考模式、采样参数、系统提示词或工具与对话的第一个请求不同，就会被标记为**缓存参数有变化**（`ark_cache_parameters_changed`），因为这些参数一变，方舟就会重新建立缓存。
+- **协议**决定上游接受哪种 API。Anthropic 同时发送 `x-api-key` 和 `Authorization: Bearer`，chat 和 responses 使用 Bearer。
+- **Base URL。** 按服务商 SDK 文档填写：chat 和 responses 在 base 后直接拼 `/chat/completions` 或 `/responses`；Anthropic 拼 `/v1/messages`。仅域名的 chat/responses 地址不会自动补 `/v1`。尾部斜杠会去掉，Anthropic base 以 `/v1` 结尾会被拒绝。一个上游只有一个 base：智谱 Chat 使用 `…/api/paas/v4`，Responses 使用 `…/api/v1`，需分别创建上游。`/api/paas/v4` 这类路径可以直接使用。客户端 `/api/v3/` 和 `/api/compatible/v1/` 前缀会先归一化再拼接端点。编辑器实时预览最终 URL，并为缺少路径的 OpenAI/方舟地址提供修正。
 
 **凭证。**
 
 - **API Key 由谁提供**：
   - **由网关保管 API Key**（默认）：网关发送上游的 API Key，客户端只需要网关密钥。
   - **每个客户端自带 API Key**：每个请求除了网关密钥，还要在 `X-OpenViking-Upstream-Key` 请求头里带上客户端自己的服务商 API Key。缺少这个请求头的请求返回 401 "Upstream API key is missing"。网关按服务商惯用的请求头把这个 API Key 传过去，`X-OpenViking-*` 请求头本身从不转发。
-- **API Key** 和**额外请求头**只能写入，不能读回。编辑上游时，API Key 留空表示保留已保存的值。额外请求头只显示名称：值留空表示保留，删除这一行表示删除这个请求头。已保存的 API Key 无法清空；不想再用它时，改为“每个客户端自带 API Key”，或者删除这个上游。
+- **API Key 和额外请求头**只写不读。Base URL 未变时，空白值保留旧凭证，删除请求头行即删除该头。修改地址会清除所有保留凭证，需重填 API Key 和自定义头值。只读视图还隐藏请求头名称。
 - **额外请求头**会加到发往这个上游的每个请求上，例如服务商的版本或组织请求头，并覆盖客户端发送的同名请求头。不允许设置 `Host`、`Content-Length`、`Transfer-Encoding` 和 `Connection`。
-- **这是 Coding Plan 或订阅密钥。** 服务商通常只允许 Coding Plan 这类订阅密钥用在自家的编程工具里，通过共享网关使用可能导致订阅被封禁。勾选后，路由到这个上游的每个请求都会被拒绝，返回 403 "Coding Plan upstreams are disabled; configure a model API key"，除非同时勾选**仍然允许**。网关无法从密钥本身分辨它是不是订阅密钥，需要你自己标记。Claude 订阅令牌（`sk-ant-oat…`）始终会被拒绝。
+- **这是 Coding Plan 或订阅密钥。** 服务商通常只允许 Coding Plan 这类订阅密钥用在自家的编程工具里，通过共享网关使用可能导致订阅被封禁。勾选后，路由到这个上游的每个请求都会被拒绝，返回 403 "Coding Plan upstreams are disabled; configure a model API key"，除非同时勾选**允许通过网关使用这个套餐**。网关无法从密钥本身分辨它是不是订阅密钥，需要你自己标记。Claude 订阅令牌（`sk-ant-oat…`）始终会被拒绝。
 
 **模型。**
 
@@ -363,9 +202,17 @@ server {
 
 其他上游设置都立即生效，对进行中的对话也一样。网关没有故障转移：选中的上游出错时，客户端会收到这个错误；服务商无法访问时返回 502 "Model upstream is unavailable"。
 
-列表中的**测试**和编辑页的**测试连接**会用上游的凭证和请求头请求服务商的模型列表（`/v1/models`，火山方舟和 BytePlus 方舟为 `/api/v3/models`），最多等待 10 秒。测试通过说明主机可达，并且服务商接受这个 API Key。测试不检查模型名，也不检查 Coding Plan 设置。没有模型列表接口、或者访问这个接口需要额外请求头的服务商，可能测试失败而实际请求正常。“每个客户端自带 API Key”的上游无法测试。
+**测试连接**使用服务商的模型列表接口和已存凭证，超时 10 秒。2xx 且有 `data` 数组表示通过；失败响应体或 401/403 表示密钥被拒。404/405 表示可达但无模型列表，密钥未验证；429 也表示可达。网络错误和 5xx 表示失败。只读用户也可测试；测试不验证模型或授权 Coding Plan 使用。Anthropic 上游同时发送 `x-api-key` 和 Bearer，OpenAI 风格上游发送 Bearer。
 
 有密钥在使用的上游不能删除；先吊销这些密钥，或者改为停用这个上游。
+
+例如，为智谱 Chat（`https://open.bigmodel.cn/api/paas/v4`）和 Responses（`https://open.bigmodel.cn/api/v1`）分别创建通用上游。方舟 Coding Plan 的 chat/responses 使用 `/api/coding/v3`，Anthropic 使用 `/api/coding`，搭配相应服务商域名。
+
+### 导入 OpenViking 模型配置
+
+嵌入宿主的**使用 OpenViking 的模型配置**会将符合条件的 VLM 凭证导入所选账号。未设管理密钥时仅 root/dev 可导入；设置后由持有管理密钥的人导入。固定 `vlm-<credential id>` 保证重复导入更新原条目。结果分为已导入、需确认和未导入。Coding/Plan 路径默认拦截，确认服务商条款允许后再开启。Codex OAuth 和 Azure 凭证会跳过，缺少 api_base 的 LiteLLM 凭证需补全后导入。
+
+**修改上游地址时：**重新填写 API Key 和所需的自定义请求头值。修改 `base_url` 会清除原 API Key 和保留的请求头，只有显式重新提交的值才会发往新地址。
 
 ### 上下文配置
 
@@ -419,7 +266,7 @@ server {
 在“密钥”标签页选择**签发密钥**，然后填写：
 
 - **名称**：方便日后辨认，例如“alice · Claude Code”。
-- **OpenViking 用户**：本账号中的一个用户或管理员。网关以这个用户的身份搜索和保存记忆。签发时，OpenViking Server 读取这个用户的 OpenViking 密钥并交给网关，网关加密保存；密钥不经过浏览器，之后也不再显示。如果 OpenViking Server 只保存密钥的哈希（启用了 `encryption.api_key_hashing.enabled`），或者因为其他原因读不到某个用户的密钥，这个用户在列表里不可选。这时选择**粘贴 OpenViking 密钥**，填入该用户自己的密钥。用 root key 登录 Studio 时没有用户列表可选：root key 解析到的账号可能不是 Studio 当前显示的账号，所以要粘贴用户的密钥。粘贴的密钥不能是 root key。
+- **OpenViking 用户**：普通用户给自己签发，账号管理员可选择本账号用户，root 先切换账号再选用户。网关用调用方凭证读取所选用户 API 密钥；只存哈希时请粘贴该用户当前密钥。不能绑定 root API 密钥；本地 dev 使用 default/default，无需凭证。
 - **上下文配置**。
 - **上游**：至少一个。这个密钥只能访问选中的上游。
 - **允许的模型**（可选）：留空表示允许这些上游提供的所有模型。这里填客户端发送的名称，包括别名。请求其他模型会返回 403 "Model is not allowed by this key"，模型列表也只显示允许的名称。
@@ -430,11 +277,11 @@ server {
 
 - **密钥不能编辑。** 要更换密钥的上下文配置、上游、允许的模型或 OpenViking 用户，就签发一个新密钥，再吊销旧的。
 - **对话属于用户，不属于密钥。** 只要客户端发送相同的会话 ID，同一 OpenViking 用户的新密钥就会接着原来的对话，所以换密钥不会打断对话。
-- **吊销**会立即切断客户端的访问（其他工作进程约 2 秒内跟上），正在进行的请求会正常完成。最后使用这个密钥的对话里还没保存的轮次会被丢弃，对话和记忆本身都保留。想换密钥又不丢轮次，就先把客户端切到新密钥，再吊销旧的。
-- **OpenViking 密钥变了怎么办。** 网关保存的是签发时这个用户的 OpenViking 密钥。如果该密钥被重新生成或删除，网关密钥仍能通过客户端认证，但记忆搜索会失败，保存也会因 `openviking_http_401` 暂停。为该用户重新签发网关密钥（Studio 会读取新的 OpenViking 密钥），切换客户端，再吊销旧的网关密钥。
+- **吊销**后，后续请求无法再使用该密钥。用户对话状态和日志保留到显式删除或保留期到期，单独吊销不删除用户数据。
+- **OpenViking 密钥变了怎么办。** 网关用 30 秒身份缓存重新校验绑定凭证。凭证被重新生成或吊销后，对应网关密钥在缓存到期后失效。请使用当前 OpenViking 凭证重新签发网关密钥，已有用户数据保留。
 - **每人一个密钥。** 使用同一个密钥的人共享其 OpenViking 用户的记忆。请给每人签发一个密钥；想让不同客户端使用不同的上下文配置，就按客户端再分开签发。
 
-**删除该用户的网关数据…**（在密钥的**更多操作**菜单中）会吊销该 OpenViking 用户的所有网关密钥，并删除网关为该用户保存的对话状态。OpenViking 中的会话和记忆不受影响，需要在 OpenViking 中删除。在 OpenViking 中删除用户或账号时，网关会自动做同样的清理，见[安全与数据](#安全与数据)。
+**删除该用户的网关数据…**仅对 admin/root 提供，会吊销用户密钥并删除网关对话状态和日志（包括未保存内容），不影响 OpenViking 记忆。嵌入部署删除用户/账号会触发同样清理，见[安全与数据](#安全与数据)。
 
 ### 请求日志和概览
 
@@ -618,18 +465,13 @@ Token 预算用于模型使用 OpenViking 工具时新增的调用、结果和�
 | Responses ID 映射 | 30 天 | `response_ttl_seconds` |
 | OpenViking 中的会话和记忆 | 遵循 OpenViking 自己的规则 | — |
 
-**删除数据。**
-
-- 在 Studio 中删除某个用户的网关数据（密钥的**更多操作**菜单 → **删除该用户的网关数据…**），或者用账号管理员密钥调用 OpenViking Server 的 `DELETE /api/v1/admin/gateway/users/{user_id}/data`。这会吊销该用户的网关密钥，并删除其对话状态。请求日志中的元数据按保留期限自然过期。
-- 在 OpenViking 中删除用户时，网关会自动执行同样的操作。删除账号时，还会从网关中删除这个账号的上游、上下文配置、密钥和请求日志。如果当时网关无法访问，OpenViking 会持续重试。不再使用网关时，把 `gateway.enabled` 设为 `false`，删除操作就不会再等待网关。
-- OpenViking 中的会话和记忆要通过 OpenViking 删除，不经过网关。
-- 在 OpenViking 中删除一条记忆，不会抹掉已经补充进对话的副本：网关为了原样放回，在对话状态里保留了补充过的记忆文本，直到对话过期。要立即清除，就删除该用户的网关数据。这会同时吊销他的全部网关密钥，之后要重新签发。
+**删除数据。** 吊销网关密钥或其绑定的 OpenViking 凭证不会删除用户数据。admin/root 可调用 `DELETE /api/v1/admin/gateway/users/{user_id}/data`，吊销用户密钥并删除网关状态和日志，包括尚未保存的内容。root 可通过 `DELETE /api/v1/admin/gateway/account/data?account_id=<account>` 清除账号的全部网关数据。嵌入部署删除 OpenViking 用户/账号会触发进程内清理；独立部署保留到显式删除或 TTL 到期。已存入 OpenViking 的记忆和会话不受影响。删除 OpenViking 中的记忆不会抹去为了回放已保存的注入副本，立即清除此副本需删除用户网关状态。
 
 **访问控制。**
 
 - 客户端用网关密钥认证，放在 `Authorization: Bearer` 或 `x-api-key` 中。密钥可以随时吊销。
 - 网关用每个用户自己的 OpenViking 密钥做记忆搜索、保存和工具调用，所以它能做的事不会超出这个用户的权限。
-- 管理令牌只应由 OpenViking Server 持有，网关的 `/admin/*` 路径必须保持私有（见[路由](#路由)）。Studio 用户由 OpenViking Server 校验：只有账号管理员和 root 能访问，并且只能管理自己的账号。管理令牌则不受账号限制，持有它就能管理所有账号，所以网关端口不能对公网开放。
+- 管理密钥只授权账号级对象操作。OpenViking 身份决定签发密钥、日志和记忆权限，见[权限矩阵](../api/25-gateway.md#凭证和账号范围)。
 - 账号管理员能为本账号的任何用户签发网关密钥（OpenViking 只保存密钥哈希时，需要用户本人提供密钥）。拿到网关密钥就能以该用户的身份召回记忆、调用工具，所以签发权实际上等于读取本账号所有用户记忆的权限，只交给可信的管理员。
 - `/gateway/uploads` 不需要网关密钥。每次上传由 OpenViking 签发的一次性令牌授权，网关只把它转发到 OpenViking 的上传接口。不要让它的查询字符串出现在代理日志里。
 - `X-OpenViking-*` 请求头、客户端凭证和 Cookie 从不转发给上游。
@@ -642,11 +484,11 @@ Token 预算用于模型使用 OpenViking 工具时新增的调用、结果和�
 
 ## 日常运维
 
-OpenViking 网关页面只对账号管理员和 root 开放。初次设置按“上游 → 上下文配置 → 签发密钥 → 接入”的顺序进行，之后的日常工作集中在下面几件事上。
+所有已连接身份都可访问网关页。初次设置按“上游 → 上下文配置 → 签发密钥 → 接入”进行。编辑权限由管理密钥设置决定，普通用户只看到自己的密钥和日志。
 
 - **盯住首次调用缓存命中率。** “概览”标签页上的**首次调用缓存命中率**反映跨轮次的提示缓存，应该接近不经过网关时服务商能达到的水平；**轮内缓存命中率**覆盖工具步骤，正常时很高。明显下降时，见[首次调用缓存命中率下降](#首次调用缓存命中率下降)。
 - **用请求日志定位单个请求。** 按新消息、工具步骤或异常筛选，展开一行就能看到召回结果、保存状态和 OpenViking 工具的停用原因，见[请求日志和概览](#请求日志和概览)。
-- **设置对外地址。** 共享部署必须设置 `public_url`。不设置时，Studio 的接入说明显示内部地址，OpenViking 工具的上传链接也无法使用。
+- **设置对外地址。** 将 `public_url` 设为客户端可访问的地址。指南默认使用请求来源；显式设置能让反向代理后的客户端和上传地址保持一致。
 - **定期备份。** 备份网关存储目录和加密密钥，方法和丢失的后果见[安全与数据](#安全与数据)中的“备份”。
 
 ### 升级
@@ -656,7 +498,7 @@ OpenViking 网关页面只对账号管理员和 root 开放。初次设置按“
 
 ### 观测
 
-网关不导出 Prometheus 之类的监控指标，也不写 HTTP 访问日志。运行状态通过 Studio 的“概览”和“请求日志”标签页，或者 OpenViking Server 上的管理 API（`/api/v1/admin/gateway/overview` 和 `logs`）查看；进程是否存活可以用网关的 `/health` 检查。
+网关不导出 Prometheus 之类的监控指标，也不写 HTTP 访问日志。运行状态通过 Studio 的“概览”和“请求日志”标签页，或者 OpenViking Server 上的管理 API（`/api/v1/admin/gateway/overview` 和 `logs`）查看；进程存活使用宿主 `/health` 检查，嵌入时为 Server 的健康接口。
 
 ## 设计取舍
 
@@ -674,61 +516,23 @@ OpenViking 网关页面只对账号管理员和 root 开放。初次设置按“
 
 ## 配置参考
 
-`ov.conf` 中的 `gateway` 部分，所有键都取默认值：
+嵌入设置位于 `ov.conf.gateway`，用 `enabled: true` 挂载网关；host、port、workers 跟随 Server。独立设置位于 `gateway.conf` 根层，增加必填 `openviking_url`、`host`（127.0.0.1）、`port`（1935）、`workers`（1–64，默认 1），不含 `enabled`。
 
-```jsonc
-{
-  "gateway": {
-    "enabled": false,                                  // 设为 true 之前，网关拒绝启动
-    "host": "127.0.0.1",                               // 监听地址
-    "port": 1935,
-    "workers": 1,                                      // 本机运行 1–64 个进程
-    "url": "http://127.0.0.1:1935",                    // OpenViking Server 访问网关的地址
-    "openviking_url": "http://127.0.0.1:1933",         // 网关访问 OpenViking Server 的地址
-    "public_url": "",                                  // 客户端访问网关的地址
-    "storage_path": "~/.openviking/gateway",   // 只能是本地磁盘
-    "encryption_key_env": "OPENVIKING_GATEWAY_ENCRYPTION_KEY",
-    "admin_token_env": "OPENVIKING_GATEWAY_ADMIN_TOKEN",
-    "min_server_version": "0.4.16",
-    "session_ttl_days": 30,
-    "response_ttl_seconds": 2592000,
-    "log_retention_days": 30,
-    "max_body_bytes": 33554432,
-    "upstream_timeout_seconds": 600,
-    "health_interval_seconds": 60
-  }
-}
-```
-
-| 键 | 默认值 | 说明 |
+| 共享字段 | 默认值 | 含义 |
 | --- | --- | --- |
-| `enabled` | `false` | 开启网关。为 false 时网关拒绝启动，Studio 的 OpenViking 网关页面显示设置卡片。 |
-| `host` | `127.0.0.1` | 监听地址。OpenViking 运行在 dev 模式时，必须是回环地址。 |
-| `port` | `1935` | 网关端口。 |
-| `workers` | `1` | 本机上的网关进程数，1–64。 |
-| `url` | `http://127.0.0.1:1935` | OpenViking Server 用来管理网关和删除数据的地址。`public_url` 为空时，Studio 也显示这个地址。 |
-| `openviking_url` | `http://127.0.0.1:1933` | 网关访问 OpenViking Server 的地址。 |
-| `public_url` | 空 | 客户端使用的地址。Studio 的接入说明显示它，OpenViking 工具的上传链接也用它。所有共享部署都应设置。 |
-| `storage_path` | `~/.openviking/gateway` | 两个数据库所在的目录，必须位于本地磁盘。 |
-| `encryption_key_env` | `OPENVIKING_GATEWAY_ENCRYPTION_KEY` | 保存加密密钥的环境变量。 |
-| `admin_token_env` | `OPENVIKING_GATEWAY_ADMIN_TOKEN` | 保存管理令牌的环境变量。 |
-| `min_server_version` | `0.4.16` | 网关支持的最低 OpenViking Server 版本。版本更低或无法解析时，记忆搜索和保存都会停止，也无法签发密钥。 |
-| `session_ttl_days` | `30` | 对话闲置多少天后删除它的状态。 |
-| `response_ttl_seconds` | `2592000` | Responses ID 到上游的映射保留多久（至少 60）。 |
-| `log_retention_days` | `30` | 请求日志的保留天数。 |
-| `max_body_bytes` | `33554432` | 请求体和上传的最大字节数（至少 1,024）。超出时返回 413。 |
-| `upstream_timeout_seconds` | `600` | 单次调用服务商的总时限。 |
-| `health_interval_seconds` | `60` | 网关检查 OpenViking 的间隔（至少 1）。 |
+| `public_url` | 空 | 客户端地址；指南默认使用请求来源 |
+| `storage_path` | `~/.openviking/gateway` | 本地目录，含自动生成的 encryption.key |
+| `encryption_key_env` | `OPENVIKING_GATEWAY_ENCRYPTION_KEY` | 可选外部 Fernet 密钥 |
+| `management_key` | 空 | 可选对象修改密钥，至少 32 字符，支持 `$VAR` 展开 |
+| `min_server_version` | `0.4.16` | 在带认证签发/保存恢复时检查的最低版本 |
+| `session_ttl_days` | `30` | 对话闲置过期天数，最小 1 |
+| `response_ttl_seconds` | `2592000` | Responses 映射过期秒数，最小 60 |
+| `log_retention_days` | `30` | 日志保留天数，最小 1 |
+| `max_body_bytes` | `33554432` | 请求/上传大小上限，至少 1024 字节 |
+| `upstream_timeout_seconds` | `600` | 服务商请求超时，必须大于 0 |
+| `health_interval_seconds` | `60` | 健康探测间隔秒数，最小 1 |
 
-URL 类设置必须是普通的 `http` 或 `https` 地址，不能包含账号密码、查询参数或片段；末尾的 `/` 会被去掉。
-
-**环境变量：**
-
-| 变量 | 读取方 | 用途 |
-| --- | --- | --- |
-| `OPENVIKING_GATEWAY_ENCRYPTION_KEY` | 网关 | 加密密钥（见[加密密钥和管理令牌](#加密密钥和管理令牌)）。 |
-| `OPENVIKING_GATEWAY_ADMIN_TOKEN` | 网关和 OpenViking Server | 管理令牌，至少 32 个字符。 |
-| `OPENVIKING_CONFIG_FILE` | 网关和 OpenViking Server | 没有指定 `--config` 时使用的 `ov.conf` 路径。 |
+URL 必须是 HTTP(S)，不含凭证、查询或 fragment。未知字段会校验失败。独立环境变量使用 `OPENVIKING_GATEWAY_` 加大写字段名，`OPENVIKING_GATEWAY_CONFIG_FILE` 指定独立 JSON 文件。`OPENVIKING_CONFIG_FILE` 只选择 Server 配置。
 
 **上下文配置的设置。** 先列 Studio 中的名称，再列管理 API 中的名称（管理 API 把上下文配置称为 `policies`）：
 
@@ -775,8 +579,8 @@ URL 类设置必须是普通的 `http` 或 `https` 地址，不能包含账号�
 | 服务商 | `vendor` | `generic` | `generic`、`anthropic`、`openai`、`deepseek`、`ark`（火山方舟）或 `byteplus`（BytePlus 方舟）。Studio 只提供服务商支持的协议，API 接受任意组合。 |
 | Base URL | `base_url` | | 服务商地址；各服务商的默认地址和路径规则见[上游](#上游)。 |
 | API Key 由谁提供 | `auth_mode` | `managed` | `managed`（由网关保管 API Key）或 `passthrough`（每个客户端自带 API Key）。 |
-| API Key | `api_key` | | 只能写入。编辑时留空表示保留已保存的密钥。 |
-| 额外请求头 | `headers` | `{}` | 值只能写入，名称可见。 |
+| API Key | `api_key` | | 只写；base_url 未变时空白保留旧密钥，改地址时清空。 |
+| 额外请求头 | `headers` | `{}` | 值只写，只读视图隐藏名称；修改 base_url 清除保留的头。 |
 | 模型 | `models` | `[]` | 提供的模型名；留空表示接受任何名称。 |
 | 模型别名 | `aliases` | `{}` | 客户端使用的名称 → 发给上游的模型。 |
 | 上下文窗口 | `context_windows` | `{}` | 模型 → token 数，每项至少 1,024。 |
@@ -788,9 +592,16 @@ URL 类设置必须是普通的 `http` 或 `https` 地址，不能包含账号�
 | 仍然允许 | `allow_coding_plan` | `false` | 允许使用被标记为 Coding Plan 的密钥。 |
 | 最小可缓存长度 | `cache_min_tokens` | `1024` | 仅火山方舟和 BytePlus 方舟；影响缓存资格的报告。 |
 
-**网关密钥字段：** 名称（`name`）、OpenViking 密钥（`openviking_key`）、上下文配置（`policy_id`）、上游（`upstream_ids`，至少一个）和允许的模型（`models`）。通过 OpenViking Server 签发时，可以用本账号用户的 `user_id` 代替 `openviking_key`，由 OpenViking Server 读取这个用户的密钥；两者只能提供一个。
+网关密钥字段、全部管理操作、权限规则和稳定错误原因见[管理 API](../api/25-gateway.md)。
 
-Studio 通过 OpenViking Server 上 `/api/v1/admin/gateway/` 下的管理 API 操作网关，资源包括 `overview`、`logs`、`guides`、`upstreams`、`policies`、`keys` 和 `users/{user_id}/data`。脚本也可以用账号管理员密钥调用这些路径。
+## 迁移
+
+1. 备份两个数据库及原加密密钥，停止旧独立进程/sidecar，再启用嵌入网关。
+2. 从 `ov.conf.gateway` 删除 `host`、`port`、`workers`、`url`、`openviking_url`、`admin_token_env`，这些字段现在会校验失败。嵌入配置保留 `enabled: true`；独立配置移至单独 gateway.conf，不带 gateway 包装或 enabled。
+3. 嵌入客户端改用 Server 的 1933 端口；移除旧 1935 Service/Ingress 路由、Compose gateway 服务/profile 和 Helm sidecar 配置。1935 仍是独立默认端口。删除旧 chart values `gateway.existingSecret`、`gateway.workers`、`gateway.port`、`gateway.resources`，改用上面的两个可选 Secret 引用。
+4. 移除共享 admin token。`OPENVIKING_GATEWAY_ADMIN_TOKEN` **不会**被当作管理密钥；需要限制对象修改时显式设置新的 `management_key`。原加密密钥通过环境变量继续提供，或恢复为 encryption.key。
+5. schema v5 → v6 只迁移一次已有 base，保持实际请求地址不变：chat/responses 的纯域名地址，方舟/BytePlus 补 `/api/v3`，其他补 `/v1`；方舟/BytePlus Anthropic 的纯域名补 `/api/compatible`；Anthropic base 的尾部 `/v1` 被去掉。新增上游遵循 SDK 规则，Anthropic base 以 `/v1` 结尾会被拒绝。
+6. 日志增加 user 列，没有用户的旧记录只在 admin/root 账号视图中可见。吊销密钥不再删除用户数据；显式删除和保留期仍生效。
 
 ## 故障排查
 
@@ -806,28 +617,15 @@ Studio 通过 OpenViking Server 上 `/api/v1/admin/gateway/` 下的管理 API �
 
 ### 网关无法启动
 
-| 提示信息 | 原因和处理 |
-| --- | --- |
-| `configure a Fernet encryption key and an admin token of at least 32 characters` | 网关的环境里缺少加密密钥或管理令牌，或者长度不够。把两者（见[加密密钥和管理令牌](#加密密钥和管理令牌)）加载到启动网关的 shell、`.env` 或 Secret 中。 |
-| `Set gateway.enabled=true in ov.conf` | 缺少这一部分、没有开启，或者网关读到了别的文件。网关依次读取 `--config`、`OPENVIKING_CONFIG_FILE`、`~/.openviking/ov.conf`，不会读取其他位置。 |
-| `Missing OpenViking Gateway dependencies: …` | 安装可选依赖：`pip install "openviking[gateway]"`。 |
-| 某个 `gateway` 字段的校验错误 | 有未知的键、拼写错误或无效的值。`${VAR}` 占位符不会展开，所以写在数字或 URL 字段里的占位符同样会报错。 |
-| `OpenViking Gateway must bind to loopback when OpenViking uses dev authentication` | OpenViking 运行在 dev 模式，而 `host` 不是回环地址。把 OpenViking 切换到 API Key 模式。 |
-| `Unsupported gateway schema; configure a fresh storage_path` | 存储由不兼容的网关版本写入。把 `storage_path` 指向一个空目录，重新设置网关。 |
-
-在 Docker Compose 中，网关反复重启通常是因为 `.env` 里的加密密钥或管理令牌为空；`docker compose logs gateway` 会显示具体信息。
+已有数据库但没有密钥文件时恢复原加密密钥，修正不足 32 字符的管理密钥，并删除[迁移](#迁移)中列出的旧字段。独立启动必须提供 `--openviking-url` 或对应配置/环境变量；dev 认证必须绑定回环地址。Compose 中查看 `docker compose logs openviking`。
 
 ### Studio 显示设置卡片
 
-OpenViking Server 无法使用网关时，OpenViking 网关页面会显示一张设置卡片，而不是各个标签页：
-
-- **OpenViking 网关未开启**：OpenViking Server 的 `ov.conf` 中没有 `gateway.enabled: true`。加上之后重启 OpenViking Server。
-- **缺少管理令牌**：OpenViking Server 的环境里没有管理令牌，或者它短于 32 个字符。设置好之后重启 OpenViking Server；Docker Compose 通过 `.env` 设置，Helm 通过 `gateway.existingSecret` 设置。
-- **OpenViking 连不上网关**：OpenViking Server 访问不到 `gateway.url`。检查网关是否在运行，以及 `url` 是否是 OpenViking Server 能访问的地址，在 Docker Compose 中应为 `http://gateway:1935`（Helm 由 Chart 自动设置）。
-
-如果两个进程都在运行，页面却提示“密钥被拒绝，请检查连接设置”，而同一个管理员密钥在**用户与权限**页面能正常使用，就说明两个进程的管理令牌不一致，网关返回的是 401 "Invalid gateway management credential"。给两者设置相同的令牌，然后都重启。
-
-如果侧边栏里没有**OpenViking 网关**，说明 Studio 没有管理员权限：在**连接设置**中把账号管理员或 root 的密钥填入**管理员 API 密钥**。OpenViking 运行在 dev 模式时，Studio 会隐藏管理页面。
+- 未启用（404）：运行 `openviking-server init` → **Update gateway**，或设置 `gateway.enabled: true` 并重启。
+- 缺失或无效 OpenViking 凭证（401）：打开连接设置，填写当前 OpenViking API 密钥。
+- `trusted_mode_unsupported`：把 Server 改为 `api_key` 认证。
+- `openviking_unreachable`：检查独立参数 `--openviking-url` 和网络连通性。
+- 上游只读：输入网关管理密钥；OpenViking root/admin API 密钥不解锁编辑。`management_key_invalid` 会重新锁定标签页。
 
 ### 签发密钥失败
 
@@ -836,7 +634,7 @@ OpenViking Server 无法使用网关时，OpenViking 网关页面会显示一张
 | Studio 中的提示 | 原因和处理 |
 | --- | --- |
 | 服务端读不到这个用户的 OpenViking 密钥，请改为粘贴。 | OpenViking Server 读不到所选用户的密钥，通常是因为它只保存密钥的哈希（`encryption.api_key_hashing.enabled`）。选择**粘贴 OpenViking 密钥**，填入该用户自己的密钥。 |
-| 这是 Root 密钥。（`root_key_not_allowed`） | OpenViking 密钥是 root key，或者 OpenViking 运行在 dev 模式，此时任何密钥都按 root 身份处理。请使用用户自己的密钥，并启用 API Key 模式。 |
+| `root_key_not_allowed` | 请绑定 user/admin API 密钥。本地 dev 支持无凭证的 default/default。 |
 | 这个 OpenViking 密钥属于其他账号。 | 密钥所属的账号不是你在 Studio 中管理的账号。 |
 | OpenViking 拒绝了这个密钥。（`openviking_http_401`） | 密钥不完整、已被重新生成，或者它的用户已被删除。请使用该用户当前的密钥。 |
 | OpenViking 无法识别这个密钥所属的用户（`openviking_identity_missing`） | OpenViking 没有返回这个密钥对应的用户。请使用本账号中某个用户的密钥。 |
@@ -854,12 +652,12 @@ OpenViking Server 无法使用网关时，OpenViking 网关页面会显示一张
 | 403 "Model is not allowed by this key" | 模型不在密钥允许的范围内。签发一个允许这个模型的密钥。 |
 | 404 "No allowed upstream matches this protocol and model" | 密钥绑定的已启用上游中，没有一个使用客户端调用的 API 并提供所请求的模型。检查上游的协议、模型和别名、是否启用，以及密钥绑定了哪些上游。 |
 | 401 "Upstream API key is missing" | 上游要求每个客户端在 `X-OpenViking-Upstream-Key` 中自带 API Key，或者由网关保管 API Key 的上游没有填写。 |
-| 403 "Coding Plan upstreams are disabled; configure a model API key" | 上游被标记为 Coding Plan 密钥。请改用模型 API Key，或者有意勾选**仍然允许**。 |
+| 403 "Coding Plan upstreams are disabled; configure a model API key" | 上游被标记为 Coding Plan 密钥。请改用模型 API Key，或者有意勾选**允许通过网关使用这个套餐**。 |
 | 404 "Unknown response for this key"、403 "Response upstream is no longer allowed" | 查询的 Responses 响应不是这个密钥创建的，或者它的上游已被停用、不再绑定到这个密钥。 |
 | 413 | 请求体超过了 `max_body_bytes`，或者超过了代理自己的上限。 |
 | 426 | 对 Responses API 发起了 WebSocket 连接。这是预期行为，Codex 会改用 HTTP。 |
 | 502 "Model upstream is unavailable" | 网关连不上服务商，或者调用超过了 `upstream_timeout_seconds`。在上游上运行**测试连接**。 |
-| 503 "Dev authentication requires a loopback gateway" | OpenViking 运行在 dev 模式。把它切换到 API Key 模式。 |
+
 | 504 "Hidden tool request timed out" | OpenViking 工具的往返超过了上下文配置中工具的**总时长**；未设置**总时长**时，是工具往返中的某次模型请求超过了 `upstream_timeout_seconds`。 |
 
 ### 没有补充记忆

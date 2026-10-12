@@ -141,29 +141,18 @@ Secrets.
 
 ### OpenViking Gateway
 
-The chart can run [OpenViking Gateway](https://docs.openviking.ai/en/guides/15-gateway)
-as a second container in the OpenViking pod, sharing its volume and `ov.conf`. The gateway
-requires OpenViking Server to use API key authentication.
-
-Create a Secret with the fixed keys `encryption-key` and `admin-token`:
-
-```bash
-kubectl create secret generic openviking-gateway \
-  --from-literal=encryption-key="$(python3 -c 'import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())')" \
-  --from-literal=admin-token="$(python3 -c 'import secrets; print(secrets.token_urlsafe(48))')"
-```
-
-Back up the encryption key along with the volume. The gateway can read its stored data only
-with this exact key, and the key can't be rotated.
-
-Then enable the gateway in your values:
+Enable [OpenViking Gateway](https://docs.openviking.ai/en/guides/15-gateway)
+inside the server container on the server port. The chart generates `gateway.enabled`
+and a storage path on the persistent data volume. It adds no sidecar or gateway Service
+port; the existing Ingress forwards all routes to OpenViking.
 
 ```yaml
 gateway:
   enabled: true
-  existingSecret: openviking-gateway
-  workers: 2
-
+  encryptionKey:
+    existingSecret: ""  # optional; key name encryption-key
+  managementKey:
+    existingSecret: ""  # optional; key name management-key
 config:
   server:
     auth_mode: api_key
@@ -171,21 +160,35 @@ config:
     public_url: https://ov.example.com
 ```
 
-- The chart generates the rest of `config.gateway`: bind address, port, workers,
-  internal URLs and a `storage_path` on the data volume. Values you set under
-  `config.gateway` take precedence.
-- Set `public_url` to the address clients use, written out literally. The gateway does not
-  expand `${VAR}` placeholders, and its container does not receive `extraEnv`.
-- With the ingress enabled, the chart routes `/v1`, `/api/v3`, `/api/compatible/v1` and
-  `/gateway/uploads` to the gateway. It never routes the gateway's `/admin` paths;
-  keep it that way in your own ingress rules.
-- Keep `replicaCount: 1`. The gateway's storage must be used from a single host; scale with
-  `gateway.workers` instead.
+Without an encryption Secret, the gateway generates `encryption.key` in its storage
+directory with mode 0600. Back it up with the volume. For an existing database, preserve
+the original key; changing encryption keys does not re-encrypt stored data.
 
-The chart does not set ingress annotations. Model requests stream and can be large, so turn off
-proxy buffering and allow 32 MiB request bodies and 600-second read timeouts. For the NGINX
-annotations, Studio setup and troubleshooting, see
-[OpenViking Gateway deployment and operations](https://docs.openviking.ai/en/guides/22-gateway-operations#helm).
+To use Secrets, create one or two Secrets with the fixed entry names below, then set
+both `existingSecret` references to the relevant Secret name:
+
+```bash
+kubectl create secret generic openviking-gateway \
+  --from-literal=encryption-key="$(python3 -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')" \
+  --from-literal=management-key="$(openssl rand -base64 32)"
+```
+
+The management key is optional and must be at least 32 characters. When its Secret is
+set, the chart injects `OPENVIKING_GATEWAY_MANAGEMENT_KEY` and explicitly configures
+`management_key: '$OPENVIKING_GATEWAY_MANAGEMENT_KEY'`. Without it, authenticated
+OpenViking users can edit upstreams and profiles in their own account. With it, even
+OpenViking admins/root need the management key for object changes. Users can still
+issue their own gateway keys. The management key does not authorize memory access.
+
+Keep `replicaCount: 1` and use the server worker setting to scale within the host.
+For streaming model requests, configure your Ingress for no response buffering,
+at least 32 MiB bodies and 600-second read timeouts. The chart does not set these
+annotations. See [deployment and operations](https://docs.openviking.ai/en/guides/22-gateway-operations#helm).
+
+When upgrading from the sidecar chart, remove `gateway.existingSecret`, `gateway.port`,
+`gateway.workers`, `gateway.resources` and legacy host/port/url fields in `config.gateway`.
+Preserve the encryption key and storage. `OPENVIKING_GATEWAY_ADMIN_TOKEN` is removed and
+is not a substitute for the new management key. Clients now use the server port.
 
 ## Configuration
 
@@ -211,11 +214,9 @@ annotations, Studio setup and troubleshooting, see
 | `config.server.root_api_key` | API key required when server binds to 0.0.0.0 | `""` |
 | `config` | Full ov.conf configuration object | See `values.yaml` |
 | `extraEnv` | Additional environment variables | `[]` |
-| `gateway.enabled` | Run OpenViking Gateway as a second container in the pod | `false` |
-| `gateway.existingSecret` | Secret with `encryption-key` and `admin-token`; required when enabled | `""` |
-| `gateway.workers` | Gateway worker processes | `2` |
-| `gateway.port` | Gateway container and Service port | `1935` |
-| `gateway.resources` | Gateway container resources | `{}` |
+| `gateway.enabled` | Embed Gateway in the server container and port | `false` |
+| `gateway.encryptionKey.existingSecret` | Optional Secret containing `encryption-key`; otherwise generate a persisted key file | `""` |
+| `gateway.managementKey.existingSecret` | Optional Secret containing `management-key` to restrict upstream/profile writes | `""` |
 
 ## Upgrading
 
