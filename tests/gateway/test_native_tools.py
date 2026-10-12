@@ -1025,7 +1025,7 @@ def test_native_file_attachments_preserve_bytes(protocol):
     assert attachment_bytes(attachments(body, protocol)[0], 100) == ("note.txt", b"hello")
 
 
-@pytest.mark.parametrize("blocked", ["disabled", "forced", "collision", "renamed_mcp"])
+@pytest.mark.parametrize("blocked", ["disabled", "forced", "collision"])
 async def test_anthropic_blocked_tools_preserve_client_thinking(
     setup_kernel, credential, policy, blocked
 ):
@@ -1056,21 +1056,43 @@ async def test_anthropic_blocked_tools_preserve_client_thinking(
         upstream["allow_gateway_tools"] = False
     elif blocked == "forced":
         body["tool_choice"] = {"type": "tool", "name": "shell"}
-    elif blocked == "collision":
-        body["tools"].append({"name": "openviking_search", "input_schema": {"type": "object"}})
     else:
-        body["tools"].append(
-            {
-                "name": "mcp__ov__read",
-                "description": "Read viking:// URIs",
-                "input_schema": {"type": "object"},
-            }
-        )
+        body["tools"].append({"name": "openviking_search", "input_schema": {"type": "object"}})
     for _ in range(2):
         result = await kernel.prepare(body, "anthropic", header, credential, upstream, policy)
         assert not result.tools_active
         assert result.body["messages"] == [prepared.body["messages"][0], *body["messages"][1:]]
         assert result.metrics.get("degradation") != "hidden_tool_history_unavailable"
+
+
+async def test_client_openviking_tools_are_decided_at_session_start(
+    setup_kernel, credential, policy
+):
+    kernel, _, _, _ = setup_kernel
+    policy.update(gateway_tools=True, recall=False, capture=False)
+    upstream = {"id": "u"}
+    body = request_body("anthropic", False)
+    body["tools"].append(
+        {"name": "mcp__ov__read", "description": "Read viking:// URIs", "input_schema": {}}
+    )
+    header = {"x-openviking-session": "client-ov"}
+    result = await kernel.prepare(body, "anthropic", header, credential, upstream, policy)
+    assert not result.tools_active
+    assert result.metrics["tool_skip_reason"] == "tool_name_collision"
+
+    # Later mentions of an OpenViking tool name keep the tools the session started with.
+    body = request_body("anthropic", False)
+    header = {"x-openviking-session": "pasted"}
+    first = await kernel.prepare(body, "anthropic", header, credential, upstream, policy)
+    assert first.tools_active
+    body["messages"].extend(
+        [
+            {"role": "assistant", "content": "Done"},
+            {"role": "user", "content": "Why does mcp__openviking__search fail?"},
+        ]
+    )
+    later = await kernel.prepare(body, "anthropic", header, credential, upstream, policy)
+    assert later.tools_active
 
 
 @pytest.mark.parametrize("arguments", [None, "", "{}", "{broken"])

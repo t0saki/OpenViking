@@ -222,15 +222,15 @@ def client_openviking_tools(body: dict, names) -> bool:
 
     ``names`` are the bare OpenViking tool names, such as ``read`` and ``add_resource``.
     """
-    pending = [
-        *body.get("tools", []),
-        *body.get("additional_tools", []),
-        *body.get("mcp_servers", []),
-    ]
+    pending = []
+    for key in ("tools", "additional_tools", "mcp_servers"):
+        if isinstance(body.get(key), list):
+            pending.extend(body[key])
     if isinstance(body.get("input"), list):
         for item in body["input"]:
             if isinstance(item, dict) and item.get("type") == "additional_tools":
-                pending.extend(item.get("tools") or [])
+                if isinstance(item.get("tools"), list):
+                    pending.extend(item["tools"])
     ending = re.compile(rf"(?<![a-z0-9])(?:{'|'.join(map(re.escape, names))})$", re.I)
     while pending:
         tool = pending.pop()

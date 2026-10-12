@@ -314,6 +314,10 @@ class MemoryKernel:
                     tools = select_tools(catalog, policy)
                 except VikingError:
                     reason = "tools_unavailable"
+                # Decided once: dropping tools mid-conversation would break provider caches.
+                names = [t["function"]["name"].removeprefix(PREFIX) for t in tools]
+                if tools and client_openviking_tools(body, names):
+                    tools, reason = [], "tool_name_collision"
             root = await self.store.replay.put(
                 scope,
                 sid,
@@ -347,12 +351,9 @@ class MemoryKernel:
             reason = tool_block_reason(
                 request.original, request.protocol, request.upstream, restores
             )
-            collision = client_openviking_tools(
-                request.original, [t["function"]["name"].removeprefix(PREFIX) for t in tools]
-            )
             hidden = any((K.HIDDEN, anchor) in request.records for anchor in request.body_chain)
-            if reason or collision:
-                request.metrics["tool_skip_reason"] = reason or "tool_name_collision"
+            if reason:
+                request.metrics["tool_skip_reason"] = reason
                 request.hidden_history_unavailable = hidden
             elif owner or hidden:
                 # Only the conversation's own turns get gateway tools. Others that resend

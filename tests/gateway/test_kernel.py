@@ -623,6 +623,7 @@ def test_client_openviking_tools_outside_tool_list():
     reply = {"role": "assistant", "content": "mcp__openviking__search"}
     assert not client_openviking_tools({"messages": [reply]}, OV_NAMES)
     assert not client_openviking_tools({"tools": [{"name": "Read"}]}, [])
+    assert not client_openviking_tools({"tools": None, "mcp_servers": None}, OV_NAMES)
 
 
 def test_capture_pairs_tools_and_strips_noise():
