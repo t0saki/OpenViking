@@ -399,7 +399,9 @@ class MemoryKernel:
             # Upstreams reject duplicate tool names, so an exact clash always skips.
             names = {t["function"]["name"] for t in tools}
             collision = any(
-                isinstance(t, dict) and t.get("function", t).get("name") in names
+                isinstance(t, dict)
+                and isinstance(t.get("function", t), dict)
+                and t.get("function", t).get("name") in names
                 for t in request.original.get("tools") or []
             )
             hidden = any((K.HIDDEN, anchor) in request.records for anchor in request.body_chain)

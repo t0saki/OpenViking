@@ -213,6 +213,8 @@ def client_openviking_tools(body: dict, names) -> bool:
 
     ``names`` are the bare OpenViking tool names, such as ``read`` and ``add_resource``.
     """
+    if not names:
+        return False
     pending = []
     for key in ("tools", "additional_tools", "mcp_servers"):
         if isinstance(body.get(key), list):
@@ -256,17 +258,14 @@ def client_openviking_tools(body: dict, names) -> bool:
         # A renamed server's tools keep their names and mention viking:// URIs, while
         # a container such as a skill list may quote an OpenViking description too.
         if (
-            names
-            and any(ending.search(label) for label in labels)
+            any(ending.search(label) for label in labels)
             and "viking://" in orjson.dumps(definition).decode().lower()
         ):
             return True
     # Deferred MCP tools, as in Claude Code's tool search, are listed only by name, one
     # per line; a name mentioned in prose is not a tool.
     deferred = rf"^[ \t]*mcp__[\w-]*?{OPENVIKING_WORD}[\w-]*__(?:{alternatives})[ \t]*$"
-    return bool(names) and any(
-        re.search(deferred, text, re.I | re.M) for text in client_texts(body)
-    )
+    return any(re.search(deferred, text, re.I | re.M) for text in client_texts(body))
 
 
 def is_user(message):

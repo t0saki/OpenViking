@@ -67,9 +67,9 @@ const enums = {
       'DeepSeek thinking is on and earlier reasoning cannot be sent back',
     tool_name_collision: 'The client already has OpenViking tools',
     tools_unavailable:
-      "OpenViking's tool list couldn't be loaded when this conversation started",
+      "OpenViking's tool list couldn't be loaded when this conversation first needed it",
     tools_not_selected_at_session_start:
-      'Tools were not available when this conversation started',
+      'This conversation has no OpenViking tools',
   },
   toolStopReason: {
     token_budget: 'Tool token budget reached',
