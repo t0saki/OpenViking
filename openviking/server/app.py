@@ -5,7 +5,7 @@
 import asyncio
 import os
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -57,7 +57,6 @@ from openviking.server.routers import (
     watches_router,
     webdav_router,
 )
-from openviking.server.routers.gateway import router as gateway_router
 from openviking.server.timing_middleware import RequestTimingMiddleware
 from openviking.service.core import OpenVikingService
 from openviking.service.task_tracker import get_task_tracker
@@ -73,6 +72,8 @@ from openviking_cli.utils.logger import init_otel_log_handler_from_server_config
 
 logger = get_logger(__name__)
 
+WORKER_HOST_ENV = "OPENVIKING_WORKER_HOST"
+WORKER_PORT_ENV = "OPENVIKING_WORKER_PORT"
 WORKER_WITH_BOT_ENV = "OPENVIKING_WORKER_WITH_BOT"
 WORKER_BOT_API_URL_ENV = "OPENVIKING_WORKER_BOT_API_URL"
 
@@ -111,6 +112,10 @@ def create_worker_app() -> FastAPI:
     bot_api_url = os.environ.get(WORKER_BOT_API_URL_ENV)
     if bot_api_url is not None:
         config.bot_api_url = bot_api_url
+    if WORKER_HOST_ENV in os.environ:
+        config.host = os.environ[WORKER_HOST_ENV] or None
+    if WORKER_PORT_ENV in os.environ:
+        config.port = int(os.environ[WORKER_PORT_ENV])
     return create_app(config, config_path=config_path)
 
 
@@ -380,11 +385,16 @@ def create_app(
         init_otel_log_handler_from_server_config(config)
 
         # Start MCP session manager (must be active before /mcp requests)
+        from openviking.server.gateway_host import gateway_lifespan, seed_dev_defaults
         from openviking.server.mcp_endpoint import mcp_lifespan
 
-        async with mcp_lifespan():
+        async with AsyncExitStack() as stack:
+            await stack.enter_async_context(mcp_lifespan())
+            await stack.enter_async_context(gateway_lifespan(app.state.gateway_app))
             if service is not None:
                 await _initialize_runtime_state(app, service, config)
+            if config.get_effective_auth_mode() == "dev":
+                await seed_dev_defaults(app.state.gateway_app)
             yield
 
         # Cleanup
@@ -457,6 +467,10 @@ def create_app(
 
         @app.middleware("http")
         async def dump_http_body(request: Request, call_next: Callable):
+            from openviking.server.gateway_host import is_gateway_path
+
+            if is_gateway_path(request.url.path):
+                return await call_next(request)
             return await _dump_body_fn(request, call_next)
 
         logger.info(
@@ -602,7 +616,6 @@ def create_app(
     app.include_router(system_router)
     app.include_router(acl_router)
     app.include_router(admin_router)
-    app.include_router(gateway_router)
     app.include_router(agent_evolution_router)
     app.include_router(compile_router)
     app.include_router(resources_router)
@@ -811,5 +824,12 @@ def create_app(
     app.routes.append(
         _ScopedRoute("/mcp", endpoint=create_mcp_app(), methods=["GET", "POST", "DELETE"])
     )
+
+    from openviking.server.gateway_host import create_embedded_gateway, mount_gateway
+
+    gateway_config = get_openviking_config().gateway
+    app.state.gateway_app = create_embedded_gateway(gateway_config, config, lambda: service)
+    if app.state.gateway_app is not None:
+        mount_gateway(app, app.state.gateway_app)
 
     return app

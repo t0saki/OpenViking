@@ -13,6 +13,7 @@ from contextlib import contextmanager
 from functools import partial
 from pathlib import Path
 from typing import Any, Protocol
+from urllib.parse import urlsplit
 
 import orjson
 from cryptography.fernet import Fernet
@@ -24,7 +25,7 @@ from .state_store import SQLiteStateStore, StateStore
 
 # Pre-release builds stamped versions 1-4 on incompatible layouts; reusing
 # one of them would let old files through and fail on the first write.
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 
 def digest(value: str) -> str:
@@ -107,7 +108,7 @@ class SQLiteKernelStore(Database):
     async def initialize(self):
         def initialize():
             with self.connect() as c:
-                if c.execute("PRAGMA user_version").fetchone()[0] not in (0, SCHEMA_VERSION):
+                if c.execute("PRAGMA user_version").fetchone()[0] not in (0, 5, SCHEMA_VERSION):
                     raise ValueError("Unsupported gateway schema; configure a fresh storage_path")
                 c.execute("PRAGMA journal_mode=WAL")
                 c.executescript("""
@@ -244,7 +245,7 @@ class ManagementStore(Database):
     async def initialize(self):
         def initialize():
             with self.connect() as c:
-                if c.execute("PRAGMA user_version").fetchone()[0] not in (0, SCHEMA_VERSION):
+                if c.execute("PRAGMA user_version").fetchone()[0] not in (0, 5, SCHEMA_VERSION):
                     raise ValueError("Unsupported gateway schema; configure a fresh storage_path")
                 c.execute("PRAGMA journal_mode=WAL")
                 c.executescript("""
@@ -253,18 +254,47 @@ class ManagementStore(Database):
                         PRIMARY KEY(account,kind,id));
                     CREATE INDEX IF NOT EXISTS object_identity ON objects(kind,id);
                     CREATE TABLE IF NOT EXISTS request_logs (
-                        id INTEGER PRIMARY KEY, account TEXT, time REAL, value BLOB);
-                    CREATE INDEX IF NOT EXISTS log_account ON request_logs(account,time);
+                        id INTEGER PRIMARY KEY, account TEXT, time REAL, value BLOB, user TEXT);
                     CREATE TABLE IF NOT EXISTS object_expiry (
                         account TEXT, kind TEXT, id TEXT, expires REAL,
                         PRIMARY KEY(account,kind,id));
                     CREATE INDEX IF NOT EXISTS expiry_time ON object_expiry(expires);
                 """)
+                # Serialize the one-time migration across standalone/server workers.
+                c.execute("BEGIN IMMEDIATE")
+                if c.execute("PRAGMA user_version").fetchone()[0] == 5:
+                    c.execute("ALTER TABLE request_logs ADD COLUMN user TEXT")
+                    for row in c.execute("SELECT * FROM objects WHERE kind='upstreams'").fetchall():
+                        value = self.decode(row["value"])
+                        base = value["base_url"].rstrip("/")
+                        if not urlsplit(base).path:
+                            if value.get("vendor") in {"ark", "byteplus"}:
+                                base += (
+                                    "/api/compatible"
+                                    if value["protocol"] == "anthropic"
+                                    else "/api/v3"
+                                )
+                            elif value["protocol"] != "anthropic":
+                                base += "/v1"
+                        if value["protocol"] == "anthropic" and base.endswith("/v1"):
+                            base = base[:-3]
+                        if base != value["base_url"]:
+                            value["base_url"] = base
+                            c.execute(
+                                "UPDATE objects SET value=?,revision=revision+1 "
+                                "WHERE account=? AND kind=? AND id=?",
+                                (self.encode(value), row["account"], row["kind"], row["id"]),
+                            )
+                c.execute("DROP INDEX IF EXISTS log_account")
+                c.execute(
+                    "CREATE INDEX IF NOT EXISTS log_account_user ON request_logs(account,user,time)"
+                )
                 c.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
+                c.commit()
 
         await self.run(initialize, write=True)
 
-    async def list(self, account, kind):
+    async def list(self, account, kind, user_id=None):
         def read():
             with self.connect() as c:
                 return [
@@ -276,8 +306,14 @@ class ManagementStore(Database):
                 ]
 
         if kind in {"keys", "upstreams"}:
-            return await self.cache.get(("list", account, kind), lambda: self.run(read))
-        return await self.run(read)
+            values = await self.cache.get(("list", account, kind), lambda: self.run(read))
+        else:
+            values = await self.run(read)
+        return (
+            [value for value in values if value.get("user_id") == user_id]
+            if user_id is not None
+            else values
+        )
 
     async def get(self, account, kind, identifier):
         def read():
@@ -352,28 +388,114 @@ class ManagementStore(Database):
 
         return await self.cache.get(("auth", identifier), lambda: self.run(read))
 
-    async def log(self, account, value):
+    async def log(self, account, value, user_id=None):
         def log():
             with self.connect() as c:
                 c.execute(
-                    "INSERT INTO request_logs(account,time,value) VALUES (?,?,?)",
-                    (account, time.time(), self.encode(value)),
+                    "INSERT INTO request_logs(account,time,value,user) VALUES (?,?,?,?)",
+                    (account, time.time(), self.encode(value), user_id),
                 )
 
         await self.run(log, write=True)
 
-    async def logs(self, account, limit=200):
+    async def record_request(
+        self,
+        account,
+        credential_id,
+        value,
+        *,
+        response_id=None,
+        upstream_id=None,
+        response_ttl=None,
+    ):
+        """Record a completed request only while its gateway key still exists.
+
+        The key check and both writes share SQLite's write transaction, so user/account
+        deletion in another worker cannot be followed by late stream bookkeeping.
+        """
+
+        def record():
+            with self.connect() as c:
+                c.execute("BEGIN IMMEDIATE")
+                row = c.execute(
+                    "SELECT value FROM objects WHERE account=? AND kind='keys' AND id=?",
+                    (account, credential_id),
+                ).fetchone()
+                if not row:
+                    return False
+                credential = self.decode(row["value"])
+                now = time.time()
+                if credential.get("expires_at", float("inf")) <= now:
+                    return False
+                user_id = credential["user_id"]
+                if response_id is not None:
+                    if upstream_id is None or response_ttl is None:
+                        raise ValueError("Response bookkeeping requires an upstream and TTL")
+                    identifier = digest(credential_id + response_id)
+                    response = {
+                        "upstream_id": upstream_id,
+                        "user_id": user_id,
+                        "expires_at": now + response_ttl,
+                    }
+                    c.execute(
+                        "INSERT INTO objects VALUES (?,'responses',?,1,?) "
+                        "ON CONFLICT(account,kind,id) DO UPDATE "
+                        "SET revision=revision+1,value=excluded.value",
+                        (account, identifier, self.encode(response)),
+                    )
+                    c.execute(
+                        "INSERT OR REPLACE INTO object_expiry VALUES (?,'responses',?,?)",
+                        (account, identifier, response["expires_at"]),
+                    )
+                c.execute(
+                    "INSERT INTO request_logs(account,time,value,user) VALUES (?,?,?,?)",
+                    (account, now, self.encode(value), user_id),
+                )
+                c.commit()
+                return True
+
+        return await self.run(record, write=True)
+
+    async def logs(self, account, limit=200, user_id=None):
         def read():
             with self.connect() as c:
+                where, args = "account=?", [account]
+                if user_id is not None:
+                    where += " AND user=?"
+                    args.append(user_id)
                 return [
                     {"time": r["time"], **self.decode(r["value"])}
                     for r in c.execute(
-                        "SELECT time,value FROM request_logs WHERE account=? ORDER BY id DESC LIMIT ?",
-                        (account, limit),
+                        f"SELECT time,value FROM request_logs WHERE {where} ORDER BY id DESC LIMIT ?",
+                        (*args, limit),
                     )
                 ]
 
         return await self.run(read)
+
+    async def delete_user(self, account, user_id):
+        def delete():
+            with self.connect() as c:
+                c.execute("BEGIN IMMEDIATE")
+                for row in c.execute(
+                    "SELECT kind,id,value FROM objects WHERE account=? "
+                    "AND kind IN ('keys','users','responses')",
+                    (account,),
+                ).fetchall():
+                    if self.decode(row["value"]).get("user_id") == user_id:
+                        identity = (account, row["kind"], row["id"])
+                        c.execute(
+                            "DELETE FROM objects WHERE account=? AND kind=? AND id=?", identity
+                        )
+                        c.execute(
+                            "DELETE FROM object_expiry WHERE account=? AND kind=? AND id=?",
+                            identity,
+                        )
+                c.execute("DELETE FROM request_logs WHERE account=? AND user=?", (account, user_id))
+                c.commit()
+
+        await self.run(delete, write=True)
+        self.cache.clear()
 
     async def expire_logs(self, before):
         def expire():
@@ -401,3 +523,22 @@ class ManagementStore(Database):
 
         await self.run(delete, write=True)
         self.cache.clear()
+
+
+async def delete_user_data(management, store, account, user_id):
+    """Revoke keys and erase gateway state; OpenViking memory is unaffected."""
+    for protocol in ("chat", "responses", "anthropic"):
+        await store.expire(0, digest(account + "\0" + user_id + "\0" + protocol))
+    await management.delete_user(account, user_id)
+
+
+async def delete_account_data(management, store, account):
+    users = {
+        value["user_id"]
+        for kind in ("users", "keys")
+        for value in await management.list(account, kind)
+        if value.get("user_id")
+    }
+    for user_id in users:
+        await delete_user_data(management, store, account, user_id)
+    await management.delete_account(account)

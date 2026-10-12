@@ -36,7 +36,7 @@ from .ingest_config import IngestConfig
 from .log_config import LogConfig
 from .memory_config import MemoryConfig
 from .oauth_config import OAuthConfig
-from .openviking_gateway_config import OpenVikingGatewayConfig
+from .openviking_gateway_config import EmbeddedGatewayConfig
 from .parser_config import (
     AnydocConfig,
     AudioConfig,
@@ -319,7 +319,7 @@ class OpenVikingConfig(BaseModel):
         description="External Connector service configuration for data import",
     )
 
-    gateway: OpenVikingGatewayConfig = Field(default_factory=OpenVikingGatewayConfig)
+    gateway: EmbeddedGatewayConfig = Field(default_factory=EmbeddedGatewayConfig)
 
     enable_watch_scheduler: bool = Field(
         default=True,

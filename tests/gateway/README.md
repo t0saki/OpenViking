@@ -8,10 +8,10 @@ process. For what the gateway does and how to deploy it, see the user guides
 
 ## Run the suite
 
-Install the gateway extra and the test dependencies in your development environment:
+Install the core package and test dependencies in your development environment:
 
 ```bash
-pip install -e ".[gateway,test]"
+pip install -e ".[test]"
 ```
 
 Run from the repository root:
@@ -26,6 +26,12 @@ test as usual, for example `tests/gateway/test_kernel.py::<test_name>`.
 
 `fixtures/` holds sanitized requests recorded from real clients; see
 [fixtures/README.md](fixtures/README.md) before updating them.
+
+## Host, management and migration coverage
+
+Management tests call `/api/v1/admin/gateway/*` directly with OpenViking identities and the optional `X-OpenViking-Gateway-Management-Key`; there is no shared admin token. Cover root/admin/user/dev account and user scope, management-key-only object access, read-only secret redaction, key issuance and revocation, VLM import permissions, and changing base_url clearing retained credentials and headers.
+
+`tests/fixtures/gateway_upstream_urls.json` is shared with Studio URL tests. Keep SDK-style base joins, alternate client prefixes and Anthropic validation in sync. Storage tests cover schema v5 → v6 migration and durable encryption-key publication. Embedded host and VLM mapping integration tests live under `tests/server/`; standalone startup uses its own config and an explicit OpenViking URL. Run those host tests separately with the full server test environment.
 
 ## Hidden tool protocol contracts
 
@@ -76,7 +82,7 @@ connection through environment variables:
 
 | Variable | Value |
 | --- | --- |
-| `OV_GW_TEST_BASE_URL` | Gateway origin without `/v1`, for example `http://127.0.0.1:1935` |
+| `OV_GW_TEST_BASE_URL` | Gateway origin without `/v1`, for example `http://127.0.0.1:1933` (embedded) or `http://127.0.0.1:1935` (standalone) |
 | `OV_GW_TEST_KEY` | Gateway key (`ovgw_…`) |
 | `OV_GW_TEST_MODEL` | A model name the key allows |
 

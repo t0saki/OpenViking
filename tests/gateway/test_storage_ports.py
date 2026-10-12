@@ -130,7 +130,7 @@ async def test_kernel_and_capture_work_with_kv_ports(credential, protocol):
         async def get(self, *_):
             return credential
 
-        async def log(self, *_):
+        async def record_request(self, *_):
             pass
 
     worker = CaptureWorker(ports, Management(), viking)
