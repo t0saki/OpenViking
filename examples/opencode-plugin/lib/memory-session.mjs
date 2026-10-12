@@ -317,8 +317,7 @@ export function createMemorySessionManager({ config, pluginRoot }) {
       const added = await flushPendingMessages(opencodeSessionId, state)
       if (commit && isCaptureEnabled(config)) {
         const result = await commitOvSession(state.ovSessionId, { force: true, reason })
-        // The server lost this session (reset or reinstall); a later event
-        // recreates the mapping and add-message recreates the session.
+        // Server lost the session (reset/reinstall); drop the stale mapping.
         if (result.status === "not_found" && sessions.get(opencodeSessionId) === state) {
           sessions.delete(opencodeSessionId)
         }

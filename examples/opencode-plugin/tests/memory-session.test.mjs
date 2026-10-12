@@ -699,11 +699,13 @@ test("commit of a session the server no longer has drops the stale local mapping
       await manager.handleEvent({ type: "session.deleted", properties: { info: { id: "oc-stale-a" } } })
       await manager.flushAll({ commit: true })
       await manager.flushAll({ commit: true })
+      assert.deepEqual(await manager.commitSession("oc-oc-stale-c"), { status: "not_found" })
 
       const commits = requests.filter((request) => request.url?.endsWith("/commit"))
       assert.deepEqual(commits.map((request) => request.url), [
         "/api/v1/sessions/oc-oc-stale-a/commit",
         "/api/v1/sessions/oc-oc-stale-b/commit",
+        "/api/v1/sessions/oc-oc-stale-c/commit",
       ])
       const state = JSON.parse(await fs.promises.readFile(statePath, "utf8"))
       assert.deepEqual(state.sessions, {})
