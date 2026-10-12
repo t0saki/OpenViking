@@ -515,7 +515,7 @@ server {
 | `tools_non_function` | Chat Completions 客户端传入了 function 以外类型的工具。 |
 | `tools_forced_choice` | `tool_choice` 为 `required`，或者指定了某个工具。 |
 | `deepseek_reasoning_history_required` | 上游的服务商是 DeepSeek，请求没有关闭思考模式（`"thinking": {"type": "disabled"}`），而之前的回复发到上游时会缺少推理内容：关闭了**补全推理内容回传**，或者这个请求补不回推理内容，因为对话换了上游、丢了记忆记录，或者思考内容被当作正文发回。标准的 Responses 请求没有 `thinking` 字段，按开启思考模式处理。 |
-| `tool_name_collision` | 客户端已接入 OpenViking 工具，网关在这段对话剩下的部分不再提供自己的工具。满足以下任一条件即算：工具名、namespace 或 MCP 服务名（`server_label`、`mcp_server_name`、`mcp_servers[].name`）含有单词 `openviking`，如 `mcp__claude_ai_OpenViking__search`；独占一行列出的延迟加载工具名符合上述规则；带前缀、以 OpenViking 工具名结尾的工具（如 `mcp__ov__read`）在定义中出现 `viking://`。此外，任一请求中客户端工具与网关工具同名也算，因为上游会拒绝重名工具。 |
+| `tool_name_collision` | 客户端已接入 OpenViking 工具，网关在这段对话剩下的部分不再提供自己的工具。满足以下任一条件即算：namespace 或 MCP 服务名（`server_label`、`mcp_server_name`、`mcp_servers[].name`）含有单词 `openviking`；以 OpenViking 工具名命名的工具名中也含这个单词，如 `mcp__claude_ai_OpenViking__search`（连接器的 `authenticate` 工具不算），包括独占一行列出的延迟加载工具名；带前缀、以 OpenViking 工具名结尾的工具（如 `mcp__ov__read`）在定义中出现 `viking://`。此外，任一请求中客户端工具与网关工具同名也算，因为上游会拒绝重名工具。 |
 | `tools_unavailable` | 无法从 OpenViking 加载工具清单，也没有之前加载成功的清单。连接恢复后请开始新对话。 |
 | `tools_not_selected_at_session_start` | 上下文配置开启了工具，但这段对话还没有能用工具的请求，或者第一个能用的请求加载 OpenViking 工具列表失败。 |
 
@@ -800,7 +800,7 @@ Studio 通过 OpenViking Server 上 `/api/v1/admin/gateway/` 下的管理 API �
 | --- | --- | --- |
 | 某段对话没有召回，也没有保存 | 检测到 OpenViking 插件，网关让出了这段对话，召回、保存和 OpenViking 工具都交给插件。 | 正常行为，避免同一份内容补充两次、保存两次，见[网关还是插件](15-gateway.md#网关还是插件)。 |
 | 保存显示“重试中”，之后变成“已暂停” | OpenViking 拒绝保存或无法访问，常见原因是用户的 OpenViking 密钥被重新生成过。 | 修好原因后网关会自动恢复；密钥失效时重新签发网关密钥，见[OpenViking 中看不到对话](#openviking-中看不到对话)。 |
-| 上下文配置开启了工具，对话里却没有 | 对话的第一个请求不满足工具条件，或者客户端没有回传完整历史。 | 在请求日志里查看停用原因（见 [OpenViking 工具](#openviking-工具)），修正后开始新对话。 |
+| 上下文配置开启了工具，对话里却没有 | 还没有能用工具的请求、第一个能用的请求加载 OpenViking 工具列表失败、客户端没有回传完整历史，或者客户端自己接了 OpenViking 工具。 | 在请求日志里查看停用原因（见 [OpenViking 工具](#openviking-工具)）。客户端接了 OpenViking MCP 服务器时出现 `tool_name_collision` 属于正常；其他原因修正后开始新对话。 |
 | 请求不带记忆 | OpenViking 无法访问或超时、预算用完、没有相关内容等。 | 见[没有补充记忆](#没有补充记忆)。 |
 | 长对话被服务商以过长为由拒绝 | 网关不知道模型的实际窗口，压缩得太晚。 | 见[长对话超出上下文长度](#长对话超出上下文长度)。 |
 

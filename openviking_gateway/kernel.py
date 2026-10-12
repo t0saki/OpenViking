@@ -394,7 +394,7 @@ class MemoryKernel:
                 request.metrics["tools_tokens"] = token_estimate(
                     orjson.dumps(adapter.wire_tools(tools)).decode()
                 )
-        elif policy.gateway_tools:
+        elif policy.gateway_tools and owner:
             request.metrics["tool_skip_reason"] = (
                 tool_block_reason(request.original, request.protocol, request.upstream)
                 or request.root["tool_skip_reason"]

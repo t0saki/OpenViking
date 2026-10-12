@@ -223,7 +223,8 @@ def client_openviking_tools(body: dict, names) -> bool:
                 if isinstance(item.get("tools"), list):
                     pending.extend(("", tool) for tool in item["tools"])
     # Prefixed like mcp__ov__read or ov_read; a bare Read is a client's own tool.
-    ending = re.compile(rf"[^a-z0-9](?:{'|'.join(map(re.escape, names))})$", re.I)
+    alternatives = "|".join(map(re.escape, names))
+    ending = re.compile(rf"[^a-z0-9](?:{alternatives})$", re.I)
     while pending:
         parent, tool = pending.pop()
         if not isinstance(tool, dict):
@@ -236,11 +237,18 @@ def client_openviking_tools(body: dict, names) -> bool:
             for key in ("name", "namespace", "server_label", "mcp_server_name")
             if isinstance(definition.get(key), str)
         ]
-        if isinstance(definition.get("tools"), list):
+        server = isinstance(definition.get("tools"), list) or "url" in definition
+        if server:
             # A namespace's tools are named without it, as in mcp__kb + glob.
             prefix = (labels[0] + "__") if labels else ""
-            pending.extend((prefix, child) for child in definition["tools"])
-        if any(re.search(OPENVIKING_WORD, label, re.I) for label in labels):
+            if isinstance(definition.get("tools"), list):
+                pending.extend((prefix, child) for child in definition["tools"])
+        named_tool = isinstance(definition.get("name"), str) and not server
+        # A tool must be one of OpenViking's, so a connector's authenticate tool is not.
+        if any(
+            re.search(OPENVIKING_WORD, label, re.I) and (not named_tool or ending.search(label))
+            for label in labels
+        ):
             return True
         # A renamed server's tools keep their names and mention viking:// URIs, while
         # a container such as a skill list may quote an OpenViking description too.
@@ -252,8 +260,10 @@ def client_openviking_tools(body: dict, names) -> bool:
             return True
     # Deferred MCP tools, as in Claude Code's tool search, are listed only by name, one
     # per line; a name mentioned in prose is not a tool.
-    deferred = rf"^[ \t]*mcp__[\w-]*?{OPENVIKING_WORD}[\w-]*__\w+[ \t]*$"
-    return any(re.search(deferred, text, re.I | re.M) for text in client_texts(body))
+    deferred = rf"^[ \t]*mcp__[\w-]*?{OPENVIKING_WORD}[\w-]*__(?:{alternatives})[ \t]*$"
+    return bool(names) and any(
+        re.search(deferred, text, re.I | re.M) for text in client_texts(body)
+    )
 
 
 def is_user(message):

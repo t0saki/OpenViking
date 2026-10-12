@@ -561,7 +561,7 @@ def test_classification_and_plugin_namespaces():
     assert client_openviking_tools(namespaces, OV_NAMES)
 
 
-OV_NAMES = ["read", "ls", "glob", "search", "add_resource"]
+OV_NAMES = ["read", "ls", "glob", "find", "search", "add_resource"]
 
 
 @pytest.mark.parametrize(
@@ -591,6 +591,8 @@ OV_NAMES = ["read", "ls", "glob", "search", "add_resource"]
         ([{"type": "mcp_toolset", "mcp_server_name": "openviking"}], True),
         ([{"name": "Read", "description": "Read a local file"}, {"name": "WebSearch"}], False),
         ([{"name": "openvikingish_search"}, {"name": "mcp__myopenviking__find"}], False),
+        # An unauthenticated claude.ai connector offers only its sign-in tools.
+        ([{"name": "mcp__claude_ai_OpenViking__authenticate"}], False),
         # A skill list quoting an OpenViking skill is not an OpenViking tool.
         (
             [
@@ -619,6 +621,10 @@ def test_client_openviking_tools_outside_tool_list():
         "<system-reminder>Deferred tools:\nmcp__claude_ai_OpenViking__search\n</system-reminder>"
     )
     assert client_openviking_tools({"messages": [{"role": "user", "content": deferred}]}, OV_NAMES)
+    signin = "mcp__claude_ai_OpenViking__authenticate\nmcp__claude_ai_OpenViking__complete_authentication"
+    assert not client_openviking_tools(
+        {"messages": [{"role": "user", "content": signin}]}, OV_NAMES
+    )
     prose = "Why does mcp__openviking__search fail?"
     assert not client_openviking_tools({"messages": [{"role": "user", "content": prose}]}, OV_NAMES)
     reply = {"role": "assistant", "content": "mcp__openviking__search"}
