@@ -540,9 +540,10 @@ async def test_native_budget_keeps_client_tools_and_output_limit(
     assert logs[0]["tool_stop_reason"] == "token_budget"
 
 
+@pytest.mark.parametrize("own_session", [False, True])
 @pytest.mark.parametrize("protocol", ["responses", "anthropic"])
 async def test_subagent_resending_tool_history_replays_it_but_cannot_call(
-    running_gateway, protocol
+    running_gateway, protocol, own_session
 ):
     app, client, admin, key, _, _ = running_gateway
     await enable_tools(client, admin)
@@ -572,10 +573,12 @@ async def test_subagent_resending_tool_history_replays_it_but_cannot_call(
         else [{"role": "assistant", "content": visible["content"]}]
     )
     body[field].append({"role": "user", "content": "Explore"})
-    # A forked sub-agent resends the main history, including the hidden tool round.
-    response = await client.post(
-        PATHS[protocol], headers={**headers, "X-Claude-Code-Agent-Id": "child"}, json=body
-    )
+    # A forked sub-agent resends the main history, including the hidden tool round,
+    # possibly under a session of its own that never had a request owning tools.
+    child = {**headers, "X-Claude-Code-Agent-Id": "child"}
+    if own_session:
+        child.update({"X-OpenViking-Session": "child-thread", "X-Codex-Parent-Thread-Id": "fork"})
+    response = await client.post(PATHS[protocol], headers=child, json=body)
     assert response.status_code == 200, response.text
     replay = requests[2]
     assert replay["tools"] == requests[0]["tools"]

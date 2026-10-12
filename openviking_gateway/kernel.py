@@ -345,12 +345,16 @@ class MemoryKernel:
     ):
         """The root with the session's gateway tools and why there are none."""
         policy = root["policy"]
+        # A branch where the model called a gateway tool keeps the tools, so its
+        # history still replays.
+        used = any((K.HIDDEN, anchor) in records for anchor in body_chain)
         # Sessions created before tools had their own record keep them in the root.
         decision = records.get((K.TOOLS, "")) or (root if "tools" in root else None)
         if decision is None:
             # Helper requests, such as a title with structured output, often come first;
-            # the first request that could use tools decides for the session.
-            if not owner or not policy.get("gateway_tools"):
+            # the first request that could use tools decides for the session. So does
+            # one resending tool rounds, as a sub-agent in a session of its own does.
+            if not (owner or used) or not policy.get("gateway_tools"):
                 return {**root, "tools": [], "tool_skip_reason": ""}
             if tool_block_reason(body, protocol, upstream):
                 return {**root, "tools": [], "tool_skip_reason": ""}
@@ -365,9 +369,6 @@ class MemoryKernel:
             )
         tools, reason = decision["tools"], decision.get("tool_skip_reason", "")
         closed = records.get((K.TOOLS_CLOSED, ""))
-        # A branch where the model called a gateway tool keeps the tools, so its
-        # history still replays.
-        used = any((K.HIDDEN, anchor) in records for anchor in body_chain)
         # Client OpenViking tools may appear late, as when MCP servers connect after the
         # first turn. Until the model has called a gateway tool, they turn gateway tools
         # off for good; the client changed its tool list then, so caches miss anyway.
