@@ -362,20 +362,6 @@ export function extractPartsFromPayload(payload, options = {}) {
   return parts;
 }
 
-const warnedFilterRules = new Set();
-
-function compileCaptureFilters(cfg) {
-  const compiled = compileInputFilters(cfg?.captureFilters);
-  for (const error of compiled.errors) {
-    if (warnedFilterRules.has(error.source)) continue;
-    warnedFilterRules.add(error.source);
-    process.stderr.write(
-      `OpenViking: ignored captureFilters rule ${JSON.stringify(error.source)}: ${error.message}\n`,
-    );
-  }
-  return compiled;
-}
-
 function substituteValue(value, rules, role) {
   if (typeof value === "string") {
     let current = value;
@@ -426,7 +412,7 @@ export function filterCaptureParts(parts, role, cfg = {}) {
   }
 
   const blank = { parts: kept, dropped: false };
-  const compiled = compileCaptureFilters(cfg);
+  const compiled = compileInputFilters(cfg?.captureFilters);
   if (!compiled.rules.length || kept.length === 0) return blank;
 
   const textParts = kept.filter((part) => part.type === "text");
@@ -688,7 +674,7 @@ export function shouldCaptureText(text, role, cfg = {}, { filters = true } = {})
   // Rules judge the full sanitized turn; the wire cap applies afterward.
   let filtered = sanitized;
   if (filters) {
-    const compiled = compileCaptureFilters(cfg);
+    const compiled = compileInputFilters(cfg?.captureFilters);
     if (compiled.rules.length) {
       const verdict = applyInputFilters(filtered, compiled.rules, { role });
       if (verdict.dropped) return { shouldCapture: false, reason: "filtered", text: "" };

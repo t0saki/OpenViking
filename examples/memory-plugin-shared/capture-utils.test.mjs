@@ -268,24 +268,6 @@ test("filterCaptureParts redacts tool inputs and outputs, with or without text p
   assert.equal(scoped.parts[0].tool_output, "echoed sk_ABCDEF")
 })
 
-test("an invalid capture rule is reported on stderr once", () => {
-  const writes = []
-  const original = process.stderr.write
-  process.stderr.write = (chunk) => {
-    writes.push(String(chunk))
-    return true
-  }
-  try {
-    const cfg = { captureFilters: ["sk-[A-Za-z0-9-]+invalid-once", "s/a/b/"] }
-    filterCaptureParts([{ type: "text", text: "hello" }], "user", cfg)
-    shouldCaptureText("hello there", "user", cfg)
-  } finally {
-    process.stderr.write = original
-  }
-  assert.equal(writes.length, 1)
-  assert.match(writes[0], /captureFilters rule "sk-\[A-Za-z0-9-\]\+invalid-once": invalid delimiter/)
-})
-
 test("filterCaptureParts takes one drop verdict on the aggregate, tool parts included", () => {
   const cfg = { captureFilters: ["d/^internal notes/"] }
   const shaped = filterCaptureParts(
