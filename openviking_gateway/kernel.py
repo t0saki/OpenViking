@@ -210,9 +210,7 @@ class MemoryKernel:
             scope, sid, list(dict.fromkeys(["", *chain, *body_chain])), ancestors
         )
         plugin = plugin_present(body, headers)
-        root = await self.session_root(
-            records, scope, sid, body, protocol, upstream, policy, credential, plugin
-        )
+        root = await self.session_root(records, scope, sid, body, upstream, policy, credential)
         upstream = next((u for u in upstreams if u["id"] == root["upstream_id"]), upstream)
         policy = Policy.model_validate(root["policy"])
         kind, anchor = classify(body, headers, messages)
@@ -222,6 +220,9 @@ class MemoryKernel:
             disabled = True
         # A token count gets gateway tools exactly when the request it measures would.
         owner = not disabled and kind in {"user", "continuation"}
+        root = await self.session_tools(
+            records, scope, sid, root, body, protocol, upstream, credential, owner, body_chain
+        )
         kind = "count" if counting else kind
         result = {**body, adapter.field: [dict(m) for m in sent]}
         prepared = Prepared(
@@ -297,27 +298,9 @@ class MemoryKernel:
             result["input"] = body["input"]
         return prepared
 
-    async def session_root(
-        self, records, scope, sid, body, protocol, upstream, policy, credential, plugin
-    ):
+    async def session_root(self, records, scope, sid, body, upstream, policy, credential):
         root = records.get((K.ROOT, ""))
         if root is None:
-            # The tool list is frozen here, so a failed load leaves the session without tools.
-            tools, reason = [], ""
-            if (
-                not plugin
-                and policy.get("gateway_tools")
-                and not tool_block_reason(body, protocol, upstream)
-            ):
-                try:
-                    catalog = await self.viking.tools(credential["openviking_key"])
-                    tools = select_tools(catalog, policy)
-                except VikingError:
-                    reason = "tools_unavailable"
-                names = [t["function"]["name"].removeprefix(PREFIX) for t in tools]
-                # Decided once: dropping tools mid-conversation would break provider caches.
-                if tools and client_openviking_tools(body, names):
-                    tools, reason = [], "tool_name_collision"
             root = await self.store.replay.put(
                 scope,
                 sid,
@@ -325,8 +308,6 @@ class MemoryKernel:
                 "",
                 {
                     "upstream_id": upstream["id"],
-                    "tools": tools,
-                    "tool_skip_reason": reason,
                     "policy": policy,
                     "credential_id": credential["id"],
                     "vendor": {
@@ -337,6 +318,49 @@ class MemoryKernel:
                 },
             )
         return root
+
+    async def session_tools(
+        self, records, scope, sid, root, body, protocol, upstream, credential, owner, body_chain
+    ):
+        """The root with the session's gateway tools and why there are none."""
+        policy = root["policy"]
+        # Sessions created before tools had their own record keep them in the root.
+        decision = records.get((K.TOOLS, "")) or (root if "tools" in root else None)
+        if decision is None:
+            # Helper requests, such as a title with structured output, often come first;
+            # the first request that could use tools decides for the session.
+            if not owner or not policy.get("gateway_tools"):
+                return {**root, "tools": [], "tool_skip_reason": ""}
+            if tool_block_reason(body, protocol, upstream):
+                return {**root, "tools": [], "tool_skip_reason": ""}
+            # A failed load leaves the session without tools.
+            tools, reason = [], ""
+            try:
+                tools = select_tools(await self.viking.tools(credential["openviking_key"]), policy)
+            except VikingError:
+                reason = "tools_unavailable"
+            decision = await self.store.replay.put(
+                scope, sid, K.TOOLS, "", {"tools": tools, "tool_skip_reason": reason}
+            )
+        tools, reason = decision["tools"], decision.get("tool_skip_reason", "")
+        closed = records.get((K.TOOLS_CLOSED, ""))
+        # Client OpenViking tools may appear late, as when MCP servers connect after the
+        # first turn. Until the model has called a gateway tool, they turn gateway tools
+        # off for good; the client changed its tool list then, so caches miss anyway.
+        if (
+            tools
+            and closed is None
+            and owner
+            and not any((K.HIDDEN, anchor) in records for anchor in body_chain)
+        ):
+            names = [t["function"]["name"].removeprefix(PREFIX) for t in tools]
+            if client_openviking_tools(body, names):
+                closed = await self.store.replay.put(
+                    scope, sid, K.TOOLS_CLOSED, "", {"reason": "tool_name_collision"}
+                )
+        if closed is not None:
+            tools, reason = [], closed["reason"]
+        return {**root, "tools": tools, "tool_skip_reason": reason}
 
     @staticmethod
     def configure_tools(request, policy, owner):

@@ -200,18 +200,9 @@ def plugin_present(body: dict, headers: dict) -> bool:
         )
         return any(re.search(rf"<{re.escape(tag)}(?:\s|>)", text, re.I) for tag in PLUGIN_TAGS)
 
-    if any(marked(text) for text in client_texts(body)):
-        return True
-    # Only tool definitions identify plugin ownership. File names, tool results
-    # and assistant prose must never permanently disable a session.
-    for tool in [*body.get("tools", []), *body.get("additional_tools", [])]:
-        if not isinstance(tool, dict):
-            continue
-        definition = tool.get("function", tool)
-        name = definition.get("name", definition.get("namespace", ""))
-        if isinstance(name, str) and re.search(r"(^|__)openviking(?:_|__|$)", name, re.I):
-            return True
-    return False
+    # Plugins mark the context they inject. OpenViking tools alone, as from an MCP
+    # connection, only keep the gateway's tools out (see client_openviking_tools).
+    return any(marked(text) for text in client_texts(body))
 
 
 OPENVIKING_WORD = r"(?<![a-z0-9])openviking(?![a-z0-9])"

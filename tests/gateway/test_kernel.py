@@ -417,11 +417,11 @@ async def test_plugin_stop_is_sticky_but_replays_existing_prefix(setup_kernel, c
         {"role": "assistant", "content": "Answer"},
         {"role": "user", "content": "Next question"},
     ]
-    two_body["tools"] = [{"type": "namespace", "name": "mcp__openviking", "tools": []}]
+    two_body["system"] = "<openviking-context>Memory</openviking-context>"
     two = await prepare(kernel, two_body, credential, policy)
     assert two.disabled
     assert two.body["messages"][0] == one.body["messages"][0]
-    del two_body["tools"]
+    del two_body["system"]
     three = await prepare(kernel, two_body, credential, policy)
     assert three.disabled and len(viking.recalls) == 1
 
@@ -553,14 +553,12 @@ def test_classification_and_plugin_namespaces():
         == "auxiliary"
     )
     assert classify({}, {"x-claude-code-agent-id": "child"}, [user])[0] == "subagent"
-    assert plugin_present(
-        {
-            "additional_tools": [
-                {"namespace": "mcp__openviking_memory", "tools": [{"name": "read"}]}
-            ]
-        },
-        {},
-    )
+    # OpenViking tools alone, as from an MCP connection, are not a plugin.
+    namespaces = {
+        "additional_tools": [{"namespace": "mcp__openviking_memory", "tools": [{"name": "read"}]}]
+    }
+    assert not plugin_present(namespaces, {})
+    assert client_openviking_tools(namespaces, OV_NAMES)
 
 
 OV_NAMES = ["read", "ls", "glob", "search", "add_resource"]
