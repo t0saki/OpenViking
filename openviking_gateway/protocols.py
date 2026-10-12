@@ -237,12 +237,15 @@ def client_openviking_tools(body: dict, names) -> bool:
             for key in ("name", "namespace", "server_label", "mcp_server_name")
             if isinstance(definition.get(key), str)
         ]
-        server = isinstance(definition.get("tools"), list) or "url" in definition
-        if server:
-            # A namespace's tools are named without it, as in mcp__kb + glob.
+        if isinstance(definition.get("tools"), list):
+            # A namespace's tools are named without it, as in mcp__kb + glob; they
+            # decide, not the namespace name.
             prefix = (labels[0] + "__") if labels else ""
-            if isinstance(definition.get("tools"), list):
-                pending.extend((prefix, child) for child in definition["tools"])
+            pending.extend((prefix, child) for child in definition["tools"])
+            continue
+        # Hosted MCP servers (Responses mcp, Anthropic mcp_servers and mcp_toolset) list
+        # no tools, so their name is all there is.
+        server = definition.get("type") in {"mcp", "mcp_toolset", "url"}
         named_tool = isinstance(definition.get("name"), str) and not server
         # A tool must be one of OpenViking's, so a connector's authenticate tool is not.
         if any(

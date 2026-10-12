@@ -1158,6 +1158,27 @@ async def test_client_openviking_tools_turn_gateway_tools_off(setup_kernel, cred
     body["tools"].append(mcp)
     kept = await kernel.prepare(body, "anthropic", header, credential, upstream, policy)
     assert kept.tools_active
+    # Another branch turns them off, and the branch that used them still keeps them.
+    other = request_body("anthropic", False)
+    other["messages"][0]["content"] = "Find green"
+    other["tools"].append(mcp)
+    assert not (
+        await kernel.prepare(other, "anthropic", header, credential, upstream, policy)
+    ).tools_active
+    kept = await kernel.prepare(body, "anthropic", header, credential, upstream, policy)
+    assert kept.tools_active
+
+    # A token count may cover only some of the client's tools and never turns them off.
+    body = request_body("anthropic", False)
+    header = {"x-openviking-session": "count"}
+    assert (
+        await kernel.prepare(body, "anthropic", header, credential, upstream, policy)
+    ).tools_active
+    counted = {**body, "tools": [mcp]}
+    await kernel.prepare(counted, "anthropic", header, credential, upstream, policy, counting=True)
+    assert (
+        await kernel.prepare(body, "anthropic", header, credential, upstream, policy)
+    ).tools_active
 
 
 @pytest.mark.parametrize("arguments", [None, "", "{}", "{broken"])

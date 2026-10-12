@@ -591,6 +591,8 @@ OV_NAMES = ["read", "ls", "glob", "find", "search", "add_resource"]
         ([{"type": "mcp_toolset", "mcp_server_name": "openviking"}], True),
         ([{"name": "Read", "description": "Read a local file"}, {"name": "WebSearch"}], False),
         ([{"name": "openvikingish_search"}, {"name": "mcp__myopenviking__find"}], False),
+        # A namespace counts by its tools, not its name.
+        ([{"namespace": "mcp__openviking_docs", "tools": [{"name": "fetch_page"}]}], False),
         # An unauthenticated claude.ai connector offers only its sign-in tools.
         ([{"name": "mcp__claude_ai_OpenViking__authenticate"}], False),
         # A skill list quoting an OpenViking skill is not an OpenViking tool.

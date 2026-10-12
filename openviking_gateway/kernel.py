@@ -221,7 +221,17 @@ class MemoryKernel:
         # A token count gets gateway tools exactly when the request it measures would.
         owner = not disabled and kind in {"user", "continuation"}
         root = await self.session_tools(
-            records, scope, sid, root, body, protocol, upstream, credential, owner, body_chain
+            records,
+            scope,
+            sid,
+            root,
+            body,
+            protocol,
+            upstream,
+            credential,
+            owner,
+            body_chain,
+            counting,
         )
         kind = "count" if counting else kind
         result = {**body, adapter.field: [dict(m) for m in sent]}
@@ -320,7 +330,18 @@ class MemoryKernel:
         return root
 
     async def session_tools(
-        self, records, scope, sid, root, body, protocol, upstream, credential, owner, body_chain
+        self,
+        records,
+        scope,
+        sid,
+        root,
+        body,
+        protocol,
+        upstream,
+        credential,
+        owner,
+        body_chain,
+        counting=False,
     ):
         """The root with the session's gateway tools and why there are none."""
         policy = root["policy"]
@@ -344,21 +365,20 @@ class MemoryKernel:
             )
         tools, reason = decision["tools"], decision.get("tool_skip_reason", "")
         closed = records.get((K.TOOLS_CLOSED, ""))
+        # A branch where the model called a gateway tool keeps the tools, so its
+        # history still replays.
+        used = any((K.HIDDEN, anchor) in records for anchor in body_chain)
         # Client OpenViking tools may appear late, as when MCP servers connect after the
         # first turn. Until the model has called a gateway tool, they turn gateway tools
         # off for good; the client changed its tool list then, so caches miss anyway.
-        if (
-            tools
-            and closed is None
-            and owner
-            and not any((K.HIDDEN, anchor) in records for anchor in body_chain)
-        ):
+        # A token count may cover only part of the client's tools, so it never decides.
+        if tools and closed is None and owner and not counting and not used:
             names = [t["function"]["name"].removeprefix(PREFIX) for t in tools]
             if client_openviking_tools(body, names):
                 closed = await self.store.replay.put(
                     scope, sid, K.TOOLS_CLOSED, "", {"reason": "tool_name_collision"}
                 )
-        if closed is not None:
+        if closed is not None and not used:
             tools, reason = [], closed["reason"]
         return {**root, "tools": tools, "tool_skip_reason": reason}
 
