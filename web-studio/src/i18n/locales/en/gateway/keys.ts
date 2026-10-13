@@ -133,6 +133,8 @@ const keys = {
     versionMismatch:
       'OpenViking is older than the gateway requires. Upgrade OpenViking, then try again.',
     unknownUser: 'This user is no longer in this account. Choose another user.',
+    userRequired:
+      'A root API key has no user of its own. Choose the user this key is for.',
     userKeyUnreadable:
       'The server only stores a hash of this user’s API key and cannot read it. Paste their user API key instead.',
   },

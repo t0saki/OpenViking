@@ -123,6 +123,7 @@ const keys = {
     versionMismatch:
       'OpenViking 版本低于网关的要求。请升级 OpenViking 后重试。',
     unknownUser: '这个用户已不在本账号中，请重新选择。',
+    userRequired: 'root API 密钥不属于任何用户，请选择这把密钥对应的用户。',
     userKeyUnreadable:
       '服务端只保存了这个用户 API 密钥的哈希，无法自动读取。请粘贴该用户的用户 API 密钥。',
   },

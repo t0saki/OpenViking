@@ -34,7 +34,7 @@
 | GET | `/gateway/admin/overview` | 调用方可见的最近 10,000 条日志汇总：用量、缓存命中、召回、保存异常、OpenViking 状态和日志保留期 |
 | GET | `/gateway/admin/logs` | 调用方可见的最新日志；`limit` 默认 200，取值 1–1000 |
 | GET | `/gateway/admin/guides` | 客户端接入地址 `base_url`，以及 `public_url_configured`；`base_url` 是 `public_url` 加 `/gateway`，未设置 `public_url` 时取请求的来源地址加 `/gateway` |
-| GET | `/gateway/admin/tools` | 调用方能用的 OpenViking 工具：名称、描述和 annotations，用调用方自己的 OpenViking 密钥读取 |
+| GET | `/gateway/admin/tools` | 调用方能用的 OpenViking 工具：名称、描述和 annotations，用调用方自己的 OpenViking 密钥读取（OpenViking 拒绝 root 访问 `/mcp`，所以 root 改用本账号已签发网关密钥对应的 OpenViking 密钥，没有时返回上次读到的目录） |
 
 Studio 只根据 `/access` 决定显示哪些按钮，自己写的管理工具也应这样做。独立网关连接公共 OpenViking 服务且没有设置管理密钥时，`warnings` 中会出现 `public_openviking_without_management_key`。它只是告警，不限制任何操作。
 
@@ -147,7 +147,7 @@ curl -X PUT "$SERVER_URL/gateway/admin/upstreams/openai?account_id=team" \
 | `policy_id` | 是 | 使用的上下文配置。 |
 | `upstream_ids` | 是 | 可用的上游，至少一个。 |
 | `models` | 否 | 允许的模型名（客户端发送的名称，包括别名）；空列表表示不限。 |
-| `user_id` | 否 | 密钥归属的 OpenViking 用户，默认是调用方自己。user 只能填自己。 |
+| `user_id` | 否 | 密钥归属的 OpenViking 用户，默认是调用方自己。root 不是账号里的用户，必须指定用户（或提供 `openviking_key`）。user 只能填自己。 |
 | `openviking_key` | 否 | 该用户的 OpenViking API 密钥。通常不用填，见下文。 |
 
 网关需要拿到目标用户的 OpenViking API 密钥，之后以这个用户的身份检索和保存记忆：
@@ -209,6 +209,7 @@ curl -X POST "$SERVER_URL/gateway/admin/keys?account_id=team" \
 | 409 | `user_key_unreadable` | OpenViking 只保存了该用户密钥的哈希。在 `openviking_key` 中提供该用户的密钥。 |
 | 409 | `in_use` | 还有 `key_count` 个网关密钥在用这个对象。 |
 | 400 | `unknown_user`、`unknown_policy`、`unknown_upstream` | 指定的用户、上下文配置或上游不存在。 |
+| 400 | `user_required` | root 签发密钥时没有提供 `user_id` 或 `openviking_key`。指定密钥归属的用户。 |
 | 404 | `not_found` | 对象不存在，或者调用方看不到它。 |
 | 422 | `invalid_configuration` | 请求体或 Base URL 不合法。错误信息不会回显提交的凭证。 |
 | 403 | `vlm_import_forbidden` | 调用方没有导入权限，以 `/access` 的 `can_import_vlm` 为准。 |

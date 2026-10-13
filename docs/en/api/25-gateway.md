@@ -34,7 +34,7 @@ Read-only views of upstreams leave out the API key, header values and header nam
 | GET | `/gateway/admin/overview` | A summary of the latest 10,000 log records the caller can see: usage, cache hits, recall, saving problems, OpenViking status and log retention |
 | GET | `/gateway/admin/logs` | The newest log records the caller can see; `limit` defaults to 200, range 1–1000 |
 | GET | `/gateway/admin/guides` | The client address `base_url`, plus `public_url_configured`; `base_url` is `public_url` followed by `/gateway`, or the request's origin followed by `/gateway` when `public_url` is empty |
-| GET | `/gateway/admin/tools` | The OpenViking tools available to the caller, with names, descriptions and annotations, read with the caller's own OpenViking key |
+| GET | `/gateway/admin/tools` | The OpenViking tools available to the caller, with names, descriptions and annotations, read with the caller's own OpenViking key (root: with the OpenViking key of a gateway key issued in this account, or the last catalog read, since OpenViking refuses root on `/mcp`) |
 
 Studio decides which buttons to show from `/access` alone, and your own management tools should do the same. When a standalone gateway connects to the public OpenViking service without a management key, `warnings` includes `public_openviking_without_management_key`. It is only a warning and does not restrict anything.
 
@@ -147,7 +147,7 @@ Request body for issuing a key:
 | `policy_id` | Yes | The context profile to use. |
 | `upstream_ids` | Yes | The upstreams the key may use; at least one. |
 | `models` | No | Allowed model names (as clients send them, including aliases); an empty list allows all. |
-| `user_id` | No | The OpenViking user the key belongs to; defaults to the caller. Users can only name themselves. |
+| `user_id` | No | The OpenViking user the key belongs to; defaults to the caller. Root is not an account user, so root must name one (or supply `openviking_key`). Users can only name themselves. |
 | `openviking_key` | No | That user's OpenViking API key. Usually not needed; see below. |
 
 The gateway needs the target user's OpenViking API key, because it searches and saves memory as that user:
@@ -209,6 +209,7 @@ Check `reason`, not the text of `detail`. When the server does not have the gate
 | 409 | `user_key_unreadable` | OpenViking stores only a hash of the user's key. Supply the user's key in `openviking_key`. |
 | 409 | `in_use` | `key_count` gateway keys still use this object. |
 | 400 | `unknown_user`, `unknown_policy`, `unknown_upstream` | The named user, context profile or upstream does not exist. |
+| 400 | `user_required` | Root issued a key without `user_id` or `openviking_key`. Name the user the key is for. |
 | 404 | `not_found` | The object does not exist, or the caller cannot see it. |
 | 422 | `invalid_configuration` | The request body or Base URL is invalid. The error never repeats submitted credentials. |
 | 403 | `vlm_import_forbidden` | The caller may not import; `can_import_vlm` in `/access` is authoritative. |

@@ -63,6 +63,9 @@ describe('enum labels', () => {
     expect(openVikingReason(t, 'openviking_RATE_LIMITED')).toBe(
       'OpenViking reported error RATE_LIMITED',
     )
+    expect(openVikingReason(t, 'openviking_unreachable')).toBe(
+      "OpenViking is unreachable or didn't answer in time",
+    )
     expect(openVikingReason(t, 'history_changed')).toBeUndefined()
   })
 

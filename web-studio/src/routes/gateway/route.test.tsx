@@ -183,6 +183,18 @@ describe('layout gates', () => {
     expect(screen.getByText('actions.retry')).toBeTruthy()
   })
 
+  it('shows an unreachable OpenViking on an embedded server as a plain failure', async () => {
+    api.getAccess.mockRejectedValue(
+      new GatewayError('unreachable', 503, undefined, 'openviking_unreachable'),
+    )
+    renderLayout()
+    expect(await screen.findByText('unavailable.failed.title')).toBeTruthy()
+    expect(
+      screen.queryByText('unavailable.openvikingUnreachable.title'),
+    ).toBeNull()
+    expect(screen.getByText('actions.retry')).toBeTruthy()
+  })
+
   it('shows other failures as an error with retry', async () => {
     api.getAccess.mockRejectedValue(new GatewayError('Network Error'))
     renderLayout()

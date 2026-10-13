@@ -125,7 +125,6 @@ const common = {
       upstream_key_missing:
         '这个上游没有保存 API Key，或者由客户端自带 API Key，网关无法发起测试。',
       trusted_mode_unsupported: '网关不支持 Trusted 模式。',
-      openviking_unreachable: '网关连不上 OpenViking。',
 
       not_enabled: '这台 OpenViking 没有开启网关。',
       conflict: '这项修改与现有配置冲突。',

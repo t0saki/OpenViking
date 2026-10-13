@@ -172,7 +172,7 @@ openviking-gateway
 
 打开网关的 `/studio/`，用 OpenViking 用户、账号管理员或 root 的 API 密钥登录。连接页会显示网关连接的 OpenViking 地址。独立网关读不到远端服务的 VLM 配置，所以不能导入模型配置，上游要手动添加。
 
-**设置从哪里来。** 命令行只有 `--config` 一个参数。网关按 `--config`、`OPENVIKING_GATEWAY_CONFIG_FILE`、`~/.openviking/gateway.conf`、`/etc/openviking/gateway.conf` 的顺序读取第一个存在的文件，环境变量可以覆盖其中任何字段。容器里可以完全不用文件：设置 `OPENVIKING_GATEWAY_OPENVIKING_URL`，再按需加上 `OPENVIKING_GATEWAY_HOST=0.0.0.0` 之类的变量。两处都没有 OpenViking 地址时，网关退出，并提示运行 `openviking-gateway init` 或设置 `OPENVIKING_GATEWAY_OPENVIKING_URL`。全部字段和覆盖规则见[配置参考](#配置参考)。
+**设置从哪里来。** 命令行只有 `--config` 一个参数。设置了 `--config` 或 `OPENVIKING_GATEWAY_CONFIG_FILE` 时，它必须指向已存在的文件；两者都没设置时，网关读取 `~/.openviking/gateway.conf` 和 `/etc/openviking/gateway.conf` 中第一个存在的文件。环境变量可以覆盖其中任何字段。容器里可以完全不用文件：设置 `OPENVIKING_GATEWAY_OPENVIKING_URL`，再按需加上 `OPENVIKING_GATEWAY_HOST=0.0.0.0` 之类的变量。两处都没有 OpenViking 地址时，网关退出，并提示运行 `openviking-gateway init` 或设置 `OPENVIKING_GATEWAY_OPENVIKING_URL`。全部字段和覆盖规则见[配置参考](#配置参考)。
 
 **启动检查。** 独立网关启动前会先访问一次 OpenViking：
 
@@ -640,7 +640,7 @@ Token 预算只计算模型使用 OpenViking 工具时新增的调用、结果�
 两种部署用同一套字段，区别只在配置文件放在哪、用什么命令生成：
 
 - **嵌入**：写在 `ov.conf` 的 `gateway` 段，由 `openviking-server init` 生成。host、port 和 workers 跟随 Server。
-- **独立**：写在 `gateway.conf` 的根层，没有 `gateway` 外层，由 `openviking-gateway init` 生成。网关按 `--config`、`OPENVIKING_GATEWAY_CONFIG_FILE`、`~/.openviking/gateway.conf`、`/etc/openviking/gateway.conf` 的顺序读取第一个存在的文件。`OPENVIKING_CONFIG_FILE` 只用来选择 Server 的配置。
+- **独立**：写在 `gateway.conf` 的根层，没有 `gateway` 外层，由 `openviking-gateway init` 生成。设置了 `--config` 或 `OPENVIKING_GATEWAY_CONFIG_FILE` 时，它必须指向已存在的文件；两者都没设置时，网关读取 `~/.openviking/gateway.conf` 和 `/etc/openviking/gateway.conf` 中第一个存在的文件。`OPENVIKING_CONFIG_FILE` 只用来选择 Server 的配置。
 
 | 字段 | 适用于 | 默认值 | 含义 |
 | --- | --- | --- | --- |
@@ -732,7 +732,7 @@ URL 必须是 HTTP(S)，不能含凭证、查询参数或 fragment。未知字�
 1. **先备份。** 备份 `storage_path`（两个数据库，以及存在的话 `encryption.key`）。停止旧的网关进程或 sidecar，再启用嵌入网关。
 2. **删掉旧字段。** 从 `ov.conf` 的 `gateway` 段删除 `host`、`port`、`workers`、`url`、`openviking_url`、`admin_token_env` 和 `encryption_key_env`。Server 会忽略这些字段并在启动时打印警告，旧的 `ov.conf` 仍能启动，但还是应该清理掉。`openviking-server init` → **Update gateway** 会自动删除它们。想继续独立运行网关，就运行 `openviking-gateway init`，或者把设置移到单独的 `gateway.conf`，去掉 `gateway` 外层和 `enabled`。独立网关的命令不再接受 `--openviking-url`、`--host`、`--port`、`--workers` 和 `--storage-path`，这些设置改写到 `gateway.conf` 或环境变量中。
 3. **改对外地址。** 把 `public_url` 改为 Server 的对外地址（不带 `/gateway`），或者删掉。旧版快速开始把它设成了 `http://127.0.0.1:1935`，嵌入网关不再监听这个端口，接入指南和上传链接都会指向一个不存在的地址。`openviking-server init` → **Update gateway** 发现 `public_url` 指向别的端口时，会询问是否清除。
-4. **改客户端地址和部署配置。** 网关的所有 URL 现在都在 `/gateway` 下，所以客户端要同时改端口和路径：`http://host:1935/v1` 改为 `http://host:1933/gateway/v1`，Claude Code 的 `ANTHROPIC_BASE_URL` 从 `http://host:1935` 改为 `http://host:1933/gateway`，方舟 SDK 改用 `http://host:1933/gateway/api/v3`。旧路径不再提供服务。调用管理 API 的脚本把 `/api/v1/admin/gateway/...` 改为 `/gateway/admin/...`。移除旧的 1935 Service 和 Ingress 路由、Compose 的 `gateway` 服务和 profile，以及 Helm 的 sidecar 配置 `gateway.workers`、`gateway.port`、`gateway.resources`。`gateway.managementKeySecret` 已删除，把其中的 `management-key` 字段移到 `gateway.existingSecret` 指定的 Secret 中。1935 仍是独立运行的默认端口，独立网关也使用同样的 `/gateway` 路径。
+4. **改客户端地址和部署配置。** 网关的所有 URL 现在都在 `/gateway` 下，所以客户端要同时改端口和路径：`http://host:1935/v1` 改为 `http://host:1933/gateway/v1`，Claude Code 的 `ANTHROPIC_BASE_URL` 从 `http://host:1935` 改为 `http://host:1933/gateway`，方舟 SDK 改用 `http://host:1933/gateway/api/v3`。旧路径不再提供服务。调用管理 API 的脚本把 `/api/v1/admin/gateway/...` 改为 `/gateway/admin/...`。移除旧的 1935 Service 和 Ingress 路由、Compose 的 `gateway` 服务和 profile，以及 Helm 的 sidecar 配置 `gateway.workers`、`gateway.port`、`gateway.resources`。1935 仍是独立运行的默认端口，独立网关也使用同样的 `/gateway` 路径。
 5. **首次启动会转换已存数据。** v0.5 网关用自己的密钥加密数据。新版网关（嵌入或独立）首次启动时，用这把旧密钥解密，再按当前的[加密](#加密)设置重新写入；加密关闭时写成明文，所以想让数据继续加密，要在这次启动前开启 OpenViking 加密。旧密钥从环境变量 `OPENVIKING_GATEWAY_ENCRYPTION_KEY` 读取，或者从 `storage_path` 下的 `encryption.key` 读取。`encryption_key_env` 会被忽略：如果你曾用它指向别的环境变量，这次启动时把密钥导出为 `OPENVIKING_GATEWAY_ENCRYPTION_KEY`。存在旧的加密数据、两处却都没有密钥时，网关拒绝启动，错误信息会写明这两个位置。用 Helm 时，只在这次升级的版本中保留 `existingSecret` 里的 `encryption-key` 字段。启动成功后旧密钥不会再被读取，可以删掉这个环境变量、Secret 字段和 `encryption.key`。
 6. **移除共享 admin token。** `OPENVIKING_GATEWAY_ADMIN_TOKEN` **不会**被当作管理密钥。需要限制谁能修改上游和上下文配置时，显式设置 `management_key`。
 7. **核对上游地址。** 首次启动时，网关会改写一次已存上游的 Base URL，让每个上游继续请求升级前的同一个地址：

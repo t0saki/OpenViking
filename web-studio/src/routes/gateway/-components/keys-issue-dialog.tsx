@@ -91,6 +91,7 @@ export function validateKeyRequest(request: KeyRequest): KeyRequestErrors {
 /** Stable backend reasons; server wording is deliberately not used for matching. */
 const ISSUE_REASONS: Partial<Record<string, [string, boolean]>> = {
   unknown_user: ['keys.errors.unknownUser', true],
+  user_required: ['keys.errors.userRequired', true],
   user_key_unreadable: ['keys.errors.userKeyUnreadable', true],
   root_key_not_allowed: ['keys.errors.rootKey', true],
   other_account: ['keys.errors.otherAccount', true],
@@ -98,6 +99,7 @@ const ISSUE_REASONS: Partial<Record<string, [string, boolean]>> = {
   openviking_http_403: ['keys.errors.invalidKey', true],
   openviking_identity_missing: ['enums.openviking.identityMissing', true],
   openviking_unavailable: ['keys.errors.unavailable', false],
+  openviking_unreachable: ['keys.errors.unavailable', false],
   openviking_version_mismatch: ['keys.errors.versionMismatch', false],
 }
 

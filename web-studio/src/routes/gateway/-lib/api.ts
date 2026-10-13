@@ -527,7 +527,7 @@ export const listLogs = (connection: GatewayConnection, limit = 200) =>
 export const listUpstreams = (connection: GatewayConnection) =>
   send<Upstream[]>(connection, 'GET', ['upstreams'])
 
-/** Available MCP tools; empty until this account has a gateway key. */
+/** OpenViking MCP tools, read with the caller's OpenViking key (root: a key issued in this account). */
 export const listTools = (connection: GatewayConnection) =>
   send<GatewayTool[]>(connection, 'GET', ['tools'])
 

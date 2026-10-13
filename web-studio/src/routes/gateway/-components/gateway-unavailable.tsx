@@ -71,7 +71,8 @@ export function GatewayUnavailable({
   retrying?: boolean
 }) {
   const { t } = useTranslation('gateway')
-  const { connectionRole, serverMode, openvikingUrl } = useAppConnection()
+  const { connectionRole, serverMode, openvikingUrl, isGatewayHost } =
+    useAppConnection()
   const canConfigure =
     serverMode === 'dev' ||
     connectionRole === 'admin' ||
@@ -122,7 +123,8 @@ export function GatewayUnavailable({
         />
       </SetupCard>
     )
-  if (error.reason === 'openviking_unreachable')
+  // Only a standalone gateway has an OpenViking URL and gateway.conf to fix.
+  if (error.reason === 'openviking_unreachable' && isGatewayHost)
     return (
       <SetupCard
         title={t('unavailable.openvikingUnreachable.title', {

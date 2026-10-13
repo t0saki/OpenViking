@@ -132,7 +132,6 @@ const common = {
       upstream_key_missing:
         "This upstream has no stored API key (or clients send their own), so the gateway can't run a test.",
       trusted_mode_unsupported: 'The gateway does not support Trusted mode.',
-      openviking_unreachable: 'The gateway cannot reach OpenViking.',
 
       not_enabled: 'The gateway is not enabled on this OpenViking server.',
       conflict: 'This change conflicts with existing settings.',

@@ -200,8 +200,9 @@ kubectl create secret generic openviking-gateway \
   --from-literal=management-key="$(openssl rand -base64 32)"
 ```
 
-Keep `replicaCount: 1`: the gateway's SQLite databases serve one pod only. To use more
-CPU, raise the server's `workers` setting.
+Keep `replicaCount: 1`: the gateway's SQLite databases serve one pod only. The default
+local vectordb also locks the workspace to a single worker, so raise the server's `workers`
+setting only after switching to a remote vectordb backend such as VikingDB.
 
 #### Upgrading from the sidecar chart
 
@@ -220,8 +221,7 @@ CPU, raise the server's `workers` setting.
   `/api/v1/admin/gateway/...` to `/gateway/admin/...`.
 - The shared admin token is gone and does not act as a management key. To restrict
   changes to upstreams and context profiles, add a `management-key` entry to
-  `gateway.existingSecret`. `gateway.managementKeySecret` is removed: move its
-  `management-key` entry into `gateway.existingSecret`.
+  `gateway.existingSecret`.
 
 For deployment, Studio management, backups and troubleshooting, see
 [OpenViking Gateway deployment and operations](https://docs.openviking.ai/en/guides/22-gateway-operations).

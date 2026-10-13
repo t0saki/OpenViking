@@ -178,6 +178,7 @@ describe('validateKeyRequest', () => {
 describe('issueProblem', () => {
   it.each([
     ['unknown_user', 400, 'keys.errors.unknownUser', true],
+    ['user_required', 400, 'keys.errors.userRequired', true],
     ['user_key_unreadable', 409, 'keys.errors.userKeyUnreadable', true],
     ['root_key_not_allowed', 403, 'keys.errors.rootKey', true],
     ['other_account', 403, 'keys.errors.otherAccount', true],
