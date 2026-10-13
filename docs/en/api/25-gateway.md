@@ -213,7 +213,7 @@ Check `reason`, not the text of `detail`. When the server does not have the gate
 | 422 | `invalid_configuration` | The request body or Base URL is invalid. The error never repeats submitted credentials. |
 | 403 | `vlm_import_forbidden` | The caller may not import; `can_import_vlm` in `/access` is authoritative. |
 | 404 | `vlm_import_unavailable` | A standalone gateway cannot read the server's model settings. Add upstreams by hand. |
-| 503 | `openviking_unavailable`, `openviking_unreachable` | The gateway cannot reach OpenViking. Check that OpenViking is running; for a standalone gateway, also check `--openviking-url`. |
+| 503 | `openviking_unavailable`, `openviking_unreachable` | The gateway cannot reach OpenViking. Check that OpenViking is running; for a standalone gateway, also check `openviking_url` (in `gateway.conf` or `OPENVIKING_GATEWAY_OPENVIKING_URL`). |
 | 503 | `openviking_version_mismatch` | Standalone gateways only: OpenViking Server is older than required. `required_version` in the response gives the minimum version. |
 
 Other HTTP errors from OpenViking are reported as `openviking_http_<status>`. The gateway's own generic HTTP errors are reported as `gateway_http_<status>`, for example 405 `gateway_http_405` for an unsupported method.

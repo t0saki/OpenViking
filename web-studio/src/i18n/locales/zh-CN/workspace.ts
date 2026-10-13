@@ -759,7 +759,7 @@ const workspace = {
         '网关密钥（ovgw_）和网关管理密钥（ovgm_）不能用来登录，请输入 OpenViking API 密钥。',
       invalidKey: 'OpenViking 拒绝了这个 API 密钥。请确认密钥正确后重试。',
       unreachable:
-        '网关连不上 OpenViking（{{url}}）。确认 OpenViking 正在运行、网关的启动参数 --openviking-url 指向它，然后重试。',
+        '网关连不上 OpenViking（{{url}}）。确认 OpenViking 正在运行、网关的 openviking_url（gateway.conf 或 OPENVIKING_GATEWAY_OPENVIKING_URL）指向它，然后重试。',
       gatewayUnreachable: '连不上这台网关。确认网关正在运行后重试。',
       connect: '登录',
       connecting: '正在登录…',

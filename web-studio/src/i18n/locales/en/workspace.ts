@@ -792,7 +792,7 @@ const workspace = {
       invalidKey:
         'OpenViking rejected this API key. Check the key and try again.',
       unreachable:
-        "The gateway can't reach OpenViking ({{url}}). Make sure OpenViking is running and the gateway's --openviking-url points to it, then try again.",
+        "The gateway can't reach OpenViking ({{url}}). Make sure OpenViking is running and the gateway's openviking_url (in gateway.conf or OPENVIKING_GATEWAY_OPENVIKING_URL) points to it, then try again.",
       gatewayUnreachable:
         "Can't reach this gateway. Make sure it is running, then try again.",
       connect: 'Sign in',

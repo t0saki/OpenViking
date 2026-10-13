@@ -27,7 +27,7 @@ description: 用 Docker Compose、Helm 或独立进程部署 OpenViking 网关�
 | 网关管理密钥（可选） | 限制谁能修改上游和上下文配置 | `gateway.management_key`；请求头 `X-OpenViking-Gateway-Management-Key` |
 | 上游 API Key | 调用模型服务商 | 上游编辑页 |
 
-另有一把**加密密钥**，网关用它加密本地存储，不需要人手动使用。
+网关没有自己的加密密钥，本地存储按 OpenViking 的加密配置加密，见[加密](#加密)。
 
 ### 网关管理密钥
 
@@ -35,17 +35,34 @@ description: 用 Docker Compose、Helm 或独立进程部署 OpenViking 网关�
 
 设置方法：
 
-- **`openviking-server init`**：远程部署回答 **Allow users to configure their own gateway upstreams?** 时选 no，init 会生成一个以 `ovgm_` 开头的值，打印出来并写入 `ov.conf` 的 `gateway.management_key`。
-- **手动设置**：值至少 32 个字符，可以用 `openssl rand -base64 32` 生成。`ov.conf` 支持引用环境变量，例如 `"management_key": "$OPENVIKING_GATEWAY_MANAGEMENT_KEY"`；独立网关还会直接读取环境变量 `OPENVIKING_GATEWAY_MANAGEMENT_KEY`。
-- **Helm**：用 `gateway.managementKeySecret` 指定 Secret，见 [Helm](#helm)。
+- **`openviking-server init`**（嵌入）：远程部署回答 **Allow users to configure their own gateway upstreams?** 时选 no，init 会生成一个以 `ovgm_` 开头的值，打印出来并写入 `ov.conf` 的 `gateway.management_key`。
+- **`openviking-gateway init`**（独立）：回答 **Require a management key to change upstreams and profiles?** 时选 yes，init 会生成一个 `ovgm_` 开头的值，只打印一次，并写入 `gateway.conf` 的 `management_key`。
+- **手动设置**：值至少 32 个字符，可以用 `openssl rand -base64 32` 生成。写进 `management_key`，或者设置环境变量 `OPENVIKING_GATEWAY_MANAGEMENT_KEY`；两种部署下环境变量都优先于配置文件，见[配置参考](#配置参考)。
+- **Compose 和 Helm**：Compose 会把 `OPENVIKING_GATEWAY_MANAGEMENT_KEY` 传进容器；Helm 从 `gateway.existingSecret` 指定的 Secret 中读取 `management-key` 字段。见 [Docker Compose](#docker-compose) 和 [Helm](#helm)。
 
 管理密钥不提供命令行参数，因为命令行参数会出现在进程列表和 shell 历史里。设置、更换或去掉管理密钥后需要重启，这不会吊销已签发的网关密钥，也不会改动已有的上游和上下文配置。
 
-### 加密密钥
+### 加密
 
-网关用一把加密密钥保护已存的凭证和对话状态。优先读取环境变量 `OPENVIKING_GATEWAY_ENCRYPTION_KEY`；没有设置时，网关首次启动会在 `storage_path` 下生成 `encryption.key`。请把它和数据库一起备份。
+网关用 OpenViking 自己的加密功能保护已存的凭证和对话状态（见[加密指南](08-encryption.md)）：
 
-数据库已经存在、却既没有密钥文件也没有环境变量时，网关拒绝启动；嵌入部署下整个 OpenViking Server 都起不来。这时要恢复原来的密钥，换一把新密钥读不了已有数据。
+- **嵌入**：网关沿用 Server 在 `ov.conf` 中的 `encryption` 段，不需要为网关单独设置。
+- **独立**：在 `gateway.conf` 中加一个 `encryption` 块，字段和 `ov.conf` 的 `encryption` 段完全相同，例如：
+
+  ```json
+  {
+    "openviking_url": "https://ov.example.com",
+    "encryption": {
+      "enabled": true,
+      "provider": "local",
+      "local": { "key_file": "~/.openviking/master.key" }
+    }
+  }
+  ```
+
+加密关闭或没有这个块时，网关以明文存储，只靠文件权限保护。之后再开启加密不会出问题：已有的明文值照常可读，新写入的值会加密。反过来，关闭加密或换一把根密钥后，已加密的值就读不出来了，所以要保持写入时的加密设置。按加密指南备份根密钥，丢了它，网关的数据库就无法读取。
+
+v0.5 网关用自己的密钥加密数据，这些数据会在首次启动时转换，见[迁移](#迁移)。
 
 ## 部署
 
@@ -54,7 +71,7 @@ description: 用 Docker Compose、Helm 或独立进程部署 OpenViking 网关�
 | 方式 | 怎么开启 | 客户端地址 |
 | --- | --- | --- |
 | 嵌入 Server（包括 Compose 和 Helm） | 在 `ov.conf` 中开启 `gateway.enabled` | Server 地址，默认 `http://127.0.0.1:1933` |
-| 独立运行 | `openviking-gateway --openviking-url <OpenViking 地址>` | 网关地址，默认 `http://127.0.0.1:1935` |
+| 独立运行 | 先 `openviking-gateway init`，再 `openviking-gateway` | 网关地址，默认 `http://127.0.0.1:1935` |
 
 两种方式提供相同的模型路径和管理路径。嵌入部署不需要第二个进程，也不需要按路径分流的反向代理；独立部署不用改动已有 OpenViking 服务的配置。
 
@@ -101,7 +118,7 @@ description: 用 Docker Compose、Helm 或独立进程部署 OpenViking 网关�
 
 在挂载的 `ov.conf` 中开启 `gateway.enabled`，然后运行 `docker compose up -d`。网关在 `openviking` 服务内运行，不需要单独的服务或 profile。
 
-- **管理密钥**：写进挂载的 `ov.conf` 的 `gateway.management_key`。自带的 Compose 文件只把 `OPENVIKING_GATEWAY_ENCRYPTION_KEY` 传进容器。
+- **管理密钥**：在 `.env` 中设置 `OPENVIKING_GATEWAY_MANAGEMENT_KEY`，自带的 Compose 文件会把它传进容器；也可以写进挂载的 `ov.conf` 的 `gateway.management_key`。Compose 文件还会传入 `OPENVIKING_GATEWAY_ENCRYPTION_KEY`，它只在迁移 v0.5 数据时读取一次，见[迁移](#迁移)。
 - **对外地址**：把 `gateway.public_url` 设为公网地址。
 - **修改配置后**：执行 `docker compose restart openviking`；启动错误用 `docker compose logs openviking` 查看。
 
@@ -114,15 +131,14 @@ description: 用 Docker Compose、Helm 或独立进程部署 OpenViking 网关�
 ```yaml
 gateway:
   enabled: true
-  existingSecret: ""       # 可选：Secret 名称，字段 encryption-key
-  managementKeySecret: ""  # 可选：Secret 名称，字段 management-key
+  existingSecret: ""  # 可选：Secret 名称，字段 management-key
 config:
   gateway:
     public_url: https://ov.example.com
 ```
 
-- 不设置 `existingSecret` 时，加密密钥文件自动生成在数据卷上，随数据卷一起备份。
-- 设置 `managementKeySecret` 后，修改上游和上下文配置需要这把管理密钥。
+- 网关和 Server 一样，按 chart 的 `config.encryption` 设置加密数据。
+- `existingSecret` 指定的 Secret 中有 `management-key` 字段时，修改上游和上下文配置需要这把管理密钥。
 - 模型请求是流式的：Ingress 要关闭响应缓冲，允许至少 32 MiB 的请求体和 600 秒超时。
 
 NGINX annotations、创建 Secret 的命令和从 sidecar 版本升级的说明见 [chart README](https://github.com/volcengine/OpenViking/blob/main/deploy/helm/README.md#openviking-gateway)。
@@ -132,29 +148,23 @@ NGINX annotations、创建 Secret 的命令和从 sidecar 版本升级的说明�
 独立网关不读取 `ov.conf`，只需要知道 OpenViking 的地址，已有的开源版或商业版服务不用改配置：
 
 ```bash
-openviking-gateway --openviking-url http://127.0.0.1:1933 --port 1935
-# 或者读取独立的 JSON 配置：
-openviking-gateway --config gateway.conf
+openviking-gateway init   # 写入 ~/.openviking/gateway.conf
+openviking-gateway
 ```
+
+`openviking-gateway init` 依次询问 OpenViking 地址（会实际访问一次，并显示服务端的认证模式和版本）、监听地址（默认 `127.0.0.1:1935`），以及是否要求[管理密钥](#网关管理密钥)。结果写入 `~/.openviking/gateway.conf`，或者 `--config` 指定的文件，只有你自己能读。想修改设置就再运行一次：它把当前值作为默认值，已有的密钥不改就原样保留。生成的文件类似这样：
 
 ```json
 {
   "openviking_url": "https://ov.example.com",
   "host": "127.0.0.1",
-  "port": 1935,
-  "storage_path": "~/.openviking/gateway"
+  "port": 1935
 }
 ```
 
 打开网关的 `/studio/`，用 OpenViking 用户、账号管理员或 root 的 API 密钥登录。连接页会显示网关连接的 OpenViking 地址。独立网关读不到远端服务的 VLM 配置，所以不能导入模型配置，上游要手动添加。
 
-**参数和配置来源。** 命令行参数有 `--config`、`--openviking-url`、`--host`、`--port`、`--workers` 和 `--storage-path`，默认 host 为 `127.0.0.1`、port 为 `1935`、workers 为 `1`。同一项设置按以下优先级取值：
-
-1. 命令行参数；
-2. 环境变量 `OPENVIKING_GATEWAY_<字段名大写>`，例如 `OPENVIKING_GATEWAY_PUBLIC_URL`，值为空时忽略；
-3. JSON 配置文件，也可以用 `OPENVIKING_GATEWAY_CONFIG_FILE` 代替 `--config` 指定。
-
-JSON 文件的根层直接写网关字段，不要 `gateway` 外层，也没有 `enabled`。全部字段见[配置参考](#配置参考)。
+**设置从哪里来。** 命令行只有 `--config` 一个参数。网关按 `--config`、`OPENVIKING_GATEWAY_CONFIG_FILE`、`~/.openviking/gateway.conf`、`/etc/openviking/gateway.conf` 的顺序读取第一个存在的文件，环境变量可以覆盖其中任何字段。容器里可以完全不用文件：设置 `OPENVIKING_GATEWAY_OPENVIKING_URL`，再按需加上 `OPENVIKING_GATEWAY_HOST=0.0.0.0` 之类的变量。两处都没有 OpenViking 地址时，网关退出，并提示运行 `openviking-gateway init` 或设置 `OPENVIKING_GATEWAY_OPENVIKING_URL`。全部字段和覆盖规则见[配置参考](#配置参考)。
 
 **启动检查。** 独立网关启动前会先访问一次 OpenViking：
 
@@ -180,7 +190,7 @@ ov.example.com {
 
 ### 扩展
 
-一个存储目录只供一台主机上的一套部署使用，嵌入网关和独立网关不能共用同一目录。嵌入网关跟随 Server 的 worker 设置；独立网关用 `--workers` 设置，取值 1–64。需要在服务商之间负载均衡、故障转移或限流时，把 LiteLLM 这类服务添加为上游。
+一个存储目录只供一台主机上的一套部署使用，嵌入网关和独立网关不能共用同一目录。嵌入网关跟随 Server 的 worker 设置；独立网关用 `workers` 设置，取值 1–64。需要在服务商之间负载均衡、故障转移或限流时，把 LiteLLM 这类服务添加为上游。
 
 ## 在 Studio 中管理网关
 
@@ -546,9 +556,9 @@ Token 预算只计算模型使用 OpenViking 工具时新增的调用、结果�
 
 **按用户隔离。** 每把网关密钥绑定一位 OpenViking 用户。网关用这位用户自己的 OpenViking 密钥检索记忆、保存对话和调用工具，所以能做的事不会超出用户本人的权限；各用户的对话状态互相隔离。会话和记忆的正本始终在 OpenViking，网关只保存让对话继续所需的状态。
 
-**网关存储什么。** `storage_path` 下有两个 SQLite 数据库，存储的值都用加密密钥加密，文件只有运行网关的系统用户能读取：
+**网关存储什么。** `storage_path` 下有两个 SQLite 数据库，文件只有运行网关的系统用户能读取；开启[加密](#加密)后，存储的每个值也都会加密：
 
-- `management.sqlite3`：上游、上下文配置、网关密钥、请求日志，以及每个 Responses 响应由哪个上游创建。上游 API Key、请求头的值，以及网关密钥绑定的 OpenViking 密钥都加密存储；网关密钥本身只存哈希和一段短前缀。
+- `management.sqlite3`：上游、上下文配置、网关密钥、请求日志，以及每个 Responses 响应由哪个上游创建。其中包括上游 API Key、请求头的值，以及网关密钥绑定的 OpenViking 密钥，加密关闭时它们以明文存储；网关密钥本身只存哈希和一段短前缀。
 - `kernel.sqlite3`：每段对话的状态，包括补充到消息中的记忆原文（原样放回需要它）、OpenViking 工具的往返记录、摘要，以及等待保存的对话文本。
 
 **请求日志记什么。** 只有元数据：请求类型、模型、状态、上游、对话 ID 的哈希、token 数、记忆条数和耗时、保存状态和异常。不记录消息文本、召回的记忆、工具参数和结果，也不记录任何密钥。网关不写 HTTP 访问日志，错误信息也不回显提交的值。
@@ -580,18 +590,18 @@ Token 预算只计算模型使用 OpenViking 工具时新增的调用、结果�
 - `/gateway/uploads` 不需要网关密钥。每次上传由 OpenViking 签发的一次性令牌授权，网关只把它转发到 OpenViking 的上传接口。不要让它的查询字符串出现在代理日志里。
 - `X-OpenViking-*` 请求头、客户端凭证和 Cookie 从不转发给上游。
 
-**备份。** 备份 `storage_path`，包括两个数据库及其 `-wal`、`-shm` 文件，并和加密密钥放在一起。要得到一致的副本，先停止网关，或者用 SQLite 的在线备份（`sqlite3 kernel.sqlite3 ".backup kernel.backup.sqlite3"`，`management.sqlite3` 同理）。丢失不同文件的后果：
+**备份。** 备份 `storage_path`，包括两个数据库及其 `-wal`、`-shm` 文件；开启加密时，还要保管好 OpenViking 根密钥的备份。要得到一致的副本，先停止网关，或者用 SQLite 的在线备份（`sqlite3 kernel.sqlite3 ".backup kernel.backup.sqlite3"`，`management.sqlite3` 同理）。丢失不同文件的后果：
 
 - **丢失 `kernel.sqlite3`**：之前补充的记忆无法放回。每段进行中的对话会有一次服务商缓存未命中，Claude 对话会丢掉一次之前的思考内容（**记忆记录缺失**，`missing_injection_record`），尚未保存的轮次也会丢失。
 - **丢失 `management.sqlite3`**：上游、上下文配置、密钥和请求日志全部丢失，需要重新配置并签发新密钥。
-- **丢失加密密钥**：两个数据库都无法读取，只能从空的 `storage_path` 重新开始。
+- **丢失根密钥**（开启加密时）：两个数据库中已加密的值都无法读取，只能从空的 `storage_path` 重新开始。
 
 ## 日常运维
 
 - **盯住首次调用缓存命中率。** 它反映跨轮次的提示缓存，应该接近不经过网关时服务商能达到的水平；**轮内缓存命中率**覆盖工具步骤，正常时很高。明显下降时，见[首次调用缓存命中率下降](#首次调用缓存命中率下降)。
 - **用请求日志定位单个请求。** 按新消息、工具步骤或异常筛选，展开一行就能看到召回结果、保存状态和 OpenViking 工具的停用原因，见[请求日志和概览](#请求日志和概览)。
 - **设置对外地址。** 把 `public_url` 设为客户端访问网关的地址，反向代理后的客户端配置和上传链接才能保持一致。
-- **定期备份。** 备份网关存储目录和加密密钥，见[安全与数据](#安全与数据)中的“备份”。
+- **定期备份。** 备份网关存储目录；开启加密时还要备份 OpenViking 根密钥，见[安全与数据](#安全与数据)中的“备份”。
 
 ### 升级
 
@@ -615,29 +625,37 @@ Token 预算只计算模型使用 OpenViking 工具时新增的调用、结果�
 | 保存时机 | 晚一轮保存：下一条消息带回上一轮，才能确认用户保留了它。 | 最后一轮要等**最新回复等待时长**（默认 10 分钟）之后才保存。 |
 | 长对话 | 由网关让同一个模型写摘要：只有网关知道模型实际收到了什么，摘要请求也大部分命中缓存。 | 触发压缩的那一轮多一次模型调用和计费；压缩位置之前的原文不再发给模型。 |
 | 本地状态 | 单台主机上的 SQLite，不引入 Postgres、Redis 这类依赖，适合自部署。 | 网关不能多机互备，是模型调用路径上的单点。 |
-| 客户端身份 | 网关签发自己的密钥，而不是直接用 OpenViking 密钥：可以单独吊销，同一个人的不同客户端可以绑定不同的上下文配置。 | 网关要加密保管用户的 OpenViking 密钥；网关密钥泄露，等于该用户的记忆泄露。 |
+| 客户端身份 | 网关签发自己的密钥，而不是直接用 OpenViking 密钥：可以单独吊销，同一个人的不同客户端可以绑定不同的上下文配置。 | 网关要保存用户的 OpenViking 密钥，因此应开启加密；网关密钥泄露，等于该用户的记忆泄露。 |
 
 ## 配置参考
 
-嵌入部署的设置写在 `ov.conf` 的 `gateway` 段，用 `enabled: true` 开启网关；host、port 和 workers 跟随 Server。独立部署的设置写在 `gateway.conf` 的根层，没有 `enabled`，另外有四个字段：必填的 `openviking_url`，以及 `host`（默认 `127.0.0.1`）、`port`（默认 `1935`）、`workers`（1–64，默认 1）。
+两种部署用同一套字段，区别只在配置文件放在哪、用什么命令生成：
 
-两种部署共用的字段：
+- **嵌入**：写在 `ov.conf` 的 `gateway` 段，由 `openviking-server init` 生成。host、port 和 workers 跟随 Server。
+- **独立**：写在 `gateway.conf` 的根层，没有 `gateway` 外层，由 `openviking-gateway init` 生成。网关按 `--config`、`OPENVIKING_GATEWAY_CONFIG_FILE`、`~/.openviking/gateway.conf`、`/etc/openviking/gateway.conf` 的顺序读取第一个存在的文件。`OPENVIKING_CONFIG_FILE` 只用来选择 Server 的配置。
 
-| 字段 | 默认值 | 含义 |
-| --- | --- | --- |
-| `public_url` | 空 | 客户端访问网关的地址；为空时接入指南用请求来源地址，文件上传不可用 |
-| `storage_path` | `~/.openviking/gateway` | 本地存储目录，自动生成的 `encryption.key` 也在这里 |
-| `encryption_key_env` | `OPENVIKING_GATEWAY_ENCRYPTION_KEY` | 从哪个环境变量读取加密密钥（Fernet 格式） |
-| `management_key` | 空 | 可选的网关管理密钥，至少 32 个字符，支持 `$VAR` 引用环境变量 |
-| `min_server_version` | `0.4.16` | 独立网关要求的 OpenViking Server 最低版本 |
-| `session_ttl_days` | `30` | 对话闲置多少天后过期，最小 1 |
-| `response_ttl_seconds` | `2592000` | Responses 响应与上游的对应关系保留多少秒，最小 60 |
-| `log_retention_days` | `30` | 请求日志保留天数，最小 1 |
-| `max_body_bytes` | `33554432` | 请求和上传的大小上限，至少 1,024 字节 |
-| `upstream_timeout_seconds` | `600` | 服务商请求超时，必须大于 0 |
-| `health_interval_seconds` | `60` | 检查 OpenViking 状态的间隔秒数，最小 1 |
+| 字段 | 适用于 | 默认值 | 含义 |
+| --- | --- | --- | --- |
+| `enabled` | 嵌入 | `false` | 在 Server 中开启网关 |
+| `openviking_url` | 独立 | —（必填） | OpenViking Server 的地址 |
+| `host` | 独立 | `127.0.0.1` | 监听地址 |
+| `port` | 独立 | `1935` | 监听端口 |
+| `workers` | 独立 | `1` | worker 进程数，1–64 |
+| `encryption` | 独立 | 不设置（明文） | 字段同 `ov.conf` 的 `encryption` 段，见[加密](#加密)；嵌入网关沿用 Server 的设置 |
+| `public_url` | 两者 | 空 | 客户端访问网关的地址；为空时接入指南用请求来源地址，文件上传不可用 |
+| `storage_path` | 两者 | `~/.openviking/gateway` | 本地存储目录 |
+| `management_key` | 两者 | 空 | 可选的网关管理密钥，至少 32 个字符 |
+| `min_server_version` | 两者 | `0.4.16` | 独立网关要求的 OpenViking Server 最低版本 |
+| `session_ttl_days` | 两者 | `30` | 对话闲置多少天后过期，最小 1 |
+| `response_ttl_seconds` | 两者 | `2592000` | Responses 响应与上游的对应关系保留多少秒，最小 60 |
+| `log_retention_days` | 两者 | `30` | 请求日志保留天数，最小 1 |
+| `max_body_bytes` | 两者 | `33554432` | 请求和上传的大小上限，至少 1,024 字节 |
+| `upstream_timeout_seconds` | 两者 | `600` | 服务商请求超时，必须大于 0 |
+| `health_interval_seconds` | 两者 | `60` | 检查 OpenViking 状态的间隔秒数，最小 1 |
 
-URL 必须是 HTTP(S)，不能含凭证、查询参数或 fragment。未知字段会导致校验失败。独立部署的环境变量为 `OPENVIKING_GATEWAY_` 加大写字段名，`OPENVIKING_GATEWAY_CONFIG_FILE` 指定 JSON 文件；`OPENVIKING_CONFIG_FILE` 只用来选择 Server 的配置。
+**环境变量优先于配置文件。** 两种部署规则相同：非空的 `OPENVIKING_GATEWAY_<字段名大写>` 环境变量（例如 `OPENVIKING_GATEWAY_PUBLIC_URL`、`OPENVIKING_GATEWAY_MANAGEMENT_KEY`）覆盖文件中的值，值为空等于没有设置。文件中的值也可以写成 `"$VAR"` 引用环境变量。`encryption` 块只能写在文件里。容器通常不需要配置文件，用环境变量设置需要的字段即可。
+
+URL 必须是 HTTP(S)，不能含凭证、查询参数或 fragment。未知字段会导致校验失败；已删除的字段除外，它们会被忽略并在启动时打印警告，包括 `encryption_key_env`，以及 `ov.conf` 中[迁移](#迁移)列出的 v0.5 字段。
 
 **上下文配置的设置。** 先列 Studio 中的名称，再列管理 API 中的名称（管理 API 把上下文配置称为 `policies`）：
 
@@ -703,11 +721,11 @@ URL 必须是 HTTP(S)，不能含凭证、查询参数或 fragment。未知字�
 
 以下步骤适用于从早期版本的 sidecar 或独立网关迁移到嵌入网关。
 
-1. **先备份。** 备份 `storage_path`（两个数据库和加密密钥）。停止旧的网关进程或 sidecar，再启用嵌入网关。
-2. **删掉旧字段。** 从 `ov.conf` 的 `gateway` 段删除 `host`、`port`、`workers`、`url`、`openviking_url` 和 `admin_token_env`。Server 会忽略这些字段并在启动时打印警告，旧的 `ov.conf` 仍能启动，但还是应该清理掉。`openviking-server init` → **Update gateway** 会自动删除它们。想继续独立运行网关，就把设置移到单独的 `gateway.conf`，去掉 `gateway` 外层和 `enabled`。
+1. **先备份。** 备份 `storage_path`（两个数据库，以及存在的话 `encryption.key`）。停止旧的网关进程或 sidecar，再启用嵌入网关。
+2. **删掉旧字段。** 从 `ov.conf` 的 `gateway` 段删除 `host`、`port`、`workers`、`url`、`openviking_url`、`admin_token_env` 和 `encryption_key_env`。Server 会忽略这些字段并在启动时打印警告，旧的 `ov.conf` 仍能启动，但还是应该清理掉。`openviking-server init` → **Update gateway** 会自动删除它们。想继续独立运行网关，就运行 `openviking-gateway init`，或者把设置移到单独的 `gateway.conf`，去掉 `gateway` 外层和 `enabled`。独立网关的命令不再接受 `--openviking-url`、`--host`、`--port`、`--workers` 和 `--storage-path`，这些设置改写到 `gateway.conf` 或环境变量中。
 3. **改对外地址。** 把 `public_url` 改为 Server 的对外地址，或者删掉。旧版快速开始把它设成了 `http://127.0.0.1:1935`，嵌入网关不再监听这个端口，接入指南和上传链接都会指向一个不存在的地址。`openviking-server init` → **Update gateway** 发现 `public_url` 指向别的端口时，会询问是否清除。
-4. **改客户端地址和部署配置。** 嵌入网关的客户端改用 Server 端口（默认 1933）。移除旧的 1935 Service 和 Ingress 路由、Compose 的 `gateway` 服务和 profile，以及 Helm 的 sidecar 配置 `gateway.workers`、`gateway.port`、`gateway.resources`。保留 `gateway.existingSecret`，chart 仍从中读取 `encryption-key`。1935 仍是独立运行的默认端口。
-5. **保留加密密钥。** 通过环境变量提供，或者放在 `storage_path` 下作为 `encryption.key`。没有它，已有数据库无法读取，Server 会拒绝启动。
+4. **改客户端地址和部署配置。** 嵌入网关的客户端改用 Server 端口（默认 1933）。移除旧的 1935 Service 和 Ingress 路由、Compose 的 `gateway` 服务和 profile，以及 Helm 的 sidecar 配置 `gateway.workers`、`gateway.port`、`gateway.resources`。`gateway.managementKeySecret` 已删除，把其中的 `management-key` 字段移到 `gateway.existingSecret` 指定的 Secret 中。1935 仍是独立运行的默认端口。
+5. **首次启动会转换已存数据。** v0.5 网关用自己的密钥加密数据。新版网关（嵌入或独立）首次启动时，用这把旧密钥解密，再按当前的[加密](#加密)设置重新写入；加密关闭时写成明文，所以想让数据继续加密，要在这次启动前开启 OpenViking 加密。旧密钥从环境变量 `OPENVIKING_GATEWAY_ENCRYPTION_KEY` 读取，或者从 `storage_path` 下的 `encryption.key` 读取。`encryption_key_env` 会被忽略：如果你曾用它指向别的环境变量，这次启动时把密钥导出为 `OPENVIKING_GATEWAY_ENCRYPTION_KEY`。存在旧的加密数据、两处却都没有密钥时，网关拒绝启动，错误信息会写明这两个位置。用 Helm 时，只在这次升级的版本中保留 `existingSecret` 里的 `encryption-key` 字段。启动成功后旧密钥不会再被读取，可以删掉这个环境变量、Secret 字段和 `encryption.key`。
 6. **移除共享 admin token。** `OPENVIKING_GATEWAY_ADMIN_TOKEN` **不会**被当作管理密钥。需要限制谁能修改上游和上下文配置时，显式设置 `management_key`。
 7. **核对上游地址。** 首次启动时，网关会改写一次已存上游的 Base URL，让每个上游继续请求升级前的同一个地址：
    - 火山方舟和 BytePlus 方舟的 Chat Completions、Responses 上游，只有域名的补上 `/api/v3`。
@@ -734,11 +752,13 @@ URL 必须是 HTTP(S)，不能含凭证、查询参数或 fragment。未知字�
 
 嵌入网关无法启动时，整个 OpenViking Server 都会停止。请在 Server 日志中查看启动错误（Compose 中用 `docker compose logs openviking`）。
 
-- **缺少加密密钥**：数据库已存在，但既没有 `encryption.key` 也没有 `OPENVIKING_GATEWAY_ENCRYPTION_KEY`。恢复原来的密钥。
+- **v0.5 数据缺少旧密钥**：存储目录里有 v0.5 网关加密的数据，但既没有 `OPENVIKING_GATEWAY_ENCRYPTION_KEY`，`storage_path` 下也没有 `encryption.key`。提供原来的密钥，见[迁移](#迁移)第 5 步。
 - **旧字段**：删除[迁移](#迁移)第 2 步列出的字段。
 - **管理密钥太短**：至少 32 个字符；用 `$VAR` 引用的环境变量没有设置时，也会报这个错。
+- **加密设置**：Server 的 `encryption` 段（嵌入）或 `gateway.conf` 的 `encryption` 块（独立）不合法，或者加载不了根密钥。见[加密指南](08-encryption.md)。
 - **存储格式不支持**（`Unsupported gateway schema`）：存储目录由不兼容的网关版本写入（更旧的版本，或降级前更新的版本）。换一个空的 `storage_path`。
-- **独立运行缺少 OpenViking 地址**：设置 `--openviking-url` 或对应的配置项。
+- **独立运行缺少 OpenViking 地址**：运行 `openviking-gateway init`，或者设置 `OPENVIKING_GATEWAY_OPENVIKING_URL`。
+- **独立运行找不到配置文件**：`--config` 或 `OPENVIKING_GATEWAY_CONFIG_FILE` 指定的文件不存在。改正路径，或者用 `openviking-gateway init --config <路径>` 生成它。
 - **独立运行绑定非回环地址**：启动检查必须连上 OpenViking 并确认它使用 `api_key` 认证，否则网关退出。先启动 OpenViking（在容器中要等它就绪），或者绑定 `127.0.0.1`。
 
 ### Studio 显示设置卡片
@@ -748,7 +768,7 @@ URL 必须是 HTTP(S)，不能含凭证、查询参数或 fragment。未知字�
 | 这台 OpenViking 没有开启网关（404） | 运行 `openviking-server init` → **Update gateway**，或者在 `ov.conf` 中设置 `gateway.enabled: true` 后重启。普通用户看到的卡片只提示联系部署者开启网关。 |
 | 先连接 OpenViking，或者 OpenViking API 密钥无效（401） | 打开连接设置，填入当前的 OpenViking API 密钥。 |
 | 网关不支持 Trusted 模式（`trusted_mode_unsupported`） | 把 Server 改为 `api_key` 认证。 |
-| 网关连不上 OpenViking（`openviking_unreachable`） | 只出现在独立网关：检查启动参数 `--openviking-url` 和网络。 |
+| 网关连不上 OpenViking（`openviking_unreachable`） | 只出现在独立网关：检查 `openviking_url`（`gateway.conf` 或 `OPENVIKING_GATEWAY_OPENVIKING_URL`）和网络。 |
 
 “上游”和“上下文配置”标签页只读，是因为部署者设置了网关管理密钥：点**输入网关管理密钥**解锁。OpenViking 的 root 或 admin API 密钥不能解锁编辑；管理密钥被更换后（`management_key_invalid`），Studio 会重新锁定。
 
@@ -763,7 +783,7 @@ URL 必须是 HTTP(S)，不能含凭证、查询参数或 fragment。未知字�
 | 这个 OpenViking API 密钥属于其他账号（`other_account`） | 密钥所属的账号不是你在 Studio 中管理的账号。 |
 | OpenViking 拒绝了这个密钥（`openviking_http_401`） | 密钥不完整、已被重新生成，或者用户已被删除。使用该用户当前的密钥。 |
 | OpenViking 无法识别这个密钥所属的用户（`openviking_identity_missing`） | OpenViking 没有返回这个密钥对应的用户。使用本账号中某个用户的密钥。 |
-| 网关连不上 OpenViking，无法校验这个密钥（`openviking_unavailable`） | 网关访问不到 OpenViking；独立网关检查 `--openviking-url`。 |
+| 网关连不上 OpenViking，无法校验这个密钥（`openviking_unavailable`） | 网关访问不到 OpenViking；独立网关检查 `openviking_url`。 |
 | OpenViking 版本低于网关的要求（`openviking_version_mismatch`） | 仅独立网关：OpenViking Server 低于 `min_server_version`（0.4.16），请升级。从源码安装、没有版本标签的服务可能报告 `0.1.dev123` 这样的开发版本号；请安装正式版本，或者把 `min_server_version` 改成与之匹配的值。 |
 
 ### 客户端收到网关返回的错误

@@ -21,7 +21,10 @@ import { useGateway } from '../-lib/use-gateway'
 import { gatewayErrorMessage } from '../-lib/localize'
 import { SettingField } from './setting-field'
 
-const MANAGEMENT_CONFIG = 'ov.conf: gateway.management_key'
+const MANAGEMENT_CONFIGS = [
+  'ov.conf: gateway.management_key',
+  'gateway.conf: management_key',
+]
 
 export function ManagementKeyDialog() {
   const { t } = useTranslation('gateway')
@@ -78,9 +81,11 @@ export function ManagementKeyDialog() {
               {t('management.where')}
             </summary>
             <ul className="mt-2 list-disc space-y-1 pl-5 text-muted-foreground">
-              <li>
-                <code>{MANAGEMENT_CONFIG}</code>
-              </li>
+              {MANAGEMENT_CONFIGS.map((config) => (
+                <li key={config}>
+                  <code>{config}</code>
+                </li>
+              ))}
               <li>
                 {t('management.environment')}{' '}
                 <code>OPENVIKING_GATEWAY_MANAGEMENT_KEY</code>

@@ -27,7 +27,7 @@ The gateway involves four keys, each with one job:
 | Gateway management key (optional) | Restricts who can change upstreams and context profiles | `gateway.management_key`; the `X-OpenViking-Gateway-Management-Key` request header |
 | Upstream API key | Calls the model provider | The upstream editor |
 
-There is also an **encryption key**, which the gateway uses to encrypt its local storage. Nobody uses it by hand.
+The gateway has no encryption key of its own: it encrypts its local storage with OpenViking's encryption settings; see [Encryption](#encryption).
 
 ### Gateway management key
 
@@ -35,17 +35,34 @@ Without a management key, every signed-in user in an account can add and change 
 
 To set one:
 
-- **`openviking-server init`**: for a remote deployment, answer no to **Allow users to configure their own gateway upstreams?**. Init generates a value starting with `ovgm_`, prints it and saves it to `gateway.management_key` in `ov.conf`.
-- **By hand**: use at least 32 characters, for example from `openssl rand -base64 32`. `ov.conf` can reference an environment variable, such as `"management_key": "$OPENVIKING_GATEWAY_MANAGEMENT_KEY"`; a standalone gateway also reads the `OPENVIKING_GATEWAY_MANAGEMENT_KEY` environment variable directly.
-- **Helm**: name a Secret in `gateway.managementKeySecret`; see [Helm](#helm).
+- **`openviking-server init`** (embedded): for a remote deployment, answer no to **Allow users to configure their own gateway upstreams?**. Init generates a value starting with `ovgm_`, prints it and saves it to `gateway.management_key` in `ov.conf`.
+- **`openviking-gateway init`** (standalone): answer yes to **Require a management key to change upstreams and profiles?**. Init generates an `ovgm_` value, prints it once and saves it to `management_key` in `gateway.conf`.
+- **By hand**: use at least 32 characters, for example from `openssl rand -base64 32`. Put it in `management_key`, or set the `OPENVIKING_GATEWAY_MANAGEMENT_KEY` environment variable, which overrides the file in both forms; see [Configuration reference](#configuration-reference).
+- **Compose and Helm**: Compose passes `OPENVIKING_GATEWAY_MANAGEMENT_KEY` into the container; Helm reads it from the `management-key` entry of the Secret named in `gateway.existingSecret`. See [Docker Compose](#docker-compose) and [Helm](#helm).
 
 There is no command-line flag for the management key, because flags show up in process lists and shell history. Setting, changing or removing it takes a restart. It does not revoke issued gateway keys or change existing upstreams and context profiles.
 
-### Encryption key
+### Encryption
 
-The gateway encrypts stored credentials and conversation state with an encryption key. It reads the `OPENVIKING_GATEWAY_ENCRYPTION_KEY` environment variable first; if that is not set, it generates `encryption.key` in `storage_path` on first start. Back it up together with the databases.
+The gateway encrypts stored credentials and conversation state with OpenViking's own encryption (see the [Encryption guide](08-encryption.md)):
 
-If the databases exist but there is neither a key file nor the environment variable, the gateway refuses to start, and in an embedded deployment the whole OpenViking Server does not start. Restore the original key: a new key cannot read existing data.
+- **Embedded**: the gateway follows the server's `encryption` section in `ov.conf`. There is nothing to set for the gateway itself.
+- **Standalone**: add an `encryption` block to `gateway.conf`. It has exactly the same fields as the `encryption` section of `ov.conf`, for example:
+
+  ```json
+  {
+    "openviking_url": "https://ov.example.com",
+    "encryption": {
+      "enabled": true,
+      "provider": "local",
+      "local": { "key_file": "~/.openviking/master.key" }
+    }
+  }
+  ```
+
+When encryption is off or the block is missing, the gateway stores everything in plain text, protected only by file permissions. Turning encryption on later is safe: values written before stay readable, and new writes are encrypted. Turning it off, or switching to a different root key, makes the encrypted values unreadable, so keep the settings the data was written with. Back up the root key as the Encryption guide describes; without it, the gateway's databases cannot be read.
+
+Data written by the v0.5 gateway, which used its own key, is converted on the first start; see [Migration](#migration).
 
 ## Deploy
 
@@ -54,7 +71,7 @@ If the databases exist but there is neither a key file nor the environment varia
 | Form | How to enable it | Client address |
 | --- | --- | --- |
 | Embedded in the server (including Compose and Helm) | Turn on `gateway.enabled` in `ov.conf` | The server address, `http://127.0.0.1:1933` by default |
-| Standalone | `openviking-gateway --openviking-url <OpenViking URL>` | The gateway address, `http://127.0.0.1:1935` by default |
+| Standalone | `openviking-gateway init`, then `openviking-gateway` | The gateway address, `http://127.0.0.1:1935` by default |
 
 Both forms serve the same model and management paths. An embedded gateway needs no second process and no path-based reverse proxy. A standalone gateway leaves the existing OpenViking service's configuration untouched.
 
@@ -101,7 +118,7 @@ A standalone gateway serves the same paths on its own port, plus:
 
 Turn on `gateway.enabled` in the mounted `ov.conf`, then run `docker compose up -d`. The gateway runs inside the `openviking` service; there is no separate service or profile.
 
-- **Management key**: put it in `gateway.management_key` in the mounted `ov.conf`. The bundled Compose file passes only `OPENVIKING_GATEWAY_ENCRYPTION_KEY` into the container.
+- **Management key**: set `OPENVIKING_GATEWAY_MANAGEMENT_KEY` in `.env`, and the bundled Compose file passes it into the container; or put it in `gateway.management_key` in the mounted `ov.conf`. The Compose file also passes `OPENVIKING_GATEWAY_ENCRYPTION_KEY`, which is only read once to migrate v0.5 data; see [Migration](#migration).
 - **Public address**: set `gateway.public_url` to the public address.
 - **After a configuration change**: run `docker compose restart openviking`; read startup errors with `docker compose logs openviking`.
 
@@ -114,15 +131,14 @@ Set `gateway.enabled: true` in the chart values. The gateway runs inside the ser
 ```yaml
 gateway:
   enabled: true
-  existingSecret: ""       # optional: Secret name, entry encryption-key
-  managementKeySecret: ""  # optional: Secret name, entry management-key
+  existingSecret: ""  # optional: Secret name, entry management-key
 config:
   gateway:
     public_url: https://ov.example.com
 ```
 
-- Without `existingSecret`, the encryption key file is generated on the data volume and is backed up with it.
-- With `managementKeySecret`, changing upstreams and context profiles requires that management key.
+- The gateway encrypts its data with the chart's `config.encryption` settings, the same as the server.
+- With a `management-key` entry in the `existingSecret` Secret, changing upstreams and context profiles requires that management key.
 - Model requests stream: the Ingress must turn off response buffering and allow request bodies of at least 32 MiB and timeouts of 600 seconds.
 
 The NGINX annotations, the commands to create the Secrets and the notes on upgrading from the sidecar chart are in the [chart README](https://github.com/volcengine/OpenViking/blob/main/deploy/helm/README.md#openviking-gateway).
@@ -132,29 +148,23 @@ The NGINX annotations, the commands to create the Secrets and the notes on upgra
 A standalone gateway does not read `ov.conf`. It only needs the OpenViking address, so an existing open-source or OpenViking Cloud service needs no configuration change:
 
 ```bash
-openviking-gateway --openviking-url http://127.0.0.1:1933 --port 1935
-# Or read a standalone JSON configuration:
-openviking-gateway --config gateway.conf
+openviking-gateway init   # writes ~/.openviking/gateway.conf
+openviking-gateway
 ```
+
+`openviking-gateway init` asks for the OpenViking address and checks it (showing the server's authentication mode and version), the listen address (`127.0.0.1:1935` by default), and whether to require a [management key](#gateway-management-key). It writes `~/.openviking/gateway.conf`, or the file named by `--config`, readable only by you. Run it again to change the settings: it offers the current values as defaults and keeps existing secrets unless you change them. The resulting file looks like this:
 
 ```json
 {
   "openviking_url": "https://ov.example.com",
   "host": "127.0.0.1",
-  "port": 1935,
-  "storage_path": "~/.openviking/gateway"
+  "port": 1935
 }
 ```
 
 Open the gateway's `/studio/` and sign in with the API key of an OpenViking user, account admin or root. The connection page shows which OpenViking address the gateway uses. A standalone gateway cannot read the remote server's VLM settings, so it cannot import model settings; add upstreams by hand.
 
-**Flags and configuration sources.** The flags are `--config`, `--openviking-url`, `--host`, `--port`, `--workers` and `--storage-path`. The defaults are host `127.0.0.1`, port `1935` and 1 worker. When a setting comes from more than one place, this order wins:
-
-1. command-line flags;
-2. `OPENVIKING_GATEWAY_<FIELD NAME IN UPPER CASE>` environment variables, such as `OPENVIKING_GATEWAY_PUBLIC_URL` (empty values are ignored);
-3. the JSON configuration file, which `OPENVIKING_GATEWAY_CONFIG_FILE` can name instead of `--config`.
-
-Gateway fields go at the root of the JSON file, with no `gateway` wrapper and no `enabled` field. Every field is listed in the [Configuration reference](#configuration-reference).
+**Where the settings come from.** The only flag is `--config`. The gateway reads the first file that exists among `--config`, `OPENVIKING_GATEWAY_CONFIG_FILE`, `~/.openviking/gateway.conf` and `/etc/openviking/gateway.conf`; environment variables override any field in it. A container needs no file at all: set `OPENVIKING_GATEWAY_OPENVIKING_URL`, plus for example `OPENVIKING_GATEWAY_HOST=0.0.0.0`. Without an OpenViking address from either source, the gateway exits and asks you to run `openviking-gateway init` or set `OPENVIKING_GATEWAY_OPENVIKING_URL`. Every field and the override rule are in the [Configuration reference](#configuration-reference).
 
 **Startup checks.** Before it starts, a standalone gateway contacts OpenViking once:
 
@@ -180,7 +190,7 @@ Whatever proxy you use, it needs three things: response buffering off, so stream
 
 ### Scaling
 
-One storage directory serves one deployment on one host, and an embedded and a standalone gateway must not share a directory. An embedded gateway follows the server's worker setting; a standalone gateway takes `--workers`, from 1 to 64. For load balancing, failover or rate limiting across providers, add a service such as LiteLLM as an upstream.
+One storage directory serves one deployment on one host, and an embedded and a standalone gateway must not share a directory. An embedded gateway follows the server's worker setting; a standalone gateway takes `workers`, from 1 to 64. For load balancing, failover or rate limiting across providers, add a service such as LiteLLM as an upstream.
 
 ## Manage the gateway in Studio
 
@@ -546,9 +556,9 @@ Each request's detail in the request log shows the window number, whether the mo
 
 **Isolation by user.** Each gateway key is bound to one OpenViking user. The gateway searches memory, saves conversations and calls tools with that user's own OpenViking key, so it can never do more than the user can, and each user's conversation state is kept separate. Sessions and memories always live in OpenViking; the gateway keeps only the state it needs to continue conversations.
 
-**What the gateway stores.** `storage_path` holds two SQLite databases. Stored values are encrypted with the encryption key, and only the system user that runs the gateway can read the files:
+**What the gateway stores.** `storage_path` holds two SQLite databases. Only the system user that runs the gateway can read the files, and with [encryption](#encryption) on, every stored value is encrypted as well:
 
-- `management.sqlite3`: upstreams, context profiles, gateway keys, request logs, and which upstream created each Responses response. Upstream API keys, header values and the OpenViking keys bound to gateway keys are encrypted; gateway keys themselves are stored only as a hash and a short prefix.
+- `management.sqlite3`: upstreams, context profiles, gateway keys, request logs, and which upstream created each Responses response. This includes upstream API keys, header values and the OpenViking keys bound to gateway keys, which are in plain text when encryption is off; gateway keys themselves are stored only as a hash and a short prefix.
 - `kernel.sqlite3`: the state of each conversation, including the memory text added to messages (needed for replay), OpenViking tool rounds, summaries and conversation text waiting to be saved.
 
 **What request logs record.** Metadata only: request type, model, status, upstream, a hash of the conversation ID, token counts, memory counts and timing, saving status and issues. Never message text, recalled memory, tool arguments or results, or any key. The gateway writes no HTTP access log, and its error messages never repeat submitted values.
@@ -580,18 +590,18 @@ None of this touches memories and sessions already stored in OpenViking. The rev
 - `/gateway/uploads` needs no gateway key. Each upload is authorized by a one-time token signed by OpenViking, and the gateway only forwards it to OpenViking's upload endpoint. Keep its query string out of proxy logs.
 - `X-OpenViking-*` headers, client credentials and cookies are never forwarded to upstreams.
 
-**Backups.** Back up `storage_path`, including both databases and their `-wal` and `-shm` files, together with the encryption key. For a consistent copy, stop the gateway first, or use SQLite's online backup (`sqlite3 kernel.sqlite3 ".backup kernel.backup.sqlite3"`, and the same for `management.sqlite3`). What losing each file means:
+**Backups.** Back up `storage_path`, including both databases and their `-wal` and `-shm` files; with encryption on, also keep a backup of OpenViking's root key. For a consistent copy, stop the gateway first, or use SQLite's online backup (`sqlite3 kernel.sqlite3 ".backup kernel.backup.sqlite3"`, and the same for `management.sqlite3`). What losing each file means:
 
 - **`kernel.sqlite3` lost**: memory added earlier cannot be replayed. Each ongoing conversation takes one provider cache miss, Claude conversations lose their earlier thinking once (**Memory record missing**, `missing_injection_record`), and turns not yet saved are lost.
 - **`management.sqlite3` lost**: upstreams, context profiles, keys and request logs are gone. Set them up again and issue new keys.
-- **Encryption key lost**: neither database can be read. Start again with an empty `storage_path`.
+- **Root key lost** (encryption on): the encrypted values in both databases cannot be read. Start again with an empty `storage_path`.
 
 ## Day-to-day operations
 
 - **Watch the first-call cache hit rate.** It reflects prompt caching across turns and should stay close to what the provider reaches without the gateway. The **Within-turn cache hit rate** covers tool steps and is normally high. If the first-call rate drops noticeably, see [The first-call cache hit rate dropped](#the-first-call-cache-hit-rate-dropped).
 - **Use the request log to look into a single request.** Filter by new messages, tool steps or issues, then expand a row to see the recall result, saving status and why OpenViking tools were left out; see [Requests and overview](#requests-and-overview).
 - **Set the public address.** Set `public_url` to the address clients use, so client settings and upload links stay correct behind a reverse proxy.
-- **Back up regularly.** Back up the gateway's storage directory and the encryption key; see **Backups** under [Security and data](#security-and-data).
+- **Back up regularly.** Back up the gateway's storage directory and, with encryption on, OpenViking's root key; see **Backups** under [Security and data](#security-and-data).
 
 ### Upgrades
 
@@ -615,29 +625,37 @@ The table explains why the gateway's main design choices were made and what they
 | When turns are saved | One turn behind: only when the next message brings the previous turn back is it clear the user kept it. | The last turn is saved only after **Save the latest reply after** (10 minutes by default). |
 | Long conversations | The gateway has the same model write the summary: only the gateway knows what the model actually received, and the summary request mostly hits the cache. | The turn that triggers compaction costs one extra, billed model call; text before the cut is no longer sent to the model. |
 | Local state | SQLite on one host, with no Postgres or Redis dependency, which suits self-hosting. | The gateway cannot fail over between machines and is a single point on the model call path. |
-| Client identity | The gateway issues its own keys instead of using OpenViking keys directly: they can be revoked on their own, and one person's clients can use different context profiles. | The gateway has to keep users' OpenViking keys encrypted; a leaked gateway key exposes that user's memory. |
+| Client identity | The gateway issues its own keys instead of using OpenViking keys directly: they can be revoked on their own, and one person's clients can use different context profiles. | The gateway has to store users' OpenViking keys, so turn on encryption; a leaked gateway key exposes that user's memory. |
 
 ## Configuration reference
 
-An embedded deployment's settings go in the `gateway` section of `ov.conf`, where `enabled: true` turns the gateway on; host, port and workers come from the server. A standalone deployment's settings go at the root of `gateway.conf`, without `enabled`, and add four fields: the required `openviking_url`, plus `host` (default `127.0.0.1`), `port` (default `1935`) and `workers` (1–64, default 1).
+Both forms use the same fields; they differ only in where the file lives and how you create it:
 
-Fields for both forms:
+- **Embedded**: the `gateway` section of `ov.conf`, written by `openviking-server init`. Host, port and workers come from the server.
+- **Standalone**: the root of `gateway.conf`, with no `gateway` wrapper, written by `openviking-gateway init`. The gateway reads the first file that exists among `--config`, `OPENVIKING_GATEWAY_CONFIG_FILE`, `~/.openviking/gateway.conf` and `/etc/openviking/gateway.conf`. `OPENVIKING_CONFIG_FILE` only selects the server's configuration.
 
-| Field | Default | Meaning |
-| --- | --- | --- |
-| `public_url` | empty | The address clients use to reach the gateway; when empty, setup guides use the request's origin and file uploads do not work |
-| `storage_path` | `~/.openviking/gateway` | Local storage directory, which also holds a generated `encryption.key` |
-| `encryption_key_env` | `OPENVIKING_GATEWAY_ENCRYPTION_KEY` | The environment variable the encryption key (Fernet format) is read from |
-| `management_key` | empty | Optional gateway management key, at least 32 characters; supports `$VAR` environment references |
-| `min_server_version` | `0.4.16` | Lowest OpenViking Server version a standalone gateway accepts |
-| `session_ttl_days` | `30` | Days of inactivity before a conversation expires; minimum 1 |
-| `response_ttl_seconds` | `2592000` | Seconds to remember which upstream created a Responses response; minimum 60 |
-| `log_retention_days` | `30` | Days to keep request logs; minimum 1 |
-| `max_body_bytes` | `33554432` | Size limit for requests and uploads; minimum 1,024 bytes |
-| `upstream_timeout_seconds` | `600` | Timeout for provider requests; must be above 0 |
-| `health_interval_seconds` | `60` | Seconds between OpenViking status checks; minimum 1 |
+| Field | Form | Default | Meaning |
+| --- | --- | --- | --- |
+| `enabled` | Embedded | `false` | Turns the gateway on inside the server |
+| `openviking_url` | Standalone | — (required) | Address of the OpenViking Server |
+| `host` | Standalone | `127.0.0.1` | Listen address |
+| `port` | Standalone | `1935` | Listen port |
+| `workers` | Standalone | `1` | Worker processes, 1–64 |
+| `encryption` | Standalone | not set (plain text) | Same fields as the `encryption` section of `ov.conf`; see [Encryption](#encryption). Embedded gateways use the server's section |
+| `public_url` | Both | empty | The address clients use to reach the gateway; when empty, setup guides use the request's origin and file uploads do not work |
+| `storage_path` | Both | `~/.openviking/gateway` | Local storage directory |
+| `management_key` | Both | empty | Optional gateway management key, at least 32 characters |
+| `min_server_version` | Both | `0.4.16` | Lowest OpenViking Server version a standalone gateway accepts |
+| `session_ttl_days` | Both | `30` | Days of inactivity before a conversation expires; minimum 1 |
+| `response_ttl_seconds` | Both | `2592000` | Seconds to remember which upstream created a Responses response; minimum 60 |
+| `log_retention_days` | Both | `30` | Days to keep request logs; minimum 1 |
+| `max_body_bytes` | Both | `33554432` | Size limit for requests and uploads; minimum 1,024 bytes |
+| `upstream_timeout_seconds` | Both | `600` | Timeout for provider requests; must be above 0 |
+| `health_interval_seconds` | Both | `60` | Seconds between OpenViking status checks; minimum 1 |
 
-URLs must be HTTP(S) and contain no credentials, query or fragment. Unknown fields fail validation. In a standalone deployment, environment variables are `OPENVIKING_GATEWAY_` plus the field name in upper case, and `OPENVIKING_GATEWAY_CONFIG_FILE` names the JSON file; `OPENVIKING_CONFIG_FILE` only selects the server's configuration.
+**Environment variables override the file.** The rule is the same in both forms: a non-empty `OPENVIKING_GATEWAY_<FIELD NAME IN UPPER CASE>` variable, such as `OPENVIKING_GATEWAY_PUBLIC_URL` or `OPENVIKING_GATEWAY_MANAGEMENT_KEY`, wins over the value in the file; an empty variable counts as unset. A value in the file can also be a `"$VAR"` reference. The `encryption` block can only be set in the file. Containers usually need no file: set the fields they need as variables.
+
+URLs must be HTTP(S) and contain no credentials, query or fragment. Unknown fields fail validation, except removed ones, which are ignored with a startup warning: `encryption_key_env`, and in `ov.conf` also the v0.5 fields listed in [Migration](#migration).
 
 **Context profile settings.** Studio label first, then the name in the management API (which calls context profiles `policies`):
 
@@ -703,11 +721,11 @@ Gateway key fields, every management operation, the access rules and the error r
 
 These steps apply when you move from the sidecar or standalone gateway of earlier releases to the embedded gateway.
 
-1. **Back up first.** Back up `storage_path` (both databases and the encryption key). Stop the old gateway process or sidecar before you enable the embedded gateway.
-2. **Remove old fields.** Delete `host`, `port`, `workers`, `url`, `openviking_url` and `admin_token_env` from the `gateway` section of `ov.conf`. The server ignores them and logs a warning at startup, so an old `ov.conf` still starts, but clean them up. `openviking-server init` → **Update gateway** removes them for you. To keep running the gateway on its own instead, move its settings to a separate `gateway.conf`, without the `gateway` wrapper and `enabled`.
+1. **Back up first.** Back up `storage_path` (both databases and `encryption.key`, if it is there). Stop the old gateway process or sidecar before you enable the embedded gateway.
+2. **Remove old fields.** Delete `host`, `port`, `workers`, `url`, `openviking_url`, `admin_token_env` and `encryption_key_env` from the `gateway` section of `ov.conf`. The server ignores them and logs a warning at startup, so an old `ov.conf` still starts, but clean them up. `openviking-server init` → **Update gateway** removes them for you. To keep running the gateway on its own instead, run `openviking-gateway init`, or move its settings to a separate `gateway.conf`, without the `gateway` wrapper and `enabled`. The standalone command no longer takes `--openviking-url`, `--host`, `--port`, `--workers` or `--storage-path`; set them in `gateway.conf` or as environment variables.
 3. **Fix the public address.** Point `public_url` at the server's public address, or remove it. The old quick start set it to `http://127.0.0.1:1935`, which the embedded gateway no longer listens on, so setup guides and upload links would point at nothing. When `public_url` points at another port, `openviking-server init` → **Update gateway** offers to clear it.
-4. **Update client addresses and deployment config.** Clients of an embedded gateway use the server port (1933 by default). Remove the old 1935 Service and Ingress routes, the Compose `gateway` service and profile, and the Helm sidecar settings `gateway.workers`, `gateway.port` and `gateway.resources`. Keep `gateway.existingSecret`: the chart still reads `encryption-key` from it. 1935 is still the standalone default port.
-5. **Keep the encryption key.** Provide it through the environment variable, or as `encryption.key` in `storage_path`. Without it, existing databases cannot be read and the server refuses to start.
+4. **Update client addresses and deployment config.** Clients of an embedded gateway use the server port (1933 by default). Remove the old 1935 Service and Ingress routes, the Compose `gateway` service and profile, and the Helm sidecar settings `gateway.workers`, `gateway.port` and `gateway.resources`. `gateway.managementKeySecret` is gone: move its `management-key` entry into the Secret named in `gateway.existingSecret`. 1935 is still the standalone default port.
+5. **Let the first start convert stored data.** The v0.5 gateway encrypted its data with its own key. On the first start, the new gateway (embedded or standalone) decrypts it with that key and rewrites it under the current [encryption](#encryption) settings, or in plain text when encryption is off, so turn on OpenViking encryption before this start if you want the data to stay encrypted. The old key is read from the `OPENVIKING_GATEWAY_ENCRYPTION_KEY` environment variable, or from `encryption.key` in `storage_path`. `encryption_key_env` is ignored: if you used it to point at another variable, export the key as `OPENVIKING_GATEWAY_ENCRYPTION_KEY` for this start. If old encrypted data exists and neither source has the key, the gateway refuses to start and the error names both places. With Helm, keep the `encryption-key` entry in the `existingSecret` Secret for the upgrade release only. After a successful start the old key is never read again, so you can remove the variable, the Secret entry and `encryption.key`.
 6. **Remove the shared admin token.** `OPENVIKING_GATEWAY_ADMIN_TOKEN` is **not** used as a management key. To restrict who can change upstreams and context profiles, set `management_key` explicitly.
 7. **Check upstream addresses.** On first start, the gateway rewrites stored Base URLs once, so each upstream keeps calling the same address as before the upgrade:
    - Ark and ModelArk Chat Completions and Responses upstreams with only a domain get `/api/v3` added.
@@ -734,11 +752,13 @@ These steps apply when you move from the sidecar or standalone gateway of earlie
 
 When an embedded gateway cannot start, the whole OpenViking Server stops. Read the startup error in the server log (`docker compose logs openviking` with Compose).
 
-- **Missing encryption key**: the databases exist, but there is neither `encryption.key` nor `OPENVIKING_GATEWAY_ENCRYPTION_KEY`. Restore the original key.
+- **v0.5 data without the old key**: the storage directory holds data encrypted by the v0.5 gateway, but there is neither `OPENVIKING_GATEWAY_ENCRYPTION_KEY` nor `encryption.key` in `storage_path`. Provide the original key; see step 5 of [Migration](#migration).
 - **Old fields**: remove the fields listed in step 2 of [Migration](#migration).
 - **Management key too short**: it needs at least 32 characters. An unset environment variable referenced with `$VAR` causes the same error.
+- **Encryption settings**: the server's `encryption` section (embedded) or the `encryption` block in `gateway.conf` (standalone) is invalid, or its root key cannot be loaded. See the [Encryption guide](08-encryption.md).
 - **Unsupported storage format** (`Unsupported gateway schema`): the storage directory was written by an incompatible gateway version (an older one, or a newer one if you downgraded). Use a fresh, empty `storage_path`.
-- **Standalone without an OpenViking URL**: set `--openviking-url` or the matching configuration field.
+- **Standalone without an OpenViking URL**: run `openviking-gateway init`, or set `OPENVIKING_GATEWAY_OPENVIKING_URL`.
+- **Standalone config file not found**: the file named by `--config` or `OPENVIKING_GATEWAY_CONFIG_FILE` does not exist. Fix the path, or create the file with `openviking-gateway init --config <path>`.
 - **Standalone on a non-loopback address**: the startup check must reach OpenViking and confirm `api_key` authentication, or the gateway exits. Start OpenViking first (in containers, wait until it is ready), or bind to `127.0.0.1`.
 
 ### Studio shows a setup card
@@ -748,7 +768,7 @@ When an embedded gateway cannot start, the whole OpenViking Server stops. Read t
 | The gateway is not enabled on this OpenViking server (404) | Run `openviking-server init` → **Update gateway**, or set `gateway.enabled: true` in `ov.conf` and restart. Regular users see a card that only asks them to contact whoever deployed the server. |
 | Connect to OpenViking first, or Your OpenViking API key is invalid (401) | Open connection settings and enter your current OpenViking API key. |
 | The gateway does not support Trusted mode (`trusted_mode_unsupported`) | Switch the server to `api_key` authentication. |
-| The gateway cannot reach OpenViking (`openviking_unreachable`) | Standalone gateways only: check the `--openviking-url` startup argument and the network. |
+| The gateway cannot reach OpenViking (`openviking_unreachable`) | Standalone gateways only: check `openviking_url` (in `gateway.conf` or `OPENVIKING_GATEWAY_OPENVIKING_URL`) and the network. |
 
 If the Upstreams and Profiles tabs are read-only, the deployer set a gateway management key: choose **Enter gateway management key** to unlock them. An OpenViking root or admin API key does not unlock editing. After the management key is changed (`management_key_invalid`), Studio locks again.
 
@@ -763,7 +783,7 @@ The **Issue a gateway key** dialog shows why issuing failed; the code in parenth
 | This OpenViking API key belongs to another account. (`other_account`) | The key belongs to a different account from the one you are managing in Studio. |
 | OpenViking rejected this key. (`openviking_http_401`) | The key is incomplete or was regenerated, or the user was deleted. Use the user's current key. |
 | OpenViking couldn't tell which user this key belongs to (`openviking_identity_missing`) | OpenViking returned no user for this key. Use the key of a user in this account. |
-| The gateway couldn't reach OpenViking to check this key. (`openviking_unavailable`) | The gateway cannot reach OpenViking; for a standalone gateway, check `--openviking-url`. |
+| The gateway couldn't reach OpenViking to check this key. (`openviking_unavailable`) | The gateway cannot reach OpenViking; for a standalone gateway, check `openviking_url`. |
 | OpenViking is older than the gateway requires. (`openviking_version_mismatch`) | Standalone gateways only: OpenViking Server is older than `min_server_version` (0.4.16). Upgrade it. A server installed from source without version tags may report a development version such as `0.1.dev123`; install a release, or set `min_server_version` to match. |
 
 ### Clients get an error from the gateway

@@ -213,7 +213,7 @@ curl -X POST "$GATEWAY_URL/api/v1/admin/gateway/keys?account_id=team" \
 | 422 | `invalid_configuration` | 请求体或 Base URL 不合法。错误信息不会回显提交的凭证。 |
 | 403 | `vlm_import_forbidden` | 调用方没有导入权限，以 `/access` 的 `can_import_vlm` 为准。 |
 | 404 | `vlm_import_unavailable` | 独立网关读不到服务端的模型配置，请手动添加上游。 |
-| 503 | `openviking_unavailable`、`openviking_unreachable` | 网关连不上 OpenViking。检查 OpenViking 是否运行；独立网关还要检查 `--openviking-url`。 |
+| 503 | `openviking_unavailable`、`openviking_unreachable` | 网关连不上 OpenViking。检查 OpenViking 是否运行；独立网关还要检查 `openviking_url`（`gateway.conf` 或 `OPENVIKING_GATEWAY_OPENVIKING_URL`）。 |
 | 503 | `openviking_version_mismatch` | 仅独立网关：OpenViking Server 低于要求的版本，响应中的 `required_version` 给出最低版本。 |
 
 OpenViking 返回的其他 HTTP 错误记为 `openviking_http_<status>`；网关自身的通用 HTTP 错误记为 `gateway_http_<status>`，例如对不支持的方法返回 405 `gateway_http_405`。

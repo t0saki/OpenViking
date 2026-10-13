@@ -33,11 +33,11 @@ OpenViking 网关是一个模型 API 代理：客户端只要能修改 Base URL�
 
 ## 一张图看懂架构
 
-![OpenViking 网关的两种运行形态。嵌入：客户端访问 OpenViking Server 的端口，Server 把模型 API、上传和网关管理路径交给同一进程里的网关，网关通过本机回环 HTTP、用用户本人的 OpenViking 密钥检索和保存记忆。独立：openviking-gateway 用自己的端口提供同样的路径和只含网关页面的 Studio，通过 HTTP(S) 调用已有的 OpenViking 服务。两种形态下，网关都用同一种 API 把请求转发给上游模型服务商；会话和记忆的正本在 OpenViking，网关本机只有两个加密的 SQLite 文件](../../images/gateway/architecture.zh.svg)
+![OpenViking 网关的两种运行形态。嵌入：客户端访问 OpenViking Server 的端口，Server 把模型 API、上传和网关管理路径交给同一进程里的网关，网关通过本机回环 HTTP、用用户本人的 OpenViking 密钥检索和保存记忆。独立：openviking-gateway 用自己的端口提供同样的路径和只含网关页面的 Studio，通过 HTTP(S) 调用已有的 OpenViking 服务。两种形态下，网关都用同一种 API 把请求转发给上游模型服务商；会话和记忆的正本在 OpenViking，网关本机只有两个 SQLite 文件（开启 OpenViking 加密时加密存储）](../../images/gateway/architecture.zh.svg)
 
 - **运行在哪**：开启后嵌入 OpenViking Server，和 Server 共用端口；也可以用 `openviking-gateway` 独立运行，连接已有的 OpenViking 服务（开源版或商业版）。两种方式的客户端路径相同，见[部署方式](22-gateway-operations.md#部署方式)。
 - **和 OpenViking 的关系**：网关只调用 OpenViking 的公开接口，向量化和记忆提取都在 OpenViking 中完成。
-- **数据在哪**：会话和记忆的正本在 OpenViking。网关本机只有两个加密的 SQLite 文件，一个存上游、密钥和配置，一个存对话状态，见[安全与数据](22-gateway-operations.md#安全与数据)。
+- **数据在哪**：会话和记忆的正本在 OpenViking。网关本机只有两个 SQLite 文件（开启 OpenViking 加密时加密存储），一个存上游、密钥和配置，一个存对话状态，见[安全与数据](22-gateway-operations.md#安全与数据)。
 - **出故障时**：OpenViking 不可用时，对话照常进行，只是不带记忆，保存会自动重试。网关停止服务时，经过它的模型调用全部失败。
 - **管理哪些对象**：同一账号的用户共用**上游**（模型服务地址和 API Key）和**上下文配置**（召回预算、是否保存对话、是否开放 OpenViking 工具等记忆设置）。每个网关密钥绑定一位 OpenViking 用户、一份上下文配置和一组上游。谁能修改什么，见[权限矩阵](../api/25-gateway.md#凭证和账号范围)。
 
@@ -186,7 +186,7 @@ OpenViking 也能以插件形式接入 Claude Code、Codex、OpenCode、pi、Ope
 | 可见性 | 补充的记忆在客户端里不可见。OpenViking 工具调用默认在回复里显示一行提示，不显示结果。Studio 的请求日志记录召回条数和工具轮数，不记录内容。工具调用不经过客户端的权限确认。 | 工具调用出现在对话记录里，经过 Agent 的权限确认。 |
 | 保存时机 | 晚一轮：下一条消息到达时保存上一轮，最后一轮在对话停顿后保存。 | 跟随 Agent 自己的事件，例如每轮结束时。 |
 | 安装与升级 | 所有人共用一个服务，不用在每台机器上安装；上游、密钥和记忆设置集中管理。 | 每台机器分别安装和升级。 |
-| 密钥、数据和故障 | 集中保管服务商的 API Key 和尚未保存的对话文本（加密存储），每次模型调用多一跳。网关停止服务时，经过它的模型调用全部失败。 | 服务商的 API Key 留在各自的 Agent 里，只有保存的对话进入 OpenViking，不需要额外维护服务。 |
+| 密钥、数据和故障 | 集中保管服务商的 API Key 和尚未保存的对话文本（开启 OpenViking 加密时加密存储），每次模型调用多一跳。网关停止服务时，经过它的模型调用全部失败。 | 服务商的 API Key 留在各自的 Agent 里，只有保存的对话进入 OpenViking，不需要额外维护服务。 |
 
 Claude Code、Codex 和 pi 需要按项目区分记忆，或者要求每次工具调用都能看到并确认时，继续用插件。没有插件的客户端，以及想集中管理服务商、密钥和记忆设置的场景，用网关。
 

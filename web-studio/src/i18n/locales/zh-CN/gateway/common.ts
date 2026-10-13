@@ -63,8 +63,9 @@ const common = {
     description:
       '网关管理密钥由部署这台网关的人设置，用来修改上游和上下文配置。它不是 OpenViking API 密钥，也不是客户端用的网关密钥。',
     where: '在哪里找？',
-    prefix: 'openviking-server init 生成的值以 ovgm_ 开头。',
-    environment: '独立运行的网关也可能从环境变量读取：',
+    prefix:
+      'openviking-server init 和 openviking-gateway init 生成的值以 ovgm_ 开头。',
+    environment: '也可能设在环境变量里，它优先于配置文件：',
     keyPlaceholder: '<至少 32 个字符>',
     session: '只保存在当前浏览器标签页，关闭后自动锁定。',
     wrongKey: '这是网关密钥（给客户端用的），请输入网关管理密钥。',
@@ -101,7 +102,7 @@ const common = {
     openvikingUnreachable: {
       title: '网关连不上 OpenViking（{{url}}）',
       description:
-        '确认 OpenViking 正在运行，并检查网关的启动参数 --openviking-url 是否指向它，然后重试。',
+        '确认 OpenViking 正在运行，并检查网关的 openviking_url（gateway.conf 或 OPENVIKING_GATEWAY_OPENVIKING_URL）是否指向它，然后重试。',
     },
     failed: {
       title: '无法加载 OpenViking 网关',
