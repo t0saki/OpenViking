@@ -1,5 +1,6 @@
 import asyncio
 import json
+import time
 from pathlib import Path
 
 import orjson
@@ -7,6 +8,7 @@ import pytest
 from aiohttp import web
 from conftest import MCP_TOOLS
 
+from openviking_gateway.capture import ready_at
 from openviking_gateway.protocols import normalize
 from openviking_gateway.tool_loop import REFUSED
 
@@ -1155,6 +1157,42 @@ async def test_overview_counts_model_requests_recalls_and_capture_issues(running
     assert overview["recall_count"] == 2
     assert overview["capture_issues"] == {"retrying": 1, "paused": 2}
     assert overview["log_retention_days"] == 30
+
+
+async def test_overview_counts_capture_recovered_during_a_request(running_gateway):
+    app, client, admin, key, _, _ = running_gateway
+    store = app.state.store
+    headers = {"Authorization": "Bearer " + key["key"], "X-OpenViking-Session": "recovering"}
+    history = [{"role": "user", "content": "Question"}]
+    response = await client.post(
+        "/v1/chat/completions", headers=headers, json={"model": "model", "messages": history}
+    )
+    assert response.status_code == 200, response.text
+    with store.connect() as c:
+        ((scope, session),) = list(c.execute("SELECT scope,session FROM capture"))
+    retry = {"attempts": 1, "reason": "openviking_http_503", "retry_at": time.time() + 3600}
+    old = await store.capture.get(scope, session)
+    value = {**old.value, "error": retry}
+    assert await store.capture.swap(scope, session, old, value, ready_at(value))
+
+    async def recover(request):
+        # The worker's retry succeeds while this request is still upstream.
+        if request.path == "/v1/chat/completions":
+            old = await store.capture.get(scope, session)
+            value = {**old.value, "error": {}}
+            assert await store.capture.swap(scope, session, old, value, ready_at(value))
+            await app.state.worker.log(
+                {"session": session}, old.value, "active", "delivery_recovered"
+            )
+
+    app.state.test_backend["handler"] = recover
+    history += [{"role": "assistant", "content": "hello"}, {"role": "user", "content": "Next"}]
+    response = await client.post(
+        "/v1/chat/completions", headers=headers, json={"model": "model", "messages": history}
+    )
+    assert response.status_code == 200, response.text
+    overview = (await client.get("/admin/overview", headers=admin)).json()
+    assert overview["capture_issues"] == {"retrying": 0, "paused": 0}
 
 
 async def test_overview_without_model_requests(running_gateway):

@@ -7,6 +7,7 @@ import json
 import logging
 import time
 import uuid
+from dataclasses import replace
 
 import aiohttp
 import orjson
@@ -14,6 +15,8 @@ from fastapi import HTTPException
 from fastapi.responses import Response, StreamingResponse
 from starlette.background import BackgroundTask
 
+from .capture import CapturePipeline
+from .models import Policy
 from .protocols import SSEDecoder, parse_body
 from .storage import digest
 from .tool_executor import ToolExecutor
@@ -326,6 +329,13 @@ class ProxyRequest:
                     digest(self.credential["id"] + self.capture.response_id),
                     {"upstream_id": self.upstream["id"], "user_id": self.credential["user_id"]},
                     ttl=self.config.response_ttl_seconds,
+                )
+            if self.prepared:
+                # Delivery may have failed or recovered while this request was in flight.
+                capture = await self.store.capture.get(self.prepared.scope, self.prepared.session)
+                CapturePipeline.metrics(
+                    replace(self.prepared, capture=capture, metrics=self.metrics),
+                    Policy.model_validate(self.prepared.root["policy"]),
                 )
             await self.management.log(
                 self.credential["account"], self.metrics, user_id=self.credential["user_id"]
