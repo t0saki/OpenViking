@@ -14,7 +14,7 @@ import aiohttp
 
 from .client import VikingClient, VikingError
 from .config import ENVIRONMENT_PREFIX, StandaloneGatewayConfig, normalize_url
-from .standalone import check_openviking, create_standalone_app
+from .standalone import build_encryptor, check_openviking, create_standalone_app
 
 CONFIG_ENVIRONMENT = ENVIRONMENT_PREFIX + "CONFIG_FILE"
 USER_CONFIG = Path("~/.openviking/gateway.conf")
@@ -72,11 +72,15 @@ def init(path: Path) -> int:
     url = current.get("openviking_url") or "http://127.0.0.1:1933"
     while True:
         url = _prompt_required_input("OpenViking server URL", url)
+        if url.startswith("$"):
+            break  # Resolved from the environment when the gateway starts.
         try:
             url = normalize_url(url)
         except ValueError as error:
             print(f"  {_red(str(error))}")
-            continue
+            if sys.stdin.isatty():
+                continue
+            return 1
         try:
             health = asyncio.run(probe(url))
         except VikingError as error:
@@ -142,6 +146,10 @@ def main():
     import uvicorn
 
     asyncio.run(check_openviking(config))
+    if encryptor := build_encryptor(config):
+        # Load (or create) the root key once, before workers start, so bad encryption
+        # settings stop startup and workers never race to create the key file.
+        asyncio.run(encryptor.provider.get_root_key())
     uvicorn.run(
         "openviking_gateway.cli:factory",
         factory=True,

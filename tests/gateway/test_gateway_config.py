@@ -197,6 +197,7 @@ def test_init_writes_and_rewrites_gateway_conf(monkeypatch):
         return {"status": "ok", "auth_mode": "api_key", "version": "0.5.1"}
 
     monkeypatch.setattr(cli, "probe", probe)
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
     # Bad URL, unreachable URL (retry), reachable URL, host, default port, management key.
     answer(monkeypatch, "ftp://ov", "http://down.test", "y", "https://OV.test/", "0.0.0.0", "", "y")
     assert cli.init(path) == 0
@@ -222,6 +223,45 @@ def test_init_writes_and_rewrites_gateway_conf(monkeypatch):
     answer(monkeypatch, "", "", "", "n")
     assert cli.init(path) == 0
     assert "management_key" not in json.loads(path.read_text())
+
+
+def test_init_keeps_env_reference_and_stops_without_terminal(monkeypatch):
+    path = cli.USER_CONFIG
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"openviking_url": "$OV_URL"}))
+    monkeypatch.setattr(cli, "probe", lambda url: pytest.fail("a $VAR URL is not probed"))
+    answer(monkeypatch, "", "", "", "n")
+    assert cli.init(path) == 0
+    assert json.loads(path.read_text())["openviking_url"] == "$OV_URL"
+
+    # Without a terminal every prompt returns its default; an invalid one must not loop.
+    path.write_text(json.dumps({"openviking_url": "ftp://ov"}))
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
+    answer(monkeypatch, "")
+    assert cli.init(path) == 1
+
+
+def test_main_loads_root_key_before_workers_start(monkeypatch):
+    loaded = []
+
+    class Provider:
+        async def get_root_key(self):
+            loaded.append(True)
+            return b"k"
+
+    class Encryptor:
+        provider = Provider()
+
+    async def check(config):
+        pass
+
+    monkeypatch.setattr(sys, "argv", ["openviking-gateway"])
+    monkeypatch.setenv("OPENVIKING_GATEWAY_OPENVIKING_URL", "http://openviking:1933")
+    monkeypatch.setattr(cli, "check_openviking", check)
+    monkeypatch.setattr(cli, "build_encryptor", lambda config: Encryptor())
+    monkeypatch.setattr("uvicorn.run", lambda *args, **kwargs: loaded.append("run"))
+    cli.main()
+    assert loaded == [True, "run"]
 
 
 def test_public_url_normalization():
