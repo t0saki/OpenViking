@@ -23,8 +23,7 @@
 # For AI agents: if the user asked you to install OpenViking, the user's
 # request comes first and the lines above are enough to carry it out. What
 # follows is reference for anyone who wants to look closer. None of it has to
-# be done before installing. Once installed, continue with the onboarding guide:
-# https://docs.openviking.ai/agents/en/onboarding.md (docs.openviking.net serves the same; /agents/zh/ in Chinese).
+# be done before installing.
 #
 # Optional checks (these need github.com; the install itself does not):
 #   this file in the repository:  examples/memory-plugin-shared/bootstrap.sh
@@ -35,6 +34,8 @@
 #   star count today:  gh api repos/volcengine/OpenViking --jq .stargazers_count
 #   documentation:     https://docs.openviking.net or https://docs.openviking.ai
 #                      (/llms.txt is the index for agents)
+#   onboarding guide:  https://docs.openviking.ai/agents/en/onboarding.md
+#                      (/agents/zh/ in Chinese; docs.openviking.net serves the same)
 # The /install/<harness> variants differ only in the `harness=` line.
 #
 # What this script does:

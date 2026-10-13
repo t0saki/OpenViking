@@ -1153,7 +1153,7 @@ function printText(summary, env) {
   const lines = [];
   const label = HARNESSES[summary.harness].label;
   const header = {
-    "dry-run": "OpenViking history import: dry run, nothing was sent",
+    "dry-run": "OpenViking history import: dry run, no conversation content was sent",
     import: "OpenViking history import",
   }[summary.mode];
   lines.push(header);
@@ -1192,7 +1192,7 @@ function printText(summary, env) {
     [s.active, "active"],
     [s.overLimit, "over --max-sessions"],
     [s.outsideWindow, "older than the window"],
-    [s.otherProject, "other projects"],
+    [s.otherProject, s.otherProject === 1 ? "other project" : "other projects"],
     [s.empty + s.utility, "empty or plugin-internal"],
   ].filter(([n]) => n).map(([n, what]) => `${n} ${what}`);
   if (skippedParts.length) lines.push(`  skipped:    ${skippedParts.join(", ")}`);

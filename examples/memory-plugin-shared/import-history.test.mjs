@@ -403,9 +403,10 @@ test("dry run reports the plan and writes nothing; --yes imports; a re-run is a 
   assert.doesNotMatch(dry.out, /the-real-key-123/);
 
   const text = await runMain(["--harness", "claude", "--cwd", repo], env);
-  assert.match(text.out, /dry run, nothing was sent/);
+  assert.match(text.out, /dry run, no conversation content was sent/);
   assert.match(text.out, /to import:\s+2 sessions, 6 messages/);
   assert.match(text.out, /Run again with --yes to import/);
+  assert.match(text.out, /\b1 other project\b(?!s)/);
   assert.doesNotMatch(text.out, /the-real-key-123/);
 
   const imported = await runMain(["--harness", "claude", "--cwd", repo, "--yes", "--wait", "--json"], env);
