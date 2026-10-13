@@ -1,7 +1,7 @@
 """End-to-end load: Python gateway (repo source) vs ov-gateway-rs under agent_sim.
 
 Usage:
-  python e2e.py mocks start|stop              # mock OV (core 1) + N mock upstreams (cores 2-3)
+  python e2e.py mocks start|stop              # mock OV (core 4) + N mock upstreams (cores 2-4)
   python e2e.py run --gateway py|rs --sessions N [--warmup 60 --duration 120 --ramp 30
                     --shards K --label L]
 Environment: E2E_ROOT is the scratch root holding pyvenv/, bench/ (agent_sim.py,
