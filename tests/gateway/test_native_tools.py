@@ -954,6 +954,26 @@ def test_custom_responses_tools_are_captured_as_complete_pairs():
     ]
 
 
+@pytest.mark.parametrize("protocol", ["chat", "responses", "anthropic"])
+def test_hidden_chain_continues_from_the_chain_before(protocol):
+    """A reply's anchors continue the request's chain: hashing only the reply gives the same."""
+    from openviking_gateway.tool_protocols import hidden_chain
+
+    messages = [
+        {"role": "system", "content": "Be brief."},
+        {"role": "user", "content": [{"type": "text", "text": "héllo 🙂", "cache_control": {}}]},
+        {"role": "assistant", "content": [{"type": "thinking", "thinking": "hm"}]},
+        {"role": "assistant", "content": "Hi", "reasoning_content": "hm"},
+        {"role": "user", "content": "<context>docs</context><user_query> why? </user_query>"},
+        {"type": "function_call", "call_id": "c-1", "name": "f", "arguments": "{}"},
+    ]
+    chain = hidden_chain(messages, protocol)
+    assert chain[0] == chain[2] == "" and all(chain[3:])
+    for index in range(len(messages) + 1):
+        head = hidden_chain(messages[:index], protocol)
+        assert [*head, *hidden_chain(messages[index:], protocol, head)] == chain
+
+
 @pytest.mark.parametrize("archive", [False, True])
 async def test_responses_notice_removal_follows_injection_replay_and_archive_cut(
     setup_kernel, credential, policy, archive

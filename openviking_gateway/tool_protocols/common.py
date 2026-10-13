@@ -13,6 +13,7 @@ import functools
 import itertools
 import uuid
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 import orjson
@@ -267,8 +268,8 @@ class ToolProtocol(ABC):
         body["tool_choice"] = "none"
 
     @staticmethod
-    def history_chain(messages: list[dict]) -> list[str]:
-        return prefix_chain(messages)
+    def history_chain(messages: list[dict], after: Sequence[str] = ()) -> list[str]:
+        return prefix_chain(messages, after)
 
     @staticmethod
     def join_replayed_history(messages: list[dict]) -> list[dict]:

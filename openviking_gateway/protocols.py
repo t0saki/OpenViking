@@ -9,6 +9,7 @@ import hashlib
 import json
 import math
 import re
+from collections.abc import Sequence
 from decimal import Decimal
 from importlib.resources import files
 from typing import Any
@@ -147,8 +148,12 @@ def normalize(value: Any) -> Any:
     return value
 
 
-def prefix_chain(messages: list[dict]) -> list[str]:
-    previous = hashlib.sha256(NORMALIZATION_VERSION.encode()).digest()
+def prefix_chain(messages: list[dict], after: Sequence[str] = ()) -> list[str]:
+    """Anchors of ``messages``; ``after``, the chain of the history before them, continues it."""
+    previous = next(
+        (bytes.fromhex(a) for a in reversed(after) if a),
+        hashlib.sha256(NORMALIZATION_VERSION.encode()).digest(),
+    )
     result = []
     for message in messages:
         if (
