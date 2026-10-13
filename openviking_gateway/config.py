@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0
 """Configuration for embedded and standalone gateway hosts."""
 
+import logging
 import os
 import tempfile
 from pathlib import Path
@@ -9,6 +10,13 @@ from urllib.parse import urlsplit, urlunsplit
 
 from cryptography.fernet import Fernet
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+logger = logging.getLogger(__name__)
+
+# v0.5.0 sidecar settings that an upgraded ov.conf may still carry.
+REMOVED_EMBEDDED_FIELDS = frozenset(
+    {"host", "port", "workers", "url", "openviking_url", "admin_token_env"}
+)
 
 PUBLIC_OPENVIKING_URLS = frozenset({"https://api.vikingdb.cn-beijing.volces.com/openviking"})
 
@@ -103,13 +111,15 @@ class EmbeddedGatewayConfig(GatewayConfig):
 
     @model_validator(mode="before")
     @classmethod
-    def reject_removed_fields(cls, value):
-        removed = {"host", "port", "workers", "url", "openviking_url", "admin_token_env"}
-        if isinstance(value, dict) and (found := removed.intersection(value)):
-            raise ValueError(
-                f"Removed embedded gateway settings: {', '.join(sorted(found))}. "
-                "See docs/en/guides/22-gateway-operations.md for migration instructions"
+    def drop_removed_fields(cls, value):
+        # Rejecting them would stop the whole server, not just the gateway, on upgrade.
+        if isinstance(value, dict) and (found := REMOVED_EMBEDDED_FIELDS.intersection(value)):
+            logger.warning(
+                "Ignoring removed gateway settings %s: the gateway now runs inside the server "
+                "on the server port. See docs/en/guides/22-gateway-operations.md#migration",
+                ", ".join(sorted(found)),
             )
+            value = {key: item for key, item in value.items() if key not in found}
         return value
 
 

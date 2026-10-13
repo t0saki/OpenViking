@@ -209,7 +209,7 @@ CPU, raise the server's `workers` setting.
   `encryption-key` entry are the same ones the sidecar used.
 - Remove `gateway.port`, `gateway.workers` and `gateway.resources`.
 - Remove `host`, `port`, `workers`, `url`, `openviking_url` and `admin_token_env` from
-  `config.gateway`. Any of them stops the server at startup.
+  `config.gateway`. The server ignores them with a startup warning.
 - Point `config.gateway.public_url` at the server's public address, not port 1935, and
   move clients to the server port.
 - The shared admin token is gone and does not act as a management key. Use

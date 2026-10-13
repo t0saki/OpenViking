@@ -16,12 +16,13 @@ from openviking_gateway.config import (
 )
 
 
-@pytest.mark.parametrize(
-    "field", ["host", "port", "workers", "url", "openviking_url", "admin_token_env"]
-)
-def test_embedded_rejects_removed_fields(field):
-    with pytest.raises(ValidationError, match="migration instructions"):
-        EmbeddedGatewayConfig.model_validate({field: "old"})
+def test_embedded_ignores_removed_fields_with_warning(caplog):
+    legacy = {"enabled": True, "url": "http://127.0.0.1:1935", "port": 1935, "workers": 2}
+    config = EmbeddedGatewayConfig.model_validate(legacy)
+    assert config.enabled
+    assert "Ignoring removed gateway settings port, url, workers" in caplog.text
+    with pytest.raises(ValidationError):
+        EmbeddedGatewayConfig.model_validate({"enabled": True, "urll": "typo"})
 
 
 def test_standalone_requires_own_url_and_rejects_server_config():

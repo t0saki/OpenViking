@@ -704,7 +704,7 @@ URL 必须是 HTTP(S)，不能含凭证、查询参数或 fragment。未知字�
 以下步骤适用于从早期版本的 sidecar 或独立网关迁移到嵌入网关。
 
 1. **先备份。** 备份 `storage_path`（两个数据库和加密密钥）。停止旧的网关进程或 sidecar，再启用嵌入网关。
-2. **删掉旧字段。** 从 `ov.conf` 的 `gateway` 段删除 `host`、`port`、`workers`、`url`、`openviking_url` 和 `admin_token_env`。嵌入网关不接受这些字段，又因为它运行在 Server 内，留着任何一个都会让整个 OpenViking Server 拒绝启动。`openviking-server init` → **Update gateway** 会自动删除它们。想继续独立运行网关，就把设置移到单独的 `gateway.conf`，去掉 `gateway` 外层和 `enabled`。
+2. **删掉旧字段。** 从 `ov.conf` 的 `gateway` 段删除 `host`、`port`、`workers`、`url`、`openviking_url` 和 `admin_token_env`。Server 会忽略这些字段并在启动时打印警告，旧的 `ov.conf` 仍能启动，但还是应该清理掉。`openviking-server init` → **Update gateway** 会自动删除它们。想继续独立运行网关，就把设置移到单独的 `gateway.conf`，去掉 `gateway` 外层和 `enabled`。
 3. **改对外地址。** 把 `public_url` 改为 Server 的对外地址，或者删掉。旧版快速开始把它设成了 `http://127.0.0.1:1935`，嵌入网关不再监听这个端口，接入指南和上传链接都会指向一个不存在的地址。`openviking-server init` → **Update gateway** 发现 `public_url` 指向别的端口时，会询问是否清除。
 4. **改客户端地址和部署配置。** 嵌入网关的客户端改用 Server 端口（默认 1933）。移除旧的 1935 Service 和 Ingress 路由、Compose 的 `gateway` 服务和 profile，以及 Helm 的 sidecar 配置 `gateway.workers`、`gateway.port`、`gateway.resources`。保留 `gateway.existingSecret`，chart 仍从中读取 `encryption-key`。1935 仍是独立运行的默认端口。
 5. **保留加密密钥。** 通过环境变量提供，或者放在 `storage_path` 下作为 `encryption.key`。没有它，已有数据库无法读取，Server 会拒绝启动。
