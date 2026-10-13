@@ -69,18 +69,28 @@ class HiddenToolLoop:
                 received += len(chunk)
                 if received > 64 * 1024 * 1024:
                     raise ToolLoopError("Model stream exceeds tool response budget")
-                for frame in decoder.feed(chunk):
-                    value = decoder.data(frame)
-                    if value is None:
-                        continue
-                    if "error" in value or value.get("type") == "error":
-                        raise ToolLoopError("Model stream failed")
-                    for event in adapter.event(value):
-                        yield adapter.encode(event)
+                # Events that arrive together leave in one write, any before a failure included.
+                events = []
+                try:
+                    events.extend(self.decode(decoder, chunk))
+                finally:
+                    if events:
+                        yield b"".join(events)
             if decoder.buffer.strip():
                 raise ToolLoopError("Incomplete model event stream")
         self.round = adapter.end()
         response.close()
+
+    def decode(self, decoder, chunk):
+        """Client bytes for the upstream events ``chunk`` completes."""
+        for frame in decoder.feed(chunk):
+            value = decoder.data(frame)
+            if value is None:
+                continue
+            if "error" in value or value.get("type") == "error":
+                raise ToolLoopError("Model stream failed")
+            for event in self.adapter.event(value):
+                yield self.adapter.encode(event)
 
     def observe(self):
         self.transcript.extend(self.round.output)

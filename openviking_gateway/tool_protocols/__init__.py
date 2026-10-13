@@ -59,11 +59,18 @@ class ResponseCapture:
         vars(self).update(adapter.reply())
 
     def event(self, body):
+        self.events([body])
+
+    def events(self, bodies):
+        """Events that arrived together; the reply is read once, after the last of them."""
         if self.assembler is None:
             self.assembler = tool_protocol(self.protocol)({})
             self.assembler.begin()
-        self.assembler.accumulate(body)
-        vars(self).update(self.assembler.reply())
+        try:
+            for body in bodies:
+                self.assembler.accumulate(body)
+        finally:
+            vars(self).update(self.assembler.reply())
 
 
 def hidden_chain(messages: list[dict], protocol: str) -> list[str]:

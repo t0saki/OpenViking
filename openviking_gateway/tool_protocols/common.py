@@ -43,6 +43,18 @@ class SummaryError(Exception):
         self.reason = reason
 
 
+def append(target, key, text):
+    """``target[key] += text``, in linear time over a whole stream of deltas."""
+    value = target.get(key) or ""
+    # Without the dict's reference the string is the local's alone, so CPython grows it
+    # in place instead of copying everything streamed so far for every delta.
+    target[key] = ""
+    try:
+        value += text
+    finally:
+        target[key] = value
+
+
 def merge_delta(target, delta):
     for key, value in delta.items():
         if value is None:
@@ -52,7 +64,7 @@ def merge_delta(target, delta):
                 target[key] = {}
             merge_delta(target[key], value)
         elif isinstance(value, str) and key not in {"role", "type", "id"}:
-            target[key] = (target.get(key) or "") + value
+            append(target, key, value)
         elif isinstance(value, list):
             target.setdefault(key, []).extend(copy.deepcopy(value))
         else:

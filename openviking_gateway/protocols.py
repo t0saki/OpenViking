@@ -398,16 +398,21 @@ def usage_of(value: dict) -> dict:
 class SSEDecoder:
     """Incremental byte framing, including CRLF and frames split inside UTF-8."""
 
+    # A frame ends at a blank line. Only where it ends matters, so the pattern starts
+    # at the newline, which the scan finds much faster than an optional CR.
+    frame_end = re.compile(rb"\n\r?\n")
+
     def __init__(self, max_buffer=8 * 1024 * 1024):
         self.buffer = b""
         self.max_buffer = max_buffer
 
     def feed(self, chunk: bytes) -> list[bytes]:
-        self.buffer += chunk
-        frames = []
-        while match := re.search(rb"\r?\n\r?\n", self.buffer):
-            frames.append(self.buffer[: match.end()])
-            self.buffer = self.buffer[match.end() :]
+        # One pass and one copy of the rest, however many frames the chunk holds.
+        buffer, frames, start = self.buffer + chunk, [], 0
+        for match in self.frame_end.finditer(buffer):
+            frames.append(buffer[start : match.end()])
+            start = match.end()
+        self.buffer = buffer[start:]
         if len(self.buffer) > self.max_buffer:
             raise ValueError("SSE event exceeds capture limit")
         return frames
@@ -415,7 +420,7 @@ class SSEDecoder:
     @staticmethod
     def data(frame: bytes) -> dict | None:
         data = b"\n".join(
-            line[5:].lstrip(b" ") for line in frame.splitlines() if line.startswith(b"data:")
+            [line[5:].lstrip(b" ") for line in frame.splitlines() if line.startswith(b"data:")]
         )
         try:
             value = orjson.loads(data)

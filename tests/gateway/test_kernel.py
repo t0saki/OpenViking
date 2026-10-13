@@ -707,6 +707,7 @@ def test_sse_chunk_boundaries_and_anthropic_usage():
     for byte in raw:
         frames += decoder.feed(bytes([byte]))
     assert b"".join(frames) == raw
+    assert SSEDecoder().feed(raw) == frames
     capture = ResponseCapture("anthropic")
     capture.event(
         {
