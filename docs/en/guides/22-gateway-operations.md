@@ -120,14 +120,22 @@ A standalone gateway serves the same `/gateway` paths on its own port, plus thes
 - `/` redirects to `/studio/`, where Studio has only the gateway and connection pages.
 - `/health` returns `service: "openviking-gateway"`, `auth_mode` and `openviking_url`, and also the caller's identity when the request carries a valid OpenViking credential.
 
-**Public address.** For a shared deployment, set `public_url` to the address clients use to reach the server (or the standalone gateway), without `/gateway`; the gateway appends `/gateway` itself. Studio's setup guides build client settings from it: Anthropic clients use `<public_url>/gateway`, and OpenAI-style clients `<public_url>/gateway/v1`. Without it, the guides use the address the browser used to open Studio, but upload links for file imports only work with `public_url` set; see [Import files and skills](#import-files-and-skills).
+**Public address.** For a shared deployment, set `public_url` to the address clients use to reach the server (or the standalone gateway), without `/gateway`; the gateway appends `/gateway` itself. When it is empty, an embedded gateway uses the server's public address (`OPENVIKING_PUBLIC_BASE_URL` or `server.public_base_url`). Studio's setup guides build client settings from it: Anthropic clients use `<public_url>/gateway`, and OpenAI-style clients `<public_url>/gateway/v1`. Without it, the guides use the address the browser used to open Studio, but upload links for file imports only work with `public_url` set; see [Import files and skills](#import-files-and-skills).
 
 ### Docker Compose
 
-Turn on `gateway.enabled` in the mounted `ov.conf`, then run `docker compose up -d`. The gateway runs inside the `openviking` service; there is no separate service or profile.
+Set `OPENVIKING_GATEWAY_ENABLED=true` in `.env`, then run `docker compose up -d`; or turn on `gateway.enabled` in the mounted `ov.conf`. The gateway runs inside the `openviking` service; there is no separate service or profile. Without Compose, add `-e OPENVIKING_GATEWAY_ENABLED=true` to `docker run`:
+
+```bash
+docker run -d -p 1933:1933 -v ~/.openviking:/app/.openviking \
+  -e OPENVIKING_GATEWAY_ENABLED=true \
+  ghcr.io/volcengine/openviking:latest
+```
+
+The server listens on `0.0.0.0` inside the container, so `ov.conf` must use API-key authentication.
 
 - **Management key**: set `OPENVIKING_GATEWAY_MANAGEMENT_KEY` in `.env`, and the bundled Compose file passes it into the container; or put it in `gateway.management_key` in the mounted `ov.conf`. The Compose file also passes `OPENVIKING_GATEWAY_ENCRYPTION_KEY`, which is only read once to migrate v0.5 data; see [Migration](#migration).
-- **Public address**: set `gateway.public_url` to the public address, without `/gateway`.
+- **Public address**: set `OPENVIKING_PUBLIC_BASE_URL` (the bundled Compose file passes it); the gateway uses it when it has no `public_url` of its own.
 - **After a configuration change**: run `docker compose restart openviking`; read startup errors with `docker compose logs openviking`.
 
 The bundled Caddy forwards all paths to `openviking:1933`. Clients can keep using the compatibility port 1934, or go straight to the server on 1933. For HTTPS, a single `reverse_proxy openviking:1933` carries Studio, the management API and model traffic; see [Public access](12-public-access.md).
@@ -650,7 +658,7 @@ Both forms use the same fields; they differ only in where the file lives and how
 | `port` | Standalone | `1935` | Listen port |
 | `workers` | Standalone | `1` | Worker processes, 1–64 |
 | `encryption` | Standalone | not set (plain text) | Same fields as the `encryption` section of `ov.conf`; see [Encryption](#encryption). Embedded gateways use the server's section |
-| `public_url` | Both | empty | The external address clients use, without `/gateway` (the gateway appends it); when empty, setup guides use the request's origin and file uploads do not work |
+| `public_url` | Both | empty | The external address clients use, without `/gateway` (the gateway appends it); when empty, an embedded gateway uses the server's public address; with neither, setup guides use the request's origin and file uploads do not work |
 | `storage_path` | Both | `~/.openviking/gateway` | Local storage directory |
 | `management_key` | Both | empty | Optional gateway management key, at least 32 characters |
 | `min_server_version` | Both | `0.4.16` | Lowest OpenViking Server version a standalone gateway accepts |

@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: AGPL-3.0
 """Construction of the optional embedded gateway, and the route class /mcp shares."""
 
+import os
+
 from starlette.routing import Match, Route
 
 from openviking.server.config import get_server_url_from_server_data
@@ -25,6 +27,7 @@ def create_embedded_gateway(openviking_config, server_config, service_source):
     from openviking.crypto.config import bootstrap_encryption
     from openviking.utils.agfs_utils import _run_coro_blocking
     from openviking_gateway.app import create_app
+    from openviking_gateway.config import normalize_url
 
     async def vlm_source(account_id):
         from openviking.server.gateway_vlm import vlm_upstreams
@@ -37,8 +40,15 @@ def create_embedded_gateway(openviking_config, server_config, service_source):
     # The gateway shares the server's encryption settings; None when OV encryption is disabled.
     encryption = {"encryption": openviking_config.encryption.model_dump()}
     # The embedded gateway ships with this server, so the minimum-version gate never applies.
+    update = {"min_server_version": "0"}
+    # Without its own public_url the gateway shares the server's public address, which
+    # MCP upload links already use (env first, then ov.conf).
+    if not config.public_url and (
+        public := os.environ.get("OPENVIKING_PUBLIC_BASE_URL") or server_config.public_base_url
+    ):
+        update["public_url"] = normalize_url(public)
     return create_app(
-        config.model_copy(update={"min_server_version": "0"}),
+        config.model_copy(update=update),
         openviking_url=get_server_url_from_server_data(server_config),
         vlm_source=vlm_source,
         encryptor=_run_coro_blocking(bootstrap_encryption(encryption)),

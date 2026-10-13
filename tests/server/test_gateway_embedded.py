@@ -29,7 +29,7 @@ def test_embedded_gateway_targets_loopback_without_version_gate(host, expected, 
     )
     options = gateway_host.create_embedded_gateway(
         openviking_config(EmbeddedGatewayConfig(enabled=True)),
-        SimpleNamespace(host=host, port=1987),
+        SimpleNamespace(host=host, port=1987, public_base_url=None),
         lambda: None,
     )
     assert options["openviking_url"] == f"http://{expected}:1987"
@@ -44,10 +44,30 @@ async def test_embedded_gateway_uses_server_encryption(tmp_path, monkeypatch):
     encryption = EncryptionConfig(enabled=True, local={"key_file": str(tmp_path / "master.key")})
     options = gateway_host.create_embedded_gateway(
         openviking_config(EmbeddedGatewayConfig(enabled=True), encryption),
-        SimpleNamespace(host="127.0.0.1", port=1987),
+        SimpleNamespace(host="127.0.0.1", port=1987, public_base_url=None),
         lambda: None,
     )
     assert isinstance(options["encryptor"], FileEncryptor)
+
+
+def test_embedded_gateway_falls_back_to_server_public_url(monkeypatch):
+    monkeypatch.setattr(
+        "openviking_gateway.app.create_app", lambda config, **kwargs: {"config": config, **kwargs}
+    )
+    monkeypatch.delenv("OPENVIKING_PUBLIC_BASE_URL", raising=False)
+    server = SimpleNamespace(host="0.0.0.0", port=1933, public_base_url="https://ov.example.com/")
+
+    def public_url(gateway):
+        options = gateway_host.create_embedded_gateway(
+            openviking_config(gateway), server, lambda: None
+        )
+        return options["config"].public_url
+
+    assert public_url(EmbeddedGatewayConfig(enabled=True)) == "https://ov.example.com"
+    monkeypatch.setenv("OPENVIKING_PUBLIC_BASE_URL", "https://edge.example.com")
+    assert public_url(EmbeddedGatewayConfig(enabled=True)) == "https://edge.example.com"
+    own = EmbeddedGatewayConfig(enabled=True, public_url="https://gw.example.com")
+    assert public_url(own) == "https://gw.example.com"
 
 
 @pytest.fixture

@@ -120,14 +120,22 @@ v0.5 网关用自己的密钥加密数据，这些数据会在首次启动时转
 - `/` 跳转到 `/studio/`，Studio 只包含网关和连接页面。
 - `/health` 返回 `service: "openviking-gateway"`、`auth_mode` 和 `openviking_url`；请求带有效的 OpenViking 凭证时，还返回调用方身份。
 
-**对外地址。** 共享部署要把 `public_url` 设为客户端访问 Server（或独立网关）的地址，不带 `/gateway`，网关会自己加上。Studio 的接入指南用它生成配置：Anthropic 客户端使用 `<public_url>/gateway`，OpenAI 风格的客户端使用 `<public_url>/gateway/v1`。不设置时，指南使用浏览器访问 Studio 的地址；但文件导入的上传链接必须依赖 `public_url`，见[导入文件和技能](#导入文件和技能)。
+**对外地址。** 共享部署要把 `public_url` 设为客户端访问 Server（或独立网关）的地址，不带 `/gateway`，网关会自己加上。嵌入网关不设置时，沿用 Server 的对外地址（`OPENVIKING_PUBLIC_BASE_URL` 或 `server.public_base_url`）。Studio 的接入指南用它生成配置：Anthropic 客户端使用 `<public_url>/gateway`，OpenAI 风格的客户端使用 `<public_url>/gateway/v1`。不设置时，指南使用浏览器访问 Studio 的地址；但文件导入的上传链接必须依赖 `public_url`，见[导入文件和技能](#导入文件和技能)。
 
 ### Docker Compose
 
-在挂载的 `ov.conf` 中开启 `gateway.enabled`，然后运行 `docker compose up -d`。网关在 `openviking` 服务内运行，不需要单独的服务或 profile。
+在 `.env` 中设置 `OPENVIKING_GATEWAY_ENABLED=true`，然后运行 `docker compose up -d`；也可以在挂载的 `ov.conf` 里开启 `gateway.enabled`。网关在 `openviking` 服务内运行，不需要单独的服务或 profile。不用 Compose 时，`docker run` 加上 `-e OPENVIKING_GATEWAY_ENABLED=true` 即可：
+
+```bash
+docker run -d -p 1933:1933 -v ~/.openviking:/app/.openviking \
+  -e OPENVIKING_GATEWAY_ENABLED=true \
+  ghcr.io/volcengine/openviking:latest
+```
+
+容器内 Server 监听 `0.0.0.0`，所以 `ov.conf` 要使用 API 密钥认证。
 
 - **管理密钥**：在 `.env` 中设置 `OPENVIKING_GATEWAY_MANAGEMENT_KEY`，自带的 Compose 文件会把它传进容器；也可以写进挂载的 `ov.conf` 的 `gateway.management_key`。Compose 文件还会传入 `OPENVIKING_GATEWAY_ENCRYPTION_KEY`，它只在迁移 v0.5 数据时读取一次，见[迁移](#迁移)。
-- **对外地址**：把 `gateway.public_url` 设为公网地址，不带 `/gateway`。
+- **对外地址**：设置 `OPENVIKING_PUBLIC_BASE_URL`（自带的 Compose 文件会传入）即可，网关没有单独配置 `public_url` 时沿用它。
 - **修改配置后**：执行 `docker compose restart openviking`；启动错误用 `docker compose logs openviking` 查看。
 
 自带的 Caddy 把所有路径转发到 `openviking:1933`。可以继续用兼容端口 1934，也可以直接访问 Server 的 1933。配置 HTTPS 时，一条 `reverse_proxy openviking:1933` 就能承载 Studio、管理接口和模型流量，见[公网访问](12-public-access.md)。
@@ -650,7 +658,7 @@ Token 预算只计算模型使用 OpenViking 工具时新增的调用、结果�
 | `port` | 独立 | `1935` | 监听端口 |
 | `workers` | 独立 | `1` | worker 进程数，1–64 |
 | `encryption` | 独立 | 不设置（明文） | 字段同 `ov.conf` 的 `encryption` 段，见[加密](#加密)；嵌入网关沿用 Server 的设置 |
-| `public_url` | 两者 | 空 | 客户端访问的对外地址，不带 `/gateway`（网关自己加）；为空时接入指南用请求来源地址，文件上传不可用 |
+| `public_url` | 两者 | 空 | 客户端访问的对外地址，不带 `/gateway`（网关自己加）；嵌入时为空则沿用 Server 的对外地址；都没有时接入指南用请求来源地址，文件上传不可用 |
 | `storage_path` | 两者 | `~/.openviking/gateway` | 本地存储目录 |
 | `management_key` | 两者 | 空 | 可选的网关管理密钥，至少 32 个字符 |
 | `min_server_version` | 两者 | `0.4.16` | 独立网关要求的 OpenViking Server 最低版本 |
