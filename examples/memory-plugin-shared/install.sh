@@ -3345,7 +3345,7 @@ EOF
     next_steps "$label" "$(t "restart $label" "重启 $label")" "$rerun" "$doctor" "$uninstall $client"
   done
   if contains_harness kimicode; then
-    next_steps "Kimi Code" "$(t 'run /reload or start a new session' '运行 /reload 或新建会话')" "$rerun" "" "$uninstall kimicode"
+    next_steps "Kimi Code" "$(t 'start a new session (not /reload)' '新建会话（不要用 /reload）')" "$rerun" "" "$uninstall kimicode"
   fi
   if contains_harness opencode && command -v opencode >/dev/null 2>&1; then
     next_steps OpenCode "$(t 'restart OpenCode' '重启 OpenCode')" "$rerun" "" \
