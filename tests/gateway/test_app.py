@@ -118,7 +118,7 @@ async def test_recorded_client_prefixes(running_gateway, client_name, session_he
         for source_id in message["source_message_ids"]
     ]
     assert source_ids and len(source_ids) == len(set(source_ids))
-    logs = (await client.get("/api/v1/admin/gateway/logs", headers=admin)).json()
+    logs = (await client.get("/admin/logs", headers=admin)).json()
     assert logs[0]["replay_hits"] >= 1
 
 
@@ -127,7 +127,7 @@ async def test_recorded_client_disabled_passthrough(running_gateway, client_name
     _, client, admin, _, seen, _ = running_gateway
     fixture = json.loads((Path(__file__).parent / "fixtures" / f"{client_name}.json").read_text())
     await client.put(
-        "/api/v1/admin/gateway/policies/off",
+        "/admin/policies/off",
         headers=admin,
         json={
             "name": "Off",
@@ -138,7 +138,7 @@ async def test_recorded_client_disabled_passthrough(running_gateway, client_name
         },
     )
     minted = await client.post(
-        "/api/v1/admin/gateway/keys",
+        "/admin/keys",
         headers=admin,
         json={
             "name": "off",
@@ -163,7 +163,7 @@ async def test_raw_passthrough_errors_sse_and_large_numbers(running_gateway):
     _, client, admin, key, seen, _ = running_gateway
     headers = {"Authorization": "Bearer " + key["key"]}
     await client.put(
-        "/api/v1/admin/gateway/policies/off",
+        "/admin/policies/off",
         headers=admin,
         json={"name": "Off", "recall": False, "capture": False, "compaction": False},
     )
@@ -181,7 +181,7 @@ async def test_raw_passthrough_errors_sse_and_large_numbers(running_gateway):
     assert response.headers["request-id"] == "stream-id"
     assert response.content.endswith(b"data: [DONE]\n\n")
     assert b"openviking-context" not in response.content
-    logs = (await client.get("/api/v1/admin/gateway/logs", headers=admin)).json()
+    logs = (await client.get("/admin/logs", headers=admin)).json()
     assert logs[0]["cached_tokens"] == 100
     assert "model-secret" not in str(logs) and "user-key" not in str(logs)
 
@@ -190,7 +190,7 @@ async def test_key_scope_revocation_and_root_rejection(running_gateway):
     _, client, admin, key, _, _ = running_gateway
     for secret, expected in [("root", 403), ("other", 403)]:
         response = await client.post(
-            "/api/v1/admin/gateway/keys",
+            "/admin/keys",
             headers=admin,
             json={
                 "name": "bad",
@@ -201,10 +201,10 @@ async def test_key_scope_revocation_and_root_rejection(running_gateway):
         )
         assert response.status_code == expected
     other_admin = {"X-API-Key": "other"}
-    assert (await client.get("/api/v1/admin/gateway/keys", headers=other_admin)).json() == []
-    listed = (await client.get("/api/v1/admin/gateway/keys", headers=admin)).json()
+    assert (await client.get("/admin/keys", headers=other_admin)).json() == []
+    listed = (await client.get("/admin/keys", headers=admin)).json()
     assert key["key"] not in str(listed) and "user-key" not in str(listed)
-    await client.delete("/api/v1/admin/gateway/keys/" + key["id"], headers=admin)
+    await client.delete("/admin/keys/" + key["id"], headers=admin)
     response = await client.get("/v1/models", headers={"Authorization": "Bearer " + key["key"]})
     assert response.status_code == 401
 
@@ -228,7 +228,7 @@ async def test_stateful_responses_and_counting(running_gateway):
 
 async def enable_tools(client, admin, **policy):
     response = await client.put(
-        "/api/v1/admin/gateway/policies/default",
+        "/admin/policies/default",
         headers=admin,
         json={
             "name": "Tools",
@@ -443,7 +443,7 @@ async def test_hidden_tools_mixed_replay_and_usage(running_gateway, streaming, m
     # The notices stay in the replaced visible span; the model never sees them.
     assert "> OpenViking" not in orjson.dumps(replay).decode()
     assert len(calls) == 1
-    logs = (await client.get("/api/v1/admin/gateway/logs", headers=admin)).json()
+    logs = (await client.get("/admin/logs", headers=admin)).json()
     assert any(log.get("hidden_rounds") == 1 for log in logs)
     assert not any("private-1" in str(log) for log in logs)
 
@@ -598,7 +598,7 @@ async def test_ark_paths_unknown_fields_and_cache_key(
     running_gateway, vendor, path, protocol, target
 ):
     _, client, admin, key, seen, _ = running_gateway
-    upstream = (await client.get("/api/v1/admin/gateway/upstreams", headers=admin)).json()
+    upstream = (await client.get("/admin/upstreams", headers=admin)).json()
     configured = next(u for u in upstream if u["id"] == protocol)
     payload = {
         k: v
@@ -610,9 +610,7 @@ async def test_ark_paths_unknown_fields_and_cache_key(
         "/api/compatible" if payload["protocol"] == "anthropic" else "/api/v3"
     )
     payload["api_key"] = "model-secret"
-    response = await client.put(
-        "/api/v1/admin/gateway/upstreams/" + protocol, headers=admin, json=payload
-    )
+    response = await client.put("/admin/upstreams/" + protocol, headers=admin, json=payload)
     assert response.status_code == 200, response.text
     field = "input" if protocol == "responses" else "messages"
     body = {
@@ -638,7 +636,7 @@ async def test_ark_paths_unknown_fields_and_cache_key(
         assert orjson.loads(seen[-2][1])["prompt_cache_key"] == forwarded["prompt_cache_key"]
     payload["coding_plan"] = True
     assert (
-        await client.put("/api/v1/admin/gateway/upstreams/" + protocol, headers=admin, json=payload)
+        await client.put("/admin/upstreams/" + protocol, headers=admin, json=payload)
     ).status_code == 200
     assert (await client.post(path, headers=headers, json=body)).status_code == 403
 
@@ -736,15 +734,13 @@ async def test_attachment_import_and_signed_upload_proxy(running_gateway, name):
     assert "viking://resources/imported" in model_requests[1]["messages"][-1]["content"]
     # The token is the sole upload authorization, and the destination is fixed.
     response = await client.post(
-        "/gateway/uploads?token=signed-once&url=http://attacker",
+        "/uploads?token=signed-once&url=http://attacker",
         files={"file": ("notes.txt", b"upload")},
         headers={"Authorization": "Bearer not-forwarded"},
     )
     assert response.status_code == 200, response.text
     assert uploads[-1] == ("file", "notes.txt", b"upload")
-    assert (
-        await client.post("/gateway/uploads", files={"file": ("x.txt", b"x")})
-    ).status_code == 400
+    assert (await client.post("/uploads", files={"file": ("x.txt", b"x")})).status_code == 400
 
 
 async def test_shell_upload_instructions_use_public_proxy(running_gateway):
@@ -819,7 +815,7 @@ async def test_shell_upload_instructions_use_public_proxy(running_gateway):
 @pytest.mark.parametrize("vendor", ["ark", "byteplus"])
 async def test_ark_responses_stream_keeps_native_fields_and_done(running_gateway, vendor):
     app, client, admin, key, _, _ = running_gateway
-    upstreams = (await client.get("/api/v1/admin/gateway/upstreams", headers=admin)).json()
+    upstreams = (await client.get("/admin/upstreams", headers=admin)).json()
     upstream = next(u for u in upstreams if u["id"] == "responses")
     allowed = {"name", "protocol", "base_url", "models", "aliases", "vendor"}
     payload = {k: v for k, v in upstream.items() if k in allowed}
@@ -829,7 +825,7 @@ async def test_ark_responses_stream_keeps_native_fields_and_done(running_gateway
     )
     payload["api_key"] = "model-secret"
     assert (
-        await client.put("/api/v1/admin/gateway/upstreams/responses", headers=admin, json=payload)
+        await client.put("/admin/upstreams/responses", headers=admin, json=payload)
     ).status_code == 200
     native = {
         "type": "response.completed",
@@ -867,7 +863,7 @@ async def test_ark_responses_stream_keeps_native_fields_and_done(running_gateway
         json={"model": "model", "store": False, "stream": True, "input": "hello there"},
     )
     assert response.content == raw
-    log = (await client.get("/api/v1/admin/gateway/logs", headers=admin)).json()[0]
+    log = (await client.get("/admin/logs", headers=admin)).json()[0]
     assert log["cached_tokens"] == 2048 and log["input_tokens"] == 3000
     assert log["cache_eligible"] is True
 
@@ -907,7 +903,7 @@ async def test_ark_connection_test_lists_models_under_api_v3(running_gateway, ve
             "base_url": upstream["base_url"].removesuffix("/v1") + "/api/v3",
         },
     )
-    response = await client.post("/api/v1/admin/gateway/upstreams/chat/test", headers=admin)
+    response = await client.post("/admin/upstreams/chat/test", headers=admin)
     assert response.json()["ok"] and response.json()["status"] == 200
     assert seen[-1][0] == "/api/v3/models"
 
@@ -1072,7 +1068,7 @@ async def test_tool_budget_finishes_after_results_without_usage(running_gateway,
     assert response.status_code == 200 and "gateway_tool_error" not in response.text
     assert len(calls) == 1 and len(requests) == 2
     assert "tool_choice" not in requests[1] and "max_tokens" not in requests[1]
-    logs = (await client.get("/api/v1/admin/gateway/logs", headers=admin)).json()
+    logs = (await client.get("/admin/logs", headers=admin)).json()
     assert logs[0]["tool_stop_reason"] == "token_budget"
 
 
@@ -1083,8 +1079,8 @@ async def test_capture_reset_is_scoped_to_the_key_account(running_gateway):
         headers={"Authorization": "Bearer " + key["key"], "X-OpenViking-Session": "reset"},
         json={"model": "model", "messages": [{"role": "user", "content": "hello"}]},
     )
-    log = (await client.get("/api/v1/admin/gateway/logs", headers=admin)).json()[0]
-    path = "/api/v1/admin/gateway/keys/" + log["credential_id"] + "/capture/reset"
+    log = (await client.get("/admin/logs", headers=admin)).json()[0]
+    path = "/admin/keys/" + log["credential_id"] + "/capture/reset"
     body = {"session": log["session"], "protocol": "chat"}
     wrong = await client.post(path, headers={"X-API-Key": "other"}, json=body)
     assert wrong.status_code == 404
@@ -1099,11 +1095,17 @@ async def test_capture_reset_is_scoped_to_the_key_account(running_gateway):
 
 async def test_guides_report_the_client_facing_address(running_gateway):
     app, client, admin, _, _, _ = running_gateway
-    response = await client.get("/api/v1/admin/gateway/guides", headers=admin)
-    assert response.json() == {"base_url": "http://gateway", "public_url_configured": False}
+    response = await client.get("/admin/guides", headers=admin)
+    assert response.json() == {
+        "base_url": "http://gateway/gateway",
+        "public_url_configured": False,
+    }
     app.state.config.public_url = "https://ov.example.com"
-    response = await client.get("/api/v1/admin/gateway/guides", headers=admin)
-    assert response.json() == {"base_url": "https://ov.example.com", "public_url_configured": True}
+    response = await client.get("/admin/guides", headers=admin)
+    assert response.json() == {
+        "base_url": "https://ov.example.com/gateway",
+        "public_url_configured": True,
+    }
 
 
 async def test_upstream_save_keeps_blank_secrets_per_header(running_gateway):
@@ -1112,7 +1114,7 @@ async def test_upstream_save_keeps_blank_secrets_per_header(running_gateway):
 
     async def save(**fields):
         response = await client.put(
-            "/api/v1/admin/gateway/upstreams/headers", headers=admin, json={**upstream, **fields}
+            "/admin/upstreams/headers", headers=admin, json={**upstream, **fields}
         )
         assert response.status_code == 200, response.text
         stored = await app.state.management.get("tenant", "upstreams", "headers")
@@ -1144,8 +1146,8 @@ async def test_overview_counts_model_requests_recalls_and_capture_issues(running
         {"kind": "capture", "session": "c", "protocol": "anthropic", "capture_status": "paused"},
     ]:
         await app.state.management.log("tenant", record)
-    overview = (await client.get("/api/v1/admin/gateway/overview", headers=admin)).json()
-    logs = (await client.get("/api/v1/admin/gateway/logs", headers=admin)).json()
+    overview = (await client.get("/admin/overview", headers=admin)).json()
+    logs = (await client.get("/admin/logs", headers=admin)).json()
     newest_request = next(log for log in logs if log["kind"] != "capture")
     assert overview["requests"] == 5
     assert overview["last_request_at"] == newest_request["time"]
@@ -1157,7 +1159,7 @@ async def test_overview_counts_model_requests_recalls_and_capture_issues(running
 
 async def test_overview_without_model_requests(running_gateway):
     _, client, admin, _, _, _ = running_gateway
-    overview = (await client.get("/api/v1/admin/gateway/overview", headers=admin)).json()
+    overview = (await client.get("/admin/overview", headers=admin)).json()
     assert overview["requests"] == 0 and overview["last_request_at"] is None
     assert overview["recall_ms"] == 0 and overview["recall_requests"] == 0
     assert overview["capture_issues"] == {"retrying": 0, "paused": 0}
@@ -1165,14 +1167,14 @@ async def test_overview_without_model_requests(running_gateway):
 
 async def test_user_and_account_data_deletion_routes(running_gateway):
     _, client, admin, key, _, _ = running_gateway
-    response = await client.delete("/api/v1/admin/gateway/users/bob/data", headers=admin)
+    response = await client.delete("/admin/users/bob/data", headers=admin)
     assert response.json() == {"deleted": True}
-    assert (await client.get("/api/v1/admin/gateway/keys", headers=admin)).json()
+    assert (await client.get("/admin/keys", headers=admin)).json()
     response = await client.delete(
-        "/api/v1/admin/gateway/account/data?account_id=tenant", headers={"X-API-Key": "root"}
+        "/admin/account/data?account_id=tenant", headers={"X-API-Key": "root"}
     )
     assert response.status_code == 200 and response.json() == {"deleted": True}
-    assert (await client.get("/api/v1/admin/gateway/keys", headers=admin)).json() == []
+    assert (await client.get("/admin/keys", headers=admin)).json() == []
     response = await client.get("/v1/models", headers={"Authorization": "Bearer " + key["key"]})
     assert response.status_code == 401
 
@@ -1181,7 +1183,7 @@ async def test_admin_tools_list_the_mcp_tools_for_profiles(running_gateway):
     app, client, admin, _, _, _ = running_gateway
     backend = app.state.test_backend
     backend["catalog"] = [{**MCP_TOOLS[0], "annotations": {"readOnlyHint": True}}, MCP_TOOLS[3]]
-    response = await client.get("/api/v1/admin/gateway/tools", headers=admin)
+    response = await client.get("/admin/tools", headers=admin)
     assert response.status_code == 200
     assert response.json() == [
         {"name": "find", "description": "OpenViking find", "annotations": {"readOnlyHint": True}},
@@ -1190,7 +1192,7 @@ async def test_admin_tools_list_the_mcp_tools_for_profiles(running_gateway):
     assert backend["tools_calls"] == ["admin-key"]
     # Tools use the caller's credential and do not require a gateway key.
     await app.state.management.delete("tenant", "keys", running_gateway[3]["id"])
-    response = await client.get("/api/v1/admin/gateway/tools", headers=admin)
+    response = await client.get("/admin/tools", headers=admin)
     assert response.status_code == 200 and len(response.json()) == 2
 
 
@@ -1198,7 +1200,7 @@ async def test_admin_tools_report_callers_failure_cleanly(running_gateway):
     app, client, admin, _, _, _ = running_gateway
     backend = app.state.test_backend
     backend["tools_status"] = {"admin-key": 401}
-    response = await client.get("/api/v1/admin/gateway/tools", headers=admin)
+    response = await client.get("/admin/tools", headers=admin)
     assert response.status_code == 401 and "private server detail" not in response.text
     assert backend["tools_calls"] == ["admin-key"]
 
@@ -1208,7 +1210,7 @@ async def test_model_restricted_key_rejects_bodies_without_a_readable_model(runn
 
     _, client, admin, key, seen, _ = running_gateway
     minted = await client.post(
-        "/api/v1/admin/gateway/keys",
+        "/admin/keys",
         headers=admin,
         json={
             "name": "restricted",

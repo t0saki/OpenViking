@@ -650,7 +650,7 @@ async def test_reset_continues_in_the_new_window(
             "upstream_id": protocol,
         }
     }
-    logs = (await client.get("/api/v1/admin/gateway/logs", headers=admin)).json()
+    logs = (await client.get("/admin/logs", headers=admin)).json()
     assert logs[0]["window"] == 2 and logs[0]["window_reset"] is True
 
 

@@ -29,7 +29,7 @@ test as usual, for example `tests/gateway/test_kernel.py::<test_name>`.
 
 ## Host, management and migration coverage
 
-Management tests call `/api/v1/admin/gateway/*` directly with OpenViking identities and the optional `X-OpenViking-Gateway-Management-Key`; there is no shared admin token. Cover root/admin/user/dev account and user scope, management-key-only object access, read-only secret redaction, key issuance, revocation only on an explicit OpenViking 401, VLM import permissions and re-import preserving edits, and changing base_url clearing retained credentials and headers.
+Management tests call `/gateway/admin/*` directly with OpenViking identities and the optional `X-OpenViking-Gateway-Management-Key`; there is no shared admin token. Cover root/admin/user/dev account and user scope, management-key-only object access, read-only secret redaction, key issuance, revocation only on an explicit OpenViking 401, VLM import permissions and re-import preserving edits, and changing base_url clearing retained credentials and headers.
 
 `tests/fixtures/gateway_upstream_urls.json` is shared with Studio URL tests. Keep SDK-style base joins, alternate client prefixes and Anthropic validation in sync. Storage tests cover the schema v5 → v6 migration, which re-encodes v0.5.0 Fernet values with the OpenViking encryptor (or as plaintext when encryption is off). Stores run the encryptor on the event loop, so tests that encode or decode directly must do it through `store.run`. Embedded host and VLM mapping integration tests live under `tests/server/`; standalone startup reads `gateway.conf` and `OPENVIKING_GATEWAY_*` variables, never `ov.conf`. Run those host tests separately with the full server test environment.
 
@@ -82,7 +82,7 @@ connection through environment variables:
 
 | Variable | Value |
 | --- | --- |
-| `OV_GW_TEST_BASE_URL` | Gateway origin without `/v1`, for example `http://127.0.0.1:1933` (embedded) or `http://127.0.0.1:1935` (standalone) |
+| `OV_GW_TEST_BASE_URL` | Gateway address without `/v1`, for example `http://127.0.0.1:1933/gateway` (embedded) or `http://127.0.0.1:1935/gateway` (standalone) |
 | `OV_GW_TEST_KEY` | Gateway key (`ovgw_…`) |
 | `OV_GW_TEST_MODEL` | A model name the key allows |
 

@@ -14,6 +14,8 @@ logger = logging.getLogger(__name__)
 
 ENVIRONMENT_PREFIX = "OPENVIKING_GATEWAY_"
 PUBLIC_OPENVIKING_URLS = frozenset({"https://api.vikingdb.cn-beijing.volces.com/openviking"})
+# Both hosts mount the gateway here; public_url is the origin in front of it.
+MOUNT_PATH = "/gateway"
 
 
 def normalize_url(value: str) -> str:

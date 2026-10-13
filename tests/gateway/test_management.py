@@ -9,7 +9,7 @@ from openviking_gateway.config import StandaloneGatewayConfig
 from openviking_gateway.standalone import check_openviking, create_standalone_app
 from openviking_gateway.storage import digest
 
-P = "/api/v1/admin/gateway"
+P = "/admin"
 MANAGER = {"X-OpenViking-Gateway-Management-Key": "ovgm_" + "m" * 40}
 
 
@@ -265,7 +265,7 @@ async def test_dev_and_trusted_identity(running_gateway):
 
 
 @pytest.mark.parametrize(
-    "path", ["/admin/keys", "/arbitrary", "/api/v1/sessions", "/api/v3evil/models"]
+    "path", ["/api/v1/admin/gateway/keys", "/arbitrary", "/api/v1/sessions", "/api/v3evil/models"]
 )
 async def test_data_catchall_is_narrow(running_gateway, path):
     _, client, _, key, _, _ = running_gateway
@@ -365,7 +365,7 @@ async def test_standalone_health_studio_and_readonly_forwarding(running_gateway,
         assert (await client.get("/health", headers={"X-API-Key": "root"})).json()["role"] == "root"
         stale = await client.get("/health", headers={"X-API-Key": "stale-key"})
         assert stale.status_code == 200 and "role" not in stale.json()
-        access = await client.get(P + "/access", headers={"X-API-Key": "stale-key"})
+        access = await client.get("/gateway" + P + "/access", headers={"X-API-Key": "stale-key"})
         assert access.status_code == 401 and access.json()["reason"] == "openviking_http_401"
         assert (await client.get("/")).headers["location"] == "/studio/"
         assert "Studio" in (await client.get("/studio/gateway/keys")).text
@@ -379,9 +379,10 @@ async def test_standalone_health_studio_and_readonly_forwarding(running_gateway,
             await client.post("/api/v1/admin/accounts", headers={"X-API-Key": "root"})
         ).status_code == 405
         assert (await client.get("/api/v1/admin/accounts/tenant/secrets")).status_code == 404
-        assert (await client.get(P + "/guides", headers={"X-API-Key": "user-key"})).json()[
-            "base_url"
-        ] == "http://gateway"
+        guides = await client.get("/gateway" + P + "/guides", headers={"X-API-Key": "user-key"})
+        assert guides.json()["base_url"] == "http://gateway/gateway"
+        # The gateway lives only under /gateway; the root keeps Studio and the OV proxy.
+        assert (await client.get(P + "/access", headers={"X-API-Key": "root"})).status_code == 404
 
 
 async def test_base_change_drops_all_retained_secrets(running_gateway):

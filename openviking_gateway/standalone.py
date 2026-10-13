@@ -11,12 +11,12 @@ from pathlib import Path
 from urllib.parse import quote, urlencode
 
 import aiohttp
-from fastapi import HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, RedirectResponse
 
 from .app import create_app
 from .client import VikingClient, VikingError
-from .config import StandaloneGatewayConfig
+from .config import MOUNT_PATH, StandaloneGatewayConfig
 from .management import request_credential
 
 logger = logging.getLogger(__name__)
@@ -72,25 +72,35 @@ def build_encryptor(config: StandaloneGatewayConfig):
 
 
 def create_standalone_app(config: StandaloneGatewayConfig, studio_dir=None):
-    app = create_app(
+    """Mount the gateway at ``MOUNT_PATH``; Studio, /health and the OV proxy stay at the root."""
+    gateway = create_app(
         config, openviking_url=config.openviking_url, encryptor=build_encryptor(config)
     )
-    for warning in app.state.warnings:
+    for warning in gateway.state.warnings:
         logger.warning("%s: %s", warning, WARNINGS[warning])
+    # A mounted app's lifespan does not run on its own; its error shapes apply here too.
+    app = FastAPI(
+        lifespan=lambda _app: gateway.router.lifespan_context(gateway),
+        exception_handlers=gateway.exception_handlers,
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
+    )
+    state = gateway.state
 
     @app.get("/health")
     async def health(request: Request):
         result = {
             "status": "ok",
             "service": "openviking-gateway",
-            "auth_mode": app.state.health.get("auth_mode", "api_key"),
-            "openviking_url": app.state.openviking_url,
-            "openviking": app.state.health,
+            "auth_mode": state.health.get("auth_mode", "api_key"),
+            "openviking_url": state.openviking_url,
+            "openviking": state.health,
         }
         if key := request_credential(request):
             # Studio learns of an invalid OV key from /access, not from host detection.
             try:
-                identity = await app.state.viking.identify(key)
+                identity = await state.viking.identify(key)
             except VikingError:
                 identity = {}
             result.update(
@@ -107,7 +117,7 @@ def create_standalone_app(config: StandaloneGatewayConfig, studio_dir=None):
     async def administration(request: Request, account_id: str | None = None):
         credential = request_credential(request)
         # Rejects trusted mode, where OV would authorize identity headers this route drops.
-        await app.state.viking.identify(credential)
+        await state.viking.identify(credential)
         path = "/api/v1/admin/accounts"
         if account_id is not None:
             path += "/" + quote(account_id, safe="") + "/users"
@@ -116,7 +126,7 @@ def create_standalone_app(config: StandaloneGatewayConfig, studio_dir=None):
             params["include_credentials"] = "false"
         if params:
             path += "?" + urlencode(params)
-        result = await app.state.viking.request("GET", path, credential)
+        result = await state.viking.request("GET", path, credential)
         return {"status": "ok", "result": result}
 
     directory = studio_dir or studio_directory()
@@ -143,4 +153,5 @@ def create_standalone_app(config: StandaloneGatewayConfig, studio_dir=None):
             raise HTTPException(404)
         return FileResponse(root / "index.html")
 
+    app.mount(MOUNT_PATH, gateway)
     return app

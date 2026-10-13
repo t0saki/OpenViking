@@ -477,7 +477,7 @@ async def test_notice_leads_the_reply_and_never_reaches_the_model(
         assert "gateway-1" in orjson.dumps(results).decode()
     # No model request ever carries a notice, recall or tool.
     assert not any("> OpenViking" in orjson.dumps(r).decode() for r in requests)
-    logs = (await client.get("/api/v1/admin/gateway/logs", headers=admin)).json()
+    logs = (await client.get("/admin/logs", headers=admin)).json()
     assert len({log["session"] for log in logs}) == 1
 
 
@@ -486,7 +486,7 @@ async def test_anthropic_reasoning_restore_ignores_the_notice(running_gateway):
     await show_recall(client, admin)
     configured = next(
         u
-        for u in (await client.get("/api/v1/admin/gateway/upstreams", headers=admin)).json()
+        for u in (await client.get("/admin/upstreams", headers=admin)).json()
         if u["id"] == "anthropic"
     )
     payload = {
@@ -495,7 +495,7 @@ async def test_anthropic_reasoning_restore_ignores_the_notice(running_gateway):
         if k not in {"id", "revision", "has_api_key", "header_names", "account"}
     }
     response = await client.put(
-        "/api/v1/admin/gateway/upstreams/anthropic",
+        "/admin/upstreams/anthropic",
         headers=admin,
         json={**payload, "replay_reasoning": True},
     )
@@ -545,7 +545,7 @@ async def test_flag_off_relays_upstream_bytes(running_gateway, protocol, streami
         PATHS[protocol], headers=headers, json=request_body(protocol, streaming)
     )
     assert response.status_code == 200 and response.content == raw
-    logs = (await client.get("/api/v1/admin/gateway/logs", headers=admin)).json()
+    logs = (await client.get("/admin/logs", headers=admin)).json()
     assert "hidden_rounds" not in logs[0] and logs[0]["recall_count"] == 1
 
 
@@ -643,5 +643,5 @@ async def test_no_tool_session_hands_every_call_to_the_client(running_gateway, c
         "content": None,
         "tool_calls": [call],
     }
-    logs = (await client.get("/api/v1/admin/gateway/logs", headers=admin)).json()
+    logs = (await client.get("/admin/logs", headers=admin)).json()
     assert not any(log.get("hidden_rounds") for log in logs)

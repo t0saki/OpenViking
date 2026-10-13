@@ -1,16 +1,10 @@
 # Copyright (c) 2026 Beijing Volcano Engine Technology Co., Ltd.
 # SPDX-License-Identifier: AGPL-3.0
-"""Construction and routing for the optional embedded gateway."""
+"""Construction of the optional embedded gateway, and the route class /mcp shares."""
 
-from starlette.routing import Match, Route, WebSocketRoute
+from starlette.routing import Match, Route
 
 from openviking.server.config import get_server_url_from_server_data
-
-GATEWAY_PREFIXES = ("/v1", "/api/v3", "/api/compatible/v1", "/gateway", "/api/v1/admin/gateway")
-
-
-def is_gateway_path(path: str) -> bool:
-    return any(path == prefix or path.startswith(prefix + "/") for prefix in GATEWAY_PREFIXES)
 
 
 class ScopedRoute(Route):
@@ -49,12 +43,3 @@ def create_embedded_gateway(openviking_config, server_config, service_source):
         vlm_source=vlm_source,
         encryptor=_run_coro_blocking(bootstrap_encryption(encryption)),
     )
-
-
-def mount_gateway(app, gateway):
-    """Forward untouched scopes, retaining gateway errors and arbitrary HTTP methods."""
-    # The gateway rejects Responses WebSocket upgrades itself (426 with an Upgrade header).
-    for path in ("/v1/responses", "/api/v3/responses"):
-        app.routes.append(WebSocketRoute(path, endpoint=gateway))
-    for prefix in GATEWAY_PREFIXES:
-        app.routes.append(ScopedRoute(prefix + "/{_gw:path}", endpoint=gateway))

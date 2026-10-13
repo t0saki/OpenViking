@@ -90,6 +90,10 @@ const routerFiles = fs.readdirSync(routerDir)
 // when that application is embedded in the server.
 const gatewayManagement = path.join(repoRoot, 'openviking_gateway/management.py')
 routerFiles.push(gatewayManagement)
+// Both hosts mount the gateway application at MOUNT_PATH.
+const gatewayMount = fs
+  .readFileSync(path.join(repoRoot, 'openviking_gateway/config.py'), 'utf8')
+  .match(/^MOUNT_PATH\s*=\s*["']([^"']+)["']/m)[1]
 for (const routerFile of routerFiles) {
   const file = path.basename(routerFile)
   const isGateway = routerFile === gatewayManagement
@@ -98,7 +102,7 @@ for (const routerFile of routerFiles) {
   const routerPrefix =
     source.match(/router\s*=\s*APIRouter\([^)]*prefix=["']([^"']+)/s)?.[1] ??
     (source.match(/router\s*=\s*APIRouter\([^)]*prefix=PREFIX\b/s) ? prefixConstant : '') ?? ''
-  const mountPrefix = file === 'bot.py' ? '/bot/v1' : ''
+  const mountPrefix = file === 'bot.py' ? '/bot/v1' : isGateway ? gatewayMount : ''
   // Gateway upstreams and policies share the handlers that object_routes(kind) registers.
   const objectKinds = Array.from(source.matchAll(/object_routes\(\s*["']([^"']+)["']/g),
     (match) => match[1])

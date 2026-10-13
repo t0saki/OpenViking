@@ -16,12 +16,13 @@ from pydantic import ValidationError
 
 from .capture import reset_capture
 from .client import VikingError
+from .config import MOUNT_PATH
 from .models import CaptureReset, KeyRequest, Policy, Upstream
 from .proxy import upstream_headers, upstream_url
 from .records import RecordKind as K
 from .storage import delete_account_data, delete_user_data, digest
 
-PREFIX = "/api/v1/admin/gateway"
+PREFIX = "/admin"
 MANAGEMENT_HEADER = "x-openviking-gateway-management-key"
 # Fields a VLM re-import refreshes; everything else may have been edited in the gateway.
 VLM_SOURCE_FIELDS = ("base_url", "api_key", "headers", "protocol", "vendor", "coding_plan")
@@ -192,7 +193,10 @@ def register_management(app):
     async def guides(request: Request):
         await caller(request)
         return {
-            "base_url": app.state.config.public_url or str(request.base_url).rstrip("/"),
+            "base_url": (
+                app.state.config.public_url or f"{request.url.scheme}://{request.url.netloc}"
+            )
+            + MOUNT_PATH,
             "public_url_configured": bool(app.state.config.public_url),
         }
 

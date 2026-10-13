@@ -495,7 +495,7 @@ async def test_native_hidden_rounds_exact_replay(running_gateway, protocol, stre
     # Notices are visible history only; no model request ever contains one.
     assert not any("> OpenViking" in orjson.dumps(r).decode() for r in requests)
     # Capture remains on the same OV session as the final/client-tool continuation.
-    logs = (await client.get("/api/v1/admin/gateway/logs", headers=admin)).json()
+    logs = (await client.get("/admin/logs", headers=admin)).json()
     assert len({log["session"] for log in logs}) == 1
 
 
@@ -536,7 +536,7 @@ async def test_native_budget_keeps_client_tools_and_output_limit(
     limit = "max_tokens" if protocol == "anthropic" else "max_output_tokens"
     assert requests[1][limit] == body[limit]
     assert requests[1]["tools"] == requests[0]["tools"]
-    logs = (await client.get("/api/v1/admin/gateway/logs", headers=admin)).json()
+    logs = (await client.get("/admin/logs", headers=admin)).json()
     assert logs[0]["tool_stop_reason"] == "token_budget"
 
 
@@ -1282,10 +1282,10 @@ async def test_admin_disabling_anthropic_tools_preserves_history_and_logs(
             },
         ]
     )
-    upstreams = (await client.get("/api/v1/admin/gateway/upstreams", headers=admin)).json()
+    upstreams = (await client.get("/admin/upstreams", headers=admin)).json()
     upstream = next(u for u in upstreams if u["id"] == "anthropic")
     changed = await client.put(
-        "/api/v1/admin/gateway/upstreams/anthropic",
+        "/admin/upstreams/anthropic",
         headers=admin,
         json={
             "name": "anthropic",
@@ -1299,7 +1299,7 @@ async def test_admin_disabling_anthropic_tools_preserves_history_and_logs(
     disabled = True
     response = await client.post("/v1/messages", headers=headers, json=body)
     assert response.status_code == 200, response.text
-    logs = (await client.get("/api/v1/admin/gateway/logs", headers=admin)).json()
+    logs = (await client.get("/admin/logs", headers=admin)).json()
     assert logs[0]["tool_skip_reason"] == "upstream_tools_disabled"
     if used_gateway_tool:
         assert logs[0]["degradation"] == "hidden_tool_history_unavailable"

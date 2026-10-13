@@ -2,8 +2,9 @@
 # SPDX-License-Identifier: AGPL-3.0
 """Gateway ASGI app and the small API its hosts use.
 
-Hosts call ``create_app``, ``seed_defaults``, ``import_vlm_objects`` and ``delete_data``;
-``standalone`` and the OpenViking server add their own routes and startup checks.
+Hosts mount ``create_app`` at ``MOUNT_PATH`` and call ``seed_defaults``,
+``import_vlm_objects`` and ``delete_data``; ``standalone`` and the OpenViking server add
+their own routes and startup checks.
 """
 
 import asyncio
@@ -218,7 +219,7 @@ def create_app(config: GatewayConfig, *, openviking_url: str, vlm_source=None, e
             Response(status_code=426, headers={"Upgrade": "HTTP/1.1"})
         )
 
-    @app.post("/gateway/uploads")
+    @app.post("/uploads")
     async def proxy_upload(request: Request):
         token = request.query_params.get("token", "")
         if not token or len(token) > 16384:
@@ -255,7 +256,9 @@ def create_app(config: GatewayConfig, *, openviking_url: str, vlm_source=None, e
     )
     async def proxy(path: str, request: Request):
         credential, degradation = await authenticate(request)
-        proxied = ProxyRequest(app, request, request.url.path.lstrip("/"), credential)
+        # The path below the host's mount, with its /v1, /api/v3 or /api/compatible/v1 prefix.
+        route_path = request.url.path.removeprefix(request.scope.get("root_path", ""))
+        proxied = ProxyRequest(app, request, route_path.lstrip("/"), credential)
         if degradation:
             proxied.metrics["degradation"] = degradation
         return await proxied.run()

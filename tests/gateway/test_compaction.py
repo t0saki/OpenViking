@@ -576,7 +576,7 @@ async def test_new_openviking_sessions_turn_off_working_memory():
 async def test_proxy_sends_the_summary_with_vendor_alias_and_headers(running_gateway):
     app, client, admin, key, seen, _ = running_gateway
     response = await client.put(
-        "/api/v1/admin/gateway/upstreams/chat",
+        "/admin/upstreams/chat",
         headers=admin,
         json={
             "name": "chat",
@@ -623,7 +623,7 @@ async def test_proxy_sends_the_summary_with_vendor_alias_and_headers(running_gat
     forwarded = orjson.loads(seen[-1][1])["messages"]
     assert "Blue cluster chosen." in forwarded[0]["content"]
     assert text_content(forwarded[1]).startswith("Next?") and len(forwarded) == 2
-    logs = (await client.get("/api/v1/admin/gateway/logs", headers=admin)).json()
+    logs = (await client.get("/admin/logs", headers=admin)).json()
     [log] = [entry for entry in logs if entry.get("compaction_tokens")]
     assert log["compaction_applied"] and log["context_window"] == 1024
 

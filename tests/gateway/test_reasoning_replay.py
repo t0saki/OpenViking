@@ -36,7 +36,7 @@ def test_vendor_defaults(vendor, value, expected):
 
 async def configure_chat(client, admin, **fields):
     response = await client.put(
-        "/api/v1/admin/gateway/upstreams/chat",
+        "/admin/upstreams/chat",
         headers=admin,
         json={
             "name": "chat",

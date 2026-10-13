@@ -362,13 +362,15 @@ async def running_gateway(tmp_path):
     )
     app.state.test_backend = override
     async with app.router.lifespan_context(app):
+        # Requests arrive as the hosts mount the gateway: below root_path /gateway.
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url="http://gateway"
+            transport=httpx.ASGITransport(app=app, root_path="/gateway"),
+            base_url="http://gateway/gateway",
         ) as client:
             admin = {"X-API-Key": "admin-key"}
             for protocol in ("chat", "anthropic", "responses"):
                 response = await client.put(
-                    f"/api/v1/admin/gateway/upstreams/{protocol}",
+                    f"/admin/upstreams/{protocol}",
                     headers=admin,
                     json={
                         "name": protocol,
@@ -381,13 +383,13 @@ async def running_gateway(tmp_path):
                 assert response.status_code == 200, response.text
             assert (
                 await client.put(
-                    "/api/v1/admin/gateway/policies/default",
+                    "/admin/policies/default",
                     headers=admin,
                     json={"name": "Default", "gateway_tools": False},
                 )
             ).status_code == 200
             minted = await client.post(
-                "/api/v1/admin/gateway/keys",
+                "/admin/keys",
                 headers=admin,
                 json={
                     "name": "test",

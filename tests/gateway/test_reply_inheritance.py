@@ -300,7 +300,7 @@ async def test_streamed_handoff_is_matched_before_bookkeeping_runs(
     body = {**body, "stream": False, "messages": [question, *tool_handoff(protocol)]}
     response = await client.post(path, headers=headers, json=body)
     assert response.status_code == 200, response.text
-    first, continued = (await client.get("/api/v1/admin/gateway/logs", headers=admin)).json()[1::-1]
+    first, continued = (await client.get("/admin/logs", headers=admin)).json()[1::-1]
     assert continued["kind"] == "continuation"
     assert continued["session"] == first["session"]
 

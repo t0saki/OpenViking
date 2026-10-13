@@ -25,12 +25,7 @@ from openviking.server.config import (
 )
 from openviking.server.dependencies import set_server_config, set_service
 from openviking.server.error_mapping import map_exception
-from openviking.server.gateway_host import (
-    ScopedRoute,
-    create_embedded_gateway,
-    is_gateway_path,
-    mount_gateway,
-)
+from openviking.server.gateway_host import ScopedRoute, create_embedded_gateway
 from openviking.server.identity import Role
 from openviking.server.models import ERROR_CODE_TO_HTTP_STATUS, ErrorInfo, Response
 from openviking.server.profile_middleware import ProfileMiddleware
@@ -75,6 +70,7 @@ from openviking_cli.utils.config import (
     resolve_config_path,
 )
 from openviking_cli.utils.logger import init_otel_log_handler_from_server_config
+from openviking_gateway.config import MOUNT_PATH as GATEWAY_MOUNT_PATH
 
 logger = get_logger(__name__)
 
@@ -478,7 +474,7 @@ def create_app(
 
         @app.middleware("http")
         async def dump_http_body(request: Request, call_next: Callable):
-            if is_gateway_path(request.url.path):
+            if request.url.path.startswith(GATEWAY_MOUNT_PATH + "/"):
                 return await call_next(request)
             return await _dump_body_fn(request, call_next)
 
@@ -825,6 +821,7 @@ def create_app(
         get_openviking_config(), config, lambda: service
     )
     if app.state.gateway_app is not None:
-        mount_gateway(app, app.state.gateway_app)
+        # The gateway answers every method and its own WebSocket upgrades below this prefix.
+        app.mount(GATEWAY_MOUNT_PATH, app.state.gateway_app)
 
     return app

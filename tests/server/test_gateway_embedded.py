@@ -1,4 +1,4 @@
-"""The embedded gateway owns its routes and starts before deletion recovery."""
+"""The embedded gateway owns /gateway and starts before deletion recovery."""
 
 import sqlite3
 from types import SimpleNamespace
@@ -6,8 +6,6 @@ from unittest.mock import AsyncMock
 
 import httpx
 import pytest
-from fastapi import FastAPI
-from starlette.responses import JSONResponse
 from starlette.testclient import TestClient, WebSocketDenialResponse
 
 from openviking.crypto.encryptor import MAGIC, FileEncryptor
@@ -52,66 +50,6 @@ async def test_embedded_gateway_uses_server_encryption(tmp_path, monkeypatch):
     assert isinstance(options["encryptor"], FileEncryptor)
 
 
-@pytest.mark.parametrize(
-    "method,path",
-    [
-        ("GET", "/v1/models"),
-        ("POST", "/v1/chat/completions"),
-        ("PATCH", "/api/v3/responses"),
-        ("DELETE", "/api/compatible/v1/messages"),
-        ("POST", "/gateway/uploads"),
-        ("GET", "/api/v1/admin/gateway/access"),
-        ("CUSTOM", "/v1/models"),
-    ],
-)
-async def test_routes_preserve_path_body_query_and_method(method, path):
-    app = FastAPI()
-
-    async def gateway(scope, receive, send):
-        request = httpx.Request(scope["method"], "http://test" + scope["path"])
-        response = JSONResponse(
-            {
-                "path": request.url.path,
-                "method": scope["method"],
-                "query": scope["query_string"].decode(),
-            },
-            status_code=409,
-        )
-        await response(scope, receive, send)
-
-    # ASGI endpoints must be callable objects, so Route does not adapt them as Request handlers.
-    class Endpoint:
-        async def __call__(self, scope, receive, send):
-            await gateway(scope, receive, send)
-
-    gateway_host.mount_gateway(app, Endpoint())
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app), base_url="http://test"
-    ) as client:
-        response = await client.request(method, path + "?account_id=other")
-        assert response.status_code == 409
-        assert response.json() == {"path": path, "method": method, "query": "account_id=other"}
-        assert (await client.get("/health")).status_code == 404
-        assert (await client.get("/admin")).status_code == 404
-
-
-@pytest.mark.parametrize("path", ["/v1/responses", "/api/v3/responses"])
-def test_websocket_reaches_gateway_426(path, tmp_path):
-    from openviking_gateway.app import create_app
-
-    app = FastAPI()
-    gateway = create_app(
-        EmbeddedGatewayConfig(storage_path=str(tmp_path)), openviking_url="http://127.0.0.1:1"
-    )
-    gateway_host.mount_gateway(app, gateway)
-    with TestClient(app) as client:
-        with pytest.raises(WebSocketDenialResponse) as exc:
-            with client.websocket_connect(path):
-                pass
-        assert exc.value.status_code == 426
-        assert exc.value.headers["upgrade"] == "HTTP/1.1"
-
-
 @pytest.fixture
 async def model_server():
     from aiohttp import web
@@ -130,13 +68,22 @@ async def model_server():
             }
         )
 
+    seen = []
+
+    async def other(request):
+        seen.append((request.method, request.path, request.query_string))
+        return web.json_response({"ok": True})
+
     app.router.add_post("/v1/chat/completions", chat)
+    app.router.add_route("*", "/v1/{tail:.*}", other)
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, "127.0.0.1", 0)
     await site.start()
     try:
-        yield f"http://127.0.0.1:{site._server.sockets[0].getsockname()[1]}/v1"
+        yield SimpleNamespace(
+            url=f"http://127.0.0.1:{site._server.sockets[0].getsockname()[1]}/v1", seen=seen
+        )
     finally:
         await runner.cleanup()
 
@@ -174,7 +121,7 @@ async def test_server_lifespan_routes_defaults_and_cors(tmp_path, monkeypatch, m
         vlm_resolver=SimpleNamespace(
             effective_vlm_config=AsyncMock(
                 return_value=VLMConfig(
-                    model="gpt", provider="openai", api_key="secret", api_base=model_server
+                    model="gpt", provider="openai", api_key="secret", api_base=model_server.url
                 )
             )
         )
@@ -213,25 +160,29 @@ async def test_server_lifespan_routes_defaults_and_cors(tmp_path, monkeypatch, m
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app), base_url="http://test"
         ) as client:
-            access = await client.get("/api/v1/admin/gateway/access")
+            access = await client.get("/gateway/admin/access")
             assert access.status_code == 200
             assert access.json()["can_import_vlm"] is True
             assert access.json()["role"] == "root"
-            upstreams = (await client.get("/api/v1/admin/gateway/upstreams")).json()
+            upstreams = (await client.get("/gateway/admin/upstreams")).json()
             assert len(upstreams) == 1
             policy = await app.state.gateway_app.state.management.get(
                 "default", "policies", "default"
             )
             assert policy["name"] == "Default"
             created = await client.post(
-                "/api/v1/admin/gateway/keys",
+                "/gateway/admin/keys",
                 json={"name": "test", "policy_id": "default", "upstream_ids": [upstreams[0]["id"]]},
             )
             assert created.status_code == 200, created.text
             key = created.json()["key"]
-            response = await client.get("/v1/models", headers={"Authorization": "Bearer " + key})
+            bearer = {"Authorization": "Bearer " + key}
+            response = await client.get("/gateway/v1/models", headers=bearer)
             assert response.status_code == 200, response.text
             assert response.json()["data"][0]["id"] == "gpt"
+            # The server no longer claims the model-API prefixes at its root.
+            for old in ("/v1/models", "/api/v3/models", "/api/v1/admin/gateway/access"):
+                assert (await client.get(old, headers=bearer)).status_code == 404, old
             await app.state.gateway_app.state.management.save(
                 "default",
                 "policies",
@@ -246,16 +197,20 @@ async def test_server_lifespan_routes_defaults_and_cors(tmp_path, monkeypatch, m
             )
             # Both model discovery and chat pass through the server to the embedded gateway.
             response = await client.post(
-                "/v1/chat/completions",
+                "/gateway/v1/chat/completions",
                 headers={"Authorization": "Bearer " + key},
                 json={"model": "gpt", "messages": [{"role": "user", "content": "hello"}]},
             )
             assert response.status_code == 200, response.text
             assert response.json()["choices"][0]["message"]["content"] == "hello"
+            # Other methods, the remaining path and the query string reach the upstream unchanged.
+            response = await client.patch("/gateway/v1/files/f-1?purpose=batch", headers=bearer)
+            assert response.status_code == 200, response.text
+            assert model_server.seen == [("PATCH", "/v1/files/f-1", "purpose=batch")]
             assert (await client.get("/admin")).status_code == 404
             assert "service" not in (await client.get("/health")).json()
             preflight = await client.options(
-                "/v1/chat/completions",
+                "/gateway/v1/chat/completions",
                 headers={
                     "Origin": "https://studio.example",
                     "Access-Control-Request-Method": "POST",
@@ -263,7 +218,20 @@ async def test_server_lifespan_routes_defaults_and_cors(tmp_path, monkeypatch, m
             )
             assert preflight.status_code == 200
             assert preflight.headers["access-control-allow-origin"] == "https://studio.example"
-            assert dumped == ["/admin", "/health"]
+            assert dumped == [
+                "/v1/models",
+                "/api/v3/models",
+                "/api/v1/admin/gateway/access",
+                "/admin",
+                "/health",
+            ]
+        # The gateway refuses Responses WebSocket upgrades itself.
+        for path in ("/gateway/v1/responses", "/gateway/api/v3/responses"):
+            with pytest.raises(WebSocketDenialResponse) as exc:
+                with TestClient(app).websocket_connect(path):
+                    pass
+            assert exc.value.status_code == 426
+            assert exc.value.headers["upgrade"] == "HTTP/1.1"
     # Gateway objects are stored with the server's encryption.
     with sqlite3.connect(tmp_path / "gateway" / "management.sqlite3") as db:
         values = [row[0] for row in db.execute("SELECT value FROM objects")]
