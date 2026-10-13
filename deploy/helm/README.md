@@ -154,8 +154,7 @@ annotations for you. With NGINX:
 ```yaml
 gateway:
   enabled: true
-  existingSecret: ""       # optional: Secret with an encryption-key entry
-  managementKeySecret: ""  # optional: Secret with a management-key entry
+  existingSecret: ""  # optional: Secret with a management-key entry
 config:
   server:
     auth_mode: api_key
@@ -182,21 +181,20 @@ upload links are built from it.
 
 #### Secrets
 
-- `gateway.existingSecret` names a Secret with an `encryption-key` entry (a Fernet key),
-  passed to the gateway as `OPENVIKING_GATEWAY_ENCRYPTION_KEY`. Without it, the gateway
-  generates `encryption.key` in its storage directory on the data volume; back it up with
-  the volume. If the databases exist but the key is missing, the whole OpenViking server
-  refuses to start, and a different key cannot read the stored data.
-- `gateway.managementKeySecret` names a Secret with a `management-key` entry (at least 32
-  characters). The chart sets `config.gateway.management_key` to
-  `$OPENVIKING_GATEWAY_MANAGEMENT_KEY` and fills that variable from the Secret. With it,
-  only requests that carry this key can change upstreams and context profiles; see
+The gateway encrypts its stored data with the server's `config.encryption` settings; with
+server encryption off, it stores them unencrypted.
+
+`gateway.existingSecret` optionally names a Secret. Both entries are optional:
+
+- `management-key` (at least 32 characters) is passed as
+  `OPENVIKING_GATEWAY_MANAGEMENT_KEY`. With it, only requests that carry this key can change
+  upstreams and context profiles; see
   [Gateway management key](https://docs.openviking.ai/en/guides/22-gateway-operations#gateway-management-key).
+- `encryption-key` is the v0.5.0 gateway key, passed as `OPENVIKING_GATEWAY_ENCRYPTION_KEY`.
+  It is only read once, to migrate data stored by the v0.5.0 gateway.
 
 ```bash
 kubectl create secret generic openviking-gateway \
-  --from-literal=encryption-key="$(python3 -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')"
-kubectl create secret generic openviking-gateway-management \
   --from-literal=management-key="$(openssl rand -base64 32)"
 ```
 
@@ -205,15 +203,21 @@ CPU, raise the server's `workers` setting.
 
 #### Upgrading from the sidecar chart
 
-- Keep `gateway.existingSecret` and the persistent volume. The Secret and its
-  `encryption-key` entry are the same ones the sidecar used.
+- Keep the persistent volume. On first start the server re-encrypts the gateway's stored
+  data with its own encryption settings, reading the old key from the `encryption-key`
+  entry of `gateway.existingSecret` or from `encryption.key` in the gateway storage
+  directory. If old encrypted data exists and neither is present, the server refuses to start.
+  Keep the `encryption-key` entry for the upgrade release only; after the server has started
+  once, the key is no longer read and you can remove the entry.
 - Remove `gateway.port`, `gateway.workers` and `gateway.resources`.
 - Remove `host`, `port`, `workers`, `url`, `openviking_url` and `admin_token_env` from
   `config.gateway`. The server ignores them with a startup warning.
 - Point `config.gateway.public_url` at the server's public address, not port 1935, and
   move clients to the server port.
-- The shared admin token is gone and does not act as a management key. Use
-  `gateway.managementKeySecret` to restrict changes to upstreams and context profiles.
+- The shared admin token is gone and does not act as a management key. To restrict
+  changes to upstreams and context profiles, add a `management-key` entry to
+  `gateway.existingSecret`. `gateway.managementKeySecret` is removed: move its
+  `management-key` entry into `gateway.existingSecret`.
 
 For deployment, Studio management, backups and troubleshooting, see
 [OpenViking Gateway deployment and operations](https://docs.openviking.ai/en/guides/22-gateway-operations).
@@ -243,8 +247,7 @@ For deployment, Studio management, backups and troubleshooting, see
 | `config` | Full ov.conf configuration object | See `values.yaml` |
 | `extraEnv` | Additional environment variables | `[]` |
 | `gateway.enabled` | Run OpenViking Gateway inside the server container, on the server port | `false` |
-| `gateway.existingSecret` | Optional Secret with an `encryption-key` entry; without it, a key file is generated on the data volume | `""` |
-| `gateway.managementKeySecret` | Optional Secret with a `management-key` entry; with it, changing upstreams and context profiles requires that key | `""` |
+| `gateway.existingSecret` | Optional Secret with optional entries `management-key` (required to change upstreams and context profiles) and `encryption-key` (v0.5.0 key, read once for migration) | `""` |
 
 ## Upgrading
 

@@ -1,9 +1,6 @@
 {{- $config := deepCopy .Values.config }}
 {{- if .Values.gateway.enabled }}
 {{- $gateway := dict "enabled" true "storage_path" (printf "%s/gateway" .Values.persistence.mountPath) }}
-{{- if .Values.gateway.managementKeySecret }}
-{{- $_ := set $gateway "management_key" "$OPENVIKING_GATEWAY_MANAGEMENT_KEY" }}
-{{- end }}
 {{- $_ := set $config "gateway" (mergeOverwrite $gateway ($config.gateway | default dict)) }}
 {{- end }}
 {{- if empty $config.storage.workspace }}

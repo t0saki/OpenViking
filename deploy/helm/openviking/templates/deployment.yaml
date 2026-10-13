@@ -48,18 +48,18 @@ spec:
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           env:
             {{- if and .Values.gateway.enabled .Values.gateway.existingSecret }}
+            - name: OPENVIKING_GATEWAY_MANAGEMENT_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.gateway.existingSecret }}
+                  key: management-key
+                  optional: true
             - name: OPENVIKING_GATEWAY_ENCRYPTION_KEY
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.gateway.existingSecret }}
                   key: encryption-key
-            {{- end }}
-            {{- if and .Values.gateway.enabled .Values.gateway.managementKeySecret }}
-            - name: OPENVIKING_GATEWAY_MANAGEMENT_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.gateway.managementKeySecret }}
-                  key: management-key
+                  optional: true
             {{- end }}
             - name: OPENVIKING_CONFIG_FILE
               value: {{ printf "%s/ov.conf" .Values.persistence.mountPath | quote }}

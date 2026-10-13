@@ -2,12 +2,12 @@
 
 replicaCount: 1
 
-# Gateway runs inside the server on the same port.
-# Secrets are optional; without an encryption Secret the key is saved on the data volume.
+# Gateway runs inside the server on the same port and uses the server's encryption settings.
 gateway:
   enabled: false
-  existingSecret: "" # Secret name; entry encryption-key (Fernet)
-  managementKeySecret: "" # Secret name; entry management-key (32+ characters)
+  # Optional Secret name. Entries (each optional): management-key (32+ characters) and
+  # encryption-key (the v0.5.0 gateway key, read only to migrate old data).
+  existingSecret: ""
 
 image:
   # Prefer ghcr.io. If it is hard to reach, use the mirror:
