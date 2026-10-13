@@ -156,8 +156,9 @@ async def test_scroll_and_count_hide_cross_user_records(vector_backend_factory, 
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(("reader_grants", "allowed"), [([], False), (["1:user:reader"], True)])
 async def test_acl_resolution_sees_restricted_records_hidden_from_caller(
-    vector_backend_factory, tmp_path
+    vector_backend_factory, tmp_path, reader_grants, allowed
 ):
     reader = RequestContext(user=UserIdentifier("acct", "reader"), role=Role.USER)
     backend = vector_backend_factory(
@@ -184,12 +185,12 @@ async def test_acl_resolution_sees_restricted_records_hidden_from_caller(
                     "updated_at": "2026-01-01T00:00:00Z",
                     "vector": [1.0, 0.0, 0.0, 0.0],
                     "acl_mode": mode,
-                    "acl_direct_grants": [],
-                    "acl_inherited_grants": [],
+                    "acl_direct_grants": direct,
+                    "acl_inherited_grants": inherited,
                 }
-                for record_id, uri, mode in (
-                    ("dir", "viking://resources/private", "restricted"),
-                    ("file", "viking://resources/private/rules.md", "inherit"),
+                for record_id, uri, mode, direct, inherited in (
+                    ("dir", "viking://resources/private", "restricted", reader_grants, []),
+                    ("file", "viking://resources/private/rules.md", "inherit", [], reader_grants),
                 )
             ],
             ctx=RequestContext(user=UserIdentifier("acct", "admin"), role=Role.ADMIN),
@@ -197,7 +198,7 @@ async def test_acl_resolution_sees_restricted_records_hidden_from_caller(
 
         acl = await backend.acl_manager.resolve("viking://resources/private/rules.md", reader)
 
-        assert not acl_allows(acl, reader, AclAction.READ)
+        assert acl_allows(acl, reader, AclAction.READ) is allowed
     finally:
         await backend.close()
 
