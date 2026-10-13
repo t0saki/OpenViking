@@ -77,6 +77,21 @@ class Database:
             except queue.Full:
                 connection.close()
 
+    @staticmethod
+    def use_wal(connection):
+        # Leaving rollback mode needs an exclusive lock, and SQLite reports a concurrent
+        # switch as "database is locked" at once instead of waiting out the busy timeout.
+        # Workers opening a new or v5 store together retry until one has converted it.
+        for _ in range(200):
+            try:
+                connection.execute("PRAGMA journal_mode=WAL")
+                return
+            except sqlite3.OperationalError as error:
+                if "locked" not in str(error):
+                    raise
+                time.sleep(0.05)
+        connection.execute("PRAGMA journal_mode=WAL")
+
     def close(self):
         self.readers.shutdown(wait=True)
         self.writer.shutdown(wait=True)
@@ -111,7 +126,7 @@ class SQLiteKernelStore(Database):
             with self.connect() as c:
                 if c.execute("PRAGMA user_version").fetchone()[0] not in (0, 5, SCHEMA_VERSION):
                     raise ValueError("Unsupported gateway schema; configure a fresh storage_path")
-                c.execute("PRAGMA journal_mode=WAL")
+                self.use_wal(c)
                 c.executescript("""
                     CREATE TABLE IF NOT EXISTS sessions (
                         scope TEXT, session TEXT, touched REAL NOT NULL,
@@ -248,7 +263,7 @@ class ManagementStore(Database):
             with self.connect() as c:
                 if c.execute("PRAGMA user_version").fetchone()[0] not in (0, 5, SCHEMA_VERSION):
                     raise ValueError("Unsupported gateway schema; configure a fresh storage_path")
-                c.execute("PRAGMA journal_mode=WAL")
+                self.use_wal(c)
                 c.executescript("""
                     CREATE TABLE IF NOT EXISTS objects (
                         account TEXT, kind TEXT, id TEXT, revision INTEGER, value BLOB,
