@@ -33,9 +33,9 @@ To add one, choose *Generic* as the provider; see [Upstreams](22-gateway-operati
 
 ## Architecture at a glance
 
-![OpenViking Gateway in its two forms. Embedded: clients call the OpenViking Server port, which passes the model API, upload and gateway management paths to the gateway in the same process; the gateway searches and saves memory over loopback HTTP with the user's own OpenViking key. Standalone: openviking-gateway on its own port serves the same paths and a gateway-only Studio, and calls an existing OpenViking service over HTTP(S). Either way the gateway forwards each request to the upstream model provider in the same API, sessions and memories live in OpenViking, and the gateway keeps only two SQLite files (encrypted when OpenViking encryption is on)](../../images/gateway/architecture.en.svg)
+![OpenViking Gateway in its two forms. Embedded: clients call the OpenViking Server port, which passes everything under /gateway (model APIs, uploads and gateway management) to the gateway in the same process; the gateway searches and saves memory over loopback HTTP with the user's own OpenViking key. Standalone: openviking-gateway on its own port serves the same /gateway paths and a gateway-only Studio, and calls an existing OpenViking service over HTTP(S). Either way the gateway forwards each request to the upstream model provider in the same API, sessions and memories live in OpenViking, and the gateway keeps only two SQLite files (encrypted when OpenViking encryption is on)](../../images/gateway/architecture.en.svg)
 
-- **Where it runs**: once enabled, inside OpenViking Server on the server's port. You can also run `openviking-gateway` on its own against an existing OpenViking service, open source or OpenViking Cloud. Clients use the same paths either way. See [Deployment options](22-gateway-operations.md#deployment-options).
+- **Where it runs**: once enabled, inside OpenViking Server on the server's port. You can also run `openviking-gateway` on its own against an existing OpenViking service, open source or OpenViking Cloud. Either way, every gateway URL is under `/gateway`, such as `/gateway/v1`, so clients use the same paths. See [Deployment options](22-gateway-operations.md#deployment-options).
 - **How it relates to OpenViking**: the gateway only calls OpenViking's public APIs. Embedding and memory extraction happen in OpenViking.
 - **Where the data lives**: sessions and memories live in OpenViking. The gateway host keeps only two SQLite files, encrypted when OpenViking encryption is on, one for upstreams, keys and settings and one for conversation state. See [Security and data](22-gateway-operations.md#security-and-data).
 - **When something fails**: if OpenViking is down, conversations go on without memory and saving retries on its own. If the gateway is down, every model call that goes through it fails.
@@ -212,7 +212,7 @@ For a server bound to `127.0.0.1` with the default local authentication.
 3. **Open the gateway in Studio.** Open <http://127.0.0.1:1933/studio/> and choose **OpenViking Gateway** in the sidebar. No key is needed. If the default account has no upstreams yet, the gateway imports the server's VLM settings as upstreams at startup and creates a context profile, so the first two steps of the **Get started** checklist on the Overview tab are already done. An imported Coding Plan upstream needs your confirmation before use; see [Import OpenViking model settings](22-gateway-operations.md#import-openviking-model-settings). If nothing could be imported, add an upstream as described in [Upstreams](22-gateway-operations.md#upstreams).
 4. **Issue a gateway key.** On the Keys tab, choose **Issue key**, enter a name, pick the context profile and an upstream, and issue it. The key reads and writes memory as the local `default` user. The **Copy your gateway key** dialog shows the full `ovgw_…` key only once, so copy it before you close the dialog.
 
-Then [send a test request](#send-a-test-request) to `http://127.0.0.1:1933`.
+Then [send a test request](#send-a-test-request) to `http://127.0.0.1:1933/gateway`.
 
 ### Remote server (API keys)
 
@@ -231,10 +231,10 @@ For a server that people reach over the network, with `api_key` authentication.
 
 ### Send a test request
 
-For a local server, use `http://127.0.0.1:1933` as the address. Replace `<model>` with a model the upstream serves:
+For a local server, use `http://127.0.0.1:1933/gateway` as the address. Replace `<model>` with a model the upstream serves:
 
 ```bash
-export GATEWAY_URL=https://ov.example.com
+export GATEWAY_URL=https://ov.example.com/gateway
 export GATEWAY_KEY='ovgw_...'
 
 curl -s "$GATEWAY_URL/v1/models" -H "Authorization: Bearer $GATEWAY_KEY"
@@ -258,17 +258,17 @@ To see results sooner while you try things out, create a second context profile 
 
 ## Connect clients
 
-Every client needs the gateway address and a gateway key. The examples use `https://ov.example.com`; replace it with your gateway address, which Studio shows at the top of the OpenViking Gateway page and on the Connect tab. The client's key must also be bound to an enabled upstream that speaks the client's protocol and serves the model it requests.
+Every client needs the gateway address and a gateway key. The gateway address is the server's address followed by `/gateway`. The examples use `https://ov.example.com/gateway`; replace it with your gateway address, which Studio shows at the top of the OpenViking Gateway page and on the Connect tab. Anthropic clients use the gateway address as it is, OpenAI-compatible clients add `/v1`, and Ark SDKs add `/api/v3`. The client's key must also be bound to an enabled upstream that speaks the client's protocol and serves the model it requests.
 
 | Client | Upstream protocol | Base URL | How its conversations are recognized |
 | --- | --- | --- | --- |
-| [Claude Code](#claude-code) | Anthropic Messages | `https://ov.example.com` | Claude Code's session header |
-| [Codex CLI](#codex-cli) | Responses | `https://ov.example.com/v1` | Codex's session header |
-| [Chat clients and SDKs](#chat-clients-and-sdks) | Chat Completions (or the API your SDK uses) | `https://ov.example.com/v1` | `X-OpenViking-Session`, which you send yourself |
-| [Open WebUI](#open-webui) | Chat Completions | `https://ov.example.com/v1` | An `X-OpenViking-Session` header set on the connection |
-| [OpenCode](#opencode) | Chat Completions | `https://ov.example.com/v1` | OpenCode's session header |
-| [pi](#pi) | Chat Completions | `https://ov.example.com/v1` | Usually matched from the conversation history |
-| [Volcano Engine Ark and BytePlus ModelArk SDKs](#volcano-engine-ark-and-byteplus-modelark-sdks) | Any of the three | `https://ov.example.com/api/v3` or `https://ov.example.com/api/compatible` | Depends on the headers the client sends |
+| [Claude Code](#claude-code) | Anthropic Messages | `https://ov.example.com/gateway` | Claude Code's session header |
+| [Codex CLI](#codex-cli) | Responses | `https://ov.example.com/gateway/v1` | Codex's session header |
+| [Chat clients and SDKs](#chat-clients-and-sdks) | Chat Completions (or the API your SDK uses) | `https://ov.example.com/gateway/v1` | `X-OpenViking-Session`, which you send yourself |
+| [Open WebUI](#open-webui) | Chat Completions | `https://ov.example.com/gateway/v1` | An `X-OpenViking-Session` header set on the connection |
+| [OpenCode](#opencode) | Chat Completions | `https://ov.example.com/gateway/v1` | OpenCode's session header |
+| [pi](#pi) | Chat Completions | `https://ov.example.com/gateway/v1` | Usually matched from the conversation history |
+| [Volcano Engine Ark and BytePlus ModelArk SDKs](#volcano-engine-ark-and-byteplus-modelark-sdks) | Any of the three | `https://ov.example.com/gateway/api/v3` or `https://ov.example.com/gateway/api/compatible` | Depends on the headers the client sends |
 
 The Open WebUI, OpenCode and pi setups follow each client's documented provider settings. Treat them as a starting point and check the result: send two messages in one conversation, then expand both requests on the Requests tab. They should belong to the same conversation, and the first turn should be saved once the second message arrives.
 
@@ -277,7 +277,7 @@ The Open WebUI, OpenCode and pi setups follow each client's documented provider 
 Claude Code uses Anthropic Messages. Set three environment variables before you start it:
 
 ```bash
-export ANTHROPIC_BASE_URL=https://ov.example.com
+export ANTHROPIC_BASE_URL=https://ov.example.com/gateway
 export ANTHROPIC_AUTH_TOKEN='<gateway-key>'
 export CLAUDE_CODE_GATEWAY_HINT_HEADERS=1
 ```
@@ -299,7 +299,7 @@ model = "<model>"
 
 [model_providers.openviking]
 name = "OpenViking Gateway"
-base_url = "https://ov.example.com/v1"
+base_url = "https://ov.example.com/gateway/v1"
 wire_api = "responses"
 env_key = "OPENVIKING_GATEWAY_KEY"
 ```
@@ -321,7 +321,7 @@ export OPENVIKING_GATEWAY_KEY='<gateway-key>'
 Any client or SDK that supports the OpenAI Chat Completions API can connect. Enter these settings wherever the client asks for an OpenAI-compatible provider:
 
 ```text
-Base URL: https://ov.example.com/v1
+Base URL: https://ov.example.com/gateway/v1
 API key: <gateway-key>
 Model: <model>
 X-OpenViking-Session: <conversation-id>
@@ -334,7 +334,7 @@ With the OpenAI Python SDK:
 ```python
 from openai import OpenAI
 
-client = OpenAI(base_url="https://ov.example.com/v1", api_key="<gateway-key>")
+client = OpenAI(base_url="https://ov.example.com/gateway/v1", api_key="<gateway-key>")
 
 reply = client.chat.completions.create(
     model="<model>",
@@ -346,14 +346,14 @@ print(reply.choices[0].message.content)
 
 SDKs for the other two APIs work the same way, as long as the upstream uses the same API as the SDK:
 
-- Point the Anthropic SDK at `https://ov.example.com`.
-- For the Responses API, use `https://ov.example.com/v1`, send the full history in every request and set `store: false`. Other Responses requests are forwarded without memory.
+- Point the Anthropic SDK at `https://ov.example.com/gateway`.
+- For the Responses API, use `https://ov.example.com/gateway/v1`, send the full history in every request and set `store: false`. Other Responses requests are forwarded without memory.
 
 When you stream Chat Completions, also ask for usage (`"stream_options": {"include_usage": true}`). Otherwise the provider reports no token counts for streamed replies, Studio cannot show usage, and the gateway has to estimate how full the context window is.
 
 ### Open WebUI
 
-In Open WebUI, add an OpenAI-compatible connection (Admin Panel → Settings → Connections) with the base URL `https://ov.example.com/v1` and the gateway key. Add these custom headers to the connection, so that each chat is its own conversation and the gateway recognizes Open WebUI's background tasks:
+In Open WebUI, add an OpenAI-compatible connection (Admin Panel → Settings → Connections) with the base URL `https://ov.example.com/gateway/v1` and the gateway key. Add these custom headers to the connection, so that each chat is its own conversation and the gateway recognizes Open WebUI's background tasks:
 
 ```json
 {
@@ -378,7 +378,7 @@ Add a provider to `~/.config/opencode/opencode.json`, merged with your existing 
       "npm": "@ai-sdk/openai-compatible",
       "name": "OpenViking",
       "options": {
-        "baseURL": "https://ov.example.com/v1",
+        "baseURL": "https://ov.example.com/gateway/v1",
         "apiKey": "{env:OPENVIKING_GATEWAY_KEY}"
       },
       "models": {
@@ -399,7 +399,7 @@ Add a provider to pi's model configuration, `~/.pi/agent/models.json`:
 {
   "providers": {
     "openviking": {
-      "baseUrl": "https://ov.example.com/v1",
+      "baseUrl": "https://ov.example.com/gateway/v1",
       "apiKey": "$OPENVIKING_GATEWAY_KEY",
       "api": "openai-completions",
       "models": [
@@ -419,20 +419,20 @@ Add a provider to pi's model configuration, `~/.pi/agent/models.json`:
 
 ### Volcano Engine Ark and BytePlus ModelArk SDKs
 
-Clients and SDKs already set up for Volcano Engine Ark, or BytePlus ModelArk (its international edition), only need the domain replaced. The gateway accepts Ark's own paths (`/api/v3/chat/completions`, `/api/v3/responses`, `/api/v3/models` and `/api/compatible/v1/messages`) as well as the standard `/v1` paths:
+Clients and SDKs already set up for Volcano Engine Ark, or BytePlus ModelArk (its international edition), only need the address replaced. Under `/gateway`, the gateway accepts Ark's own paths (`/api/v3/chat/completions`, `/api/v3/responses`, `/api/v3/models` and `/api/compatible/v1/messages`) as well as the standard `/v1` paths:
 
 | Original address | Gateway address |
 | --- | --- |
-| `https://ark.cn-beijing.volces.com/api/v3` | `https://ov.example.com/api/v3` |
-| `https://ark.ap-southeast.bytepluses.com/api/v3` | `https://ov.example.com/api/v3` |
-| `https://ark.cn-beijing.volces.com/api/compatible` (Anthropic-compatible) | `https://ov.example.com/api/compatible` |
+| `https://ark.cn-beijing.volces.com/api/v3` | `https://ov.example.com/gateway/api/v3` |
+| `https://ark.ap-southeast.bytepluses.com/api/v3` | `https://ov.example.com/gateway/api/v3` |
+| `https://ark.cn-beijing.volces.com/api/compatible` (Anthropic-compatible) | `https://ov.example.com/gateway/api/compatible` |
 
 Use the gateway key in place of the Ark API key. With the Volcano Engine Ark Python SDK:
 
 ```python
 from volcenginesdkarkruntime import Ark
 
-client = Ark(base_url="https://ov.example.com/api/v3", api_key="<gateway-key>")
+client = Ark(base_url="https://ov.example.com/gateway/api/v3", api_key="<gateway-key>")
 ```
 
 The path a client uses only decides which API it speaks. The request still goes to an upstream bound to the key that uses that API and serves the model, usually one whose provider is Volcano Engine Ark or BytePlus ModelArk (see [Upstreams](22-gateway-operations.md#upstreams)).

@@ -70,10 +70,10 @@ v0.5 网关用自己的密钥加密数据，这些数据会在首次启动时转
 
 | 方式 | 怎么开启 | 客户端地址 |
 | --- | --- | --- |
-| 嵌入 Server（包括 Compose 和 Helm） | 在 `ov.conf` 中开启 `gateway.enabled` | Server 地址，默认 `http://127.0.0.1:1933` |
-| 独立运行 | 先 `openviking-gateway init`，再 `openviking-gateway` | 网关地址，默认 `http://127.0.0.1:1935` |
+| 嵌入 Server（包括 Compose 和 Helm） | 在 `ov.conf` 中开启 `gateway.enabled` | Server 地址加 `/gateway`，默认 `http://127.0.0.1:1933/gateway` |
+| 独立运行 | 先 `openviking-gateway init`，再 `openviking-gateway` | 网关自己的地址加 `/gateway`，默认 `http://127.0.0.1:1935/gateway` |
 
-两种方式提供相同的模型路径和管理路径。嵌入部署不需要第二个进程，也不需要按路径分流的反向代理；独立部署不用改动已有 OpenViking 服务的配置。
+两种方式都在 `/gateway` 下提供相同的模型路径和管理路径。嵌入部署不需要第二个进程，也不需要按路径分流的反向代理；独立部署不用改动已有 OpenViking 服务的配置。
 
 ### 在 Server 中启用
 
@@ -95,31 +95,39 @@ v0.5 网关用自己的密钥加密数据，这些数据会在首次启动时转
 
 ### 路由
 
-嵌入部署中，Server 把以下路径原样交给网关：
+两种部署方式下，网关的所有 URL 都在 `/gateway` 下。嵌入部署中，Server 把整个 `/gateway` 前缀交给网关，其他路径仍由 Server 自己处理：
 
 | 路径前缀 | 用途 |
 | --- | --- |
-| `/v1/` | 模型 API 和模型列表 |
-| `/api/v3/` | 方舟兼容客户端 |
-| `/api/compatible/v1/` | 方舟 Anthropic 兼容客户端 |
-| `/gateway/` | 工具上传 |
-| `/api/v1/admin/gateway/` | 管理 API，需要认证 |
+| `/gateway/v1/` | 模型 API 和模型列表 |
+| `/gateway/api/v3/` | 方舟兼容客户端 |
+| `/gateway/api/compatible/v1/` | 方舟 Anthropic 兼容客户端 |
+| `/gateway/uploads` | 工具上传 |
+| `/gateway/admin/` | 管理 API，需要认证 |
+
+因此客户端使用下面的 Base URL，把 `http://127.0.0.1:1933` 换成你的 Server 地址即可：
+
+| 客户端 | Base URL |
+| --- | --- |
+| Claude Code 和 Anthropic SDK | `http://127.0.0.1:1933/gateway` |
+| OpenAI 兼容的客户端和 SDK，包括 Codex、OpenCode、pi 和 Open WebUI | `http://127.0.0.1:1933/gateway/v1` |
+| 火山方舟和 BytePlus 方舟 SDK | `http://127.0.0.1:1933/gateway/api/v3` |
 
 `/health` 仍是 Server 自己的健康检查，嵌入网关不单独提供 `/health`。
 
-独立网关在自己的端口上提供同样的路径，另外：
+独立网关在自己的端口上提供同样的 `/gateway` 路径，另外在根路径提供：
 
 - `/` 跳转到 `/studio/`，Studio 只包含网关和连接页面。
 - `/health` 返回 `service: "openviking-gateway"`、`auth_mode` 和 `openviking_url`；请求带有效的 OpenViking 凭证时，还返回调用方身份。
 
-**对外地址。** 共享部署要把 `public_url` 设为客户端访问网关的地址。Studio 的接入指南用它生成配置：Anthropic 客户端直接使用这个地址，OpenAI 风格的客户端在后面加 `/v1`。不设置时，指南使用浏览器访问 Studio 的地址；但文件导入的上传链接必须依赖 `public_url`，见[导入文件和技能](#导入文件和技能)。
+**对外地址。** 共享部署要把 `public_url` 设为客户端访问 Server（或独立网关）的地址，不带 `/gateway`，网关会自己加上。Studio 的接入指南用它生成配置：Anthropic 客户端使用 `<public_url>/gateway`，OpenAI 风格的客户端使用 `<public_url>/gateway/v1`。不设置时，指南使用浏览器访问 Studio 的地址；但文件导入的上传链接必须依赖 `public_url`，见[导入文件和技能](#导入文件和技能)。
 
 ### Docker Compose
 
 在挂载的 `ov.conf` 中开启 `gateway.enabled`，然后运行 `docker compose up -d`。网关在 `openviking` 服务内运行，不需要单独的服务或 profile。
 
 - **管理密钥**：在 `.env` 中设置 `OPENVIKING_GATEWAY_MANAGEMENT_KEY`，自带的 Compose 文件会把它传进容器；也可以写进挂载的 `ov.conf` 的 `gateway.management_key`。Compose 文件还会传入 `OPENVIKING_GATEWAY_ENCRYPTION_KEY`，它只在迁移 v0.5 数据时读取一次，见[迁移](#迁移)。
-- **对外地址**：把 `gateway.public_url` 设为公网地址。
+- **对外地址**：把 `gateway.public_url` 设为公网地址，不带 `/gateway`。
 - **修改配置后**：执行 `docker compose restart openviking`；启动错误用 `docker compose logs openviking` 查看。
 
 自带的 Caddy 把所有路径转发到 `openviking:1933`。可以继续用兼容端口 1934，也可以直接访问 Server 的 1933。配置 HTTPS 时，一条 `reverse_proxy openviking:1933` 就能承载 Studio、管理接口和模型流量，见[公网访问](12-public-access.md)。
@@ -228,7 +236,7 @@ ov.example.com {
   - Chat Completions 和 Responses 拼接 `/chat/completions` 或 `/responses`。只填域名时不会自动补 `/v1`，OpenAI 要写 `https://api.openai.com/v1`。
   - Anthropic Messages 拼接 `/v1/messages`，所以 Base URL 不能以 `/v1` 结尾，否则保存时被拒绝。
   - 末尾的斜杠会被去掉。`/api/paas/v4` 这类带版本路径的地址可以直接使用。
-  - 客户端用方舟路径（`/api/v3/`、`/api/compatible/v1/`）发来的请求，按同样的规则拼接。
+  - 客户端用方舟路径（`/gateway/api/v3/`、`/gateway/api/compatible/v1/`）发来的请求，按同样的规则拼接。
   - 一个上游只有一个 Base URL。同一服务商的不同协议地址不同时，要分别建上游：例如智谱 Chat Completions 用 `https://open.bigmodel.cn/api/paas/v4`，Responses 用 `https://open.bigmodel.cn/api/v1`。方舟 Coding Plan 的 Chat Completions 和 Responses 用 `…/api/coding/v3`，Anthropic Messages 用 `…/api/coding`。
 
   编辑页会实时预览最终的请求地址；OpenAI、方舟这类地址漏掉路径，或者 Anthropic 地址多了 `/v1` 时，会给出提示和一键修正。
@@ -244,7 +252,7 @@ ov.example.com {
 
 #### 模型
 
-- **模型**列出这个上游提供的模型名，留空表示接受任何名称。只有列出的名称和别名会出现在模型列表（`/v1/models`）里。
+- **模型**列出这个上游提供的模型名，留空表示接受任何名称。只有列出的名称和别名会出现在模型列表（`/gateway/v1/models`）里。
 - **模型别名**把客户端使用的名称映射为发给上游的模型，例如把 Claude Code 请求的 Claude 模型名映射到服务商提供的模型。别名出现在模型列表中，请求日志显示客户端使用的名称。
 - **上下文窗口**按模型记录窗口大小（token，至少 1,024），键是映射之后、实际发给上游的模型名。长对话按窗口的比例触发压缩，窗口小于 1,000,000 token 的模型都要列出来，见[长对话](#长对话)。
 
@@ -370,7 +378,7 @@ ov.example.com {
 | 工具步骤 | 同一轮的延续，例如带着工具结果继续 | 放回之前的记忆；随所在轮次一起保存 |
 | 辅助请求 | 生成标题、摘要、压缩、建议和权限检查的请求 | 放回之前的记忆；从不保存 |
 | 子 Agent | 客户端的子 Agent 发出的请求 | 放回之前的记忆；从不保存 |
-| Token 计数 | token 计数请求（`/v1/messages/count_tokens`） | 放回之前的记忆，计数才和实际发送的内容一致 |
+| Token 计数 | token 计数请求（`/gateway/v1/messages/count_tokens`） | 放回之前的记忆，计数才和实际发送的内容一致 |
 | 直接转发 | 原样转发、不带记忆的请求：其他接口、依赖服务商端状态的 Responses 请求、压缩过或无法解析的请求体 | 无 |
 | 记忆同步 | 后台保存事件，不是模型请求 | — |
 
@@ -576,8 +584,8 @@ Token 预算只计算模型使用 OpenViking 工具时新增的调用、结果�
 
 **删除数据。** 吊销网关密钥、或者它绑定的 OpenViking 密钥失效，都不会删除用户数据。要删除，有三种途径：
 
-- 账号管理员或 root 在 Studio 中用**删除该用户的网关数据…**，或者调用 `DELETE /api/v1/admin/gateway/users/{user_id}/data`：吊销该用户的网关密钥，删除对话状态和日志，包括尚未保存的内容。
-- root 调用 `DELETE /api/v1/admin/gateway/account/data?account_id=<account>`，清除整个账号的网关数据。
+- 账号管理员或 root 在 Studio 中用**删除该用户的网关数据…**，或者调用 `DELETE /gateway/admin/users/{user_id}/data`：吊销该用户的网关密钥，删除对话状态和日志，包括尚未保存的内容。
+- root 调用 `DELETE /gateway/admin/account/data?account_id=<account>`，清除整个账号的网关数据。
 - 嵌入部署中，在 OpenViking 里删除用户或账号时，网关自动删除对应的网关数据。独立部署没有这一步，数据保留到显式删除或过期。
 
 已存入 OpenViking 的记忆和会话不受这些操作影响。反过来，在 OpenViking 中删除一条记忆后，网关为进行中的对话保存的那份记忆副本仍会被原样放回，直到对话过期；要立即清除，删除该用户的网关数据。
@@ -600,7 +608,7 @@ Token 预算只计算模型使用 OpenViking 工具时新增的调用、结果�
 
 - **盯住首次调用缓存命中率。** 它反映跨轮次的提示缓存，应该接近不经过网关时服务商能达到的水平；**轮内缓存命中率**覆盖工具步骤，正常时很高。明显下降时，见[首次调用缓存命中率下降](#首次调用缓存命中率下降)。
 - **用请求日志定位单个请求。** 按新消息、工具步骤或异常筛选，展开一行就能看到召回结果、保存状态和 OpenViking 工具的停用原因，见[请求日志和概览](#请求日志和概览)。
-- **设置对外地址。** 把 `public_url` 设为客户端访问网关的地址，反向代理后的客户端配置和上传链接才能保持一致。
+- **设置对外地址。** 把 `public_url` 设为客户端访问的地址（不带 `/gateway`），反向代理后的客户端配置和上传链接才能保持一致。
 - **定期备份。** 备份网关存储目录；开启加密时还要备份 OpenViking 根密钥，见[安全与数据](#安全与数据)中的“备份”。
 
 ### 升级
@@ -611,7 +619,7 @@ Token 预算只计算模型使用 OpenViking 工具时新增的调用、结果�
 
 ### 观测
 
-网关不导出 Prometheus 之类的监控指标，也不写 HTTP 访问日志。运行状态通过 Studio 的“概览”和“请求日志”标签页查看，或者调用管理 API 的 `/api/v1/admin/gateway/overview` 和 `/api/v1/admin/gateway/logs`。进程存活用 `/health` 检查：嵌入部署用 Server 的健康检查，独立部署用网关自己的。
+网关不导出 Prometheus 之类的监控指标，也不写 HTTP 访问日志。运行状态通过 Studio 的“概览”和“请求日志”标签页查看，或者调用管理 API 的 `/gateway/admin/overview` 和 `/gateway/admin/logs`。进程存活用 `/health` 检查：嵌入部署用 Server 的健康检查，独立部署用网关自己的。
 
 ## 设计取舍
 
@@ -642,7 +650,7 @@ Token 预算只计算模型使用 OpenViking 工具时新增的调用、结果�
 | `port` | 独立 | `1935` | 监听端口 |
 | `workers` | 独立 | `1` | worker 进程数，1–64 |
 | `encryption` | 独立 | 不设置（明文） | 字段同 `ov.conf` 的 `encryption` 段，见[加密](#加密)；嵌入网关沿用 Server 的设置 |
-| `public_url` | 两者 | 空 | 客户端访问网关的地址；为空时接入指南用请求来源地址，文件上传不可用 |
+| `public_url` | 两者 | 空 | 客户端访问的对外地址，不带 `/gateway`（网关自己加）；为空时接入指南用请求来源地址，文件上传不可用 |
 | `storage_path` | 两者 | `~/.openviking/gateway` | 本地存储目录 |
 | `management_key` | 两者 | 空 | 可选的网关管理密钥，至少 32 个字符 |
 | `min_server_version` | 两者 | `0.4.16` | 独立网关要求的 OpenViking Server 最低版本 |
@@ -723,8 +731,8 @@ URL 必须是 HTTP(S)，不能含凭证、查询参数或 fragment。未知字�
 
 1. **先备份。** 备份 `storage_path`（两个数据库，以及存在的话 `encryption.key`）。停止旧的网关进程或 sidecar，再启用嵌入网关。
 2. **删掉旧字段。** 从 `ov.conf` 的 `gateway` 段删除 `host`、`port`、`workers`、`url`、`openviking_url`、`admin_token_env` 和 `encryption_key_env`。Server 会忽略这些字段并在启动时打印警告，旧的 `ov.conf` 仍能启动，但还是应该清理掉。`openviking-server init` → **Update gateway** 会自动删除它们。想继续独立运行网关，就运行 `openviking-gateway init`，或者把设置移到单独的 `gateway.conf`，去掉 `gateway` 外层和 `enabled`。独立网关的命令不再接受 `--openviking-url`、`--host`、`--port`、`--workers` 和 `--storage-path`，这些设置改写到 `gateway.conf` 或环境变量中。
-3. **改对外地址。** 把 `public_url` 改为 Server 的对外地址，或者删掉。旧版快速开始把它设成了 `http://127.0.0.1:1935`，嵌入网关不再监听这个端口，接入指南和上传链接都会指向一个不存在的地址。`openviking-server init` → **Update gateway** 发现 `public_url` 指向别的端口时，会询问是否清除。
-4. **改客户端地址和部署配置。** 嵌入网关的客户端改用 Server 端口（默认 1933）。移除旧的 1935 Service 和 Ingress 路由、Compose 的 `gateway` 服务和 profile，以及 Helm 的 sidecar 配置 `gateway.workers`、`gateway.port`、`gateway.resources`。`gateway.managementKeySecret` 已删除，把其中的 `management-key` 字段移到 `gateway.existingSecret` 指定的 Secret 中。1935 仍是独立运行的默认端口。
+3. **改对外地址。** 把 `public_url` 改为 Server 的对外地址（不带 `/gateway`），或者删掉。旧版快速开始把它设成了 `http://127.0.0.1:1935`，嵌入网关不再监听这个端口，接入指南和上传链接都会指向一个不存在的地址。`openviking-server init` → **Update gateway** 发现 `public_url` 指向别的端口时，会询问是否清除。
+4. **改客户端地址和部署配置。** 网关的所有 URL 现在都在 `/gateway` 下，所以客户端要同时改端口和路径：`http://host:1935/v1` 改为 `http://host:1933/gateway/v1`，Claude Code 的 `ANTHROPIC_BASE_URL` 从 `http://host:1935` 改为 `http://host:1933/gateway`，方舟 SDK 改用 `http://host:1933/gateway/api/v3`。旧路径不再提供服务。调用管理 API 的脚本把 `/api/v1/admin/gateway/...` 改为 `/gateway/admin/...`。移除旧的 1935 Service 和 Ingress 路由、Compose 的 `gateway` 服务和 profile，以及 Helm 的 sidecar 配置 `gateway.workers`、`gateway.port`、`gateway.resources`。`gateway.managementKeySecret` 已删除，把其中的 `management-key` 字段移到 `gateway.existingSecret` 指定的 Secret 中。1935 仍是独立运行的默认端口，独立网关也使用同样的 `/gateway` 路径。
 5. **首次启动会转换已存数据。** v0.5 网关用自己的密钥加密数据。新版网关（嵌入或独立）首次启动时，用这把旧密钥解密，再按当前的[加密](#加密)设置重新写入；加密关闭时写成明文，所以想让数据继续加密，要在这次启动前开启 OpenViking 加密。旧密钥从环境变量 `OPENVIKING_GATEWAY_ENCRYPTION_KEY` 读取，或者从 `storage_path` 下的 `encryption.key` 读取。`encryption_key_env` 会被忽略：如果你曾用它指向别的环境变量，这次启动时把密钥导出为 `OPENVIKING_GATEWAY_ENCRYPTION_KEY`。存在旧的加密数据、两处却都没有密钥时，网关拒绝启动，错误信息会写明这两个位置。用 Helm 时，只在这次升级的版本中保留 `existingSecret` 里的 `encryption-key` 字段。启动成功后旧密钥不会再被读取，可以删掉这个环境变量、Secret 字段和 `encryption.key`。
 6. **移除共享 admin token。** `OPENVIKING_GATEWAY_ADMIN_TOKEN` **不会**被当作管理密钥。需要限制谁能修改上游和上下文配置时，显式设置 `management_key`。
 7. **核对上游地址。** 首次启动时，网关会改写一次已存上游的 Base URL，让每个上游继续请求升级前的同一个地址：
@@ -847,7 +855,7 @@ URL 必须是 HTTP(S)，不能含凭证、查询参数或 fragment。未知字�
 ### 文件导入失败
 
 - "Set gateway.public_url for client uploads"：把 `public_url` 设为客户端能访问的地址。
-- 上传链接无法访问或返回 404：确认 `public_url` 不是旧的 `:1935` 地址，并且代理像其他路径一样转发 `/gateway/uploads`。
+- 上传链接无法访问或返回 404：确认 `public_url` 不是旧的 `:1935` 地址，也没有以 `/gateway` 结尾，并且代理像其他路径一样转发 `/gateway/uploads`。
 - 413：文件超过了 `max_body_bytes` 或代理的上限。
 - 502 "OpenViking upload is unavailable"：网关连不上 OpenViking Server。
 - 模型没有导入工具：OpenViking 服务没有提供该工具，上下文配置没有勾选，或者当前请求不能使用网关工具。检查工具清单和请求详情。

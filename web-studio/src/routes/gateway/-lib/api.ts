@@ -414,7 +414,7 @@ export function toGatewayError(error: unknown): GatewayError {
   )
 }
 
-const BASE_PATH = '/api/v1/admin/gateway'
+const BASE_PATH = '/gateway/admin'
 
 type Method = 'GET' | 'POST' | 'PUT' | 'DELETE'
 

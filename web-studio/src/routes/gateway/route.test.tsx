@@ -193,11 +193,13 @@ describe('layout gates', () => {
 
   it('shows the gateway address and the tabs once the gateway answers', async () => {
     api.getConnectionInfo.mockResolvedValue({
-      base_url: 'https://gw.example.com',
+      base_url: 'https://gw.example.com/gateway',
       public_url_configured: true,
     })
     renderLayout()
-    expect(await screen.findByText('https://gw.example.com')).toBeTruthy()
+    expect(
+      await screen.findByText('https://gw.example.com/gateway'),
+    ).toBeTruthy()
     expect(
       screen.getByRole('button', {
         name: 'beta.label',

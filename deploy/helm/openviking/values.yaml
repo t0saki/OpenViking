@@ -2,7 +2,7 @@
 
 replicaCount: 1
 
-# Gateway runs inside the server on the same port and uses the server's encryption settings.
+# Gateway runs inside the server under /gateway on the same port and uses the server's encryption settings.
 gateway:
   enabled: false
   # Optional Secret name. Entries (each optional): management-key (32+ characters) and

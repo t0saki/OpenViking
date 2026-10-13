@@ -127,7 +127,7 @@ it('says OpenViking is down instead of blaming the key', async () => {
     ),
   )
   expect(fetch).toHaveBeenCalledWith(
-    'http://gateway.test/api/v1/admin/gateway/access',
+    'http://gateway.test/gateway/admin/access',
     { headers: { 'X-API-Key': 'valid-but-unverifiable' } },
   )
   expect(saveConnection).not.toHaveBeenCalled()

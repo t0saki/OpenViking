@@ -1,4 +1,4 @@
-# Legacy HTTP entrypoint. Server and gateway share OPENVIKING_SERVER_PORT.
+# Legacy HTTP entrypoint. Server and gateway (under /gateway) share OPENVIKING_SERVER_PORT.
 # Studio is served at /studio by the same server.
 #
 # For public HTTPS, add a domain block and publish ports 80/443 in Compose:

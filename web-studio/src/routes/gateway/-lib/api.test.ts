@@ -59,7 +59,7 @@ describe('gateway calls', () => {
     const [options] = request.mock.calls[0]
     expect(options).toMatchObject({
       method: 'PUT',
-      url: '/api/v1/admin/gateway/upstreams/a%2Fb',
+      url: '/gateway/admin/upstreams/a%2Fb',
       body: input,
       headers: { 'Content-Type': 'application/json' },
     })
@@ -74,7 +74,7 @@ describe('gateway calls', () => {
     ])
     expect(request.mock.calls[0][0]).toMatchObject({
       method: 'GET',
-      url: '/api/v1/admin/gateway/logs',
+      url: '/gateway/admin/logs',
       query: { limit: 50 },
     })
     expect(request.mock.calls[0][0]).not.toHaveProperty('body')
@@ -93,7 +93,7 @@ describe('gateway calls', () => {
     await expect(listTools(connection)).resolves.toEqual(tools)
     expect(request.mock.calls[0][0]).toMatchObject({
       method: 'GET',
-      url: '/api/v1/admin/gateway/tools',
+      url: '/gateway/admin/tools',
     })
     request.mockResolvedValue(ok([]))
     await expect(listTools(connection)).resolves.toEqual([])
@@ -118,9 +118,9 @@ describe('gateway calls', () => {
     expect(
       request.mock.calls.map(([options]) => [options.method, options.url]),
     ).toEqual([
-      ['POST', '/api/v1/admin/gateway/keys/key-1/capture/reset'],
-      ['POST', '/api/v1/admin/gateway/keys'],
-      ['DELETE', '/api/v1/admin/gateway/users/alice/data'],
+      ['POST', '/gateway/admin/keys/key-1/capture/reset'],
+      ['POST', '/gateway/admin/keys'],
+      ['DELETE', '/gateway/admin/users/alice/data'],
     ])
   })
 })

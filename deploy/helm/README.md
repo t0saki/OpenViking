@@ -144,7 +144,7 @@ Secrets.
 Set `gateway.enabled: true` to run [OpenViking Gateway](https://docs.openviking.ai/en/guides/15-gateway)
 inside the server container. The chart adds `gateway.enabled` to `ov.conf` and stores
 gateway data in `<persistence.mountPath>/gateway` on the persistent volume. There is no
-sidecar and no extra Service port: clients use the server port, and the existing Ingress
+sidecar and no extra Service port: clients use `/gateway` on the server port, and the existing Ingress
 forwards every path to OpenViking.
 
 Model requests stream, so the Ingress must turn off response buffering and allow request
@@ -176,8 +176,10 @@ ingress:
           pathType: Prefix
 ```
 
-Set `config.gateway.public_url` to the address clients use; Studio's setup guides and file
-upload links are built from it.
+Set `config.gateway.public_url` to the address clients use, without `/gateway`; Studio's
+setup guides and file upload links are built from it, with `/gateway` appended. Clients use
+`https://ov.example.com/gateway/v1` (OpenAI-compatible) or `https://ov.example.com/gateway`
+(Anthropic).
 
 #### Secrets
 
@@ -213,7 +215,9 @@ CPU, raise the server's `workers` setting.
 - Remove `host`, `port`, `workers`, `url`, `openviking_url` and `admin_token_env` from
   `config.gateway`. The server ignores them with a startup warning.
 - Point `config.gateway.public_url` at the server's public address, not port 1935, and
-  move clients to the server port.
+  move clients to the server port and the `/gateway` prefix: `http://host:1935/v1` becomes
+  `https://ov.example.com/gateway/v1`. The management API moved from
+  `/api/v1/admin/gateway/...` to `/gateway/admin/...`.
 - The shared admin token is gone and does not act as a management key. To restrict
   changes to upstreams and context profiles, add a `management-key` entry to
   `gateway.existingSecret`. `gateway.managementKeySecret` is removed: move its
@@ -246,7 +250,7 @@ For deployment, Studio management, backups and troubleshooting, see
 | `config.server.root_api_key` | API key required when server binds to 0.0.0.0 | `""` |
 | `config` | Full ov.conf configuration object | See `values.yaml` |
 | `extraEnv` | Additional environment variables | `[]` |
-| `gateway.enabled` | Run OpenViking Gateway inside the server container, on the server port | `false` |
+| `gateway.enabled` | Run OpenViking Gateway inside the server container, under `/gateway` on the server port | `false` |
 | `gateway.existingSecret` | Optional Secret with optional entries `management-key` (required to change upstreams and context profiles) and `encryption-key` (v0.5.0 key, read once for migration) | `""` |
 
 ## Upgrading

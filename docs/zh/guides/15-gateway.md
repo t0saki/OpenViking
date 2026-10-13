@@ -33,9 +33,9 @@ OpenViking 网关是一个模型 API 代理：客户端只要能修改 Base URL�
 
 ## 一张图看懂架构
 
-![OpenViking 网关的两种运行形态。嵌入：客户端访问 OpenViking Server 的端口，Server 把模型 API、上传和网关管理路径交给同一进程里的网关，网关通过本机回环 HTTP、用用户本人的 OpenViking 密钥检索和保存记忆。独立：openviking-gateway 用自己的端口提供同样的路径和只含网关页面的 Studio，通过 HTTP(S) 调用已有的 OpenViking 服务。两种形态下，网关都用同一种 API 把请求转发给上游模型服务商；会话和记忆的正本在 OpenViking，网关本机只有两个 SQLite 文件（开启 OpenViking 加密时加密存储）](../../images/gateway/architecture.zh.svg)
+![OpenViking 网关的两种运行形态。嵌入：客户端访问 OpenViking Server 的端口，Server 把 /gateway 下的所有路径（模型 API、上传和网关管理）交给同一进程里的网关，网关通过本机回环 HTTP、用用户本人的 OpenViking 密钥检索和保存记忆。独立：openviking-gateway 用自己的端口提供同样的 /gateway 路径和只含网关页面的 Studio，通过 HTTP(S) 调用已有的 OpenViking 服务。两种形态下，网关都用同一种 API 把请求转发给上游模型服务商；会话和记忆的正本在 OpenViking，网关本机只有两个 SQLite 文件（开启 OpenViking 加密时加密存储）](../../images/gateway/architecture.zh.svg)
 
-- **运行在哪**：开启后嵌入 OpenViking Server，和 Server 共用端口；也可以用 `openviking-gateway` 独立运行，连接已有的 OpenViking 服务（开源版或商业版）。两种方式的客户端路径相同，见[部署方式](22-gateway-operations.md#部署方式)。
+- **运行在哪**：开启后嵌入 OpenViking Server，和 Server 共用端口；也可以用 `openviking-gateway` 独立运行，连接已有的 OpenViking 服务（开源版或商业版）。两种方式下网关的所有 URL 都在 `/gateway` 下（例如 `/gateway/v1`），客户端路径相同，见[部署方式](22-gateway-operations.md#部署方式)。
 - **和 OpenViking 的关系**：网关只调用 OpenViking 的公开接口，向量化和记忆提取都在 OpenViking 中完成。
 - **数据在哪**：会话和记忆的正本在 OpenViking。网关本机只有两个 SQLite 文件（开启 OpenViking 加密时加密存储），一个存上游、密钥和配置，一个存对话状态，见[安全与数据](22-gateway-operations.md#安全与数据)。
 - **出故障时**：OpenViking 不可用时，对话照常进行，只是不带记忆，保存会自动重试。网关停止服务时，经过它的模型调用全部失败。
@@ -212,7 +212,7 @@ Claude Code、Codex 和 pi 需要按项目区分记忆，或者要求每次工�
 3. **在 Studio 中打开网关。** 打开 <http://127.0.0.1:1933/studio/>，在侧边栏选择 **OpenViking 网关**，不用填写密钥。默认账号还没有上游时，网关启动时会把服务端的 VLM 配置导入为上游，并创建一份上下文配置，所以“概览”标签页的**快速开始**清单前两步已经完成。导入的 Coding Plan 上游需要你确认后才能使用，见[导入 OpenViking 模型配置](22-gateway-operations.md#导入-openviking-模型配置)；没有可导入的配置时，按[上游](22-gateway-operations.md#上游)手动添加。
 4. **签发网关密钥。** 在“密钥”标签页点**签发密钥**，填写名称，选择上下文配置和上游，然后签发。这个密钥以本地 `default` 用户的身份读写记忆。**复制网关密钥**对话框只显示一次完整的 `ovgw_…` 密钥，关闭前先复制。
 
-然后向 `http://127.0.0.1:1933` [发送测试请求](#发送测试请求)。
+然后向 `http://127.0.0.1:1933/gateway` [发送测试请求](#发送测试请求)。
 
 ### 远程服务（使用 API 密钥）
 
@@ -231,10 +231,10 @@ Claude Code、Codex 和 pi 需要按项目区分记忆，或者要求每次工�
 
 ### 发送测试请求
 
-本地服务把地址换成 `http://127.0.0.1:1933`，并把 `<model>` 换成上游提供的模型：
+本地服务把地址换成 `http://127.0.0.1:1933/gateway`，并把 `<model>` 换成上游提供的模型：
 
 ```bash
-export GATEWAY_URL=https://ov.example.com
+export GATEWAY_URL=https://ov.example.com/gateway
 export GATEWAY_KEY='ovgw_...'
 
 curl -s "$GATEWAY_URL/v1/models" -H "Authorization: Bearer $GATEWAY_KEY"
@@ -258,17 +258,17 @@ curl -s "$GATEWAY_URL/v1/chat/completions" \
 
 ## 接入客户端
 
-每个客户端需要两样东西：网关地址和网关密钥。下面的示例用 `https://ov.example.com`，请换成你的网关地址；Studio 的 OpenViking 网关页面顶部和“接入”标签页都会显示它。客户端用的密钥还必须绑定一个已启用的上游，这个上游要支持客户端的协议，并提供客户端请求的模型。
+每个客户端需要两样东西：网关地址和网关密钥。网关地址是服务地址加上 `/gateway`。下面的示例用 `https://ov.example.com/gateway`，请换成你的网关地址；Studio 的 OpenViking 网关页面顶部和“接入”标签页都会显示它。Anthropic 客户端直接使用网关地址，OpenAI 兼容客户端在后面加 `/v1`，方舟 SDK 加 `/api/v3`。客户端用的密钥还必须绑定一个已启用的上游，这个上游要支持客户端的协议，并提供客户端请求的模型。
 
 | 客户端 | 上游协议 | Base URL | 对话识别方式 |
 | --- | --- | --- | --- |
-| [Claude Code](#claude-code) | Anthropic Messages | `https://ov.example.com` | Claude Code 的会话请求头 |
-| [Codex CLI](#codex-cli) | Responses | `https://ov.example.com/v1` | Codex 的会话请求头 |
-| [聊天客户端和 SDK](#聊天客户端和-sdk) | Chat Completions（或 SDK 使用的 API） | `https://ov.example.com/v1` | `X-OpenViking-Session`，需要自己发送 |
-| [Open WebUI](#open-webui) | Chat Completions | `https://ov.example.com/v1` | 在连接上配置 `X-OpenViking-Session` 请求头 |
-| [OpenCode](#opencode) | Chat Completions | `https://ov.example.com/v1` | OpenCode 的会话请求头 |
-| [pi](#pi) | Chat Completions | `https://ov.example.com/v1` | 通常根据对话历史匹配 |
-| [火山方舟与 BytePlus 方舟 SDK](#火山方舟与-byteplus-方舟-sdk) | 三种均可 | `https://ov.example.com/api/v3` 或 `https://ov.example.com/api/compatible` | 取决于客户端发送的请求头 |
+| [Claude Code](#claude-code) | Anthropic Messages | `https://ov.example.com/gateway` | Claude Code 的会话请求头 |
+| [Codex CLI](#codex-cli) | Responses | `https://ov.example.com/gateway/v1` | Codex 的会话请求头 |
+| [聊天客户端和 SDK](#聊天客户端和-sdk) | Chat Completions（或 SDK 使用的 API） | `https://ov.example.com/gateway/v1` | `X-OpenViking-Session`，需要自己发送 |
+| [Open WebUI](#open-webui) | Chat Completions | `https://ov.example.com/gateway/v1` | 在连接上配置 `X-OpenViking-Session` 请求头 |
+| [OpenCode](#opencode) | Chat Completions | `https://ov.example.com/gateway/v1` | OpenCode 的会话请求头 |
+| [pi](#pi) | Chat Completions | `https://ov.example.com/gateway/v1` | 通常根据对话历史匹配 |
+| [火山方舟与 BytePlus 方舟 SDK](#火山方舟与-byteplus-方舟-sdk) | 三种均可 | `https://ov.example.com/gateway/api/v3` 或 `https://ov.example.com/gateway/api/compatible` | 取决于客户端发送的请求头 |
 
 Open WebUI、OpenCode 和 pi 的配置依据它们各自文档中的服务商设置编写，请当作起点，配好后验证一下：在同一段对话里发两条消息，然后在“请求日志”中展开这两个请求，它们应该属于同一段对话，并且第二条消息到达后，第一轮已经保存。
 
@@ -277,7 +277,7 @@ Open WebUI、OpenCode 和 pi 的配置依据它们各自文档中的服务商设
 Claude Code 使用 Anthropic Messages。启动前设置三个环境变量：
 
 ```bash
-export ANTHROPIC_BASE_URL=https://ov.example.com
+export ANTHROPIC_BASE_URL=https://ov.example.com/gateway
 export ANTHROPIC_AUTH_TOKEN='<gateway-key>'
 export CLAUDE_CODE_GATEWAY_HINT_HEADERS=1
 ```
@@ -299,7 +299,7 @@ model = "<model>"
 
 [model_providers.openviking]
 name = "OpenViking Gateway"
-base_url = "https://ov.example.com/v1"
+base_url = "https://ov.example.com/gateway/v1"
 wire_api = "responses"
 env_key = "OPENVIKING_GATEWAY_KEY"
 ```
@@ -321,7 +321,7 @@ export OPENVIKING_GATEWAY_KEY='<gateway-key>'
 支持 OpenAI Chat Completions API 的客户端和 SDK 都能接入。在客户端填写 OpenAI 兼容服务商的地方填入：
 
 ```text
-Base URL: https://ov.example.com/v1
+Base URL: https://ov.example.com/gateway/v1
 API key: <gateway-key>
 Model: <model>
 X-OpenViking-Session: <conversation-id>
@@ -334,7 +334,7 @@ X-OpenViking-Session: <conversation-id>
 ```python
 from openai import OpenAI
 
-client = OpenAI(base_url="https://ov.example.com/v1", api_key="<gateway-key>")
+client = OpenAI(base_url="https://ov.example.com/gateway/v1", api_key="<gateway-key>")
 
 reply = client.chat.completions.create(
     model="<model>",
@@ -346,14 +346,14 @@ print(reply.choices[0].message.content)
 
 另外两种 API 的 SDK 用法相同，上游使用的 API 要和 SDK 一致：
 
-- Anthropic SDK 指向 `https://ov.example.com`。
-- Responses API 使用 `https://ov.example.com/v1`，每个请求都要带完整历史并设置 `store: false`；其他 Responses 请求直接转发，不补充记忆。
+- Anthropic SDK 指向 `https://ov.example.com/gateway`。
+- Responses API 使用 `https://ov.example.com/gateway/v1`，每个请求都要带完整历史并设置 `store: false`；其他 Responses 请求直接转发，不补充记忆。
 
 流式调用 Chat Completions 时，请同时请求返回用量（`"stream_options": {"include_usage": true}`）。否则服务商不报告流式回复的 token 数，Studio 显示不了用量，网关也只能估算上下文窗口用了多少。
 
 ### Open WebUI
 
-在 Open WebUI 中添加一个 OpenAI 兼容连接（Admin Panel → Settings → Connections），Base URL 填 `https://ov.example.com/v1`，密钥填网关密钥。再给这个连接加上下面的自定义请求头，让每个聊天成为一段独立的对话，并让网关认出 Open WebUI 的后台任务：
+在 Open WebUI 中添加一个 OpenAI 兼容连接（Admin Panel → Settings → Connections），Base URL 填 `https://ov.example.com/gateway/v1`，密钥填网关密钥。再给这个连接加上下面的自定义请求头，让每个聊天成为一段独立的对话，并让网关认出 Open WebUI 的后台任务：
 
 ```json
 {
@@ -378,7 +378,7 @@ print(reply.choices[0].message.content)
       "npm": "@ai-sdk/openai-compatible",
       "name": "OpenViking",
       "options": {
-        "baseURL": "https://ov.example.com/v1",
+        "baseURL": "https://ov.example.com/gateway/v1",
         "apiKey": "{env:OPENVIKING_GATEWAY_KEY}"
       },
       "models": {
@@ -399,7 +399,7 @@ print(reply.choices[0].message.content)
 {
   "providers": {
     "openviking": {
-      "baseUrl": "https://ov.example.com/v1",
+      "baseUrl": "https://ov.example.com/gateway/v1",
       "apiKey": "$OPENVIKING_GATEWAY_KEY",
       "api": "openai-completions",
       "models": [
@@ -419,20 +419,20 @@ print(reply.choices[0].message.content)
 
 ### 火山方舟与 BytePlus 方舟 SDK
 
-已经接入火山方舟或其海外站 BytePlus 方舟的客户端和 SDK，只需替换域名。网关既接受方舟自己的路径（`/api/v3/chat/completions`、`/api/v3/responses`、`/api/v3/models` 和 `/api/compatible/v1/messages`），也接受标准的 `/v1` 路径：
+已经接入火山方舟或其海外站 BytePlus 方舟的客户端和 SDK，只需替换地址。在 `/gateway` 下，网关既接受方舟自己的路径（`/api/v3/chat/completions`、`/api/v3/responses`、`/api/v3/models` 和 `/api/compatible/v1/messages`），也接受标准的 `/v1` 路径：
 
 | 原地址 | 网关地址 |
 | --- | --- |
-| `https://ark.cn-beijing.volces.com/api/v3` | `https://ov.example.com/api/v3` |
-| `https://ark.ap-southeast.bytepluses.com/api/v3` | `https://ov.example.com/api/v3` |
-| `https://ark.cn-beijing.volces.com/api/compatible`（Anthropic 兼容） | `https://ov.example.com/api/compatible` |
+| `https://ark.cn-beijing.volces.com/api/v3` | `https://ov.example.com/gateway/api/v3` |
+| `https://ark.ap-southeast.bytepluses.com/api/v3` | `https://ov.example.com/gateway/api/v3` |
+| `https://ark.cn-beijing.volces.com/api/compatible`（Anthropic 兼容） | `https://ov.example.com/gateway/api/compatible` |
 
 用网关密钥代替方舟的 API Key。以火山方舟 Python SDK 为例：
 
 ```python
 from volcenginesdkarkruntime import Ark
 
-client = Ark(base_url="https://ov.example.com/api/v3", api_key="<gateway-key>")
+client = Ark(base_url="https://ov.example.com/gateway/api/v3", api_key="<gateway-key>")
 ```
 
 客户端用哪个路径，只决定它使用哪种 API。请求仍然发往密钥绑定的、使用这种 API 并提供该模型的上游，通常是服务商选为“火山方舟”或“BytePlus 方舟（海外站）”的上游（见[上游](22-gateway-operations.md#上游)）。

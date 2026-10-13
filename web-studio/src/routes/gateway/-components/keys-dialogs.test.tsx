@@ -716,7 +716,7 @@ describe('KeysSecretDialog', () => {
       <KeysSecretDialog
         open
         issued={issued}
-        baseUrl="https://gw.example.com"
+        baseUrl="https://gw.example.com/gateway"
         profileName="Coding"
         upstreams={upstreams}
         onDone={onDone}
@@ -745,7 +745,7 @@ describe('KeysSecretDialog', () => {
     expect(screen.getByText('Coding')).toBeTruthy()
     // Only a Chat Completions upstream: the chat client tab is selected.
     const snippet = screen.getByText(/chat\.completions\.create/)
-    expect(snippet.textContent).toContain('https://gw.example.com/v1')
+    expect(snippet.textContent).toContain('https://gw.example.com/gateway/v1')
     expect(snippet.textContent).toContain('ovgw_theSecret')
     expect(snippet.textContent).toContain('deepseek-chat')
     expect(screen.queryByText('keys.secret.noProtocol')).toBeNull()

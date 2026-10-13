@@ -73,7 +73,7 @@ OV_ACME_EMAIL=admin@your-domain.com   # 可选；推荐用于 Let's Encrypt
 }
 ```
 
-开启 OpenViking 网关（`gateway.enabled: true`）后，模型 API 和网关管理 API 也走 Server 端口，这条反代配置同样覆盖它们，不需要额外的上游或按路径分流。
+开启 OpenViking 网关（`gateway.enabled: true`）后，模型 API 和网关管理 API 也在 Server 端口的 `/gateway` 下，这条反代配置同样覆盖它们，不需要额外的上游或按路径分流。
 
 ### 3. 取消 `docker-compose.yml` 中的 HTTPS 注释
 
@@ -199,7 +199,7 @@ Compose 部署应修改 `.env` 并运行 `docker compose up -d`，在其他 shel
 
 ## 兼容说明：`:1934` 代理
 
-自带 Caddy 的兼容端口 1934 把所有路径转发到 `openviking:{$OPENVIKING_SERVER_PORT:1933}`。开启 OpenViking 网关后，1933 端口同时提供 OpenViking 的普通接口、模型 API、工具上传和网关管理 API（`/api/v1/admin/gateway/*`），不再需要单独的网关容器、1935 端口或按路径分流的规则。
+自带 Caddy 的兼容端口 1934 把所有路径转发到 `openviking:{$OPENVIKING_SERVER_PORT:1933}`。开启 OpenViking 网关后，1933 端口同时提供 OpenViking 的普通接口，以及 `/gateway` 下的模型 API、工具上传和网关管理 API，不再需要单独的网关容器、1935 端口或按路径分流的规则。
 
 已有书签或客户端还在用 1934 时可以保留它，用不到就删掉端口映射。公网客户端请走 HTTPS 入口。
 

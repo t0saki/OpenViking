@@ -70,10 +70,10 @@ Data written by the v0.5 gateway, which used its own key, is converted on the fi
 
 | Form | How to enable it | Client address |
 | --- | --- | --- |
-| Embedded in the server (including Compose and Helm) | Turn on `gateway.enabled` in `ov.conf` | The server address, `http://127.0.0.1:1933` by default |
-| Standalone | `openviking-gateway init`, then `openviking-gateway` | The gateway address, `http://127.0.0.1:1935` by default |
+| Embedded in the server (including Compose and Helm) | Turn on `gateway.enabled` in `ov.conf` | The server address plus `/gateway`, `http://127.0.0.1:1933/gateway` by default |
+| Standalone | `openviking-gateway init`, then `openviking-gateway` | The gateway's own address plus `/gateway`, `http://127.0.0.1:1935/gateway` by default |
 
-Both forms serve the same model and management paths. An embedded gateway needs no second process and no path-based reverse proxy. A standalone gateway leaves the existing OpenViking service's configuration untouched.
+Both forms serve the same model and management paths under `/gateway`. An embedded gateway needs no second process and no path-based reverse proxy. A standalone gateway leaves the existing OpenViking service's configuration untouched.
 
 ### Enable it in the server
 
@@ -95,31 +95,39 @@ Open `/studio/` on the server and choose **OpenViking Gateway** in the sidebar. 
 
 ### Routes
 
-In an embedded deployment, the server hands these paths to the gateway unchanged:
+Every gateway URL is under `/gateway`, in both forms. An embedded server hands the whole `/gateway` prefix to the gateway and keeps every other path for itself:
 
 | Path prefix | Purpose |
 | --- | --- |
-| `/v1/` | Model APIs and the model list |
-| `/api/v3/` | Ark-compatible clients |
-| `/api/compatible/v1/` | Ark Anthropic-compatible clients |
-| `/gateway/` | Tool uploads |
-| `/api/v1/admin/gateway/` | Management API (authenticated) |
+| `/gateway/v1/` | Model APIs and the model list |
+| `/gateway/api/v3/` | Ark-compatible clients |
+| `/gateway/api/compatible/v1/` | Ark Anthropic-compatible clients |
+| `/gateway/uploads` | Tool uploads |
+| `/gateway/admin/` | Management API (authenticated) |
+
+Clients therefore use these base URLs, with `http://127.0.0.1:1933` replaced by your server's address:
+
+| Client | Base URL |
+| --- | --- |
+| Claude Code and Anthropic SDKs | `http://127.0.0.1:1933/gateway` |
+| OpenAI-compatible clients and SDKs, including Codex, OpenCode, pi and Open WebUI | `http://127.0.0.1:1933/gateway/v1` |
+| Volcano Engine Ark and BytePlus ModelArk SDKs | `http://127.0.0.1:1933/gateway/api/v3` |
 
 `/health` stays the server's own health check; an embedded gateway has no separate `/health`.
 
-A standalone gateway serves the same paths on its own port, plus:
+A standalone gateway serves the same `/gateway` paths on its own port, plus these at the root:
 
 - `/` redirects to `/studio/`, where Studio has only the gateway and connection pages.
 - `/health` returns `service: "openviking-gateway"`, `auth_mode` and `openviking_url`, and also the caller's identity when the request carries a valid OpenViking credential.
 
-**Public address.** For a shared deployment, set `public_url` to the address clients use to reach the gateway. Studio's setup guides build client settings from it: Anthropic clients use the address as is, and OpenAI-style clients add `/v1`. Without it, the guides use the address the browser used to open Studio, but upload links for file imports only work with `public_url` set; see [Import files and skills](#import-files-and-skills).
+**Public address.** For a shared deployment, set `public_url` to the address clients use to reach the server (or the standalone gateway), without `/gateway`; the gateway appends `/gateway` itself. Studio's setup guides build client settings from it: Anthropic clients use `<public_url>/gateway`, and OpenAI-style clients `<public_url>/gateway/v1`. Without it, the guides use the address the browser used to open Studio, but upload links for file imports only work with `public_url` set; see [Import files and skills](#import-files-and-skills).
 
 ### Docker Compose
 
 Turn on `gateway.enabled` in the mounted `ov.conf`, then run `docker compose up -d`. The gateway runs inside the `openviking` service; there is no separate service or profile.
 
 - **Management key**: set `OPENVIKING_GATEWAY_MANAGEMENT_KEY` in `.env`, and the bundled Compose file passes it into the container; or put it in `gateway.management_key` in the mounted `ov.conf`. The Compose file also passes `OPENVIKING_GATEWAY_ENCRYPTION_KEY`, which is only read once to migrate v0.5 data; see [Migration](#migration).
-- **Public address**: set `gateway.public_url` to the public address.
+- **Public address**: set `gateway.public_url` to the public address, without `/gateway`.
 - **After a configuration change**: run `docker compose restart openviking`; read startup errors with `docker compose logs openviking`.
 
 The bundled Caddy forwards all paths to `openviking:1933`. Clients can keep using the compatibility port 1934, or go straight to the server on 1933. For HTTPS, a single `reverse_proxy openviking:1933` carries Studio, the management API and model traffic; see [Public access](12-public-access.md).
@@ -228,7 +236,7 @@ When you choose a provider in the editor, its default Base URL is filled in:
   - Chat Completions and Responses append `/chat/completions` or `/responses`. A bare domain does not get `/v1` added, so OpenAI needs `https://api.openai.com/v1`.
   - Anthropic Messages appends `/v1/messages`, so the Base URL must not end in `/v1`; saving such a URL is rejected.
   - A trailing slash is removed. Addresses with a version path, such as `/api/paas/v4`, work as is.
-  - Requests that clients send to the Ark paths (`/api/v3/`, `/api/compatible/v1/`) follow the same rules.
+  - Requests that clients send to the Ark paths (`/gateway/api/v3/`, `/gateway/api/compatible/v1/`) follow the same rules.
   - An upstream has one Base URL. If a provider uses different addresses for different protocols, create separate upstreams. For example, Zhipu uses `https://open.bigmodel.cn/api/paas/v4` for Chat Completions and `https://open.bigmodel.cn/api/v1` for Responses. Ark Coding Plan uses `…/api/coding/v3` for Chat Completions and Responses and `…/api/coding` for Anthropic Messages.
 
   The editor previews the final request URL as you type. If an OpenAI or Ark address is missing its path, or an Anthropic address ends in `/v1`, it warns you and offers a one-click fix.
@@ -244,7 +252,7 @@ When you choose a provider in the editor, its default Base URL is filled in:
 
 #### Models
 
-- **Models** lists the model names this upstream serves. Leave it empty to accept any name. Only listed names and aliases appear in the model list (`/v1/models`).
+- **Models** lists the model names this upstream serves. Leave it empty to accept any name. Only listed names and aliases appear in the model list (`/gateway/v1/models`).
 - **Model aliases** map a name that clients use to the model sent to the upstream, for example the Claude model names Claude Code requests to a model your provider serves. Aliases appear in the model list, and the request log shows the name the client used.
 - **Context windows** records each model's window size in tokens (at least 1,024), keyed by the model name actually sent to the upstream, after aliases. Long conversations are compacted at a share of this window, so list every model whose window is smaller than 1,000,000 tokens; see [Long conversations](#long-conversations).
 
@@ -370,7 +378,7 @@ Only requests that reached a model provider are logged. Requests the gateway rej
 | Tool step | The same turn continuing, for example with tool results | Earlier memory replayed; saved with its turn |
 | Housekeeping | Title, summary, compaction, suggestion and permission-check requests | Earlier memory replayed; never saved |
 | Sub-agent | Requests from a client's sub-agents | Earlier memory replayed; never saved |
-| Token count | Token-counting requests (`/v1/messages/count_tokens`) | Earlier memory replayed, so the count matches what is actually sent |
+| Token count | Token-counting requests (`/gateway/v1/messages/count_tokens`) | Earlier memory replayed, so the count matches what is actually sent |
 | Forwarded | Requests passed through unchanged, without memory: other endpoints, Responses requests that rely on provider-side state, compressed or unreadable bodies | None |
 | Memory sync | Background saving events, not model requests | — |
 
@@ -576,8 +584,8 @@ Each request's detail in the request log shows the window number, whether the mo
 
 **Deleting data.** Revoking a gateway key, or the bound OpenViking key becoming invalid, does not delete user data. There are three ways to delete it:
 
-- An account admin or root uses **Delete this user's gateway data…** in Studio, or calls `DELETE /api/v1/admin/gateway/users/{user_id}/data`. This revokes the user's gateway keys and deletes their conversation state and logs, including content not yet saved.
-- Root calls `DELETE /api/v1/admin/gateway/account/data?account_id=<account>` to delete all gateway data of an account.
+- An account admin or root uses **Delete this user's gateway data…** in Studio, or calls `DELETE /gateway/admin/users/{user_id}/data`. This revokes the user's gateway keys and deletes their conversation state and logs, including content not yet saved.
+- Root calls `DELETE /gateway/admin/account/data?account_id=<account>` to delete all gateway data of an account.
 - In an embedded deployment, deleting a user or account in OpenViking also deletes the matching gateway data. A standalone deployment has no such step; its data stays until it is explicitly deleted or expires.
 
 None of this touches memories and sessions already stored in OpenViking. The reverse also holds: after you delete a memory in OpenViking, the copy the gateway saved for an ongoing conversation is still replayed until that conversation expires. To clear it now, delete the user's gateway data.
@@ -600,7 +608,7 @@ None of this touches memories and sessions already stored in OpenViking. The rev
 
 - **Watch the first-call cache hit rate.** It reflects prompt caching across turns and should stay close to what the provider reaches without the gateway. The **Within-turn cache hit rate** covers tool steps and is normally high. If the first-call rate drops noticeably, see [The first-call cache hit rate dropped](#the-first-call-cache-hit-rate-dropped).
 - **Use the request log to look into a single request.** Filter by new messages, tool steps or issues, then expand a row to see the recall result, saving status and why OpenViking tools were left out; see [Requests and overview](#requests-and-overview).
-- **Set the public address.** Set `public_url` to the address clients use, so client settings and upload links stay correct behind a reverse proxy.
+- **Set the public address.** Set `public_url` to the address clients use, without `/gateway`, so client settings and upload links stay correct behind a reverse proxy.
 - **Back up regularly.** Back up the gateway's storage directory and, with encryption on, OpenViking's root key; see **Backups** under [Security and data](#security-and-data).
 
 ### Upgrades
@@ -611,7 +619,7 @@ None of this touches memories and sessions already stored in OpenViking. The rev
 
 ### Monitoring
 
-The gateway exports no metrics such as Prometheus and writes no HTTP access log. Check its state on Studio's Overview and Requests tabs, or through the management API's `/api/v1/admin/gateway/overview` and `/api/v1/admin/gateway/logs`. Use `/health` for liveness: the server's health check in an embedded deployment, and the gateway's own in a standalone one.
+The gateway exports no metrics such as Prometheus and writes no HTTP access log. Check its state on Studio's Overview and Requests tabs, or through the management API's `/gateway/admin/overview` and `/gateway/admin/logs`. Use `/health` for liveness: the server's health check in an embedded deployment, and the gateway's own in a standalone one.
 
 ## Design trade-offs
 
@@ -642,7 +650,7 @@ Both forms use the same fields; they differ only in where the file lives and how
 | `port` | Standalone | `1935` | Listen port |
 | `workers` | Standalone | `1` | Worker processes, 1–64 |
 | `encryption` | Standalone | not set (plain text) | Same fields as the `encryption` section of `ov.conf`; see [Encryption](#encryption). Embedded gateways use the server's section |
-| `public_url` | Both | empty | The address clients use to reach the gateway; when empty, setup guides use the request's origin and file uploads do not work |
+| `public_url` | Both | empty | The external address clients use, without `/gateway` (the gateway appends it); when empty, setup guides use the request's origin and file uploads do not work |
 | `storage_path` | Both | `~/.openviking/gateway` | Local storage directory |
 | `management_key` | Both | empty | Optional gateway management key, at least 32 characters |
 | `min_server_version` | Both | `0.4.16` | Lowest OpenViking Server version a standalone gateway accepts |
@@ -723,8 +731,8 @@ These steps apply when you move from the sidecar or standalone gateway of earlie
 
 1. **Back up first.** Back up `storage_path` (both databases and `encryption.key`, if it is there). Stop the old gateway process or sidecar before you enable the embedded gateway.
 2. **Remove old fields.** Delete `host`, `port`, `workers`, `url`, `openviking_url`, `admin_token_env` and `encryption_key_env` from the `gateway` section of `ov.conf`. The server ignores them and logs a warning at startup, so an old `ov.conf` still starts, but clean them up. `openviking-server init` → **Update gateway** removes them for you. To keep running the gateway on its own instead, run `openviking-gateway init`, or move its settings to a separate `gateway.conf`, without the `gateway` wrapper and `enabled`. The standalone command no longer takes `--openviking-url`, `--host`, `--port`, `--workers` or `--storage-path`; set them in `gateway.conf` or as environment variables.
-3. **Fix the public address.** Point `public_url` at the server's public address, or remove it. The old quick start set it to `http://127.0.0.1:1935`, which the embedded gateway no longer listens on, so setup guides and upload links would point at nothing. When `public_url` points at another port, `openviking-server init` → **Update gateway** offers to clear it.
-4. **Update client addresses and deployment config.** Clients of an embedded gateway use the server port (1933 by default). Remove the old 1935 Service and Ingress routes, the Compose `gateway` service and profile, and the Helm sidecar settings `gateway.workers`, `gateway.port` and `gateway.resources`. `gateway.managementKeySecret` is gone: move its `management-key` entry into the Secret named in `gateway.existingSecret`. 1935 is still the standalone default port.
+3. **Fix the public address.** Point `public_url` at the server's public address, without `/gateway`, or remove it. The old quick start set it to `http://127.0.0.1:1935`, which the embedded gateway no longer listens on, so setup guides and upload links would point at nothing. When `public_url` points at another port, `openviking-server init` → **Update gateway** offers to clear it.
+4. **Update client addresses and deployment config.** Every gateway URL now lives under `/gateway`, so clients change both the port and the path: `http://host:1935/v1` becomes `http://host:1933/gateway/v1`, a Claude Code `ANTHROPIC_BASE_URL` of `http://host:1935` becomes `http://host:1933/gateway`, and Ark SDKs move to `http://host:1933/gateway/api/v3`. The old paths are not served any more. Scripts that call the management API move from `/api/v1/admin/gateway/...` to `/gateway/admin/...`. Remove the old 1935 Service and Ingress routes, the Compose `gateway` service and profile, and the Helm sidecar settings `gateway.workers`, `gateway.port` and `gateway.resources`. `gateway.managementKeySecret` is gone: move its `management-key` entry into the Secret named in `gateway.existingSecret`. 1935 is still the standalone default port, and a standalone gateway uses the same `/gateway` paths.
 5. **Let the first start convert stored data.** The v0.5 gateway encrypted its data with its own key. On the first start, the new gateway (embedded or standalone) decrypts it with that key and rewrites it under the current [encryption](#encryption) settings, or in plain text when encryption is off, so turn on OpenViking encryption before this start if you want the data to stay encrypted. The old key is read from the `OPENVIKING_GATEWAY_ENCRYPTION_KEY` environment variable, or from `encryption.key` in `storage_path`. `encryption_key_env` is ignored: if you used it to point at another variable, export the key as `OPENVIKING_GATEWAY_ENCRYPTION_KEY` for this start. If old encrypted data exists and neither source has the key, the gateway refuses to start and the error names both places. With Helm, keep the `encryption-key` entry in the `existingSecret` Secret for the upgrade release only. After a successful start the old key is never read again, so you can remove the variable, the Secret entry and `encryption.key`.
 6. **Remove the shared admin token.** `OPENVIKING_GATEWAY_ADMIN_TOKEN` is **not** used as a management key. To restrict who can change upstreams and context profiles, set `management_key` explicitly.
 7. **Check upstream addresses.** On first start, the gateway rewrites stored Base URLs once, so each upstream keeps calling the same address as before the upgrade:
@@ -847,7 +855,7 @@ When the provider rejects a long conversation as too long, it is usually one of 
 ### File imports fail
 
 - "Set gateway.public_url for client uploads": set `public_url` to an address the client can reach.
-- The upload link is unreachable or returns 404: make sure `public_url` is not an old `:1935` address and that your proxy forwards `/gateway/uploads` like the other paths.
+- The upload link is unreachable or returns 404: make sure `public_url` is not an old `:1935` address, does not already end in `/gateway`, and that your proxy forwards `/gateway/uploads` like the other paths.
 - 413: the file is larger than `max_body_bytes` or the proxy's limit.
 - 502 "OpenViking upload is unavailable": the gateway cannot reach OpenViking Server.
 - The model has no import tool: the OpenViking service does not provide it, the profile has it unchecked, or this request cannot use gateway tools. Check the tool list and the request detail.

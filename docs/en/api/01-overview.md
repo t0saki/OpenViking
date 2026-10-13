@@ -538,25 +538,25 @@ When the gateway runs inside the server, use the server's port; when it runs sta
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/v1/admin/gateway/access` | Read the caller's permissions and deployment warnings |
-| GET | `/api/v1/admin/gateway/guides` | Read the gateway address clients use |
-| GET | `/api/v1/admin/gateway/tools` | List the OpenViking tools available to the caller |
-| GET | `/api/v1/admin/gateway/upstreams/{identifier}` | Read one upstream |
-| GET | `/api/v1/admin/gateway/policies/{identifier}` | Read one context profile |
-| GET | `/api/v1/admin/gateway/keys/{identifier}` | Read one gateway key (without the secret) |
-| GET | `/api/v1/admin/gateway/overview` | Read the usage overview within the caller's scope |
-| GET | `/api/v1/admin/gateway/logs` | Read the request logs the caller can see |
-| GET | `/api/v1/admin/gateway/upstreams` | List the account's upstreams |
-| PUT / DELETE | `/api/v1/admin/gateway/upstreams/{identifier}` | Create/replace or delete an upstream |
-| POST | `/api/v1/admin/gateway/upstreams/{identifier}/test` | Test an upstream connection |
-| POST | `/api/v1/admin/gateway/upstreams/import-vlm` | Import the server's VLM settings as upstreams (embedded only) |
-| GET | `/api/v1/admin/gateway/policies` | List the account's context profiles |
-| PUT / DELETE | `/api/v1/admin/gateway/policies/{identifier}` | Create/replace or delete a context profile |
-| GET / POST | `/api/v1/admin/gateway/keys` | List the gateway keys the caller can see, or issue a new one |
-| DELETE | `/api/v1/admin/gateway/keys/{identifier}` | Revoke a gateway key |
-| POST | `/api/v1/admin/gateway/keys/{identifier}/capture/reset` | Start saving a conversation again |
-| DELETE | `/api/v1/admin/gateway/users/{user_id}/data` | Admin or root: delete a user's gateway data |
-| DELETE | `/api/v1/admin/gateway/account/data` | Root: delete an account's gateway data |
+| GET | `/gateway/admin/access` | Read the caller's permissions and deployment warnings |
+| GET | `/gateway/admin/guides` | Read the gateway address clients use |
+| GET | `/gateway/admin/tools` | List the OpenViking tools available to the caller |
+| GET | `/gateway/admin/upstreams/{identifier}` | Read one upstream |
+| GET | `/gateway/admin/policies/{identifier}` | Read one context profile |
+| GET | `/gateway/admin/keys/{identifier}` | Read one gateway key (without the secret) |
+| GET | `/gateway/admin/overview` | Read the usage overview within the caller's scope |
+| GET | `/gateway/admin/logs` | Read the request logs the caller can see |
+| GET | `/gateway/admin/upstreams` | List the account's upstreams |
+| PUT / DELETE | `/gateway/admin/upstreams/{identifier}` | Create/replace or delete an upstream |
+| POST | `/gateway/admin/upstreams/{identifier}/test` | Test an upstream connection |
+| POST | `/gateway/admin/upstreams/import-vlm` | Import the server's VLM settings as upstreams (embedded only) |
+| GET | `/gateway/admin/policies` | List the account's context profiles |
+| PUT / DELETE | `/gateway/admin/policies/{identifier}` | Create/replace or delete a context profile |
+| GET / POST | `/gateway/admin/keys` | List the gateway keys the caller can see, or issue a new one |
+| DELETE | `/gateway/admin/keys/{identifier}` | Revoke a gateway key |
+| POST | `/gateway/admin/keys/{identifier}/capture/reset` | Start saving a conversation again |
+| DELETE | `/gateway/admin/users/{user_id}/data` | Admin or root: delete a user's gateway data |
+| DELETE | `/gateway/admin/account/data` | Root: delete an account's gateway data |
 
 ### [OpenViking Assets](22-openviking-assets.md), [WebDAV](20-webdav.md), [Agent Runtime API](23-agent-runtime.md), and [VikingBot API](24-vikingbot.md)
 

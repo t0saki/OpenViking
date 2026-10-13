@@ -1,8 +1,8 @@
 # OpenViking 网关管理 API
 
-管理 API 用来查看权限、配置上游和上下文配置、签发网关密钥、读取用量和日志。所有路径都以 `/api/v1/admin/gateway/` 开头，由网关直接提供：网关在 OpenViking Server 内运行时，访问 Server 的端口（默认 1933）；独立运行时，访问网关自己的端口（默认 1935）。
+管理 API 用来查看权限、配置上游和上下文配置、签发网关密钥、读取用量和日志。所有路径都以 `/gateway/admin/` 开头，由网关直接提供：网关在 OpenViking Server 内运行时，访问 Server 的端口（默认 1933）；独立运行时，访问网关自己的端口（默认 1935）。示例中的 `SERVER_URL` 指这个地址本身，不带路径，例如 `http://127.0.0.1:1933`。
 
-模型客户端不调用这组接口。它们用网关密钥访问 `/v1/*`、`/api/v3/*` 或 `/api/compatible/v1/*`，见[OpenViking 网关](../guides/15-gateway.md#接入客户端)。
+模型客户端不调用这组接口。它们用网关密钥访问 `/gateway/v1/*`、`/gateway/api/v3/*` 或 `/gateway/api/compatible/v1/*`，见[OpenViking 网关](../guides/15-gateway.md#接入客户端)。
 
 ## 凭证和账号范围
 
@@ -30,16 +30,16 @@
 
 | 方法 | 路径 | 返回 |
 | --- | --- | --- |
-| GET | `/api/v1/admin/gateway/access` | 调用方的权限：`managed`、`can_write_objects`、`can_import_vlm`、`can_issue_for_others`、`role`、`account_id`、`user_id`、`warnings` |
-| GET | `/api/v1/admin/gateway/overview` | 调用方可见的最近 10,000 条日志汇总：用量、缓存命中、召回、保存异常、OpenViking 状态和日志保留期 |
-| GET | `/api/v1/admin/gateway/logs` | 调用方可见的最新日志；`limit` 默认 200，取值 1–1000 |
-| GET | `/api/v1/admin/gateway/guides` | 客户端接入地址 `base_url`，以及 `public_url_configured`；未设置 `public_url` 时，`base_url` 取请求的来源地址 |
-| GET | `/api/v1/admin/gateway/tools` | 调用方能用的 OpenViking 工具：名称、描述和 annotations，用调用方自己的 OpenViking 密钥读取 |
+| GET | `/gateway/admin/access` | 调用方的权限：`managed`、`can_write_objects`、`can_import_vlm`、`can_issue_for_others`、`role`、`account_id`、`user_id`、`warnings` |
+| GET | `/gateway/admin/overview` | 调用方可见的最近 10,000 条日志汇总：用量、缓存命中、召回、保存异常、OpenViking 状态和日志保留期 |
+| GET | `/gateway/admin/logs` | 调用方可见的最新日志；`limit` 默认 200，取值 1–1000 |
+| GET | `/gateway/admin/guides` | 客户端接入地址 `base_url`，以及 `public_url_configured`；`base_url` 是 `public_url` 加 `/gateway`，未设置 `public_url` 时取请求的来源地址加 `/gateway` |
+| GET | `/gateway/admin/tools` | 调用方能用的 OpenViking 工具：名称、描述和 annotations，用调用方自己的 OpenViking 密钥读取 |
 
 Studio 只根据 `/access` 决定显示哪些按钮，自己写的管理工具也应这样做。独立网关连接公共 OpenViking 服务且没有设置管理密钥时，`warnings` 中会出现 `public_openviking_without_management_key`。它只是告警，不限制任何操作。
 
 ```bash
-curl "$GATEWAY_URL/api/v1/admin/gateway/access" \
+curl "$SERVER_URL/gateway/admin/access" \
   -H "X-API-Key: $OPENVIKING_API_KEY"
 ```
 
@@ -62,16 +62,16 @@ OpenViking 拒绝 API 密钥时，返回 401 `openviking_http_401`。
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| GET | `/api/v1/admin/gateway/upstreams` | 列出上游 |
-| GET | `/api/v1/admin/gateway/upstreams/{identifier}` | 读取单个上游 |
-| PUT | `/api/v1/admin/gateway/upstreams/{identifier}` | 创建或替换上游 |
-| DELETE | `/api/v1/admin/gateway/upstreams/{identifier}` | 删除没有密钥在用的上游 |
-| POST | `/api/v1/admin/gateway/upstreams/{identifier}/test` | 测试上游连接 |
-| POST | `/api/v1/admin/gateway/upstreams/import-vlm` | 导入 OpenViking 的模型配置 |
-| GET | `/api/v1/admin/gateway/policies` | 列出上下文配置 |
-| GET | `/api/v1/admin/gateway/policies/{identifier}` | 读取单个上下文配置 |
-| PUT | `/api/v1/admin/gateway/policies/{identifier}` | 创建或替换上下文配置 |
-| DELETE | `/api/v1/admin/gateway/policies/{identifier}` | 删除没有密钥在用的上下文配置 |
+| GET | `/gateway/admin/upstreams` | 列出上游 |
+| GET | `/gateway/admin/upstreams/{identifier}` | 读取单个上游 |
+| PUT | `/gateway/admin/upstreams/{identifier}` | 创建或替换上游 |
+| DELETE | `/gateway/admin/upstreams/{identifier}` | 删除没有密钥在用的上游 |
+| POST | `/gateway/admin/upstreams/{identifier}/test` | 测试上游连接 |
+| POST | `/gateway/admin/upstreams/import-vlm` | 导入 OpenViking 的模型配置 |
+| GET | `/gateway/admin/policies` | 列出上下文配置 |
+| GET | `/gateway/admin/policies/{identifier}` | 读取单个上下文配置 |
+| PUT | `/gateway/admin/policies/{identifier}` | 创建或替换上下文配置 |
+| DELETE | `/gateway/admin/policies/{identifier}` | 删除没有密钥在用的上下文配置 |
 
 ID 由调用方指定。`PUT` 提交完整对象，未知字段会导致校验失败。各字段的含义、默认值和取值范围见[配置参考](../guides/22-gateway-operations.md#配置参考)。
 
@@ -82,7 +82,7 @@ ID 由调用方指定。`PUT` 提交完整对象，未知字段会导致校验�
 - 可编辑视图返回 `has_api_key` 和 `header_names`，不返回值。
 
 ```bash
-curl -X PUT "$GATEWAY_URL/api/v1/admin/gateway/upstreams/openai?account_id=team" \
+curl -X PUT "$SERVER_URL/gateway/admin/upstreams/openai?account_id=team" \
   -H "X-OpenViking-Gateway-Management-Key: $GATEWAY_MANAGEMENT_KEY" \
   -H "Content-Type: application/json" \
   -d '{"name":"OpenAI","protocol":"chat","base_url":"https://api.openai.com/v1","api_key":"<provider-key>"}'
@@ -92,7 +92,7 @@ curl -X PUT "$GATEWAY_URL/api/v1/admin/gateway/upstreams/openai?account_id=team"
 
 ### 连接测试
 
-`POST /api/v1/admin/gateway/upstreams/{identifier}/test` 用已存的凭证请求服务商的模型列表，超时 10 秒，返回 `{ok, status, reason, url}`；没有收到响应时不含 `status`。只读调用方也能使用。Anthropic 上游同时在 `x-api-key` 和 `Authorization: Bearer` 中发送密钥，Chat Completions 和 Responses 上游只发送 Bearer。
+`POST /gateway/admin/upstreams/{identifier}/test` 用已存的凭证请求服务商的模型列表，超时 10 秒，返回 `{ok, status, reason, url}`；没有收到响应时不含 `status`。只读调用方也能使用。Anthropic 上游同时在 `x-api-key` 和 `Authorization: Bearer` 中发送密钥，Chat Completions 和 Responses 上游只发送 Bearer。
 
 | 服务商的响应 | `reason` | `ok` |
 | --- | --- | --- |
@@ -107,7 +107,7 @@ curl -X PUT "$GATEWAY_URL/api/v1/admin/gateway/upstreams/openai?account_id=team"
 
 ### 导入 VLM 配置
 
-`POST /api/v1/admin/gateway/upstreams/import-vlm` 把 OpenViking Server 的 VLM 凭证导入为所选账号的上游，只在嵌入部署中可用；独立网关返回 404 `vlm_import_unavailable`。
+`POST /gateway/admin/upstreams/import-vlm` 把 OpenViking Server 的 VLM 凭证导入为所选账号的上游，只在嵌入部署中可用；独立网关返回 404 `vlm_import_unavailable`。
 
 每个导入的上游 ID 固定为 `vlm-<credential id>`，重复导入不会产生重复的上游。再次导入时，来自服务端的字段（`base_url`、`api_key`、`headers`、`protocol`、`vendor`、`coding_plan`）按服务端配置刷新，其他字段保留在网关里改过的值，包括 `name`、`enabled`、`priority`、`models`、`aliases`、`context_windows` 和 `allow_coding_plan`。路径中含 `coding` 或 `plan` 段的上游会被标为 Coding Plan，在设置 `allow_coding_plan` 之前归入 `needs_confirmation`。
 
@@ -131,13 +131,13 @@ curl -X PUT "$GATEWAY_URL/api/v1/admin/gateway/upstreams/openai?account_id=team"
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| GET | `/api/v1/admin/gateway/keys` | 列出调用方可见的密钥，不含密钥本身 |
-| GET | `/api/v1/admin/gateway/keys/{identifier}` | 读取单个可见密钥 |
-| POST | `/api/v1/admin/gateway/keys` | 签发密钥，响应中的 `key` 是唯一一次返回的完整密钥 |
-| DELETE | `/api/v1/admin/gateway/keys/{identifier}` | 吊销密钥，保留用户数据 |
-| POST | `/api/v1/admin/gateway/keys/{identifier}/capture/reset` | 让一段对话重新开始保存 |
-| DELETE | `/api/v1/admin/gateway/users/{user_id}/data` | admin 或 root：吊销该用户的全部密钥，删除其对话状态和日志 |
-| DELETE | `/api/v1/admin/gateway/account/data` | root：删除账号的全部网关对象、密钥、对话状态和日志 |
+| GET | `/gateway/admin/keys` | 列出调用方可见的密钥，不含密钥本身 |
+| GET | `/gateway/admin/keys/{identifier}` | 读取单个可见密钥 |
+| POST | `/gateway/admin/keys` | 签发密钥，响应中的 `key` 是唯一一次返回的完整密钥 |
+| DELETE | `/gateway/admin/keys/{identifier}` | 吊销密钥，保留用户数据 |
+| POST | `/gateway/admin/keys/{identifier}/capture/reset` | 让一段对话重新开始保存 |
+| DELETE | `/gateway/admin/users/{user_id}/data` | admin 或 root：吊销该用户的全部密钥，删除其对话状态和日志 |
+| DELETE | `/gateway/admin/account/data` | root：删除账号的全部网关对象、密钥、对话状态和日志 |
 
 签发请求体：
 
@@ -158,7 +158,7 @@ curl -X PUT "$GATEWAY_URL/api/v1/admin/gateway/upstreams/openai?account_id=team"
 - root API 密钥不能绑定到网关密钥，本地 dev 的 `default/default` 例外。
 
 ```bash
-curl -X POST "$GATEWAY_URL/api/v1/admin/gateway/keys?account_id=team" \
+curl -X POST "$SERVER_URL/gateway/admin/keys?account_id=team" \
   -H "X-API-Key: $OPENVIKING_API_KEY" -H "Content-Type: application/json" \
   -d '{"name":"Alice laptop","user_id":"alice","policy_id":"default","upstream_ids":["openai"]}'
 ```

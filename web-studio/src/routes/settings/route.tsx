@@ -68,7 +68,7 @@ function ConnectionSettingsRoute() {
 async function openvikingUnreachable(baseUrl: string, apiKey: string) {
   try {
     const response = await fetch(
-      `${baseUrl.replace(/\/+$/, '')}/api/v1/admin/gateway/access`,
+      `${baseUrl.replace(/\/+$/, '')}/gateway/admin/access`,
       { headers: { 'X-API-Key': apiKey } },
     )
     const body: unknown = await response.json()
