@@ -457,6 +457,24 @@ printf '%s|%s|%s\\n' "$PROBE_RESULT" "$CRED_URL" "$CRED_KEY"
   assert.equal(result.stdout.trim().split("\n").pop(), `ok|${url}|fresh-key`);
 });
 
+test("the onboarding guide is linked on the docs host the downloads came from, in the UI language", () => {
+  const cases = [
+    ["https://docs.openviking.ai/dl", "en", "https://docs.openviking.ai/agents/en/onboarding.md"],
+    ["https://docs.openviking.net/dl", "en", "https://docs.openviking.net/agents/en/onboarding.md"],
+    ["https://docs.openviking.net/dl", "zh", "https://docs.openviking.net/agents/zh/onboarding.md"],
+    ["https://docs.openviking.ai/dl", "zh", "https://docs.openviking.ai/agents/zh/onboarding.md"],
+    // A mirror or a dev checkout names neither host: Chinese goes to the .net mirror.
+    ["https://mirror.example.com/dl", "en", "https://docs.openviking.ai/agents/en/onboarding.md"],
+    ["", "zh", "https://docs.openviking.net/agents/zh/onboarding.md"],
+    // A look-alike host is not the docs site.
+    ["https://docs.openviking.net.example.com/dl", "en", "https://docs.openviking.ai/agents/en/onboarding.md"],
+  ];
+  const body = cases.map(([base, lang]) => `DOWNLOAD_BASE=${JSON.stringify(base)}; UI_LANG=${lang}; onboarding_url`).join("\n");
+  const result = runInstallerPrelude(body);
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(result.stdout.trim().split("\n"), cases.map(([, , url]) => url));
+});
+
 // A copy away from the checkout, so the run is not in dev mode and the
 // release installer is not fetched.
 function detachedInstaller(t, transform = (source) => source) {
@@ -568,6 +586,8 @@ test("a non-interactive run with no server says so and how to re-run", (t) => {
   assert.match(result.stdout, /\[4\/4\] Validation/);
   assert.match(result.stdout, /DeepSeek Harness\n {4}Next: .*\n {4}Updates: re-run this installer\n {4}Uninstall: dsh plugin --profile web rm @openviking\/dsh-memory-plugin/);
   assert.equal(JSON.parse(readFileSync(join(home, ".openviking", "ovcli.conf"), "utf8")).url, "http://127.0.0.1:1933");
+  // The last thing said is where the agent goes next.
+  assert.match(result.stdout, /==> Get started: have your agent follow the onboarding guide at https:\/\/docs\.openviking\.ai\/agents\/en\/onboarding\.md\n$/);
 
   // Once a server is configured, a re-run has nothing to warn about.
   const again = run(["--harness", "dsh", "--lang", "en", "--yes"]);

@@ -3270,6 +3270,20 @@ next_steps() { # next_steps <name> <next> <updates> <verify> <uninstall>
   printf '    %s %s\n' "$(t 'Uninstall:' '卸载：')" "$5"
 }
 
+# The agent onboarding guide on the docs host the downloads came from, so a
+# machine that reached only docs.openviking.net is not sent to .ai. Any other
+# download location falls back by language.
+onboarding_url() {
+  local host=docs.openviking.ai lang=en
+  [ "$UI_LANG" != "zh" ] || lang=zh
+  case "$DOWNLOAD_BASE" in
+    *://docs.openviking.net/*|*://docs.openviking.net) host=docs.openviking.net ;;
+    *://docs.openviking.ai/*|*://docs.openviking.ai) ;;
+    *) [ "$lang" != "zh" ] || host=docs.openviking.net ;;
+  esac
+  printf 'https://%s/agents/%s/onboarding.md\n' "$host" "$lang"
+}
+
 print_next_steps() {
   local label updates rerun uninstall doctor client remove
   rerun="$(t 're-run this installer' '重新运行本安装脚本')"
@@ -3338,6 +3352,8 @@ EOF
     next_steps "CLI (ov)" "$(t 'run ov health, which uses the same credentials' '运行 ov health，它使用同一份凭据')" "$rerun" "" \
       "$(cli_uninstall_command)"
   fi
+  printf '\n'
+  info "$(t 'Get started: have your agent follow the onboarding guide at' '开始使用：让 Agent 按接入引导继续：') $(onboarding_url)"
 }
 
 # ---------------------------------------------------------------------------
