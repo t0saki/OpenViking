@@ -6,7 +6,7 @@ description: Give any API-key model client OpenViking memory by pointing it at O
 
 OpenViking Gateway is a model API proxy. Any client that lets you change its base URL can use it to get OpenViking memory. You change two settings: the base URL becomes the gateway address, and the provider's API key becomes a gateway key. There is no plugin to install and no code or prompt to change.
 
-For an animated walkthrough of how the gateway works, see [openviking.ai/gateway](https://openviking.ai/gateway) (also at [openviking.net/gateway](https://openviking.net/gateway)).
+For an animated walkthrough of how the gateway works, see [openviking.ai/gateway](https://openviking.ai/gateway).
 
 While it forwards a request, the gateway does three things:
 
