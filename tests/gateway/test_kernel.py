@@ -301,6 +301,21 @@ async def test_recall_uses_server_rendered_and_uri_only_entries(
     assert uri in viking.recalls[-1][2]
 
 
+async def test_served_directory_is_not_echoed_into_exclude(setup_kernel, credential, policy):
+    """exclude_uris matches a subtree, so a served directory would hide new files under it."""
+    kernel, _, viking, _ = setup_kernel
+    folder = "viking://user/alice/memories/preferences"
+    viking.entries[:] = [{"uri": f"{folder}/kestrel-theme.md"}, {"uri": folder}]
+    body = {"messages": [{"role": "user", "content": "Which theme do I like?"}]}
+    await prepare(kernel, body, credential, policy)
+    body["messages"] += [
+        {"role": "assistant", "content": "Kestrel"},
+        {"role": "user", "content": "And my region?"},
+    ]
+    await prepare(kernel, body, credential, policy)
+    assert viking.recalls[-1][2] == [f"{folder}/kestrel-theme.md"]
+
+
 async def test_empty_server_rendered_does_not_fall_back_to_entries(
     setup_kernel, credential, policy
 ):
