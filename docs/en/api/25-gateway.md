@@ -4,7 +4,7 @@ The gateway owns `/api/v1/admin/gateway/*` in both embedded and standalone deplo
 
 ## Credentials and account scope
 
-Send an OpenViking API key in `X-API-Key` or `Authorization: Bearer`. The gateway verifies identity through OpenViking `/health`, caching successful results by credential digest for 30 seconds. Local dev uses root identity `default/default`; trusted authentication is unsupported.
+Send an OpenViking API key in `X-API-Key` or `Authorization: Bearer`. The gateway asks OpenViking who the key belongs to and remembers a successful answer for 30 seconds. Local dev uses root identity `default/default`; trusted authentication is unsupported.
 
 Upstreams and context profiles (`policies`) belong to an account. `account_id` is an optional query parameter, defaulting to the caller's account. Root can select any account. Admins and users remain in their own account for identity-dependent operations.
 
@@ -41,6 +41,21 @@ curl "$GATEWAY_URL/api/v1/admin/gateway/access" \
   -H "X-API-Key: $OPENVIKING_API_KEY"
 ```
 
+```json
+{
+  "managed": true,
+  "can_write_objects": false,
+  "can_import_vlm": false,
+  "can_issue_for_others": true,
+  "role": "admin",
+  "account_id": "team",
+  "user_id": "alice",
+  "warnings": []
+}
+```
+
+An invalid OpenViking API key returns 401 `openviking_http_401`.
+
 ## Upstreams and profiles
 
 | Method | Path | Description |
@@ -58,7 +73,7 @@ curl "$GATEWAY_URL/api/v1/admin/gateway/access" \
 
 Choose IDs yourself. `PUT` takes a complete object; unknown fields fail validation. Field defaults and limits are in the [configuration reference](../guides/22-gateway-operations.md#configuration-reference).
 
-API keys and header values are write-only. Writable upstream views return `has_api_key` and `header_names`; read-only views retain `has_api_key` and `auth_mode` but hide headers and their names. A blank/omitted `api_key` keeps the stored key **only if `base_url` is unchanged**. When changing the base, submit a new API key; otherwise the old key is cleared. When the base is unchanged, omitted `headers` preserve stored headers; supplied names replace the set, and blank values keep existing values for those names. Changing `base_url` also clears retained headers: re-enter every custom header value required at the new destination.
+API keys and header values are write-only. Writable upstream views return `has_api_key` and `header_names`; read-only views keep `has_api_key` and `auth_mode` and leave out headers and their names. While `base_url` stays the same, a blank or omitted `api_key` keeps the stored key, omitted `headers` keep the stored headers, and a supplied `headers` object replaces the set, where a blank value keeps the stored value for that name. **Changing `base_url` clears the stored API key and header values**: send every secret the new address needs.
 
 ```bash
 curl -X PUT "$GATEWAY_URL/api/v1/admin/gateway/upstreams/openai?account_id=team" \
@@ -67,11 +82,40 @@ curl -X PUT "$GATEWAY_URL/api/v1/admin/gateway/upstreams/openai?account_id=team"
   -d '{"name":"OpenAI","protocol":"chat","base_url":"https://api.openai.com/v1","api_key":"<provider-key>"}'
 ```
 
-Deleting an object still referenced by keys returns 409 `in_use` with `key_count`. Revoke those keys first, or disable an upstream to stop requests immediately. Existing gateway keys cannot be edited.
+Deleting an object still referenced by keys returns 409 `in_use` with `key_count`. Revoke those keys first, or disable an upstream to stop requests immediately.
 
-Connection tests return `{ok, status, reason, url}` (network failures omit `status`). 2xx with a `data` array passes (`passed`); 2xx failure bodies and 401/403 return `upstream_key_rejected`; 404/405 are reachable with no model list (`models_unavailable`, `ok: true`, key unverified); 429 is reachable (`rate_limited`, `ok: true`); network/5xx failures return `upstream_unavailable`. Tests time out after 10 seconds and remain available in read-only views.
+### Connection tests
 
-VLM imports return `{imported, needs_confirmation, skipped}`. Entries use stable `vlm-<credential id>` IDs; repeat imports update them. Coding/Plan endpoints require `allow_coding_plan` confirmation. Skipped reasons include `openai_codex` (refreshing OAuth token), `azure` (requires api-version) and `litellm_no_api_base` (set api_base before retrying). Standalone gateways return `vlm_import_unavailable`.
+`POST upstreams/{identifier}/test` requests the provider's model list with the stored credentials and returns `{ok, status, reason, url}`; `status` is omitted when no response arrived. Tests time out after 10 seconds and remain available in read-only views. Anthropic upstreams send the key as both `x-api-key` and `Authorization: Bearer`; Chat Completions and Responses upstreams send Bearer only.
+
+| Provider response | `reason` | `ok` |
+| --- | --- | --- |
+| No API key available: none is stored, or the upstream expects each client to send its own. No request is sent. | `upstream_key_missing` | `false` |
+| 2xx with a `data` array | `passed` | `true` |
+| 2xx with a failure body, 401, 403 | `upstream_key_rejected` | `false` |
+| 404, 405: reachable, but no model list; the key is unverified | `models_unavailable` | `true` |
+| 429: reachable | `rate_limited` | `true` |
+| Network failure or 5xx | `upstream_unavailable` | `false` |
+
+### Import VLM settings
+
+`POST upstreams/import-vlm` turns the embedded server's VLM credentials into upstreams in the selected account. Each one gets the stable ID `vlm-<credential id>`. Importing again refreshes the fields that come from the server (`base_url`, `api_key`, `headers`, `protocol`, `vendor`, `coding_plan`) and keeps every other field as edited in the gateway, including `name`, `enabled`, `priority`, `models`, `aliases`, `context_windows` and `allow_coding_plan`. Upstreams on Coding/Plan paths land in `needs_confirmation` until `allow_coding_plan` is set. Standalone gateways return 404 `vlm_import_unavailable`.
+
+```json
+{
+  "imported": [{"id": "vlm-default", "name": "default"}],
+  "needs_confirmation": [{"id": "vlm-coding", "name": "coding"}],
+  "skipped": [{"id": "vlm-codex", "reason": "openai_codex"}]
+}
+```
+
+| Skip `reason` | Cause |
+| --- | --- |
+| `openai_codex` | The credential is a Codex OAuth token that refreshes itself. |
+| `azure` | Azure needs an `api-version` the gateway does not send. |
+| `litellm_no_api_base` | A LiteLLM credential without `api_base`; set it in OpenViking and import again. |
+| `litellm_unsupported_route` | A LiteLLM route that does not speak the OpenAI Chat Completions API, such as `gemini/`, `bedrock/` or `vertex_ai/`. Add the provider as an upstream manually. |
+| `invalid_configuration` | The credential does not form a valid upstream, for example an unusable base URL. |
 
 ## Gateway keys
 
@@ -93,7 +137,24 @@ curl -X POST "$GATEWAY_URL/api/v1/admin/gateway/keys?account_id=team" \
   -d '{"name":"Alice laptop","user_id":"alice","policy_id":"default","upstream_ids":["openai"]}'
 ```
 
-Copy the returned `key` (`ovgw_…`) immediately; subsequent reads show only its prefix and metadata. `PUT keys/{id}` returns 405 `replacement_key_required`: issue a replacement and revoke the original. Regenerating or revoking the bound OpenViking key invalidates the gateway key after identity-cache expiry (up to 30 seconds); this does not delete stored user data.
+```json
+{
+  "id": "3f9c…",
+  "name": "Alice laptop",
+  "user_id": "alice",
+  "policy_id": "default",
+  "upstream_ids": ["openai"],
+  "models": [],
+  "prefix": "ovgw_Xk2pQ7a",
+  "created_at": 1760000000.0,
+  "revision": 1,
+  "key": "ovgw_Xk2pQ7a…"
+}
+```
+
+Copy the returned `key` immediately. `GET keys` and `GET keys/{identifier}` return the same fields without `key`. Keys cannot be edited and have no `PUT`; issue a replacement and revoke the original.
+
+When the bound OpenViking API key is regenerated or its user removed, OpenViking answers 401 and the gateway deletes the gateway key within about 30 seconds; stored user data stays. If OpenViking is unreachable or answers with another error, requests continue and the key is kept.
 
 Capture reset takes `{"session":"<header value or logged session>","protocol":"chat"}`, where protocol is `chat`, `anthropic` or `responses`. It returns `{"status":"ready","message":"…"}` or 404 `not_found`.
 
@@ -101,7 +162,7 @@ Explicit data deletion removes pending conversation content and logs in the gate
 
 ## Errors
 
-Gateway failures contain a stable top-level `reason`, for example `{"reason":"in_use","detail":"in_use","key_count":2}`. Credential/service failures may also include `error: {message, reason}`. Match `reason`, not message text. An embedded server with Gateway disabled has no management route (404); Studio presents this as `not_enabled`.
+Management errors carry a stable top-level `reason` and a short English `detail`, plus extra fields where noted, for example `{"reason":"in_use","detail":"Gateway keys still use this object; revoke them first.","key_count":2}`. Match `reason`, not `detail` or message text. An embedded server with Gateway disabled has no management route (404); Studio presents this as `not_enabled`.
 
 | HTTP | reason | Next step |
 | --- | --- | --- |
@@ -112,7 +173,7 @@ Gateway failures contain a stable top-level `reason`, for example `{"reason":"in
 | 403 | `other_account` | Choose an account inside caller scope |
 | 401 | `openviking_http_401` | OpenViking rejected credential; reconnect |
 | 502 / 503 | `openviking_unavailable / openviking_unreachable` | Check service connectivity and standalone --openviking-url |
-| 503 | `openviking_version_mismatch` | Upgrade to min_server_version or later |
+| 503 | `openviking_version_mismatch` | Standalone gateways only: upgrade OpenViking to min_server_version or later |
 | 403 | `trusted_mode_unsupported` | Use API key authentication |
 | 409 | `in_use` | key_count keys reference the object |
 | 403 | `vlm_import_forbidden` | Recheck /access and import authority |
@@ -120,10 +181,9 @@ Gateway failures contain a stable top-level `reason`, for example `{"reason":"in
 | 400 | `unknown_user / unknown_policy / unknown_upstream` | Choose existing user or object |
 | 403 | `forbidden` | Operation outside caller role/user scope |
 | 404 | `not_found` | Resource missing or not visible |
-| 405 | `replacement_key_required` | Issue a replacement key |
 | 422 | `invalid_configuration` | Fix body or base URL; submitted secrets are not echoed |
 | 401 | `openviking_identity_missing` | Credential did not resolve to a user |
 
-Other OpenViking HTTP failures use `openviking_http_<status>`; generic gateway HTTP errors use `gateway_http_<status>`. Model-client 401 errors can mean a missing, wrong or revoked `ovgw_` key, or an invalidated bound OpenViking key. Check the client key and reissue it with a current user key.
+Other OpenViking HTTP failures use `openviking_http_<status>`; generic gateway HTTP errors use `gateway_http_<status>`, for example 405 `gateway_http_405` for a method a route does not support. Model-client 401 errors can mean a missing, wrong or revoked `ovgw_` key, or an invalidated bound OpenViking key. Check the client key and reissue it with a current user key.
 
 See [Deployment and operations](../guides/22-gateway-operations.md) for configuration, migration and URL rules.

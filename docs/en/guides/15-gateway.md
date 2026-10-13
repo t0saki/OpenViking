@@ -33,17 +33,13 @@ See [Upstreams](22-gateway-operations.md#upstreams) for how to add one; choose *
 
 ## Architecture at a glance
 
-```text
-Client → OpenViking Server :1933 → embedded Gateway → model provider
-                                      ↓
-                              OpenViking memory APIs
-```
+![OpenViking Gateway architecture in its two forms. Embedded: clients call the OpenViking Server port, which passes the model API, upload and gateway management paths to the gateway in the same process; the gateway searches and saves memory over loopback HTTP with the user's own OpenViking key. Standalone: openviking-gateway on its own port serves the same paths and a gateway-only Studio, and calls an existing OpenViking service over HTTP(S). Either way the gateway forwards each request to the upstream model provider in the same API, sessions and memories live in OpenViking, and the gateway keeps only two encrypted SQLite files](../../images/gateway/architecture.en.svg)
 
-- **Where it runs**: embedded on the Server port, or standalone against an existing OpenViking service. Both provide the same client paths. See [Deployment options](22-gateway-operations.md#deployment-options).
+- **Where it runs**: embedded in OpenViking Server on the server port, or standalone with `openviking-gateway` against an existing OpenViking service, open source or OpenViking Cloud. Both serve the same client paths. See [Deployment options](22-gateway-operations.md#deployment-options).
 - **How it relates to OpenViking**: the gateway only calls OpenViking's public APIs. Embedding and memory extraction happen inside OpenViking.
 - **Where the data lives**: sessions and memories live in OpenViking. The gateway host keeps only two encrypted SQLite files, one for upstreams, keys and settings and one for conversation state. A conversation's state is deleted after 30 days without use. For deletion and isolation, see [Security and data](22-gateway-operations.md#security-and-data).
 - **When something fails**: if OpenViking is unavailable, conversations continue without memory and saving retries automatically. If the gateway is down, every model call that goes through it fails.
-- **Who manages it**: users issue their own gateway keys; admins can issue for their account, and root can select accounts. Each key binds an OpenViking user, a context profile and upstreams. An optional gateway management key controls changes to shared upstreams and profiles.
+- **What gets managed**: an account shares its **upstreams** (the model endpoints and API keys requests are forwarded to) and **context profiles** (memory settings such as the recall budget, whether conversations are saved and whether OpenViking tools are offered). Each gateway key binds one OpenViking user, one context profile and a set of upstreams. Who may change what is listed in the [access matrix](../api/25-gateway.md#credentials-and-account-scope).
 
 ## What happens once you connect
 
@@ -198,25 +194,58 @@ OpenViking MCP tools alone, without a plugin, do not count: the gateway keeps ad
 
 ## Quick start
 
-Start with an OpenViking configuration that has working embedding and VLM settings. Gateway dependencies are included in the core package.
+Start with an OpenViking installation whose `ov.conf` already has working embedding and VLM models (see [Quick Start](../getting-started/02-quickstart.md)). The gateway is part of the core package; there is nothing extra to install. Pick the path that matches your server.
 
-1. Run `openviking-server init`. Enable Gateway on the same port, or choose **Update gateway** for an existing configuration. Alternatively set `"gateway": {"enabled": true}` in `ov.conf`.
-2. Start or restart `openviking-server`. Open `http://127.0.0.1:1933/studio/` and select Gateway. Local dev requires no API key; it creates VLM upstreams and a default profile when none exist. Confirm any imported Coding Plan upstream before using it.
-3. In remote deployments, sign in with your OpenViking API key. If upstreams or profiles are missing, add them; if they are read-only, ask the deployer to provide them or enter the gateway management key. Ordinary users can issue their own gateway keys. Admins and root can select a target user; root first chooses the account. Hash-only user credentials require pasting that user's API key.
-4. Issue a gateway key, select a profile and upstreams, and copy the `ovgw_…` value when shown. It is shown only once and acts with the selected user's memory permissions. Regenerating that user's OpenViking API key invalidates this gateway key.
-5. Test with the issued gateway key:
+### Local server (no API key)
+
+This path suits a server bound to `127.0.0.1` with the default local authentication.
+
+1. **Turn the gateway on.** Run `openviking-server init` and answer yes to **Enable OpenViking Gateway on the same port?**. With an existing configuration, choose **Update gateway**. Alternatively merge `{"gateway": {"enabled": true}}` into `ov.conf`.
+2. **Start or restart** `openviking-server`.
+3. **Open the gateway in Studio.** Open <http://127.0.0.1:1933/studio/> and choose **OpenViking Gateway** in the sidebar. No key is needed. On first start the gateway turns the server's VLM settings into upstreams and creates a context profile, so the **Get started** checklist on the Overview tab already shows its first two steps as done. An imported Coding Plan upstream needs your confirmation before use (see [Import OpenViking model settings](22-gateway-operations.md#import-openviking-model-settings)). If nothing could be imported, add an upstream as described in [Upstreams](22-gateway-operations.md#upstreams).
+4. **Issue a gateway key.** On the Keys tab, choose **Issue key**, enter a name, pick the profile and an upstream, and issue it. The key acts as the local `default` user. The **Copy your gateway key** dialog shows the full `ovgw_…` key only once; copy it before closing the dialog.
+
+Then [send a test request](#send-a-test-request) to `http://127.0.0.1:1933`.
+
+### Remote server (API keys)
+
+This path suits a server that other people reach over the network, with `api_key` authentication.
+
+1. **Turn the gateway on.** On the server host, run `openviking-server init`, bind to **Remote (0.0.0.0)** and answer yes to **Enable OpenViking Gateway on the same port?**. The next question decides who may change upstreams and context profiles: answer yes to let every signed-in user configure their own account, or no to generate a gateway management key, printed once, that you keep for yourself. Restart the server.
+2. **Get an OpenViking API key.** Use your own user API key, or create an account and user with the root key as described in [Authentication](04-authentication.md#managing-accounts-and-users).
+3. **Sign in to Studio.** Open `https://ov.example.com/studio/`, enter your API key under **Connection Settings**, then choose **OpenViking Gateway** in the sidebar.
+4. **Add an upstream.** On the Upstreams tab, choose **Add upstream**, pick the provider and the protocol your client speaks (Chat Completions for the test below), paste the provider's API key and save. Use **Test** in the upstream list to check that the gateway reaches the provider. If the tab is read-only, a gateway management key is configured; see [Manage the gateway in Studio](22-gateway-operations.md#manage-the-gateway-in-studio).
+5. **Create a context profile.** On the Profiles tab, choose **Create with recommended settings**.
+6. **Issue a gateway key** for yourself as in step 4 of the local path. To issue keys for other users, see [Gateway keys](22-gateway-operations.md#gateway-keys).
+
+### Send a test request
+
+Replace the address with `http://127.0.0.1:1933` for a local server, and `<model>` with a model the upstream serves:
 
 ```bash
-export GATEWAY_KEY='<ovgw_key>'
-curl http://127.0.0.1:1933/v1/models -H "Authorization: Bearer $GATEWAY_KEY"
-curl http://127.0.0.1:1933/v1/chat/completions \
-  -H "Authorization: Bearer $GATEWAY_KEY" -H "Content-Type: application/json" \
-  -d '{"model":"<your-model>","messages":[{"role":"user","content":"Remember that I prefer concise replies."}]}'
+export GATEWAY_URL=https://ov.example.com
+export GATEWAY_KEY='ovgw_...'
+
+curl -s "$GATEWAY_URL/v1/models" -H "Authorization: Bearer $GATEWAY_KEY"
+
+curl -s "$GATEWAY_URL/v1/chat/completions" \
+  -H "Authorization: Bearer $GATEWAY_KEY" \
+  -H "Content-Type: application/json" \
+  -H "X-OpenViking-Session: quickstart-1" \
+  -d '{"model": "<model>", "messages": [{"role": "user", "content": "Remember that I prefer short answers."}]}'
 ```
 
-Inspect Requests in Studio to check recall and saving. A new account may have no memories until saved conversations are committed and processed.
+The model list contains the models and aliases configured on the upstream; it is empty if the upstream accepts any model name. The second command should return a normal completion from your provider.
 
-To connect an existing server independently, run `openviking-gateway --openviking-url <OV URL>`, then open `http://127.0.0.1:1935/studio/` and log in with an OpenViking API key. No server configuration change is required. Standalone configuration, management keys, encrypted storage and migration are covered in [Deployment and operations](22-gateway-operations.md).
+### Confirm that memory works
+
+- **The request went through the gateway.** Open the Requests tab. Your request appears as a **New message** with status 200. The **Memory** column shows how many entries were added (for example `+3`) once OpenViking has something relevant; on a brand-new account it stays empty.
+- **The conversation is saved.** Send a second message with the same `X-OpenViking-Session` header. The first turn is saved as soon as the second message arrives, and the last turn after 10 quiet minutes. The conversation then appears on Studio's **Sessions** page, as the key's user, as a session named `gateway-…`.
+- **Memories are extracted.** OpenViking extracts memories after the session is committed: when the conversation has been quiet for 10 minutes, or when 20,000 uncommitted tokens have built up. Extraction runs in the background, so allow it a moment. Then start a new conversation (another session header value) and ask something that depends on it, such as "How long should your answers be?". The Memory column shows the recalled entries, and the reply should use them.
+
+To see results faster while you try things out, create a second profile with a short **Save the latest reply after** time, issue a key with it, and use that key for new conversations. Profile changes apply only to conversations that start afterwards.
+
+To run the gateway as a separate process against an existing OpenViking service instead, see [Separate deployment](22-gateway-operations.md#separate-deployment).
 
 ## Connect clients
 

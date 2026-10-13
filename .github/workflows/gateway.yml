@@ -1,7 +1,7 @@
 name: OpenViking Gateway
 on:
   pull_request:
-    paths: ["openviking_gateway/**", "tests/gateway/**", "scripts/gateway_*", "openviking/server/gateway_*.py", "openviking/server/app.py", "openviking/server/bootstrap.py", "tests/fixtures/gateway_upstream_urls.json", "openviking_cli/utils/config/openviking_gateway_config.py", ".github/workflows/gateway.yml"]
+    paths: ["openviking_gateway/**", "tests/gateway/**", "scripts/gateway_*", "tests/fixtures/gateway_upstream_urls.json", "openviking_cli/utils/config/openviking_gateway_config.py", ".github/workflows/gateway.yml"]
   workflow_dispatch:
 jobs:
   test:

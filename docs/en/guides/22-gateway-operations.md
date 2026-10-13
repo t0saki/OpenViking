@@ -12,7 +12,7 @@ OpenViking Gateway can run inside OpenViking Server on the same port (1933 by de
 
 ## Requirements
 
-- OpenViking Server 0.4.16 or later, with `api_key` authentication or local `dev` authentication. Trusted mode is unsupported.
+- OpenViking Server with `api_key` authentication or local `dev` authentication; trusted mode is unsupported. A standalone gateway needs OpenViking Server 0.4.16 or later.
 - A current OpenViking installation. Gateway dependencies are included in the core package; `gateway-fast` remains an optional performance extra.
 - An OpenViking API key for remote use. Users, account admins and root can sign in to Studio. In local dev mode, the gateway uses the `default/default` identity without a key.
 - Model provider credentials and local disk storage. Use a single host for the SQLite databases; network filesystems and storage shared between hosts are unsupported.
@@ -23,14 +23,12 @@ OpenViking Gateway can run inside OpenViking Server on the same port (1933 by de
 | --- | --- | --- |
 | OpenViking API key | Sign in to Studio; identify the account and user for memory access | `X-API-Key` or `Authorization: Bearer` on management requests |
 | Gateway key (`ovgw_…`) | Connect model clients; binds a user, profile and upstreams | Client API key field |
-| Gateway management key | Allow changes to upstreams and profiles; does not authorize memory access or key issuance | `gateway.management_key`, and request header `X-OpenViking-Gateway-Management-Key` |
+| Gateway management key | Restrict who can change upstreams and profiles | `gateway.management_key`, and request header `X-OpenViking-Gateway-Management-Key` |
 | Upstream API Key | Authenticate with a model provider | Upstream editor |
 
-The management key is optional and must contain at least 32 characters when set. `openviking-server init` generates one with an `ovgm_` prefix when you choose to restrict configuration. You can generate a value with `openssl rand -base64 32`. Embedded configuration supports `"management_key": "$OPENVIKING_GATEWAY_MANAGEMENT_KEY"`; standalone deployments also read `OPENVIKING_GATEWAY_MANAGEMENT_KEY` directly. There is no command-line flag for this secret.
+The management key is optional and must contain at least 32 characters when set. `openviking-server init` generates one with an `ovgm_` prefix when you choose to restrict configuration; you can also generate a value with `openssl rand -base64 32`. Embedded configuration supports `"management_key": "$OPENVIKING_GATEWAY_MANAGEMENT_KEY"`; standalone deployments also read `OPENVIKING_GATEWAY_MANAGEMENT_KEY` directly. There is no command-line flag for this secret. Adding, changing or removing it takes a restart and does not revoke gateway keys or change stored objects. What it controls is listed in the [access matrix](../api/25-gateway.md#credentials-and-account-scope).
 
-The separate **encryption key** protects stored secrets and conversation state. `OPENVIKING_GATEWAY_ENCRYPTION_KEY` takes precedence; otherwise the gateway atomically creates `storage_path/encryption.key` with mode 0600. Keep this file with the databases when backing up. If databases exist but the key file and environment key are absent, startup fails. Restore the original key: changing it does not re-encrypt existing data.
-
-Changing, adding or removing the management key requires a restart but does not revoke gateway keys or change stored objects. Studio stores an entered management key only in the current tab's session storage; **Lock**, closing the tab, or an invalid-key response locks editing again.
+The separate **encryption key** protects stored secrets and conversation state. `OPENVIKING_GATEWAY_ENCRYPTION_KEY` takes precedence; otherwise the gateway generates `encryption.key` in `storage_path` on first start. Back it up with the databases. If the databases exist but neither the key file nor the environment variable is present, startup fails, and in an embedded deployment the whole OpenViking server does not start. Restore the original key: a new key cannot read existing data.
 
 ## Deploy
 
@@ -55,7 +53,7 @@ Run `openviking-server init`, enable Gateway on the same port, then start or res
 
 Open `/studio/` on the server and select Gateway. In dev mode the first startup imports available VLM credentials when the default account has no upstreams and creates the `default` profile. Coding Plan imports require confirmation before use. If no credential can be imported, add an upstream manually.
 
-**Agent configuration flow.** Use the server's root API key to call `GET /api/v1/admin/configuration?source=file`, read `result.content` and `result.revision`, edit the complete configuration text, then `PATCH /api/v1/admin/configuration?source=file` with `{"content":"<edited full text>","revision":"<read revision>"}`. Read the new revision from the save response and send `POST /api/v1/admin/restart` with `{"revision":"<new revision>"}`. An outdated revision is rejected; reload before trying again. Remote restart requires the single-worker `openviking-server` CLI. For multiple workers, restart through your process manager. These server configuration endpoints are not available on a standalone gateway.
+**Changing the configuration from an agent.** An agent holding the root API key can edit `ov.conf` and restart the server through the [runtime configuration API](../api/08-admin.md#runtime-configuration). A standalone gateway does not offer this API.
 
 ### Routes
 
@@ -69,13 +67,13 @@ The embedded server passes these prefixes unchanged to the gateway:
 | `/gateway/` | Tool uploads |
 | `/api/v1/admin/gateway/` | Authenticated management REST API |
 
-`/health` remains the server's health endpoint; the embedded gateway does not expose a separate `/health` or legacy `/admin`. Standalone `/health` reports `service: "openviking-gateway"`, `auth_mode` and `openviking_url`, plus caller identity when credentials are supplied. Its root URL redirects to `/studio/`.
+`/health` remains the server's health endpoint; the embedded gateway does not expose a separate `/health` or legacy `/admin`. Standalone `/health` reports `service: "openviking-gateway"`, `auth_mode` and `openviking_url`, plus the caller's identity when the request carries a valid OpenViking credential; an invalid credential only leaves the identity out. Its root URL redirects to `/studio/`.
 
 Set `public_url` to the external origin for shared deployments. With no `public_url`, client guides use the request origin. Anthropic clients use the origin; OpenAI-style clients add `/v1`.
 
 ### Docker Compose
 
-Enable `gateway.enabled` in the mounted `ov.conf`, then run `docker compose up -d`. The gateway runs inside the `openviking` service; no `gateway` profile or separate service is needed. After editing the configuration, run `docker compose restart openviking`. Read startup errors with `docker compose logs openviking`.
+Enable `gateway.enabled` in the mounted `ov.conf`, then run `docker compose up -d`. The gateway runs inside the `openviking` service; no `gateway` profile or separate service is needed. To restrict configuration, write the management key into `gateway.management_key` in the mounted `ov.conf`; the bundled Compose file passes only `OPENVIKING_GATEWAY_ENCRYPTION_KEY` into the container. After editing the configuration, run `docker compose restart openviking`. Read startup errors with `docker compose logs openviking`.
 
 Caddy forwards all paths to `openviking:1933`. The compatibility port 1934 can remain, but clients can also reach model APIs directly on server port 1933. For HTTPS follow [Public access](12-public-access.md); a single `reverse_proxy openviking:1933` covers Studio, management and model traffic. Set `gateway.public_url` to the public origin.
 
@@ -86,16 +84,14 @@ Set `gateway.enabled: true` in chart values. The chart embeds the gateway in the
 ```yaml
 gateway:
   enabled: true
-  encryptionKey:
-    existingSecret: "" # optional Secret entry: encryption-key
-  managementKey:
-    existingSecret: "" # optional Secret entry: management-key
+  existingSecret: ""       # optional Secret with entry encryption-key
+  managementKeySecret: ""  # optional Secret with entry management-key
 config:
   gateway:
     public_url: https://ov.example.com
 ```
 
-With no encryption Secret the persisted key file is generated automatically. When a management Secret is supplied, the chart sets `management_key` to `$OPENVIKING_GATEWAY_MANAGEMENT_KEY`. See the [chart README](https://github.com/volcengine/OpenViking/blob/main/deploy/helm/README.md) for Secret creation and authentication setup.
+Without `existingSecret`, the encryption key file is generated on the data volume. Model requests stream, so the Ingress needs response buffering off, request bodies of at least 32 MiB and 600-second timeouts. The [chart README](https://github.com/volcengine/OpenViking/blob/main/deploy/helm/README.md#openviking-gateway) has the NGINX annotations, the Secret commands and the upgrade notes.
 
 ### Separate deployment
 
@@ -118,9 +114,9 @@ openviking-gateway --config gateway.conf
 
 Open the gateway's `/studio/` and sign in with an OpenViking user, admin or root API key. The connection page shows the configured OpenViking URL; standalone Studio offers Gateway and Connection pages. It cannot import the remote server's VLM configuration.
 
-Flags are `--config`, `--openviking-url`, `--host`, `--port`, `--workers` and `--storage-path`. Defaults are host `127.0.0.1`, port `1935`, workers `1`. Configuration precedence is flags → `OPENVIKING_GATEWAY_<FIELD>` environment variables → JSON file. `OPENVIKING_GATEWAY_CONFIG_FILE` selects a file without `--config`. The file has gateway fields at its root, without a `gateway` wrapper or `enabled` field.
+Flags are `--config`, `--openviking-url`, `--host`, `--port`, `--workers` and `--storage-path`. Defaults are host `127.0.0.1`, port `1935`, workers `1`. Configuration precedence is flags → `OPENVIKING_GATEWAY_<FIELD>` environment variables → JSON file; empty environment variables are ignored. `OPENVIKING_GATEWAY_CONFIG_FILE` selects a file without `--config`. The file has gateway fields at its root, without a `gateway` wrapper or `enabled` field.
 
-The gateway probes OpenViking before standalone startup and refuses a non-loopback bind with dev authentication. A commercial `/health` returning 401 means reachable but authentication required; it does not disable recall. Version checks use authenticated requests during key issuance and capture recovery. Protect remote OpenViking connections with TLS or a private network.
+A standalone gateway checks OpenViking at startup. When it binds to a non-loopback host, it starts only if that check confirms `api_key` authentication; if OpenViking is unreachable or runs in dev mode, it exits. Start OpenViking first, or bind to `127.0.0.1`. Protect remote OpenViking connections with TLS or a private network.
 
 When connecting to `https://api.vikingdb.cn-beijing.volces.com/openviking` without a management key, startup logs and Studio warn `public_openviking_without_management_key`: every valid user of that public service can configure upstreams in their own account. Set `OPENVIKING_GATEWAY_MANAGEMENT_KEY` and restart to restrict object changes. This does not restrict who can sign in or issue their own gateway keys.
 
@@ -144,11 +140,13 @@ Use one host and one deployment per storage directory. Embedded workers follow t
 
 ## Manage the gateway in Studio
 
-Connect with your OpenViking API key and open Gateway. Users can issue keys for themselves; admins can issue for users in their account, and root can switch accounts first. Upstreams and profiles are shared by the whole account.
+Connect with your OpenViking API key and open **OpenViking Gateway**. Upstreams and context profiles are shared by the whole account; gateway keys and request logs belong to users. The [access matrix](../api/25-gateway.md#credentials-and-account-scope) lists who may do what. In Studio it works out like this:
 
-Without a management key configured, every authenticated user may edit their account's objects. With one configured, upstreams and profiles are read-only until **Enter gateway management key** unlocks them; this also applies to OpenViking admins and root. Testing connections and issuing personal gateway keys remain available. Read-only upstream views hide API keys, headers and header names. Object edits take effect immediately for keys that use them.
+- **Without a management key**, every signed-in user can add and edit their account's upstreams and profiles.
+- **With a management key**, upstreams and profiles are read-only, for OpenViking admins and root too. Choose **Enter gateway management key** to unlock editing; it stays unlocked until you choose **Lock** or close the tab. Read-only users can still view and test upstreams, without their API keys or headers, and pick them when issuing their own keys. If none exist yet, ask whoever deployed the gateway.
+- **Gateway keys**: everyone can issue keys for themselves. Account admins can issue keys for users in their account; root first switches account in the sidebar. See [Gateway keys](#gateway-keys).
 
-Studio uses `GET /api/v1/admin/gateway/access` for permissions. See the [management API](../api/25-gateway.md) for the complete access matrix and all operations.
+Object edits take effect immediately for the keys that use them.
 
 ### Upstreams
 
@@ -181,7 +179,7 @@ The upstream editor has four sections.
 - **Who provides the API key**:
   - **The gateway holds the API key** (the default): the gateway sends the upstream's key, and clients need only a gateway key.
   - **Each client sends its own key**: every request must also carry the client's own provider key in an `X-OpenViking-Upstream-Key` header, next to its gateway key. Requests without it fail with 401 "Upstream API key is missing". The gateway passes the key to the provider in the provider's usual header and never forwards `X-OpenViking-*` headers.
-- **API key and extra headers** are write-only. With an unchanged base URL, blank values keep stored secrets and removing a header row deletes that header. Changing the base clears all retained credentials: re-enter the API key and custom header values. Read-only views hide header names too.
+- **API key and extra headers** are write-only: leave a field blank to keep what is stored, and remove a header row to delete that header. Changing the base URL clears the stored API key and header values, so re-enter them whenever you change it.
 - **Extra headers** are added to every request to this upstream, such as a provider's version or organization header, and replace a client header of the same name. `Host`, `Content-Length`, `Transfer-Encoding` and `Connection` are not allowed.
 - **This key is a Coding Plan or subscription key.** Providers restrict Coding Plan and similar subscription keys to their own coding tools, and using one through a shared gateway can get the subscription suspended. When you check this box, every request routed to the upstream is rejected with 403 "Coding Plan upstreams are disabled; configure a model API key", unless you also check **Allow this plan through the gateway**. The gateway cannot tell such keys apart from ordinary ones, so mark them yourself. Claude subscription tokens (`sk-ant-oat…`) are always rejected.
 
@@ -201,7 +199,7 @@ The upstream editor has four sections.
 
 Every other upstream setting takes effect at once, in existing conversations too. There is no failover: when the chosen upstream fails, the client receives the error, and an unreachable provider returns 502 "Model upstream is unavailable".
 
-**Test connection** uses the provider's model-list endpoint and stored credentials, with a 10-second timeout. 2xx with a `data` array passes; a failure body or 401/403 means the key was rejected. 404/405 means reachable with no model list, so the key is unverified; 429 also means reachable. Network failures and 5xx fail. Read-only users can test. This does not validate a model or authorize Coding Plan use. Anthropic upstreams send both `x-api-key` and Bearer authorization; OpenAI-style upstreams send Bearer.
+**Test connection** asks the provider for its model list with the stored credentials and shows whether the address answered and the key was accepted; read-only users can run it too. It does not validate a specific model or authorize Coding Plan use. The [connection test results](../api/25-gateway.md#connection-tests) explain each outcome.
 
 An upstream that a key uses cannot be deleted; revoke those keys first, or disable the upstream.
 
@@ -209,9 +207,7 @@ For example, create separate Generic upstreams for Zhipu Chat (`https://open.big
 
 ### Import OpenViking model settings
 
-In an embedded host, **Use OpenViking's model settings** imports all eligible VLM credentials into the selected account. With no management key, only root/dev may import; with one configured, its holder may import. Stable `vlm-<credential id>` IDs make repeat imports update existing entries. The result groups imported, needs-confirmation and skipped credentials. Coding/Plan paths are blocked until you allow them; confirm the provider's terms first. Codex OAuth and Azure credentials are skipped, and LiteLLM credentials without api_base need that field before importing.
-
-**Changing an upstream address:** re-enter the API Key and any required custom header values. Changing `base_url` clears both the old API key and retained headers; only explicitly resubmitted values can be sent to the new destination.
+In an embedded deployment, **Use OpenViking's model settings** turns the server's VLM credentials into upstreams in the selected account; the [access matrix](../api/25-gateway.md#credentials-and-account-scope) says who may run it. Each imported upstream keeps a stable `vlm-<credential id>` ID. Importing again refreshes the address, API key, headers, protocol and provider from the server and keeps what you changed in the gateway, such as the name, enabled state, priority, models, aliases, context windows and the Coding Plan confirmation. The result lists imported, needs-confirmation and skipped credentials. Upstreams on Coding/Plan paths stay blocked until you allow them; confirm the provider's terms first. Codex OAuth and Azure credentials are skipped, as are LiteLLM credentials without `api_base` and LiteLLM routes that do not speak the OpenAI Chat Completions API; see [the skip reasons](../api/25-gateway.md#import-vlm-settings).
 
 ### Context profiles
 
@@ -265,7 +261,7 @@ A gateway key (`ovgw_…`) is what a client uses in place of a provider key. Eac
 To issue one, choose **Issue key** on the **Keys** tab and fill in:
 
 - **Name**, to recognize the key later, for example "alice · Claude Code".
-- **OpenViking user**: users issue for themselves; account admins can choose users in their account and root can switch accounts first. The gateway reads the selected user’s API key using the caller’s credentials. If only a hash is stored, paste the user’s current API key. A root API key cannot be bound; local dev uses default/default without a credential.
+- **OpenViking user**: users issue for themselves; account admins can choose users in their account, and root switches account first. The gateway reads the selected user's API key from OpenViking; when OpenViking stores only key hashes, paste that user's current API key instead. A root API key cannot be bound to a gateway key. In local dev, keys act as the `default` user.
 - **Context profile**.
 - **Upstreams**: at least one. The key can reach only these.
 - **Allowed models** (optional): leave empty to allow every model these upstreams serve. The names are the ones clients send, including aliases. Requests for other models fail with 403 "Model is not allowed by this key", and the model list shows only allowed names.
@@ -277,7 +273,7 @@ The **Copy your gateway key** dialog then shows the full key. This is the only t
 - **Keys cannot be edited.** To change a key's profile, upstreams, allowed models or OpenViking user, issue a new key and revoke the old one.
 - **Conversations belong to the user, not the key.** A new key for the same OpenViking user continues the same conversations when the client sends the same session ID, so replacing a key is seamless.
 - **Revoking** prevents subsequent requests from using the key. User conversation state and logs remain until explicit deletion or retention expiry; revocation alone does not remove user data.
-- **When an OpenViking key changes.** The gateway rechecks the bound credential with a 30-second identity cache. Regenerating or revoking it invalidates its gateway keys after cache expiry. Issue a new gateway key with the current OpenViking credential; stored user data is preserved.
+- **When an OpenViking key changes.** If the user's OpenViking API key is regenerated or the user is removed, OpenViking rejects the stored key and the gateway removes the gateway keys bound to it within about 30 seconds. Conversation state and logs stay. Issue a new gateway key with the current OpenViking key. An unreachable or failing OpenViking never removes keys: requests keep reaching the model, without memory.
 - **One key per person.** Everyone using a key shares the memory of its OpenViking user. Issue one key per person, and per client when you want different profiles.
 
 **Delete this user’s gateway data…** is available to admin/root. It revokes the user’s keys and removes gateway conversation state and logs, including pending content. OpenViking memories are unaffected. Embedded user/account deletion triggers the same cleanup; see [Security and data](#security-and-data).
@@ -291,7 +287,7 @@ The **Overview** tab summarizes the latest 10,000 request-log records within the
 - **First-call cache hit rate**: the share of input tokens served from the provider's prompt cache on the first model call of each new user message. This is the gateway's most important health signal. It should stay close to what the provider reaches without the gateway; a drop usually means the history the gateway sends no longer matches the previous request. See [The first-call cache hit rate dropped](#the-first-call-cache-hit-rate-dropped).
 - **Within-turn cache hit rate**: the same for later calls within a turn, such as tool steps and OpenViking tool rounds. It is usually high either way.
 - **Memory entries recalled**: entries added to new messages, and how long a search in OpenViking took on average, counting only messages that searched.
-- **OpenViking**: Connected, Degraded or Starting, with the version, authentication mode and, when degraded, the reason. While OpenViking is unreachable, requests still reach the model without memory. Under **Saving conversations**, the card also counts conversations that are retrying or have paused saving to OpenViking.
+- **OpenViking**: Connected, Degraded or Starting, with the version and, when degraded, the reason. While OpenViking is unreachable, requests still reach the model without memory. Under **Saving conversations**, the card also counts conversations that are retrying or have paused saving to OpenViking.
 - **Degraded requests**: how often each issue occurred, with an explanation; the issues are listed in the [troubleshooting table](#issues-on-degraded-requests).
 - **Recent requests**, with a link to the Requests tab.
 
@@ -315,6 +311,7 @@ The **Saving** column shows where each conversation stands:
 - **Off**: the conversation's profile does not save.
 - **Retrying**: OpenViking rejected a save or could not be reached. The gateway retries after 10, 20, 40 and 80 seconds.
 - **Paused**: five attempts failed. The gateway keeps retrying every 5 minutes until it succeeds. Unsaved turns are kept until they are saved or the conversation expires.
+- **Paused** with `gateway_key_revoked`: the conversation's gateway key was revoked or removed. The gateway does not retry; the user's next request in the conversation through a valid key resumes saving. Unsaved turns are kept until then or until the conversation expires.
 
 The expanded row shows the reason, for example that OpenViking rejected the key (`openviking_http_401`: the user's OpenViking key is no longer valid) or that OpenViking is unreachable (`openviking_unavailable`). A note that the conversation history changed (`history_changed`) is normal: the client edited, regenerated or compacted the conversation, and the gateway continues saving in a new OpenViking session with the current history.
 
@@ -369,7 +366,7 @@ Housekeeping and sub-agent requests, and conversations where an OpenViking plugi
 
 **Importing files and skills.** The import tools are available when your OpenViking server provides them and they are selected in the profile. URL imports do not need a shell tool. Local files need one of these upload paths:
 
-- **A shell tool** (a client tool named like bash, shell, exec_command, terminal or run_command): the import tool returns a one-time upload link, and the model uploads the file with the client's own shell tool, which does go through the client's permission prompt. Skill directories are zipped first. The link points to `public_url` plus `/gateway/uploads`, so `public_url` must be an address the client can reach and your proxy must route that path to the gateway. Without `public_url`, imports fail with "Set gateway.public_url for client uploads".
+- **A shell tool** (a client tool named like bash, shell, exec_command, terminal or run_command): the import tool returns a one-time upload link, and the model uploads the file with the client's own shell tool, which does go through the client's permission prompt. Skill directories are zipped first. The link points to `public_url` plus `/gateway/uploads`, so `public_url` must be an address the client can reach, and a proxy in front must forward that path along with the rest of the origin. Without `public_url`, imports fail with "Set gateway.public_url for client uploads".
 - **An attached file**: without a shell tool, the model can import a file attached to a user message, sent either as base64 file data or as attachment text. This includes Responses `input_file` and Anthropic `document.source` with embedded `base64` or `text` data. Open WebUI usually sends only the extracted text, which is imported as a text file. Attachment URLs and provider file IDs are not fetched; use the import tool's URL parameter for a supported remote resource.
 
 Uploads are limited to `max_body_bytes` (32 MiB by default).
@@ -470,7 +467,7 @@ Stored values are encrypted with the encryption key. The files are readable only
 
 - Clients authenticate with gateway keys, sent as `Authorization: Bearer` or `x-api-key`. Keys can be revoked at any time.
 - The gateway uses each user's own OpenViking key for memory search, saving and tools, so it can do only what that user can do.
-- Management keys authorize account-level objects only. OpenViking identity controls key issuance, logs and memory access. See the [access matrix](../api/25-gateway.md#credentials-and-account-scope).
+- A management key only controls changes to upstreams and profiles; it grants no access to memory, logs or key issuance. See the [access matrix](../api/25-gateway.md#credentials-and-account-scope).
 - Account admins can issue gateway keys for any user in their account (when OpenViking stores only key hashes, the user has to provide their key). A gateway key lets its holder recall memory and call tools as that user, so the right to issue keys amounts to reading the memory of every user in the account. Give it only to admins you trust.
 - `/gateway/uploads` needs no gateway key. A one-time token signed by OpenViking authorizes each upload, and the gateway forwards it only to OpenViking's upload endpoint. Keep its query string out of proxy logs.
 - `X-OpenViking-*` headers, client credentials and cookies are never forwarded to upstreams.
@@ -483,7 +480,7 @@ Stored values are encrypted with the encryption key. The files are readable only
 
 ## Day-to-day operations
 
-The Gateway page is available to every connected identity. Start with upstream → profile → key → client. Object editing follows the management-key setting; users see only their own keys and logs.
+Set things up in the order upstream → profile → key → client; the **Get started** checklist on the Overview tab follows the same order.
 
 - **Watch the first-call cache hit rate.** The **First-call cache hit rate** on the Overview tab reflects prompt caching across turns and should stay close to what the provider reaches without the gateway. The **Within-turn cache hit rate** covers tool steps and is normally high. If the first-call rate drops noticeably, see [The first-call cache hit rate dropped](#the-first-call-cache-hit-rate-dropped).
 - **Use the request log to track down a single request.** Filter by new messages, tool steps or issues, then expand a row to see the recall result, saving status and why OpenViking tools were off; see [Requests and overview](#requests-and-overview).
@@ -492,12 +489,12 @@ The Gateway page is available to every connected identity. Start with upstream �
 
 ### Upgrades
 
-- OpenViking Server must be at least `min_server_version` (0.4.16). With an older server, memory search and saving stop and no keys can be issued. When you upgrade the gateway and OpenViking separately, upgrade OpenViking first, then the gateway.
+- A standalone gateway needs OpenViking Server `min_server_version` (0.4.16) or later. With an older server, memory search and saving stop and no keys can be issued. When you upgrade them separately, upgrade OpenViking first, then the gateway. An embedded gateway ships with its server and skips this check.
 - Read the release notes before you upgrade. If a new gateway version cannot read the old storage format, it stops at startup with `Unsupported gateway schema`; see [The gateway does not start](#the-gateway-does-not-start).
 
 ### Monitoring
 
-The gateway exports no metrics such as Prometheus and writes no HTTP access log. Check how it is doing on Studio's Overview and Requests tabs, or through the management API on OpenViking Server (`/api/v1/admin/gateway/overview` and `logs`); use the host’s `/health` to check liveness (the server health endpoint in embedded deployments).
+The gateway exports no metrics such as Prometheus and writes no HTTP access log. Check how it is doing on Studio's Overview and Requests tabs, or through the management API (`/api/v1/admin/gateway/overview` and `logs`); use the host’s `/health` to check liveness (the server health endpoint in embedded deployments).
 
 ## Design trade-offs
 
@@ -523,7 +520,7 @@ Embedded settings live in `ov.conf.gateway`. Set `enabled: true` to mount the ga
 | `storage_path` | `~/.openviking/gateway` | Local storage directory, including generated encryption.key |
 | `encryption_key_env` | `OPENVIKING_GATEWAY_ENCRYPTION_KEY` | Optional external Fernet key |
 | `management_key` | empty | Optional object-write secret; minimum 32 characters; supports `$VAR` expansion |
-| `min_server_version` | `0.4.16` | Minimum version checked on authenticated issuance/capture recovery |
+| `min_server_version` | `0.4.16` | Minimum OpenViking Server version for a standalone gateway |
 | `session_ttl_days` | `30` | Conversation inactivity expiry, minimum 1 day |
 | `response_ttl_seconds` | `2592000` | Responses mapping expiry, minimum 60 seconds |
 | `log_retention_days` | `30` | Log retention, minimum 1 day |
@@ -531,7 +528,7 @@ Embedded settings live in `ov.conf.gateway`. Set `enabled: true` to mount the ga
 | `upstream_timeout_seconds` | `600` | Provider request timeout, greater than zero |
 | `health_interval_seconds` | `60` | Health polling interval, minimum 1 second |
 
-URL values must be HTTP(S) without credentials, query or fragment. Unknown configuration fields fail validation. Standalone environment fields use `OPENVIKING_GATEWAY_` followed by the uppercase field name; `OPENVIKING_GATEWAY_CONFIG_FILE` selects the standalone JSON file. `OPENVIKING_CONFIG_FILE` selects the server configuration only.
+URL values must be HTTP(S) without credentials, query or fragment. Unknown configuration fields fail validation. Standalone environment fields use `OPENVIKING_GATEWAY_` followed by the uppercase field name, and empty values are ignored; `OPENVIKING_GATEWAY_CONFIG_FILE` selects the standalone JSON file. `OPENVIKING_CONFIG_FILE` selects the server configuration only.
 
 **Context profile settings.** Studio label first, then the name used in the management API (where profiles are called `policies`):
 
@@ -578,8 +575,8 @@ URL values must be HTTP(S) without credentials, query or fragment. Unknown confi
 | Provider | `vendor` | `generic` | `generic`, `anthropic`, `openai`, `deepseek`, `ark` (Volcano Engine Ark) or `byteplus` (BytePlus ModelArk). Studio offers only the protocols the provider supports; the API accepts any pair. |
 | Base URL | `base_url` | | Provider address; see [Upstreams](#upstreams) for each provider's default and the path rules. |
 | Who provides the API key | `auth_mode` | `managed` | `managed` (The gateway holds the API key) or `passthrough` (Each client sends its own key). |
-| API key | `api_key` | | Write-only. Blank keeps the stored key only when base_url is unchanged. |
-| Extra headers | `headers` | `{}` | Write-only; names are hidden in read-only views. Changing base_url clears retained headers. |
+| API key | `api_key` | | Write-only; see Credentials under [Upstreams](#upstreams). |
+| Extra headers | `headers` | `{}` | Write-only; see Credentials under [Upstreams](#upstreams). |
 | Models | `models` | `[]` | Model names served; empty accepts any. |
 | Model aliases | `aliases` | `{}` | Client-facing name → model sent to the upstream. |
 | Context windows | `context_windows` | `{}` | Model → tokens, each at least 1,024. |
@@ -595,12 +592,22 @@ Gateway key fields, every management operation, access rules and stable error re
 
 ## Migration
 
-1. Back up both databases and the original encryption key, then stop the old standalone process/sidecar before enabling the embedded gateway.
-2. Remove `host`, `port`, `workers`, `url`, `openviking_url` and `admin_token_env` from `ov.conf.gateway`; they now fail validation. Enable the embedded gateway with `enabled: true`, or move standalone settings into a separate gateway.conf without the gateway wrapper or enabled flag.
-3. Embedded clients now use server port 1933; remove old 1935 Service/Ingress routes, Compose gateway service/profile and Helm sidecar settings. Port 1935 remains the standalone default. Remove old `gateway.existingSecret`, `gateway.workers`, `gateway.port` and `gateway.resources` chart values; use the two optional Secret references above.
-4. Remove the shared admin token. `OPENVIKING_GATEWAY_ADMIN_TOKEN` is **not** treated as a management key. Configure a new `management_key` explicitly if object changes should be restricted. Preserve the existing encryption key through its environment variable or restore it as encryption.key.
-5. Schema v5 → v6 migrates stored bases once to preserve request URLs: bare chat/responses origins gain `/api/v3` for Ark/BytePlus and `/v1` otherwise; bare Ark/BytePlus Anthropic origins gain `/api/compatible`; trailing `/v1` is removed from Anthropic bases. New entries follow SDK URL rules, and an Anthropic base ending in `/v1` is rejected.
-6. Logs gain a user column. Old rows without a user remain visible only in account-wide admin/root views. Key revocation no longer deletes user data; explicit deletion and retention still apply.
+These steps apply when you move from the sidecar or separate gateway of earlier releases.
+
+1. Back up `storage_path`, including both databases and the encryption key, then stop the old gateway process or sidecar before you enable the embedded gateway.
+2. Remove `host`, `port`, `workers`, `url`, `openviking_url` and `admin_token_env` from the `gateway` section of `ov.conf`. The embedded gateway rejects them, and because it runs inside the server, the whole OpenViking server then refuses to start. `openviking-server init` → **Update gateway** removes them for you. To keep running the gateway separately instead, move its settings into a standalone `gateway.conf`, without the `gateway` wrapper or `enabled`.
+3. Point `public_url` at the server's external address, or remove it. The old quick start set it to `http://127.0.0.1:1935`, which an embedded gateway no longer serves, so client guides and upload links would point nowhere.
+4. Clients of an embedded gateway use the server port (1933 by default). Remove the old 1935 Service and Ingress routes, the Compose `gateway` service and profile, and the Helm sidecar settings `gateway.workers`, `gateway.port` and `gateway.resources`. Keep `gateway.existingSecret`: the chart still reads its `encryption-key` entry. Port 1935 remains the standalone default.
+5. Keep the existing encryption key, through its environment variable or as `encryption.key` in `storage_path`. Without it, existing databases cannot be read and the server refuses to start.
+6. Remove the shared admin token. `OPENVIKING_GATEWAY_ADMIN_TOKEN` is **not** treated as a management key; configure `management_key` explicitly if object changes should be restricted.
+7. On first start, stored upstream base URLs are rewritten once so that every upstream keeps sending requests to the same URL as before:
+   - Chat Completions and Responses upstreams of Volcano Engine Ark or BytePlus ModelArk with no path gain `/api/v3`.
+   - Other Chat Completions and Responses upstreams gain `/v1` unless their path already ends in a version segment such as `/v1` or `/v4`. This covers bare origins (`https://api.deepseek.com` → `https://api.deepseek.com/v1`) and bases with a path prefix (`https://openrouter.ai/api` → `https://openrouter.ai/api/v1`, or a self-hosted proxy under `/litellm`).
+   - Ark and ModelArk Anthropic upstreams with no path gain `/api/compatible`.
+   - Anthropic bases ending in `/v1` lose it.
+
+   Bases that already end in another version, such as Zhipu's `https://open.bigmodel.cn/api/paas/v4`, are left unchanged. Before the upgrade they were sent to `…/v4/v1` and failed; now they work as entered. New and edited upstreams follow the provider's SDK URL rules (see [Upstreams](#upstreams)), and an Anthropic base ending in `/v1` is rejected.
+8. Request logs gain a user column. Older rows have no user and appear only in account-wide admin and root views. Revoking a key no longer deletes the user's data; explicit deletion and retention still apply.
 
 ## Troubleshooting
 
@@ -609,14 +616,20 @@ Gateway key fields, every management operation, access rules and stable error re
 | Symptom | Cause | What to do |
 | --- | --- | --- |
 | A conversation gets no recall and is not saved | An OpenViking plugin was detected, and the gateway stepped aside, leaving recall, saving and OpenViking tools to the plugin. | Expected: it keeps the same content from being added or saved twice. See [Gateway or plugin?](15-gateway.md#gateway-or-plugin). |
-| Saving shows **Retrying**, then **Paused** | OpenViking rejected the save or could not be reached, often because the user's OpenViking key was regenerated. | The gateway recovers on its own once the cause is fixed; if the key is no longer valid, issue a new gateway key. See [Conversations do not appear in OpenViking](#conversations-do-not-appear-in-openviking). |
+| Saving shows **Retrying**, then **Paused** | OpenViking rejected the save or could not be reached, or the conversation's gateway key was revoked (`gateway_key_revoked`), for example after the user's OpenViking key was regenerated. | The gateway recovers on its own once OpenViking is back. After a revocation, issue a new gateway key; the user's next request resumes saving. See [Conversations do not appear in OpenViking](#conversations-do-not-appear-in-openviking). |
 | The profile has tools on, but the conversation has none | No request that could use tools has arrived yet, OpenViking's tool list failed to load for the first one, the client does not send the full history, or the client has OpenViking tools of its own. | Check the reason in the request log (see [OpenViking tools](#openviking-tools)). `tool_name_collision` is expected when the client has the OpenViking MCP server; for other reasons, fix the cause and start a new conversation. |
 | Requests go without memory | OpenViking unreachable or too slow, budget used up, nothing relevant, and so on. | See [No memory is added](#no-memory-is-added). |
 | The provider rejects a long conversation as too long | The gateway does not know the model's real window and compacts too late. | See [Long conversations hit the context limit](#long-conversations-hit-the-context-limit). |
 
 ### The gateway does not start
 
-Restore the original encryption key if existing databases have no key file, fix management keys shorter than 32 characters, and remove legacy fields listed in [Migration](#migration). Standalone startup requires `--openviking-url` (or its config/env equivalent); dev authentication requires a loopback bind. In Compose, inspect `docker compose logs openviking`.
+An embedded gateway that cannot start stops the whole OpenViking server; read the startup error in the server log (`docker compose logs openviking` in Compose).
+
+- **Missing encryption key**: the databases exist but neither `encryption.key` nor `OPENVIKING_GATEWAY_ENCRYPTION_KEY` is present. Restore the original key.
+- **Legacy fields**: remove the fields listed in [Migration](#migration).
+- **Short management key**: it must contain at least 32 characters.
+- **Standalone without an OpenViking URL**: set `--openviking-url` or its configuration equivalent.
+- **Standalone on a non-loopback host**: the gateway exits unless its startup check reaches OpenViking and confirms `api_key` authentication. Start OpenViking first (in containers, wait until it is ready), or bind to `127.0.0.1`.
 
 ### Studio shows a setup card
 
@@ -638,7 +651,7 @@ The **Issue a gateway key** dialog shows why issuing failed. The code in parenth
 | OpenViking rejected this key. (`openviking_http_401`) | The key is incomplete, was regenerated, or its user was removed. Use the user's current key. |
 | OpenViking couldn't tell which user this key belongs to (`openviking_identity_missing`) | OpenViking returned no user for this key. Use the key of a user in this account. |
 | The gateway couldn't reach OpenViking to check this key. (`openviking_unavailable`) | The gateway cannot reach `openviking_url`. |
-| OpenViking is older than the gateway requires. (`openviking_version_mismatch`) | OpenViking Server is older than `min_server_version` (0.4.16). Upgrade it. A server installed from a source checkout without version tags may report a development version such as `0.1.dev123`; install a release, or set `min_server_version` to match. |
+| OpenViking is older than the gateway requires. (`openviking_version_mismatch`) | Standalone gateways only: OpenViking Server is older than `min_server_version` (0.4.16). Upgrade it. A server installed from a source checkout without version tags may report a development version such as `0.1.dev123`; install a release, or set `min_server_version` to match. |
 
 ### Clients get an error from the gateway
 
@@ -646,7 +659,7 @@ These rejections happen before a request reaches a provider, so they do not appe
 
 | Status and message | Cause and fix |
 | --- | --- |
-| 401 "Invalid or revoked OpenViking Gateway key" | The client sent no gateway key, a revoked one, or its provider key. Check which key the client sends. |
+| 401 "Invalid gateway key. It may have been revoked, or removed because its OpenViking API key was regenerated…" | The client sent no gateway key, a revoked one or its provider key, or the gateway removed the key after the user's OpenViking API key was regenerated. Check which key the client sends, and issue a new one if needed. |
 | 403 "Claude subscription OAuth credentials are not supported" | The client sent a Claude subscription token, for example Claude Code signed in with a subscription and no `ANTHROPIC_AUTH_TOKEN` set; or the upstream holds one. Use API keys. |
 | 403 "Model is not allowed by this key" | The model is not in the key's allowed models. Issue a key that allows it. |
 | 404 "No allowed upstream matches this protocol and model" | No enabled upstream bound to the key speaks the API the client called and serves the requested model. Check the upstream's protocol, its models and aliases, whether it is enabled, and the key's upstreams. |
@@ -656,7 +669,6 @@ These rejections happen before a request reaches a provider, so they do not appe
 | 413 | The request body is larger than `max_body_bytes`, or than your proxy's own limit. |
 | 426 | A WebSocket connection to the Responses API. Expected: Codex falls back to HTTP. |
 | 502 "Model upstream is unavailable" | The gateway could not reach the provider, or the call exceeded `upstream_timeout_seconds`. Use **Test connection** on the upstream. |
-
 | 504 "Hidden tool request timed out" | OpenViking tool rounds exceeded the profile's **Total time** for tools, or, when **Total time** is not set, one model request inside the tool rounds exceeded `upstream_timeout_seconds`. |
 
 ### No memory is added
@@ -677,7 +689,7 @@ A message whose search failed never gets memory later; the next message searches
 
 - **Saving is one turn behind.** A turn appears when the next message arrives, the last turn after **Save the latest reply after** (10 minutes by default).
 - **The profile does not save.** The Saving column shows Off.
-- **Saving is retrying or paused.** The expanded row shows the reason. Fix the cause, for example an invalid OpenViking key; the gateway retries within 5 minutes. If the conversation stays paused, use **Resync conversation…**.
+- **Saving is retrying or paused.** The expanded row shows the reason. Fix the cause, for example an unreachable OpenViking; the gateway retries within 5 minutes. With `gateway_key_revoked`, issue a new gateway key; the next request resumes saving. If the conversation stays paused, use **Resync conversation…**.
 - **An OpenViking plugin is in use** (`plugin_present`); the gateway saves nothing for that conversation.
 - **You are looking as another user.** Sessions belong to the OpenViking user behind the gateway key and are named `gateway-…`.
 - **Memories come later than sessions.** OpenViking extracts memories only after a commit, in the background.
@@ -702,7 +714,7 @@ If the provider rejects long conversations as too long for the model:
 ### File imports fail
 
 - "Set gateway.public_url for client uploads": set `public_url` to an address the client can reach.
-- The upload link cannot be reached, or returns 404: route `/gateway/uploads` to the gateway in your proxy.
+- The upload link cannot be reached, or returns 404: make sure `public_url` is not an old `:1935` address and that your proxy forwards `/gateway/uploads` along with the rest of the origin.
 - 413: the file is larger than `max_body_bytes` or the proxy's limit.
 - 502 "OpenViking upload is unavailable": the gateway cannot reach OpenViking Server.
 - The import tools are not offered: the OpenViking server does not provide them, the profile has them unchecked, or gateway tools are disabled for this request. Check the Tools list and request details.
@@ -722,3 +734,4 @@ The **Requests** and **Overview** tabs flag requests the gateway could not fully
 | Tool history unavailable (`hidden_tool_history_unavailable`) | A Claude conversation previously used OpenViking tools, but this request cannot use them, so earlier thinking has been removed. | Check the tool skip reason in the request detail, restore the original settings or start a new conversation. |
 | OpenViking tools failed (`hidden_tool_loop_failed`) | The model could not finish answering while using OpenViking tools, and the client received an error. | See [OpenViking tools](#openviking-tools). |
 | Reply not saved (`capture_parse_failure`) | A streamed reply could not be parsed, so this reply was not saved. The client was not affected. | Nothing; it is informational. |
+| Key not verified (`revocation_check_unavailable`) | OpenViking could not confirm the gateway key, so the request was served without checking whether the key was revoked. | Check that OpenViking is reachable and healthy. |

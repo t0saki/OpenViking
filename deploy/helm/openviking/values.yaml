@@ -6,10 +6,8 @@ replicaCount: 1
 # Secrets are optional; without an encryption Secret the key is saved on the data volume.
 gateway:
   enabled: false
-  encryptionKey:
-    existingSecret: "" # Secret entry: encryption-key (Fernet)
-  managementKey:
-    existingSecret: "" # Secret entry: management-key (32+ characters)
+  existingSecret: "" # Secret name; entry encryption-key (Fernet)
+  managementKeySecret: "" # Secret name; entry management-key (32+ characters)
 
 image:
   # Prefer ghcr.io. If it is hard to reach, use the mirror:

@@ -19,6 +19,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from openviking_cli.utils.config.consts import DEFAULT_CONFIG_DIR, OPENVIKING_CONFIG_ENV
 from openviking_cli.utils.ollama import (
@@ -1899,28 +1900,53 @@ def _wizard_server(current: dict[str, Any] | None = None) -> dict[str, Any] | No
     return {"host": "0.0.0.0", "port": port, "root_api_key": root_api_key}
 
 
+# Fields of the old standalone/sidecar gateway section; the embedded config rejects them.
+_LEGACY_GATEWAY_FIELDS = ("host", "port", "workers", "url", "openviking_url", "admin_token_env")
+
+
 def _wizard_gateway(
     server: dict[str, Any], current: dict[str, Any] | None = None
 ) -> dict[str, Any]:
     """Enable the gateway on the server port and choose who may configure it."""
-    gateway = dict(current or {})
+    gateway = {k: v for k, v in (current or {}).items() if k not in _LEGACY_GATEWAY_FIELDS}
     _rule("OpenViking Gateway")
     gateway["enabled"] = _prompt_confirm(
         "Enable OpenViking Gateway on the same port?", default=gateway.get("enabled", False)
     )
-    if gateway["enabled"] and (server.get("root_api_key") or server.get("auth_mode") == "api_key"):
-        allow_users = _prompt_confirm(
-            "Allow users to configure their own gateway upstreams?",
-            default=not bool(gateway.get("management_key")),
-        )
-        if allow_users:
-            gateway.pop("management_key", None)
-        elif not gateway.get("management_key"):
-            gateway["management_key"] = "ovgm_" + secrets.token_urlsafe(32)
-            print(f"\n  {_green('Generated gateway management key — copy it to unlock editing:')}")
-            print(f"\n    {_bold(gateway['management_key'])}\n")
-            print(f"  {_dim('Saved in ov.conf (gateway.management_key).')}")
+    if gateway["enabled"]:
+        _check_gateway_public_url(server, gateway)
+        _prompt_gateway_access(server, gateway)
     return gateway
+
+
+def _check_gateway_public_url(server: dict[str, Any], gateway: dict[str, Any]) -> None:
+    """Offer to clear a public_url left over from the old 1935 gateway port."""
+    public_url = str(gateway.get("public_url") or "")
+    port = urlsplit(public_url).port
+    server_port = int(server.get("port") or 1933)
+    if port is None or port == server_port:
+        return
+    print(f"\n  {_yellow(f'gateway.public_url points at port {port}:')} {public_url}")
+    print(f"  {_dim(f'The gateway now serves on the server port ({server_port}).')}")
+    if _prompt_confirm("Clear gateway.public_url?", default=port == 1935):
+        gateway.pop("public_url")
+
+
+def _prompt_gateway_access(server: dict[str, Any], gateway: dict[str, Any]) -> None:
+    """Remote servers choose whether users may configure upstreams themselves."""
+    if not (server.get("root_api_key") or server.get("auth_mode") == "api_key"):
+        return
+    allow_users = _prompt_confirm(
+        "Allow users to configure their own gateway upstreams?",
+        default=not bool(gateway.get("management_key")),
+    )
+    if allow_users:
+        gateway.pop("management_key", None)
+    elif not gateway.get("management_key"):
+        gateway["management_key"] = "ovgm_" + secrets.token_urlsafe(32)
+        print(f"\n  {_green('Generated gateway management key — copy it to unlock editing:')}")
+        print(f"\n    {_bold(gateway['management_key'])}\n")
+        print(f"  {_dim('Saved in ov.conf (gateway.management_key).')}")
 
 
 def _wizard_query_planner(config_dict: dict[str, Any], ollama_running: bool | None = None) -> None:
@@ -2136,6 +2162,14 @@ def _update_existing_config(config_path: Path, section: str) -> int:
             updated_server.pop("auth_mode", None)
             updated_server.pop("root_api_key", None)
         data["server"] = updated_server
+        gateway = _config_section(data, "gateway")
+        if gateway.get("enabled"):
+            # Local dev has no restricted configuration; remote asks who may configure.
+            if server_dict.get("host") == "127.0.0.1":
+                gateway.pop("management_key", None)
+            else:
+                _prompt_gateway_access(updated_server, gateway)
+            data["gateway"] = gateway
 
     print(f"\n  {_bold('Change:')} {old_summary}")
     print(f"      {_cyan('→')}    {new_summary}")

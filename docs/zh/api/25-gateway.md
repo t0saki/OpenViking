@@ -4,7 +4,7 @@
 
 ## 凭证和账号范围
 
-在 `X-API-Key` 或 `Authorization: Bearer` 中发送 OpenViking API 密钥。网关通过 OpenViking `/health` 验证身份，按凭证摘要缓存成功结果 30 秒。本地 dev 使用 root 身份 `default/default`；不支持 trusted 认证。
+在 `X-API-Key` 或 `Authorization: Bearer` 中发送 OpenViking API 密钥。网关向 OpenViking 确认密钥属于谁，确认成功的结果保留 30 秒。本地 dev 使用 root 身份 `default/default`；不支持 trusted 认证。
 
 上游和上下文配置（`policies`）归账号所有。可选 query 参数 `account_id` 默认是调用方账号。root 可选任意账号；涉及 OpenViking 身份的操作中，admin 和 user 始终限于本账号。
 
@@ -41,6 +41,21 @@ curl "$GATEWAY_URL/api/v1/admin/gateway/access" \
   -H "X-API-Key: $OPENVIKING_API_KEY"
 ```
 
+```json
+{
+  "managed": true,
+  "can_write_objects": false,
+  "can_import_vlm": false,
+  "can_issue_for_others": true,
+  "role": "admin",
+  "account_id": "team",
+  "user_id": "alice",
+  "warnings": []
+}
+```
+
+OpenViking API 密钥无效时返回 401 `openviking_http_401`。
+
 ## 上游和上下文配置
 
 | 方法 | 路径 | 说明 |
@@ -58,7 +73,7 @@ curl "$GATEWAY_URL/api/v1/admin/gateway/access" \
 
 ID 由调用方指定。`PUT` 提交完整对象；未知字段会校验失败。字段默认值和限制见[配置参考](../guides/22-gateway-operations.md#配置参考)。
 
-API Key 和请求头的值只写不读。可编辑视图返回 `has_api_key` 和 `header_names`；只读视图保留 `has_api_key`、`auth_mode`，但隐藏请求头及名称。只有 **`base_url` 未变**时，空白或省略的 `api_key` 才保留旧值。更改地址时必须重填 API Key，否则旧密钥被清空。地址未变时，省略 `headers` 保留原请求头；提交名称集合会替换原集合，空白值沿用对应名称的旧值。修改 `base_url` 也会清除保留的请求头，必须重新填写新地址所需的每个自定义请求头值。
+API Key 和请求头的值只写不读。可编辑视图返回 `has_api_key` 和 `header_names`；只读视图保留 `has_api_key` 和 `auth_mode`，不返回请求头及其名称。`base_url` 不变时，空白或省略的 `api_key` 保留已存的密钥，省略 `headers` 保留已存的请求头，提交的 `headers` 对象替换整个集合，其中空白值沿用该名称已存的值。**修改 `base_url` 会清除已存的 API Key 和请求头值**，新地址需要的凭证都要重新提交。
 
 ```bash
 curl -X PUT "$GATEWAY_URL/api/v1/admin/gateway/upstreams/openai?account_id=team" \
@@ -67,11 +82,40 @@ curl -X PUT "$GATEWAY_URL/api/v1/admin/gateway/upstreams/openai?account_id=team"
   -d '{"name":"OpenAI","protocol":"chat","base_url":"https://api.openai.com/v1","api_key":"<provider-key>"}'
 ```
 
-删除仍被密钥引用的对象返回 409 `in_use`，附带 `key_count`。请先吊销引用它的密钥；也可停用上游立即停止请求。已签发网关密钥不可编辑。
+删除仍被密钥引用的对象返回 409 `in_use`，附带 `key_count`。请先吊销引用它的密钥；也可停用上游立即停止请求。
 
-连接测试返回 `{ok, status, reason, url}`，网络错误不含 `status`。2xx 且有 `data` 数组表示通过（`passed`）；2xx 失败响应或 401/403 为 `upstream_key_rejected`；404/405 表示可达但无模型列表（`models_unavailable`、`ok: true`，未验证密钥）；429 表示可达（`rate_limited`、`ok: true`）；网络或 5xx 为 `upstream_unavailable`。超时为 10 秒，只读用户也可测试。
+### 连接测试
 
-VLM 导入返回 `{imported, needs_confirmation, skipped}`。条目使用固定的 `vlm-<credential id>`，重复导入会更新。Coding/Plan 端点需确认 `allow_coding_plan`。跳过原因包括 `openai_codex`（OAuth 令牌需刷新）、`azure`（需要 api-version）、`litellm_no_api_base`（补上 api_base 后重试）。独立网关返回 `vlm_import_unavailable`。
+`POST upstreams/{identifier}/test` 用已存的凭证请求服务商的模型列表，返回 `{ok, status, reason, url}`；没有收到响应时不含 `status`。超时为 10 秒，只读视图中也可使用。Anthropic 上游把密钥同时放在 `x-api-key` 和 `Authorization: Bearer` 中发送；Chat Completions 和 Responses 上游只发送 Bearer。
+
+| 服务商的响应 | `reason` | `ok` |
+| --- | --- | --- |
+| 没有可用的 API Key：没有保存，或者上游要求每个客户端自带。不发送请求。 | `upstream_key_missing` | `false` |
+| 2xx 且带 `data` 数组 | `passed` | `true` |
+| 2xx 但响应体表示失败、401、403 | `upstream_key_rejected` | `false` |
+| 404、405：地址可达，但没有模型列表，密钥未验证 | `models_unavailable` | `true` |
+| 429：地址可达 | `rate_limited` | `true` |
+| 网络错误或 5xx | `upstream_unavailable` | `false` |
+
+### 导入 VLM 配置
+
+`POST upstreams/import-vlm` 把嵌入宿主的 VLM 凭证导入为所选账号的上游，每个上游的 ID 固定为 `vlm-<credential id>`。再次导入时，来自服务端的字段（`base_url`、`api_key`、`headers`、`protocol`、`vendor`、`coding_plan`）会刷新，其他字段保留在网关中修改后的值，包括 `name`、`enabled`、`priority`、`models`、`aliases`、`context_windows` 和 `allow_coding_plan`。Coding/Plan 路径上的上游在设置 `allow_coding_plan` 之前归入 `needs_confirmation`。独立网关返回 404 `vlm_import_unavailable`。
+
+```json
+{
+  "imported": [{"id": "vlm-default", "name": "default"}],
+  "needs_confirmation": [{"id": "vlm-coding", "name": "coding"}],
+  "skipped": [{"id": "vlm-codex", "reason": "openai_codex"}]
+}
+```
+
+| 跳过原因 `reason` | 原因 |
+| --- | --- |
+| `openai_codex` | 这是会自动刷新的 Codex OAuth 令牌。 |
+| `azure` | Azure 需要 `api-version`，网关不发送这个参数。 |
+| `litellm_no_api_base` | LiteLLM 凭证没有 `api_base`；在 OpenViking 中补上后重新导入。 |
+| `litellm_unsupported_route` | LiteLLM 路由不使用 OpenAI Chat Completions API，例如 `gemini/`、`bedrock/` 或 `vertex_ai/`。请手动把这个服务商添加为上游。 |
+| `invalid_configuration` | 凭证无法构成有效的上游，例如 base URL 不可用。 |
 
 ## 网关密钥
 
@@ -93,7 +137,24 @@ curl -X POST "$GATEWAY_URL/api/v1/admin/gateway/keys?account_id=team" \
   -d '{"name":"Alice laptop","user_id":"alice","policy_id":"default","upstream_ids":["openai"]}'
 ```
 
-立即复制响应的 `key`（`ovgw_…`）；后续读取只返回前缀和元数据。`PUT keys/{id}` 返回 405 `replacement_key_required`，需新签发后吊销旧密钥。绑定的 OpenViking 密钥被重新生成或吊销后，网关密钥会在身份缓存过期后失效（最多 30 秒），但不会删除已存的用户数据。
+```json
+{
+  "id": "3f9c…",
+  "name": "Alice laptop",
+  "user_id": "alice",
+  "policy_id": "default",
+  "upstream_ids": ["openai"],
+  "models": [],
+  "prefix": "ovgw_Xk2pQ7a",
+  "created_at": 1760000000.0,
+  "revision": 1,
+  "key": "ovgw_Xk2pQ7a…"
+}
+```
+
+立即复制响应中的 `key`。`GET keys` 和 `GET keys/{identifier}` 返回同样的字段，但不含 `key`。网关密钥不能修改，没有 `PUT`；需要变更时签发新密钥，再吊销旧密钥。
+
+绑定的 OpenViking API 密钥被重新生成或用户被删除后，OpenViking 返回 401，网关在约 30 秒内删除这个网关密钥，已存的用户数据保留。OpenViking 无法访问或返回其他错误时，请求照常进行，密钥也保留。
 
 重置保存的请求体为 `{"session":"<请求头值或日志中的 session>","protocol":"chat"}`，协议为 `chat`、`anthropic` 或 `responses`。返回 `{"status":"ready","message":"…"}`，不存在时返回 404 `not_found`。
 
@@ -101,7 +162,7 @@ curl -X POST "$GATEWAY_URL/api/v1/admin/gateway/keys?account_id=team" \
 
 ## 错误
 
-网关错误包含稳定的顶层 `reason`，例如 `{"reason":"in_use","detail":"in_use","key_count":2}`。凭证或服务错误还可能包含 `error: {message, reason}`。按 `reason` 判断，不要匹配消息文本。嵌入服务未开启网关时没有管理路由（404），Studio 将其显示为 `not_enabled`。
+管理错误包含稳定的顶层 `reason` 和一句简短的英文说明 `detail`，部分错误另有附加字段，例如 `{"reason":"in_use","detail":"Gateway keys still use this object; revoke them first.","key_count":2}`。请按 `reason` 判断，不要匹配 `detail` 或消息文本。嵌入服务未开启网关时没有管理路由（404），Studio 将其显示为 `not_enabled`。
 
 | HTTP | reason | 下一步 |
 | --- | --- | --- |
@@ -112,7 +173,7 @@ curl -X POST "$GATEWAY_URL/api/v1/admin/gateway/keys?account_id=team" \
 | 403 | `other_account` | 选择调用方权限范围内账号 |
 | 401 | `openviking_http_401` | OpenViking 拒绝凭证；重新连接 |
 | 502 / 503 | `openviking_unavailable / openviking_unreachable` | 检查服务连通性和独立 --openviking-url |
-| 503 | `openviking_version_mismatch` | 升级到 min_server_version 或更高 |
+| 503 | `openviking_version_mismatch` | 仅独立网关：把 OpenViking 升级到 min_server_version 或更高 |
 | 403 | `trusted_mode_unsupported` | 改用 API Key 认证 |
 | 409 | `in_use` | key_count 个密钥仍引用对象 |
 | 403 | `vlm_import_forbidden` | 重新检查 /access 和导入权限 |
@@ -120,10 +181,9 @@ curl -X POST "$GATEWAY_URL/api/v1/admin/gateway/keys?account_id=team" \
 | 400 | `unknown_user / unknown_policy / unknown_upstream` | 选择已有用户或对象 |
 | 403 | `forbidden` | 操作超出角色或用户范围 |
 | 404 | `not_found` | 资源不存在或不可见 |
-| 405 | `replacement_key_required` | 签发替代密钥 |
 | 422 | `invalid_configuration` | 修正请求体或 Base URL；不回显提交的凭证 |
 | 401 | `openviking_identity_missing` | 凭证未解析出用户身份 |
 
-其他 OpenViking HTTP 错误使用 `openviking_http_<status>`，通用网关 HTTP 错误使用 `gateway_http_<status>`。模型客户端的 401 可能来自缺失、错误或已吊销的 `ovgw_` 密钥，或其绑定的 OpenViking 密钥失效。请检查客户端密钥，并用当前用户密钥重新签发。
+其他 OpenViking HTTP 错误使用 `openviking_http_<status>`，通用网关 HTTP 错误使用 `gateway_http_<status>`，例如对不支持的方法返回 405 `gateway_http_405`。模型客户端的 401 可能来自缺失、错误或已吊销的 `ovgw_` 密钥，或其绑定的 OpenViking 密钥失效。请检查客户端密钥，并用当前用户密钥重新签发。
 
 配置、迁移和 URL 规则见[部署与运维](../guides/22-gateway-operations.md)。
