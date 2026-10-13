@@ -4,12 +4,17 @@ const upstreams = {
     useSettings: "Use OpenViking's model settings",
     hint: "Uses the server's VLM settings",
     running: 'Importing…',
-    summary:
-      'Imported or updated: {{imported}}. Need confirmation (Coding Plan): {{confirmation}}. Not imported: {{skipped}}.',
+    summary_one: 'Imported or updated {{count}} upstream.',
+    summary_other: 'Imported or updated {{count}} upstreams.',
+    nothing: "OpenViking's model settings have nothing to import.",
+    needsConfirmation:
+      'These Coding Plan upstreams stay blocked until you confirm the plan allows use through the gateway:',
+    skipped_one: '{{count}} credential was not imported:',
+    skipped_other: '{{count}} credentials were not imported:',
     confirm: 'Review',
     dismiss: 'Dismiss',
     repeat:
-      "Importing again refreshes addresses and credentials from OpenViking's settings. Your changes to enabled state, priority and models are kept, and nothing is duplicated.",
+      "Importing again updates addresses and credentials from OpenViking's settings without creating duplicates. Your changes to the enabled state, priority and models are kept.",
     reasons: {
       invalid_configuration:
         'The model configuration is invalid. Check the server settings and import again.',
@@ -26,14 +31,11 @@ const upstreams = {
     },
   },
   readOnly: {
-    description:
-      'Upstreams and profiles are provided by your gateway admin. You can view and test them, and pick them when issuing a key.',
-    empty: 'Waiting for your gateway admin to add upstreams.',
-    managedKey: 'The API key is held by your gateway admin',
-    clientKey: 'Each client provides its own API key',
-    codingAllowed: 'Allowed by your gateway admin',
-    codingBlocked: 'Blocked',
-    back: 'Back',
+    empty: 'Waiting for your gateway admin to add an upstream.',
+    managedKey: 'Your gateway admin keeps the API key.',
+    clientKey: 'Each client sends its own API key.',
+    codingAllowed: 'Coding Plan, allowed by your gateway admin',
+    codingBlocked: 'Coding Plan, requests blocked',
   },
   description:
     'Model providers the gateway forwards requests to. Each upstream speaks one protocol; requests are never converted.',
@@ -105,10 +107,9 @@ const upstreams = {
     },
   },
   delete: {
-    viewKeys: 'View keys',
     disable: 'Disable',
     disableHint:
-      'You can disable it first. These keys will immediately lose access to this upstream.',
+      'You can disable it instead; those keys stop reaching it right away.',
     inUse_one: '{{count}} key still uses this upstream.',
     inUse_other: '{{count}} keys still use this upstream.',
     action: 'Delete',
@@ -116,7 +117,7 @@ const upstreams = {
     blocked_other: 'Used by {{count}} keys — revoke them first',
     title: 'Delete “{{name}}”?',
     description:
-      'The upstream and its stored API key and headers will be deleted. Keys that still use it must be revoked first; issue new keys with another upstream if needed.',
+      "The upstream is deleted together with its stored API key and headers. It can't be deleted while keys still use it.",
     confirm: 'Delete upstream',
   },
   toast: {
@@ -136,7 +137,7 @@ const upstreams = {
       description:
         'It may have been deleted. Go back to the list to see the current upstreams.',
     },
-    missing: 'Still needed: {{fields}}',
+    missing: 'Still to fill in or fix: {{fields}}',
     separator: ', ',
     create: 'Add upstream',
   },
@@ -238,7 +239,7 @@ const upstreams = {
       description:
         "Subscription keys are usually licensed for the provider's own tools only.",
       warning:
-        'While this is checked, the gateway rejects every request to this upstream. Use a model API key instead, or turn on “Allow this plan through the gateway” if your plan permits use from other clients.',
+        'By default the gateway rejects every request to this upstream. Use a model API key instead, or, if your plan permits use outside the provider’s tools, turn on the option below.',
       allow: 'Allow this plan through the gateway',
       allowDescription:
         'Some Coding Plans only authorize use in the provider’s own tools. Check that your plan permits this before enabling it, or the provider may restrict your account.',

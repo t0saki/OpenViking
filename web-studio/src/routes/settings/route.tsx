@@ -64,6 +64,24 @@ function ConnectionSettingsRoute() {
   )
 }
 
+/** Whether the gateway reports OpenViking itself unreachable for this key. */
+async function openvikingUnreachable(baseUrl: string, apiKey: string) {
+  try {
+    const response = await fetch(
+      `${baseUrl.replace(/\/+$/, '')}/api/v1/admin/gateway/access`,
+      { headers: { 'X-API-Key': apiKey } },
+    )
+    const body: unknown = await response.json()
+    return (
+      typeof body === 'object' &&
+      body !== null &&
+      (body as { reason?: unknown }).reason === 'openviking_unreachable'
+    )
+  } catch {
+    return false
+  }
+}
+
 export function GatewayConnectionSettings() {
   const { t } = useTranslation('settings')
   const { connection, openvikingUrl, saveConnection, serverMode } =
@@ -86,9 +104,14 @@ export function GatewayConnectionSettings() {
         connection.baseUrl,
         apiKey.trim() ? { 'X-API-Key': apiKey.trim() } : {},
       )
-      // The gateway answers an invalid key with health minus identity.
+      // The gateway answers an invalid key with health minus identity, and
+      // so it does while OpenViking is down; /access tells the two apart.
       if (apiKey.trim() && typeof health.user_id !== 'string') {
-        setError(t('gatewayConnection.invalidKey'))
+        setError(
+          (await openvikingUnreachable(connection.baseUrl, apiKey.trim()))
+            ? t('gatewayConnection.unreachable', { url: openvikingUrl })
+            : t('gatewayConnection.invalidKey'),
+        )
         return
       }
       saveConnection({
@@ -106,7 +129,7 @@ export function GatewayConnectionSettings() {
       })
       await navigate({ to: '/gateway' })
     } catch {
-      setError(t('gatewayConnection.invalidKey'))
+      setError(t('gatewayConnection.gatewayUnreachable'))
     } finally {
       setPending(false)
     }
@@ -116,9 +139,11 @@ export function GatewayConnectionSettings() {
     <Card className="w-full max-w-xl">
       <CardHeader>
         <CardTitle>{t('gatewayConnection.title')}</CardTitle>
-        <p className="break-all text-sm text-muted-foreground">
-          {t('gatewayConnection.openvikingUrl', { url: openvikingUrl })}
-        </p>
+        {openvikingUrl ? (
+          <p className="break-all text-sm text-muted-foreground">
+            {t('gatewayConnection.openvikingUrl', { url: openvikingUrl })}
+          </p>
+        ) : null}
       </CardHeader>
       <CardContent>
         <form className="grid gap-4" onSubmit={(event) => void login(event)}>

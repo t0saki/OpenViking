@@ -179,8 +179,11 @@ export type KeyRequest = KeyOwner & {
 export type KeyUser = {
   user_id: string
   role: 'admin' | 'user'
-  /** False when the server can't read the user's key, e.g. it keeps only a hash. */
-  api_key_available: boolean
+  /**
+   * False when the server can't read the user's key, e.g. it keeps only a
+   * hash. OpenViking servers that predate the field omit it.
+   */
+  api_key_available?: boolean
 }
 
 export type CacheStats = {

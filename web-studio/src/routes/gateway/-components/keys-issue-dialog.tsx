@@ -470,7 +470,7 @@ export function KeysIssueDialog({
               ) : (
                 <>
                   {t(
-                    access?.managed
+                    readOnly
                       ? 'keys.prerequisites.managed'
                       : 'keys.form.profile.empty',
                   )}{' '}
@@ -556,7 +556,7 @@ export function KeysIssueDialog({
               ) : (
                 <>
                   {t(
-                    access?.managed
+                    readOnly
                       ? 'keys.prerequisites.managed'
                       : 'keys.form.upstreams.empty',
                   )}{' '}
@@ -669,11 +669,12 @@ function KeyUserLabel({ user }: { user: KeyUser }) {
       <span className="text-xs text-muted-foreground">
         {t(`keys.form.user.roles.${user.role}`)}
       </span>
-      {user.api_key_available ? null : (
+      {/* Older OpenViking servers omit the field; only `false` is known. */}
+      {user.api_key_available === false ? (
         <span className="text-xs text-muted-foreground">
           {t('keys.form.user.unavailable')}
         </span>
-      )}
+      ) : null}
     </span>
   )
 }

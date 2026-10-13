@@ -4,6 +4,7 @@ import { useMutation } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import {
   CopyPlusIcon,
+  EyeIcon,
   KeyRoundIcon,
   PencilIcon,
   PlusIcon,
@@ -27,7 +28,7 @@ import { cn } from '#/lib/utils'
 import { deleteProfile, keysUsing, toGatewayError } from '../-lib/api'
 import type { GatewayTool, Profile } from '../-lib/api'
 import { EMPTY_VALUE, formatNumber, formatPercent } from '../-lib/format'
-import { gatewayErrorMessage } from '../-lib/localize'
+import { toastGatewayError } from '../-lib/error-toast'
 import type { Translate } from '../-lib/localize'
 import { offeredTools, toProfileSettings } from '../-lib/profile-schema'
 import { NEW_ID } from '../-lib/search'
@@ -160,7 +161,7 @@ function ProfileCard({
               />
             }
           >
-            <PencilIcon />
+            {readOnly ? <EyeIcon /> : <PencilIcon />}
             {t(readOnly ? 'actions.view' : 'actions.edit')}
           </Button>
           {!readOnly ? (
@@ -232,7 +233,7 @@ export function ProfilesPage() {
     onError: (error) => {
       const failure = toGatewayError(error)
       if (failure.reason === 'in_use') setInUseCount(failure.keyCount ?? 0)
-      else toast.error(gatewayErrorMessage(t, error))
+      else toastGatewayError(t, error)
     },
   })
 
@@ -263,7 +264,7 @@ export function ProfilesPage() {
           icon={<SlidersHorizontalIcon />}
           title={t('profiles.empty.title')}
           description={t(
-            readOnly ? 'management.readOnly' : 'profiles.empty.description',
+            readOnly ? 'profiles.empty.readOnly' : 'profiles.empty.description',
           )}
           action={
             readOnly ? undefined : (
@@ -363,7 +364,7 @@ export function ProfilesPage() {
               nativeButton={false}
               render={<Link to="/gateway/keys" />}
             >
-              {t('tabs.keys')}
+              {t('actions.viewKeys')}
             </Button>
           }
         >

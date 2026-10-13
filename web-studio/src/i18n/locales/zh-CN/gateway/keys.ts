@@ -129,11 +129,10 @@ const keys = {
   secret: {
     identity: '这把密钥以 {{user}} 的身份读写记忆。',
     dependency:
-      '它依赖 {{user}} 当前的用户 API 密钥。那个 API 密钥重新生成后，这把网关密钥会自动失效。',
+      '它绑定 {{user}} 当前的用户 API 密钥。那个密钥重新生成后，这把网关密钥会自动失效，需要重新签发。',
     title: '复制网关密钥',
     once: '完整密钥只显示这一次。',
     copyKey: '复制网关密钥',
-    user: 'OpenViking 用户',
     profile: '上下文配置',
     connectTitle: '接入客户端',
     clients: {

@@ -472,7 +472,7 @@ describe('UpstreamEditor', () => {
     expect(await screen.findByText('upstreams.delete.inUse')).toBeTruthy()
     expect(
       screen
-        .getByRole('link', { name: 'upstreams.delete.viewKeys' })
+        .getByRole('link', { name: 'actions.viewKeys' })
         .getAttribute('href'),
     ).toBe('/gateway/keys')
     fireEvent.click(
@@ -872,8 +872,10 @@ describe('upstream access and import', () => {
     readOnly()
     renderAt('/gateway/upstreams/new')
     expect(
-      await screen.findByText('upstreams.readOnly.description'),
-    ).toBeTruthy()
+      (await screen.findByText('upstreams.editor.back'))
+        .closest('a')
+        ?.getAttribute('href'),
+    ).toBe('/gateway/upstreams')
     expect(screen.queryByLabelText('upstreams.form.name.label')).toBeNull()
   })
 
@@ -941,6 +943,28 @@ describe('upstream access and import', () => {
     )
     expect(screen.queryByText('upstreams.import.summary')).toBeNull()
     expect(api.importVlm).toHaveBeenCalledTimes(1)
+  })
+
+  it('lists only the skipped credentials when an import saves nothing', async () => {
+    api.getAccess.mockResolvedValue({
+      can_write_objects: true,
+      can_import_vlm: true,
+    })
+    api.importVlm.mockResolvedValue({
+      imported: [],
+      needs_confirmation: [],
+      skipped: [{ id: 'oauth', reason: 'openai_codex' }],
+    })
+    renderAt('/gateway/upstreams')
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'upstreams.import.action' }),
+    )
+    expect(
+      await screen.findByText('oauth: upstreams.import.reasons.openai_codex'),
+    ).toBeTruthy()
+    expect(screen.queryByText('upstreams.import.summary')).toBeNull()
+    expect(screen.queryByText('upstreams.import.nothing')).toBeNull()
+    expect(screen.queryByText('upstreams.import.repeat')).toBeNull()
   })
 
   it('offers manual setup when the server cannot import VLM settings', async () => {

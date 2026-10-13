@@ -1,8 +1,11 @@
-import { ManagementUnlockButton } from './access-notices'
-import { Notice } from './notice'
 import type * as React from 'react'
 import { Link } from '@tanstack/react-router'
-import { ArrowRightIcon, CheckIcon, ListChecksIcon } from 'lucide-react'
+import {
+  ArrowRightIcon,
+  CheckIcon,
+  ListChecksIcon,
+  TriangleAlertIcon,
+} from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '#/components/ui/button'
@@ -23,6 +26,7 @@ import {
   useProfiles,
   useUpstreams,
 } from '../-lib/use-gateway'
+import { ManagementUnlockButton } from './access-notices'
 import { RecommendedProfileButton } from './recommended-profile-button'
 
 type StepState = 'done' | 'current' | 'todo'
@@ -121,6 +125,12 @@ export function OverviewSetup() {
   const variantOf = (index: number) =>
     index === current ? 'default' : 'outline'
   const [upstreamCount = 0, profileCount = 0, keyCount = 0] = counts
+  // Upstreams imported from the server's VLM settings carry a `vlm-` id.
+  const importedCount =
+    upstreams.data?.filter((item) => item.id.startsWith('vlm-')).length ?? 0
+  const blockedUpstreams = (upstreams.data ?? []).filter(
+    (item) => item.coding_plan && !item.allow_coding_plan,
+  )
 
   const viewButton = (
     to: '/gateway/upstreams' | '/gateway/profiles' | '/gateway/keys',
@@ -164,22 +174,46 @@ export function OverviewSetup() {
             state={stateOf(0)}
             title={t('overview.setup.upstream.title')}
             description={
-              done[0]
-                ? t(
-                    readOnly
-                      ? 'overview.setup.providedUpstreams'
-                      : upstreams.data?.some((item) =>
-                            item.id.startsWith('vlm-'),
-                          )
-                        ? 'overview.setup.importedUpstreams'
-                        : 'overview.setup.upstream.done',
-                    { count: upstreamCount },
-                  )
-                : t(
-                    readOnly
-                      ? 'overview.setup.waitUpstreams'
-                      : 'overview.setup.upstream.description',
-                  )
+              <>
+                <p>
+                  {done[0]
+                    ? t(
+                        readOnly
+                          ? 'overview.setup.providedUpstreams'
+                          : !importedCount
+                            ? 'overview.setup.upstream.done'
+                            : importedCount < upstreamCount
+                              ? 'overview.setup.someImportedUpstreams'
+                              : 'overview.setup.importedUpstreams',
+                        { count: upstreamCount, imported: importedCount },
+                      )
+                    : t(
+                        readOnly
+                          ? 'overview.setup.waitUpstreams'
+                          : 'overview.setup.upstream.description',
+                      )}
+                </p>
+                {readOnly
+                  ? null
+                  : blockedUpstreams.map((item) => (
+                      <p
+                        key={item.id}
+                        className="mt-1 flex items-start gap-1.5 text-xs text-amber-800 dark:text-amber-200"
+                      >
+                        <TriangleAlertIcon className="mt-0.5 size-3.5 shrink-0" />
+                        <span>
+                          {t('overview.setup.codingPlan', { name: item.name })}{' '}
+                          <Link
+                            to="/gateway/upstreams/$upstreamId"
+                            params={{ upstreamId: item.id }}
+                            className="font-medium underline underline-offset-4"
+                          >
+                            {t('overview.setup.confirm')}
+                          </Link>
+                        </span>
+                      </p>
+                    ))}
+              </>
             }
           >
             {done[0] ? (
@@ -201,35 +235,6 @@ export function OverviewSetup() {
                 {t('overview.setup.upstream.action')}
               </Button>
             )}
-            {readOnly
-              ? null
-              : upstreams.data
-                  ?.filter(
-                    (item) => item.coding_plan && !item.allow_coding_plan,
-                  )
-                  .map((item) => (
-                    <Notice
-                      key={item.id}
-                      tone="warning"
-                      action={
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          nativeButton={false}
-                          render={
-                            <Link
-                              to="/gateway/upstreams/$upstreamId"
-                              params={{ upstreamId: item.id }}
-                            />
-                          }
-                        >
-                          {t('overview.setup.confirm')}
-                        </Button>
-                      }
-                    >
-                      {t('overview.setup.codingPlan', { name: item.name })}
-                    </Notice>
-                  ))}
           </SetupStep>
           <SetupStep
             number={2}
@@ -288,7 +293,11 @@ export function OverviewSetup() {
                   <p>{t('overview.setup.key.description')}</p>
                   {loaded && !(done[0] && done[1]) ? (
                     <p className="mt-1 text-xs">
-                      {t('overview.setup.key.blocked')}
+                      {t(
+                        readOnly
+                          ? 'overview.setup.key.waiting'
+                          : 'overview.setup.key.blocked',
+                      )}
                     </p>
                   ) : null}
                 </>

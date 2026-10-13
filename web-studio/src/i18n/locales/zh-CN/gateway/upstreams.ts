@@ -4,12 +4,17 @@ const upstreams = {
     useSettings: '使用 OpenViking 的模型配置',
     hint: '即服务端的 VLM 配置',
     running: '导入中…',
-    summary:
-      '已导入或更新 {{imported}} 个上游；{{confirmation}} 个需要确认（Coding Plan）；{{skipped}} 个未导入。',
+    summary_one: '已导入或更新 {{count}} 个上游。',
+    summary_other: '已导入或更新 {{count}} 个上游。',
+    nothing: 'OpenViking 的模型配置里没有可导入的凭证。',
+    needsConfirmation:
+      '以下 Coding Plan 上游会拦截所有请求，确认套餐允许通过网关使用后才能启用：',
+    skipped_one: '{{count}} 个凭证未导入：',
+    skipped_other: '{{count}} 个凭证未导入：',
     confirm: '去确认',
     dismiss: '关闭',
     repeat:
-      '再次导入会按 OpenViking 的配置更新地址和凭证，你修改过的启用状态、优先级和模型设置会保留，不会重复创建。',
+      '再次导入会按 OpenViking 的配置更新地址和凭证，不会重复创建；你改过的启用状态、优先级和模型设置会保留。',
     reasons: {
       invalid_configuration: '模型配置无效，请检查服务端配置后重新导入。',
       openai_codex:
@@ -24,14 +29,11 @@ const upstreams = {
     },
   },
   readOnly: {
-    description:
-      '上游和上下文配置由网关管理员统一提供。你可以查看、测试连接，并在签发密钥时选用。',
     empty: '等待网关管理员添加上游。',
-    managedKey: 'API Key 由网关管理员保管',
-    clientKey: '由每个客户端自带',
-    codingAllowed: '网关管理员已允许',
-    codingBlocked: '已拦截',
-    back: '返回',
+    managedKey: 'API Key 由网关管理员保管。',
+    clientKey: 'API Key 由每个客户端自带。',
+    codingAllowed: 'Coding Plan，网关管理员已允许',
+    codingBlocked: 'Coding Plan，请求已拦截',
   },
   description:
     '网关把请求转发给这些模型服务商。每个上游只支持一种协议，网关不做协议转换。',
@@ -100,9 +102,8 @@ const upstreams = {
     },
   },
   delete: {
-    viewKeys: '查看密钥',
     disable: '停用',
-    disableHint: '可以先停用它，停用后这些密钥会立即请求不到这个上游。',
+    disableHint: '也可以先停用它，停用后这些密钥会立即请求不到这个上游。',
     inUse_one: '仍有 {{count}} 个密钥在使用它。',
     inUse_other: '仍有 {{count}} 个密钥在使用它。',
     action: '删除',
@@ -110,7 +111,7 @@ const upstreams = {
     blocked_other: '有 {{count}} 个密钥在使用，请先吊销',
     title: '删除“{{name}}”？',
     description:
-      '上游会连同保存的 API Key 和请求头一起删除。仍有密钥使用它时，需要先吊销这些密钥；需要时签发使用其他上游的新密钥。',
+      '上游会连同保存的 API Key 和请求头一起删除。还有密钥在使用它时无法删除。',
     confirm: '删除上游',
   },
   toast: {
@@ -128,7 +129,7 @@ const upstreams = {
       title: '这个上游已不存在',
       description: '它可能已被删除。请返回列表查看现有的上游。',
     },
-    missing: '还需填写：{{fields}}',
+    missing: '还需填写或修正：{{fields}}',
     separator: '、',
     create: '添加上游',
   },
@@ -226,7 +227,7 @@ const upstreams = {
       label: '这是 Coding Plan 或订阅密钥',
       description: '订阅类密钥通常只授权在服务商自己的工具里使用。',
       warning:
-        '勾选后，网关会拒绝所有发往这个上游的请求。请改用模型 API Key；如果套餐允许在其他客户端使用，可以打开“允许通过网关使用这个套餐”。',
+        '网关默认拒绝所有发往这个上游的请求。请改用模型 API Key；如果套餐条款允许在服务商自己的工具之外使用，可以打开下面的选项。',
       allow: '允许通过网关使用这个套餐',
       allowDescription:
         '部分 Coding Plan 只授权在服务商自己的工具里使用。打开前请确认套餐条款允许，否则账号可能被服务商限制。',

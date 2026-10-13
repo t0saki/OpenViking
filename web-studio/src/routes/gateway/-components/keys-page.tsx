@@ -69,8 +69,7 @@ type Missing = 'upstream' | 'profile' | 'both'
 /** Issue and revoke gateway keys. */
 export function KeysPage() {
   const { t } = useTranslation('gateway')
-  const { connection, invalidate, access, readOnly, canIssueForOthers } =
-    useGateway()
+  const { connection, invalidate, readOnly, canIssueForOthers } = useGateway()
   const keysQuery = useKeys()
   const profilesQuery = useProfiles()
   const upstreamsQuery = useUpstreams()
@@ -120,6 +119,14 @@ export function KeysPage() {
           ? 'profile'
           : null
   const canIssue = listsReady && !missing
+  // Only someone who can't add upstreams or profiles waits for the gateway admin.
+  const missingReason = missing
+    ? t(
+        readOnly
+          ? 'keys.prerequisites.managed'
+          : `keys.prerequisites.${missing}`,
+      )
+    : undefined
   const refreshing =
     keysQuery.isFetching ||
     profilesQuery.isFetching ||
@@ -140,15 +147,7 @@ export function KeysPage() {
   const issueButton = (
     <IssueButton
       disabled={!canIssue}
-      reason={
-        missing
-          ? t(
-              access?.managed
-                ? 'keys.prerequisites.managed'
-                : `keys.prerequisites.${missing}`,
-            )
-          : undefined
-      }
+      reason={missingReason}
       onClick={openIssue}
     />
   )
@@ -237,13 +236,9 @@ export function KeysPage() {
               description={
                 <>
                   <span className="block">{t('keys.empty.description')}</span>
-                  {missing ? (
+                  {missingReason ? (
                     <span className="mt-2 block font-medium text-foreground">
-                      {t(
-                        access?.managed
-                          ? 'keys.prerequisites.managed'
-                          : `keys.prerequisites.${missing}`,
-                      )}
+                      {missingReason}
                     </span>
                   ) : null}
                 </>

@@ -77,7 +77,7 @@ export function ManagementKeyDialog() {
             <summary className="cursor-pointer">
               {t('management.where')}
             </summary>
-            <ul className="mt-2 list-inside list-disc space-y-1 text-muted-foreground">
+            <ul className="mt-2 list-disc space-y-1 pl-5 text-muted-foreground">
               <li>
                 <code>{MANAGEMENT_CONFIG}</code>
               </li>

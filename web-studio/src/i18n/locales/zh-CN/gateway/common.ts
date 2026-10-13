@@ -34,6 +34,7 @@ const common = {
     view: '查看',
     back: '返回',
     viewAll: '查看全部',
+    viewKeys: '查看密钥',
   },
   states: {
     loading: '加载中…',
@@ -50,7 +51,10 @@ const common = {
   access: {
     title: '先连接 OpenViking',
     invalid: 'OpenViking API 密钥无效',
-    description: '网关用你的 OpenViking API 密钥确认你是谁。',
+    description:
+      '网关用你的 OpenViking API 密钥确认你是谁。请先在连接设置中填写它。',
+    invalidDescription:
+      'OpenViking 拒绝了连接设置中的 API 密钥，它可能已被重新生成或删除。请换一个有效的密钥。',
     action: '打开连接设置',
   },
   management: {
@@ -60,17 +64,17 @@ const common = {
       '网关管理密钥由部署这台网关的人设置，用来修改上游和上下文配置。它不是 OpenViking API 密钥，也不是客户端用的网关密钥。',
     where: '在哪里找？',
     prefix: 'openviking-server init 生成的值以 ovgm_ 开头。',
-    environment: '独立运行时，也可能在环境变量中：',
+    environment: '独立运行的网关也可能从环境变量读取：',
     keyPlaceholder: '<至少 32 个字符>',
     session: '只保存在当前浏览器标签页，关闭后自动锁定。',
     wrongKey: '这是网关密钥（给客户端用的），请输入网关管理密钥。',
     invalid:
-      '网关管理密钥不正确。请向部署这台网关的人确认；注意这里不是 OpenViking 的管理员 API 密钥。',
+      '网关管理密钥不正确。请向部署这台网关的人确认。注意，这里要填的不是 OpenViking 的管理员 API 密钥。',
     unlock: '解锁',
-    unlocked: '已解锁',
+    unlocked: '已解锁，现在可以修改上游和上下文配置',
     lock: '锁定',
     editing: '可修改上游和上下文配置',
-    expired: '网关管理密钥已失效，已自动锁定。',
+    expired: '网关管理密钥已失效，上游和上下文配置恢复为只读。',
     readOnly:
       '上游和上下文配置由网关管理员统一提供。你可以查看、测试连接，并在签发密钥时选用。',
     adminReadOnly: 'OpenViking 的管理员和 Root 也需要网关管理密钥才能修改。',
@@ -78,24 +82,26 @@ const common = {
       '你正在修改本账号所有用户共用的配置，保存后立即对使用它的密钥生效。',
     publicTitle: '这台网关对所有 OpenViking 商业版用户开放',
     publicDescription:
-      '它连接的是公共 OpenViking 服务，并且没有设置网关管理密钥。任何持有商业版 API 密钥的人都能登录这台网关，用它转发模型请求，并修改所在账号的上游。如果你是部署者，并且这台网关只给你自己或团队使用，请设置网关管理密钥后重启。',
-    generate: '可以用以下命令生成：',
+      '它连接的是公共 OpenViking 服务，又没有设置网关管理密钥，所以任何持有商业版 API 密钥的人都能登录这台网关、用它转发模型请求，还能修改自己账号下的上游。如果这台网关只给你自己或团队使用，请设置网关管理密钥，然后重启网关。',
+    generate: '可以用这条命令生成密钥：',
     dismiss: '关闭提示',
   },
   unavailable: {
     notEnabled: {
       title: '这台 OpenViking 没有开启网关',
       description:
-        '在 openviking-server init 中选 Update gateway，或在 ov.conf 写入以下配置后重启。',
+        '运行 openviking-server init 并选择 Update gateway；也可以在 ov.conf 中加入下面的配置，然后重启 OpenViking。',
     },
-    contact: '请联系部署者开启网关。',
+    contact: '请联系部署这台 OpenViking 的人开启网关。',
     trusted: {
       title: '网关不支持 Trusted 模式',
-      description: '请在 ov.conf 中改为 API 密钥模式后重启。',
+      description:
+        '网关要靠 API 密钥识别每个用户。请在 ov.conf 中把 server.auth_mode 改为 api_key，然后重启 OpenViking。',
     },
     openvikingUnreachable: {
       title: '网关连不上 OpenViking（{{url}}）',
-      description: '检查启动参数 --openviking-url，然后重试。',
+      description:
+        '确认 OpenViking 正在运行，并检查网关的启动参数 --openviking-url 是否指向它，然后重试。',
     },
     failed: {
       title: '无法加载 OpenViking 网关',
@@ -108,7 +114,7 @@ const common = {
   errors: {
     reasons: {
       management_key_required:
-        '上游和上下文配置由网关管理员统一提供，你没有修改权限。',
+        '上游和上下文配置由网关管理员统一提供，输入网关管理密钥后才能修改。',
       management_key_invalid: '网关管理密钥不正确，请向部署这台网关的人确认。',
       vlm_import_forbidden: '你没有导入 OpenViking 模型配置的权限。',
       vlm_import_unavailable:
@@ -116,16 +122,16 @@ const common = {
       in_use_one: '仍有 {{count}} 个密钥在使用它。',
       in_use_other: '仍有 {{count}} 个密钥在使用它。',
       upstream_key_missing:
-        '这个上游没有保存 API Key（或由客户端自带 key），网关无法发起测试。',
+        '这个上游没有保存 API Key，或者由客户端自带 API Key，网关无法发起测试。',
       trusted_mode_unsupported: '网关不支持 Trusted 模式。',
       openviking_unreachable: '网关连不上 OpenViking。',
 
-      not_enabled: '这台服务器没有开启 OpenViking 网关。',
+      not_enabled: '这台 OpenViking 没有开启网关。',
       conflict: '这项修改与现有配置冲突。',
       invalid: '网关拒绝了这些设置，请检查填写的值后重试。',
       forbidden: '没有执行此操作的权限。',
       not_found: '该项已不存在，请刷新后重试。',
-      unauthorized: '密钥被拒绝，请检查连接设置。',
+      unauthorized: 'OpenViking API 密钥被拒绝，请检查连接设置。',
       other: '操作失败，请重试。',
     },
     inUse: '仍有密钥在使用它，请先吊销这些密钥。',
@@ -138,8 +144,7 @@ const common = {
     subscriptionKey: '不支持 Claude 订阅登录，请使用模型 API Key。',
   },
   validation: {
-    anthropicBaseUrl:
-      'Anthropic 的 base_url 不需要 /v1，网关会自动拼接 /v1/messages。',
+    anthropicBaseUrl: '去掉末尾的 /v1 才能保存',
     required: '必填',
     number: '请输入数字',
     integer: '请输入整数',
@@ -185,6 +190,7 @@ const common = {
   keyValue: {
     add: '添加',
     remove: '移除',
+    none: '未设置',
     duplicate: '名称重复，只保留最后一项',
   },
   tags: {

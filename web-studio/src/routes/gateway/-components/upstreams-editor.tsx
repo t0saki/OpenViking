@@ -10,7 +10,7 @@ import { Card } from '#/components/ui/card'
 
 import { keysUsing, newObjectId, saveUpstream } from '../-lib/api'
 import type { Upstream, UpstreamInput } from '../-lib/api'
-import { gatewayErrorMessage } from '../-lib/localize'
+import { toastGatewayError } from '../-lib/error-toast'
 import { NEW_ID } from '../-lib/search'
 import {
   UPSTREAM_DEFAULTS,
@@ -20,7 +20,6 @@ import {
 import { useGateway, useKeys, useUpstreams } from '../-lib/use-gateway'
 import { isValid } from '../-lib/validation'
 import { ReadOnlyProvider } from './read-only'
-import { Notice } from './notice'
 import { EditorFooter } from './editor-footer'
 import { EmptyState, ErrorState, LoadingState } from './empty-state'
 import { BackLink, SectionHeader } from './section-header'
@@ -48,19 +47,10 @@ export function UpstreamEditor({ upstreamId }: { upstreamId: string }) {
   const upstreams = useUpstreams({ enabled: !isNew })
   const keys = useKeys({ enabled: !isNew })
 
+  // The read-only notice above the tabs explains why and offers to unlock.
   if (isNew && readOnly)
     return (
-      <Notice
-        tone="info"
-        action={
-          <BackLink
-            to="/gateway/upstreams"
-            label={t('upstreams.editor.back')}
-          />
-        }
-      >
-        {t('upstreams.readOnly.description')}
-      </Notice>
+      <BackLink to="/gateway/upstreams" label={t('upstreams.editor.back')} />
     )
   if (isNew) return <UpstreamEditorForm />
 
@@ -200,7 +190,7 @@ function UpstreamEditorForm({ stored, usedBy }: UpstreamEditorFormProps) {
       await invalidate('upstreams')
       await navigate({ to: '/gateway/upstreams' })
     },
-    onError: (error) => toast.error(gatewayErrorMessage(t, error)),
+    onError: (error) => toastGatewayError(t, error),
   })
 
   const canSave = !readOnly && dirty && valid && !save.isPending
@@ -230,13 +220,15 @@ function UpstreamEditorForm({ stored, usedBy }: UpstreamEditorFormProps) {
             />
           }
           title={stored ? stored.name : t('upstreams.editor.newTitle')}
-          description={t(
+          description={
             readOnly
-              ? 'upstreams.readOnly.description'
-              : stored
-                ? 'upstreams.editor.editDescription'
-                : 'upstreams.editor.newDescription',
-          )}
+              ? undefined
+              : t(
+                  stored
+                    ? 'upstreams.editor.editDescription'
+                    : 'upstreams.editor.newDescription',
+                )
+          }
           actions={
             stored && !readOnly ? (
               <>
@@ -275,7 +267,7 @@ function UpstreamEditorForm({ stored, usedBy }: UpstreamEditorFormProps) {
               variant="outline"
               render={<Link to="/gateway/upstreams" />}
             >
-              {t('upstreams.readOnly.back')}
+              {t('actions.back')}
             </Button>
             {stored ? (
               <UpstreamTest upstream={stored} variant="header" />

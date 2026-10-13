@@ -8,20 +8,21 @@ const overview = {
   sampleNote_other:
     'Figures cover the latest {{limit}} entries of the request log. Entries are kept for {{count}} days.',
   setup: {
-    providedUpstreams_one: 'Your gateway admin has provided {{count}} upstream',
+    providedUpstreams_one: '{{count}} upstream provided by your gateway admin',
     providedUpstreams_other:
-      'Your gateway admin has provided {{count}} upstreams',
+      '{{count}} upstreams provided by your gateway admin',
     importedUpstreams_one:
-      '{{count}} upstream available from OpenViking model settings',
+      "{{count}} upstream, imported from OpenViking's model settings",
     importedUpstreams_other:
-      '{{count}} upstreams available from OpenViking model settings',
-    waitUpstreams: 'Waiting for your gateway admin to add upstreams',
-    providedProfiles_one: 'Your gateway admin has provided {{count}} profile',
-    providedProfiles_other:
-      'Your gateway admin has provided {{count}} profiles',
-    waitProfiles: 'Waiting for your gateway admin to add profiles',
+      "{{count}} upstreams, imported from OpenViking's model settings",
+    someImportedUpstreams:
+      "{{count}} upstreams, {{imported}} of them imported from OpenViking's model settings",
+    waitUpstreams: 'Waiting for your gateway admin to add an upstream',
+    providedProfiles_one: '{{count}} profile provided by your gateway admin',
+    providedProfiles_other: '{{count}} profiles provided by your gateway admin',
+    waitProfiles: 'Waiting for your gateway admin to add a profile',
     codingPlan:
-      '{{name}} is a Coding Plan upstream and needs confirmation before use',
+      '{{name}} is a Coding Plan upstream. Requests to it are blocked until you confirm the plan allows it.',
     confirm: 'Review',
 
     title: 'Get started',
@@ -50,6 +51,8 @@ const overview = {
       description:
         'Clients use this key to call the gateway. It belongs to one OpenViking user, whose memory the gateway reads and writes.',
       blocked: 'Add an upstream and a context profile first.',
+      waiting:
+        'You can issue a key once your gateway admin adds an upstream and a profile.',
       done_one: '{{count}} key issued',
       done_other: '{{count}} keys issued',
       action: 'Issue key',

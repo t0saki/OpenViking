@@ -740,7 +740,6 @@ describe('KeysSecretDialog', () => {
 
   it('opens on a client the key can serve, with the real key and address', () => {
     renderSecret()
-    expect(screen.getByText('alice')).toBeTruthy()
     expect(screen.getByText('keys.secret.identity')).toBeTruthy()
     expect(screen.getByText('keys.secret.dependency')).toBeTruthy()
     expect(screen.getByText('Coding')).toBeTruthy()

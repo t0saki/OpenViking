@@ -48,7 +48,9 @@ export function GatewayConnect({ invalid = false }: { invalid?: boolean }) {
   return (
     <SetupCard
       title={t(invalid ? 'access.invalid' : 'access.title')}
-      description={t('access.description')}
+      description={t(
+        invalid ? 'access.invalidDescription' : 'access.description',
+      )}
       actions={
         <Button nativeButton={false} render={<Link to="/settings" />}>
           <KeyRoundIcon />

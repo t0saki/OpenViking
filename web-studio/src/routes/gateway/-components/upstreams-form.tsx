@@ -345,24 +345,32 @@ export function UpstreamForm({
               </p>
             ) : null}
             {correction && !readOnly ? (
-              <Notice tone="warning">
+              <Notice
+                tone="warning"
+                action={
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => onChange('base_url', correction.url)}
+                  >
+                    {t(
+                      correction.reason === 'anthropicVersion'
+                        ? 'upstreams.form.baseUrl.removeVersion'
+                        : 'upstreams.form.baseUrl.correctPath',
+                      { url: correction.url },
+                    )}
+                  </Button>
+                }
+              >
                 <p>{t(`upstreams.form.baseUrl.${correction.reason}`)}</p>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => onChange('base_url', correction.url)}
-                >
-                  {t(
-                    correction.reason === 'anthropicVersion'
-                      ? 'upstreams.form.baseUrl.removeVersion'
-                      : 'upstreams.form.baseUrl.correctPath',
-                    { url: correction.url },
-                  )}
-                </Button>
               </Notice>
             ) : null}
-            {!readOnly && defaultUrl && !usesDefaultBaseUrl(draft) ? (
+            {/* The correction button already offers the default address. */}
+            {!readOnly &&
+            defaultUrl &&
+            !usesDefaultBaseUrl(draft) &&
+            correction?.url !== defaultUrl ? (
               <button
                 type="button"
                 className="flex max-w-full min-w-0 gap-1 justify-self-start text-xs font-medium whitespace-nowrap text-foreground underline underline-offset-4"
@@ -382,14 +390,14 @@ export function UpstreamForm({
         description={t('upstreams.sections.credentials.description')}
       >
         {readOnly ? (
-          <>
-            <p>
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            <span>
               {t(
                 draft.auth_mode === 'passthrough'
                   ? 'upstreams.readOnly.clientKey'
                   : 'upstreams.readOnly.managedKey',
               )}
-            </p>
+            </span>
             {draft.coding_plan ? (
               <ToneBadge tone="neutral">
                 {t(
@@ -399,7 +407,7 @@ export function UpstreamForm({
                 )}
               </ToneBadge>
             ) : null}
-          </>
+          </div>
         ) : (
           <>
             <SettingField label={t('upstreams.form.authMode.label')}>
@@ -432,7 +440,7 @@ export function UpstreamForm({
                 label={
                   <>
                     {t('upstreams.form.apiKey.label')}
-                    {keyStored ? (
+                    {keyStored && !addressChanged ? (
                       <ToneBadge tone="success">
                         {t('upstreams.form.apiKey.stored')}
                       </ToneBadge>
@@ -456,7 +464,7 @@ export function UpstreamForm({
                   autoComplete="new-password"
                   value={draft.api_key}
                   placeholder={t(
-                    keyStored
+                    keyStored && !addressChanged
                       ? 'field.storedSecret'
                       : 'upstreams.form.apiKey.placeholder',
                   )}

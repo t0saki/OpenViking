@@ -15,7 +15,6 @@ import {
   TriangleAlertIcon,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
 
 import { Badge } from '#/components/ui/badge'
 import { Button } from '#/components/ui/button'
@@ -40,6 +39,7 @@ import { cn } from '#/lib/utils'
 import { importVlm, keysUsing, saveUpstream, toGatewayError } from '../-lib/api'
 import type { Upstream, VlmImportResult } from '../-lib/api'
 import { formatNumber, hostFromUrl } from '../-lib/format'
+import { toastGatewayError } from '../-lib/error-toast'
 import {
   authModeLabel,
   gatewayErrorMessage,
@@ -99,7 +99,7 @@ function useToggleUpstream() {
     onError: (error, { upstream }) => {
       // `upstream` is the row as it was before the switch was flipped.
       setEnabled(upstream.id, upstream.enabled)
-      toast.error(gatewayErrorMessage(t, error))
+      toastGatewayError(t, error)
     },
     // Refetch after the last running toggle only (this one still counts), so
     // the fresh list doesn't undo switches whose save hasn't finished.
@@ -298,53 +298,10 @@ export function UpstreamsPage() {
         </Notice>
       ) : null}
       {importResult ? (
-        <Notice
-          tone={
-            importResult.needs_confirmation.length ||
-            importResult.skipped.length
-              ? 'warning'
-              : 'info'
-          }
-        >
-          <div className="flex items-start justify-between gap-3">
-            <p>
-              {t('upstreams.import.summary', {
-                imported: importResult.imported.length,
-                confirmation: importResult.needs_confirmation.length,
-                skipped: importResult.skipped.length,
-              })}
-            </p>
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
-              onClick={() => setImportResult(null)}
-            >
-              {t('upstreams.import.dismiss')}
-            </Button>
-          </div>
-          {importResult.needs_confirmation.map((item) => (
-            <p key={item.id}>
-              {item.name}{' '}
-              <Link
-                className="underline"
-                to="/gateway/upstreams/$upstreamId"
-                params={{ upstreamId: item.id }}
-              >
-                {t('upstreams.import.confirm')}
-              </Link>
-            </p>
-          ))}
-          {importResult.skipped.map((item) => (
-            <p key={item.id}>
-              {item.id}:{' '}
-              {t(`upstreams.import.reasons.${item.reason}`, {
-                defaultValue: t('upstreams.import.reasons.unknown'),
-              })}
-            </p>
-          ))}
-          <p className="text-xs">{t('upstreams.import.repeat')}</p>
-        </Notice>
+        <ImportResultNotice
+          result={importResult}
+          onDismiss={() => setImportResult(null)}
+        />
       ) : null}
       <Card className="gap-0 overflow-hidden py-0">
         <CardContent className="p-0">{body}</CardContent>
@@ -356,6 +313,73 @@ export function UpstreamsPage() {
         }}
       />
     </div>
+  )
+}
+
+/** What an import of OpenViking's model settings saved, and what needs a look. */
+function ImportResultNotice({
+  result,
+  onDismiss,
+}: {
+  result: VlmImportResult
+  onDismiss: () => void
+}) {
+  const { t } = useTranslation('gateway')
+  const { imported, needs_confirmation: confirm, skipped } = result
+  // Upstreams awaiting Coding Plan confirmation are saved too.
+  const saved = imported.length + confirm.length
+  return (
+    <Notice
+      tone={confirm.length || skipped.length ? 'warning' : 'info'}
+      action={
+        <Button type="button" size="sm" variant="outline" onClick={onDismiss}>
+          {t('upstreams.import.dismiss')}
+        </Button>
+      }
+    >
+      {saved ? (
+        <p className="font-medium">
+          {t('upstreams.import.summary', { count: saved })}
+        </p>
+      ) : skipped.length ? null : (
+        <p className="font-medium">{t('upstreams.import.nothing')}</p>
+      )}
+      {confirm.length ? (
+        <div>
+          <p>{t('upstreams.import.needsConfirmation')}</p>
+          <ul className="list-inside list-disc">
+            {confirm.map((item) => (
+              <li key={item.id}>
+                {item.name}{' '}
+                <Link
+                  className="font-medium underline underline-offset-4"
+                  to="/gateway/upstreams/$upstreamId"
+                  params={{ upstreamId: item.id }}
+                >
+                  {t('upstreams.import.confirm')}
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {skipped.length ? (
+        <div>
+          <p>{t('upstreams.import.skipped', { count: skipped.length })}</p>
+          <ul className="list-inside list-disc">
+            {skipped.map((item) => (
+              <li key={item.id}>
+                {item.id}:{' '}
+                {t(`upstreams.import.reasons.${item.reason}`, {
+                  defaultValue: t('upstreams.import.reasons.unknown'),
+                })}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {saved ? <p className="text-xs">{t('upstreams.import.repeat')}</p> : null}
+    </Notice>
   )
 }
 

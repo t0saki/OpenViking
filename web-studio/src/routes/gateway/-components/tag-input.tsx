@@ -93,15 +93,19 @@ export function TagInput({
             className="h-6 max-w-full gap-1 pr-1 font-mono font-normal"
           >
             <span className="truncate">{item}</span>
-            <button
-              type="button"
-              disabled={disabled}
-              aria-label={t('tags.remove', { value: item })}
-              className="rounded-sm text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-              onClick={() => onChange(value.filter((other) => other !== item))}
-            >
-              <XIcon className="size-3" />
-            </button>
+            {readOnly ? null : (
+              <button
+                type="button"
+                disabled={disabled}
+                aria-label={t('tags.remove', { value: item })}
+                className="rounded-sm text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+                onClick={() =>
+                  onChange(value.filter((other) => other !== item))
+                }
+              >
+                <XIcon className="size-3" />
+              </button>
+            )}
           </Badge>
         ))}
         <input
@@ -110,7 +114,7 @@ export function TagInput({
           id={id}
           value={text}
           disabled={disabled}
-          placeholder={value.length ? undefined : placeholder}
+          placeholder={value.length || readOnly ? undefined : placeholder}
           className="h-6 min-w-24 flex-1 bg-transparent font-mono text-sm outline-none placeholder:font-sans placeholder:text-muted-foreground"
           onChange={(event) => setText(event.target.value)}
           onKeyDown={onKeyDown}

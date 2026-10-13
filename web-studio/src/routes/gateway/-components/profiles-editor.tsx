@@ -26,7 +26,7 @@ import { cn } from '#/lib/utils'
 
 import { keysUsing, newObjectId, saveProfile } from '../-lib/api'
 import type { Profile, ProfileSettings } from '../-lib/api'
-import { gatewayErrorMessage } from '../-lib/localize'
+import { toastGatewayError } from '../-lib/error-toast'
 import {
   PROFILE_DEFAULTS,
   duplicateProfile,
@@ -174,7 +174,7 @@ function ProfileEditorForm({
       await invalidate('profiles')
       void navigate({ to: '/gateway/profiles' })
     },
-    onError: (error) => toast.error(gatewayErrorMessage(t, error)),
+    onError: (error) => toastGatewayError(t, error),
   })
   const canSave = !readOnly && valid && dirty && !save.isPending
 
@@ -348,13 +348,8 @@ export function ProfileEditor({ profileId, from }: ProfileEditorProps) {
     <BackLink to="/gateway/profiles" label={t('profiles.editor.back')} />
   )
 
-  if (isNew && readOnly)
-    return (
-      <div className="grid gap-4">
-        {backLink}
-        <Notice tone="info">{t('management.readOnly')}</Notice>
-      </div>
-    )
+  // The read-only notice above the tabs explains why and offers to unlock.
+  if (isNew && readOnly) return backLink
 
   if (sourceId && !profiles.data) {
     return (

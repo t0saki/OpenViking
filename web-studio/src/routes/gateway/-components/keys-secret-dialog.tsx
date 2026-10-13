@@ -121,29 +121,15 @@ export function KeysSecretDialog({
                   size="icon-sm"
                 />
               </div>
-              <p className="text-sm">
-                {t('keys.secret.identity', { user: issued.user_id })}
-              </p>
               <Notice tone="info">
-                {t('keys.secret.dependency', { user: issued.user_id })}
+                <p>{t('keys.secret.identity', { user: issued.user_id })}</p>
+                <p>{t('keys.secret.dependency', { user: issued.user_id })}</p>
               </Notice>
-              <dl className="flex flex-wrap gap-x-6 gap-y-1 text-sm">
-                <div className="flex min-w-0 items-baseline gap-2">
-                  <dt className="text-muted-foreground">
-                    {t('keys.secret.user')}
-                  </dt>
-                  <dd className="truncate font-mono text-xs">
-                    {issued.user_id}
-                  </dd>
-                </div>
-                <div className="flex min-w-0 items-baseline gap-2">
-                  <dt className="text-muted-foreground">
-                    {t('keys.secret.profile')}
-                  </dt>
-                  <dd className="truncate">
-                    {profileName ?? issued.policy_id}
-                  </dd>
-                </div>
+              <dl className="flex min-w-0 items-baseline gap-2 text-sm">
+                <dt className="text-muted-foreground">
+                  {t('keys.secret.profile')}
+                </dt>
+                <dd className="truncate">{profileName ?? issued.policy_id}</dd>
               </dl>
             </div>
 

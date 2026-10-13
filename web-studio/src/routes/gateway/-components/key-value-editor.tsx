@@ -139,19 +139,21 @@ export function KeyValueEditor(props: KeyValueEditorProps) {
                   change(row.id, { value: event.target.value })
                 }
               />
-              <Button
-                disabled={disabled}
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                aria-label={t('keyValue.remove')}
-                className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                onClick={() =>
-                  update(rows.filter((other) => other.id !== row.id))
-                }
-              >
-                <Trash2Icon />
-              </Button>
+              {readOnly ? null : (
+                <Button
+                  disabled={disabled}
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={t('keyValue.remove')}
+                  className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                  onClick={() =>
+                    update(rows.filter((other) => other.id !== row.id))
+                  }
+                >
+                  <Trash2Icon />
+                </Button>
+              )}
             </div>
             {duplicate ? (
               <p className="text-xs text-amber-600 dark:text-amber-300">
@@ -161,20 +163,27 @@ export function KeyValueEditor(props: KeyValueEditorProps) {
           </div>
         )
       })}
-      <div>
-        <Button
-          disabled={disabled}
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={() =>
-            setRows([...rows, { id: nextRowId++, key: '', value: '' }])
-          }
-        >
-          <PlusIcon />
-          {props.addLabel ?? t('keyValue.add')}
-        </Button>
-      </div>
+      {/* A read-only view shows what is set, not how to add more. */}
+      {readOnly ? (
+        rows.length ? null : (
+          <p className="text-sm text-muted-foreground">{t('keyValue.none')}</p>
+        )
+      ) : (
+        <div>
+          <Button
+            disabled={disabled}
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() =>
+              setRows([...rows, { id: nextRowId++, key: '', value: '' }])
+            }
+          >
+            <PlusIcon />
+            {props.addLabel ?? t('keyValue.add')}
+          </Button>
+        </div>
+      )}
     </div>
   )
 }

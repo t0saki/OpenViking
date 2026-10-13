@@ -5,7 +5,7 @@ const keys = {
   loadFailed: "Couldn't load gateway keys",
   prerequisites: {
     managed:
-      'Your gateway admin has not added upstreams or context profiles yet.',
+      "Your gateway admin hasn't added upstreams or context profiles yet.",
     unlock: 'Enter gateway management key',
     upstream: 'Add an upstream before issuing a key.',
     profile: 'Create a context profile before issuing a key.',
@@ -75,7 +75,8 @@ const keys = {
         admin: 'Admin',
         user: 'User',
       },
-      unavailable: "User API key can't be read on the server; paste it instead",
+      unavailable:
+        "The server can't read this user's API key; paste it instead",
       loadFailed:
         "Couldn't load this account's users, so paste the user API key instead.",
       none: "The server can't read the user API keys of this account's users, so paste one instead.",
@@ -138,11 +139,10 @@ const keys = {
   secret: {
     identity: 'This key reads and writes memory as {{user}}.',
     dependency:
-      "It depends on {{user}}'s current user API key. Regenerating that API key automatically invalidates this gateway key.",
+      "It's tied to {{user}}'s current user API key. If that key is regenerated, this gateway key stops working and you'll need to issue a new one.",
     title: 'Copy your gateway key',
     once: 'This is the only time the full key is shown.',
     copyKey: 'Copy gateway key',
-    user: 'OpenViking user',
     profile: 'Context profile',
     connectTitle: 'Connect a client',
     clients: {

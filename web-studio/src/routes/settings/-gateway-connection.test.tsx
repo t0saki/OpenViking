@@ -88,8 +88,17 @@ it.each(['ovgw_client', 'ovgm_management'])(
   },
 )
 
+function stubAccess(body: object) {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn().mockResolvedValue({ json: () => Promise.resolve(body) }),
+  )
+}
+afterEach(() => vi.unstubAllGlobals())
+
 it('keeps the current connection when health omits the identity', async () => {
   health.mockResolvedValue({ service: 'openviking-gateway' })
+  stubAccess({ reason: 'openviking_http_401' })
   render(<GatewayConnectionSettings />)
   fireEvent.change(screen.getByLabelText('gatewayConnection.apiKey'), {
     target: { value: 'invalid' },
@@ -102,4 +111,38 @@ it('keeps the current connection when health omits the identity', async () => {
   )
   expect(saveConnection).not.toHaveBeenCalled()
   expect(navigate).not.toHaveBeenCalled()
+})
+
+it('says OpenViking is down instead of blaming the key', async () => {
+  health.mockResolvedValue({ service: 'openviking-gateway' })
+  stubAccess({ reason: 'openviking_unreachable' })
+  render(<GatewayConnectionSettings />)
+  fireEvent.change(screen.getByLabelText('gatewayConnection.apiKey'), {
+    target: { value: 'valid-but-unverifiable' },
+  })
+  fireEvent.click(screen.getByText('gatewayConnection.connect'))
+  await waitFor(() =>
+    expect(screen.getByRole('alert').textContent).toBe(
+      'gatewayConnection.unreachable: https://openviking.example',
+    ),
+  )
+  expect(fetch).toHaveBeenCalledWith(
+    'http://gateway.test/api/v1/admin/gateway/access',
+    { headers: { 'X-API-Key': 'valid-but-unverifiable' } },
+  )
+  expect(saveConnection).not.toHaveBeenCalled()
+})
+
+it('says the gateway itself is unreachable when health fails', async () => {
+  health.mockRejectedValue(new Error('offline'))
+  render(<GatewayConnectionSettings />)
+  fireEvent.change(screen.getByLabelText('gatewayConnection.apiKey'), {
+    target: { value: 'key' },
+  })
+  fireEvent.click(screen.getByText('gatewayConnection.connect'))
+  await waitFor(() =>
+    expect(screen.getByRole('alert').textContent).toBe(
+      'gatewayConnection.gatewayUnreachable',
+    ),
+  )
 })

@@ -23,6 +23,7 @@ import {
   toGatewayError,
 } from '../-lib/api'
 import type { Upstream, UpstreamTestResult } from '../-lib/api'
+import { toastGatewayError } from '../-lib/error-toast'
 import { gatewayErrorMessage } from '../-lib/localize'
 import type { Translate } from '../-lib/localize'
 import { useGateway } from '../-lib/use-gateway'
@@ -100,14 +101,13 @@ export function describeTest(t: Translate, outcome: TestOutcome): TestSummary {
       explanation: t('upstreams.test.explain.ok'),
     }
   }
+  // 404 and 405 were answered above as reachable but unverified.
   const explanation =
     result.reason === 'upstream_key_rejected' ||
     status === 401 ||
     status === 403
       ? t('upstreams.test.explain.auth')
-      : status === 404
-        ? t('upstreams.test.explain.notFound')
-        : t('upstreams.test.explain.status', { status })
+      : t('upstreams.test.explain.status', { status })
   return {
     tone: 'danger',
     label: t('upstreams.test.result.failed', { status }),
@@ -247,7 +247,7 @@ export function DeleteUpstreamDialog({
       onOpenChange(false)
       await invalidate('upstreams')
     },
-    onError: (error) => toast.error(gatewayErrorMessage(t, error)),
+    onError: (error) => toastGatewayError(t, error),
   })
   const remove = useMutation({
     mutationFn: (target: Upstream) => deleteUpstream(connection, target.id),
@@ -262,7 +262,7 @@ export function DeleteUpstreamDialog({
       if (failure.reason === 'in_use') {
         setConflict(failure.keyCount ?? 0)
         await invalidate('keys')
-      } else toast.error(gatewayErrorMessage(t, error))
+      } else toastGatewayError(t, error)
     },
   })
   const pending = remove.isPending || disable.isPending
@@ -285,9 +285,14 @@ export function DeleteUpstreamDialog({
         {conflict !== null ? (
           <Notice tone="warning">
             <p>{t('upstreams.delete.inUse', { count: conflict })}</p>
-            <p>{t('upstreams.delete.disableHint')}</p>
-            <Link to="/gateway/keys" className="underline">
-              {t('upstreams.delete.viewKeys')}
+            {upstream?.enabled ? (
+              <p>{t('upstreams.delete.disableHint')}</p>
+            ) : null}
+            <Link
+              to="/gateway/keys"
+              className="justify-self-start font-medium underline underline-offset-4"
+            >
+              {t('actions.viewKeys')}
             </Link>
           </Notice>
         ) : null}
@@ -301,15 +306,15 @@ export function DeleteUpstreamDialog({
             {t('actions.cancel')}
           </Button>
           {conflict !== null ? (
-            <Button
-              type="button"
-              disabled={pending || !upstream?.enabled}
-              onClick={() => {
-                if (upstream) disable.mutate(upstream)
-              }}
-            >
-              {t('upstreams.delete.disable')}
-            </Button>
+            upstream?.enabled ? (
+              <Button
+                type="button"
+                disabled={pending}
+                onClick={() => disable.mutate(upstream)}
+              >
+                {t('upstreams.delete.disable')}
+              </Button>
+            ) : null
           ) : (
             <Button
               type="button"

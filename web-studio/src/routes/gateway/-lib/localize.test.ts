@@ -157,7 +157,7 @@ describe('gatewayErrorMessage', () => {
           'not_enabled',
         ),
       ),
-    ).toBe('The OpenViking Gateway is turned off on this server.')
+    ).toBe('The gateway is not enabled on this OpenViking server.')
     expect(gatewayErrorMessage(t, new Error('socket hang up'))).toBe(
       'socket hang up',
     )
