@@ -464,13 +464,21 @@ class MemoryKernel:
         current = [value for index, value in existing if index > cut]
         used = sum(v.get("tokens", 0) for v in current)
         # ponytail: exclude_uris matches a whole subtree since #5627, so echoing a
-        # served directory would hide every file written under it later. Only
-        # leaf URIs (a dot in the last segment) are echoed; an extensionless file
-        # may be served again and a dotted directory still hides its subtree.
-        # Upgrade path: a server-reported is_directory flag on entries.
+        # served directory would hide every file written under it later. A URI
+        # without a dot in its last segment is treated as a directory and echoed
+        # as its own level files, which excludes the node but not its children;
+        # an extensionless file may be served again and a dotted directory still
+        # hides its subtree. Upgrade path: a server-reported is_directory flag.
         exclude = list(
             dict.fromkeys(
-                u for v in current for u in v.get("uris", []) if "." in u.rsplit("/", 1)[-1]
+                x
+                for v in current
+                for u in v.get("uris", [])
+                for x in (
+                    [u]
+                    if "." in u.rsplit("/", 1)[-1]
+                    else [f"{u}/.abstract.md", f"{u}/.overview.md"]
+                )
             )
         )
         budget = min(policy.max_tokens, policy.session_max_tokens - used)
