@@ -20,6 +20,15 @@ _RULES = json.loads(files("openviking_gateway").joinpath("client-rules.json").re
 PLUGIN_TAGS = tuple(_RULES["plugin_tags"])
 NOISE_TAGS = tuple(_RULES["noise_tags"])
 AUXILIARY_PATTERNS = tuple(_RULES["auxiliary_patterns"])
+# re.I tries a pattern at every offset; plain ASCII patterns (no escapes, sets or flags),
+# lowercased, get re's literal search instead, the same match unless the text has one of
+# the only letters where lower() and re.I differ against ASCII (checked in the tests).
+REI_CASE_EXCEPTIONS = "İıſ"
+LOWERED_AUXILIARY = (
+    tuple(re.compile(p.lower()) for p in AUXILIARY_PATTERNS)
+    if all(p.isascii() and not re.search(r"[\\\[]|\(\?", p) for p in AUXILIARY_PATTERNS)
+    else ()
+)
 # Vendors whose models expect their reasoning back in later turns.
 REASONING_VENDORS = {"deepseek", "ark", "byteplus"}
 
@@ -263,9 +272,11 @@ def client_openviking_tools(body: dict, names) -> bool:
         ):
             return True
     # Deferred MCP tools, as in Claude Code's tool search, are listed only by name, one
-    # per line; a name mentioned in prose is not a tool.
+    # per line; a name mentioned in prose is not a tool. Most texts have no "__" at all.
     deferred = rf"^[ \t]*mcp__[\w-]*?{OPENVIKING_WORD}[\w-]*__(?:{alternatives})[ \t]*$"
-    return any(re.search(deferred, text, re.I | re.M) for text in client_texts(body))
+    return any(
+        "__" in text and re.search(deferred, text, re.I | re.M) for text in client_texts(body)
+    )
 
 
 def is_user(message):
@@ -279,6 +290,14 @@ def is_user(message):
             )
         )
     )
+
+
+def auxiliary(text: str) -> bool:
+    """Whether ``text`` matches an auxiliary pattern, ignoring case."""
+    if LOWERED_AUXILIARY and not any(c in text for c in REI_CASE_EXCEPTIONS):
+        text = text.lower()
+        return any(pattern.search(text) for pattern in LOWERED_AUXILIARY)
+    return any(re.search(pattern, text, re.I) for pattern in AUXILIARY_PATTERNS)
 
 
 def classify(body: dict, headers: dict, messages: list[dict]) -> tuple[str, int]:
@@ -308,7 +327,7 @@ def classify(body: dict, headers: dict, messages: list[dict]) -> tuple[str, int]
     probe = str(body.get("system", "")) + str(body.get("instructions", ""))
     if anchor >= 0:
         probe += text_content(messages[anchor])
-    if any(re.search(pattern, probe, re.I) for pattern in AUXILIARY_PATTERNS):
+    if auxiliary(probe):
         return "auxiliary", anchor
     if anchor < 0:
         return "continuation", anchor
