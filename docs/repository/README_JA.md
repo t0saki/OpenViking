@@ -209,6 +209,8 @@ curl -fsSL https://openviking.ai/install | bash -s -- --yes --url <SERVER_URL>
 完了したら、どのツールにインストールしたかと、
 それぞれの次の手順を伝えること。そのうえで、
 ほかのツールにも入れるか私に確認すること。
+その後、https://docs.openviking.ai/agents/en/onboarding.md を取得し、
+それに従って初回利用を案内すること。
 ```
 
 サーバーのアドレスを用意しておいてください。認証が有効なら API キーも必要です。

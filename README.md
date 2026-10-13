@@ -207,6 +207,8 @@ blocks it, ask me to approve running it outside the sandbox.
 
 When it finishes, tell me which tools it installed into and the next steps for
 each, then ask whether I want it in any other tool.
+Then fetch https://docs.openviking.ai/agents/en/onboarding.md and follow it to
+walk me through the first use.
 ```
 
 Have your server's address ready, plus its API key if it has auth turned on.
