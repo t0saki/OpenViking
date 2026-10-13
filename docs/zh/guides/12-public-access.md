@@ -73,7 +73,7 @@ OV_ACME_EMAIL=admin@your-domain.com   # 可选；推荐用于 Let's Encrypt
 }
 ```
 
-设置 `gateway.enabled: true` 后，模型和管理 API 与 Server 共用端口。同一反代配置也覆盖网关，无需额外上游或按路径分流。
+开启 OpenViking 网关（`gateway.enabled: true`）后，模型 API 和网关管理 API 也走 Server 端口，这条反代配置同样覆盖它们，不需要额外的上游或按路径分流。
 
 ### 3. 取消 `docker-compose.yml` 中的 HTTPS 注释
 
@@ -199,7 +199,9 @@ Compose 部署应修改 `.env` 并运行 `docker compose up -d`，在其他 shel
 
 ## 兼容说明：`:1934` 代理
 
-自带 Caddy 的兼容监听端口 1934 将所有路径转发到 `openviking:{$OPENVIKING_SERVER_PORT:1933}`。设置 `gateway.enabled: true` 后，1933 同时提供模型 API、上传、`/api/v1/admin/gateway/*` 和普通 OpenViking 路由，不需要独立网关容器、1935 端口或路径匹配器。可为已有书签保留 1934，不用时移除端口映射；公网客户端使用 HTTPS 入口。
+自带 Caddy 的兼容端口 1934 把所有路径转发到 `openviking:{$OPENVIKING_SERVER_PORT:1933}`。开启 OpenViking 网关后，1933 端口同时提供 OpenViking 的普通接口、模型 API、工具上传和网关管理 API（`/api/v1/admin/gateway/*`），不再需要单独的网关容器、1935 端口或按路径分流的规则。
+
+已有书签或客户端还在用 1934 时可以保留它，用不到就删掉端口映射。公网客户端请走 HTTPS 入口。
 
 
 ## 相关文档
@@ -207,4 +209,4 @@ Compose 部署应修改 `.env` 并运行 `docker compose up -d`，在其他 shel
 - [部署指南](03-deployment.md) — Docker、systemd、Kubernetes
 - [OAuth 指南](11-oauth.md) — OAuth 2.1 配置与客户端接入
 - [认证](04-authentication.md) — API Key 管理
-- [OpenViking 网关部署与运维](22-gateway-operations.md) — 网关的路由、代理设置和 HTTPS
+- [OpenViking 网关部署与运维](22-gateway-operations.md) — 网关的部署、路由和反向代理要求

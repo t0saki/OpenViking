@@ -77,7 +77,7 @@ as the issuer in OAuth metadata and `WWW-Authenticate` headers) and Caddy
 }
 ```
 
-With `gateway.enabled: true`, model and management APIs share the server port. The same proxy block handles Gateway; no separate upstream or path routing is required.
+With OpenViking Gateway enabled (`gateway.enabled: true`), the model APIs and the gateway management API also use the server port, so this proxy block covers them too. No extra upstream or path-based routing is needed.
 
 ### 3. Uncomment HTTPS lines in `docker-compose.yml`
 
@@ -203,7 +203,9 @@ For Compose, set it in `.env` and run `docker compose up -d`; an `export` in an 
 
 ## Compatibility note: the `:1934` proxy
 
-The bundled Caddy compatibility listener on 1934 forwards all paths to `openviking:{$OPENVIKING_SERVER_PORT:1933}`. With `gateway.enabled: true`, server port 1933 serves model APIs, uploads and `/api/v1/admin/gateway/*` as well as the ordinary OpenViking routes. No separate gateway container, 1935 port or path matcher is needed. Keep 1934 for existing bookmarks, or remove its port mapping if unused. Public clients should use the HTTPS entrypoint.
+The bundled Caddy's compatibility port 1934 forwards all paths to `openviking:{$OPENVIKING_SERVER_PORT:1933}`. With OpenViking Gateway enabled, port 1933 serves the regular OpenViking APIs, the model APIs, tool uploads and the gateway management API (`/api/v1/admin/gateway/*`). You no longer need a separate gateway container, port 1935 or path-based routing rules.
+
+Keep 1934 if existing bookmarks or clients still use it; otherwise remove its port mapping. Public clients should use the HTTPS entrypoint.
 
 
 ## Related
@@ -211,4 +213,4 @@ The bundled Caddy compatibility listener on 1934 forwards all paths to `openviki
 - [Deployment Guide](03-deployment.md) — Docker, systemd, Kubernetes
 - [OAuth Guide](11-oauth.md) — OAuth 2.1 setup and client onboarding
 - [Authentication](04-authentication.md) — API key management
-- [OpenViking Gateway deployment and operations](22-gateway-operations.md) — routes, proxy settings and HTTPS for the gateway
+- [OpenViking Gateway deployment and operations](22-gateway-operations.md) — deploying the gateway, its routes and reverse proxy requirements

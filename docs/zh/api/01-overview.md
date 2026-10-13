@@ -529,29 +529,29 @@ JSON 输出 - 错误：
 
 ### [OpenViking 网关管理](25-gateway.md)
 
-嵌入时从 Server 端口访问，独立时从 Gateway 端口访问。OpenViking 身份决定账号范围，可选网关管理密钥另外控制上游/上下文配置写入；普通用户可以给自己签发密钥。完整权限矩阵和稳定错误原因见链接中的接口文档。
+网关在 Server 内运行时，从 Server 端口访问；独立运行时，从网关自己的端口访问。OpenViking API 密钥决定调用方能访问哪个账号；部署者设置了网关管理密钥时，修改上游和上下文配置还需要这把密钥。每个用户都能给自己签发网关密钥。权限矩阵和错误原因见[网关管理 API](25-gateway.md)。
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | `/api/v1/admin/gateway/access` | 读取权限与配置告警 |
-| GET | `/api/v1/admin/gateway/guides` | 读取客户端接入地址 |
-| GET | `/api/v1/admin/gateway/tools` | 读取调用方的 OpenViking 工具目录 |
+| GET | `/api/v1/admin/gateway/access` | 读取调用方的权限和部署告警 |
+| GET | `/api/v1/admin/gateway/guides` | 读取客户端使用的网关地址 |
+| GET | `/api/v1/admin/gateway/tools` | 列出调用方可用的 OpenViking 工具 |
 | GET | `/api/v1/admin/gateway/upstreams/{identifier}` | 读取单个上游 |
 | GET | `/api/v1/admin/gateway/policies/{identifier}` | 读取单个上下文配置 |
-| GET | `/api/v1/admin/gateway/keys/{identifier}` | 读取单个可见密钥 |
-| GET | `/api/v1/admin/gateway/overview` | 读取身份范围内的用量概览 |
-| GET | `/api/v1/admin/gateway/logs` | 读取可见请求日志 |
-| GET | `/api/v1/admin/gateway/upstreams` | 列出账号上游 |
+| GET | `/api/v1/admin/gateway/keys/{identifier}` | 读取单个网关密钥（不含密钥本身） |
+| GET | `/api/v1/admin/gateway/overview` | 读取调用方可见范围内的用量概览 |
+| GET | `/api/v1/admin/gateway/logs` | 读取调用方可见的请求日志 |
+| GET | `/api/v1/admin/gateway/upstreams` | 列出本账号的上游 |
 | PUT / DELETE | `/api/v1/admin/gateway/upstreams/{identifier}` | 创建/替换或删除上游 |
 | POST | `/api/v1/admin/gateway/upstreams/{identifier}/test` | 测试上游连接 |
-| POST | `/api/v1/admin/gateway/upstreams/import-vlm` | 导入嵌入宿主 VLM 凭证 |
-| GET | `/api/v1/admin/gateway/policies` | 列出账号上下文配置 |
+| POST | `/api/v1/admin/gateway/upstreams/import-vlm` | 把 Server 的 VLM 配置导入为上游（仅嵌入部署） |
+| GET | `/api/v1/admin/gateway/policies` | 列出本账号的上下文配置 |
 | PUT / DELETE | `/api/v1/admin/gateway/policies/{identifier}` | 创建/替换或删除上下文配置 |
-| GET / POST | `/api/v1/admin/gateway/keys` | 列出或签发可见网关密钥 |
+| GET / POST | `/api/v1/admin/gateway/keys` | 列出调用方可见的网关密钥，或签发新密钥 |
 | DELETE | `/api/v1/admin/gateway/keys/{identifier}` | 吊销网关密钥 |
-| POST | `/api/v1/admin/gateway/keys/{identifier}/capture/reset` | 重置会话保存 |
-| DELETE | `/api/v1/admin/gateway/users/{user_id}/data` | admin/root：删除用户网关数据 |
-| DELETE | `/api/v1/admin/gateway/account/data` | root：删除账号网关数据 |
+| POST | `/api/v1/admin/gateway/keys/{identifier}/capture/reset` | 让一段对话重新开始保存 |
+| DELETE | `/api/v1/admin/gateway/users/{user_id}/data` | admin 或 root：删除某个用户的网关数据 |
+| DELETE | `/api/v1/admin/gateway/account/data` | root：删除整个账号的网关数据 |
 
 ### [OpenViking Assets](22-openviking-assets.md)、[WebDAV](20-webdav.md)、[Agent Runtime API](23-agent-runtime.md) 与 [VikingBot API](24-vikingbot.md)
 

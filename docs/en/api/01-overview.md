@@ -534,29 +534,29 @@ This catalog follows the routes actually mounted by the server. Each group headi
 
 ### [OpenViking Gateway Management](25-gateway.md)
 
-Available on the server port when embedded and on the gateway port when standalone. OpenViking identity controls account scope; the optional gateway management key separately controls upstream/profile writes. Users can issue their own keys. See the linked reference for the access matrix and stable error reasons.
+When the gateway runs inside the server, use the server's port; when it runs standalone, use the gateway's own port. The OpenViking API key decides which account the caller can reach. If the deployer set a gateway management key, changing upstreams and context profiles also requires it. Every user can issue gateway keys for themselves. The access matrix and error reasons are in the [Gateway Management API](25-gateway.md).
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/v1/admin/gateway/access` | Read permissions and configuration warnings |
-| GET | `/api/v1/admin/gateway/guides` | Read client connection origin |
-| GET | `/api/v1/admin/gateway/tools` | Read caller’s OpenViking tool catalog |
+| GET | `/api/v1/admin/gateway/access` | Read the caller's permissions and deployment warnings |
+| GET | `/api/v1/admin/gateway/guides` | Read the gateway address clients use |
+| GET | `/api/v1/admin/gateway/tools` | List the OpenViking tools available to the caller |
 | GET | `/api/v1/admin/gateway/upstreams/{identifier}` | Read one upstream |
-| GET | `/api/v1/admin/gateway/policies/{identifier}` | Read one profile |
-| GET | `/api/v1/admin/gateway/keys/{identifier}` | Read one visible key |
-| GET | `/api/v1/admin/gateway/overview` | Read usage summary in caller scope |
-| GET | `/api/v1/admin/gateway/logs` | Read visible request logs |
-| GET | `/api/v1/admin/gateway/upstreams` | List account upstreams |
+| GET | `/api/v1/admin/gateway/policies/{identifier}` | Read one context profile |
+| GET | `/api/v1/admin/gateway/keys/{identifier}` | Read one gateway key (without the secret) |
+| GET | `/api/v1/admin/gateway/overview` | Read the usage overview within the caller's scope |
+| GET | `/api/v1/admin/gateway/logs` | Read the request logs the caller can see |
+| GET | `/api/v1/admin/gateway/upstreams` | List the account's upstreams |
 | PUT / DELETE | `/api/v1/admin/gateway/upstreams/{identifier}` | Create/replace or delete an upstream |
 | POST | `/api/v1/admin/gateway/upstreams/{identifier}/test` | Test an upstream connection |
-| POST | `/api/v1/admin/gateway/upstreams/import-vlm` | Import embedded VLM credentials |
-| GET | `/api/v1/admin/gateway/policies` | List account profiles |
-| PUT / DELETE | `/api/v1/admin/gateway/policies/{identifier}` | Create/replace or delete a profile |
-| GET / POST | `/api/v1/admin/gateway/keys` | List or issue visible gateway keys |
+| POST | `/api/v1/admin/gateway/upstreams/import-vlm` | Import the server's VLM settings as upstreams (embedded only) |
+| GET | `/api/v1/admin/gateway/policies` | List the account's context profiles |
+| PUT / DELETE | `/api/v1/admin/gateway/policies/{identifier}` | Create/replace or delete a context profile |
+| GET / POST | `/api/v1/admin/gateway/keys` | List the gateway keys the caller can see, or issue a new one |
 | DELETE | `/api/v1/admin/gateway/keys/{identifier}` | Revoke a gateway key |
-| POST | `/api/v1/admin/gateway/keys/{identifier}/capture/reset` | Reset session saving |
-| DELETE | `/api/v1/admin/gateway/users/{user_id}/data` | Admin/root: delete user gateway data |
-| DELETE | `/api/v1/admin/gateway/account/data` | Root: delete account gateway data |
+| POST | `/api/v1/admin/gateway/keys/{identifier}/capture/reset` | Start saving a conversation again |
+| DELETE | `/api/v1/admin/gateway/users/{user_id}/data` | Admin or root: delete a user's gateway data |
+| DELETE | `/api/v1/admin/gateway/account/data` | Root: delete an account's gateway data |
 
 ### [OpenViking Assets](22-openviking-assets.md), [WebDAV](20-webdav.md), [Agent Runtime API](23-agent-runtime.md), and [VikingBot API](24-vikingbot.md)
 
