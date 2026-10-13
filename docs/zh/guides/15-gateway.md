@@ -6,7 +6,7 @@ description: 把任何使用 API Key 的模型客户端指向 OpenViking 网关�
 
 OpenViking 网关是一个模型 API 代理：客户端只要能修改 Base URL，接上它就能用上 OpenViking 记忆。接入只改两处：Base URL 换成网关地址，模型服务商的 API Key 换成网关密钥。不用装插件，也不用改代码或提示词。
 
-想先直观了解网关的工作原理，可以看官网的动画演示：[openviking.net/zh/gateway](https://openviking.net/zh/gateway)（也可以访问 [openviking.ai/zh/gateway](https://openviking.ai/zh/gateway)）。
+想先直观了解网关的工作原理，可以看官网的动画演示：[openviking.net/gateway](https://openviking.net/gateway)（也可以访问 [openviking.ai/gateway](https://openviking.ai/gateway)）。
 
 网关在转发请求时完成三件事：
 
