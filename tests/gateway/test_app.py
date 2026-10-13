@@ -1195,6 +1195,25 @@ async def test_overview_counts_capture_recovered_during_a_request(running_gatewa
     assert overview["capture_issues"] == {"retrying": 0, "paused": 0}
 
 
+async def test_capture_status_refresh_failure_still_logs_request(running_gateway, monkeypatch):
+    _, client, admin, key, _, _ = running_gateway
+
+    class Broken:
+        @staticmethod
+        def model_validate(_):
+            raise RuntimeError("refresh failed")
+
+    monkeypatch.setattr("openviking_gateway.proxy.Policy", Broken)
+    response = await client.post(
+        "/v1/chat/completions",
+        headers={"Authorization": "Bearer " + key["key"], "X-OpenViking-Session": "s"},
+        json={"model": "model", "messages": [{"role": "user", "content": "Question"}]},
+    )
+    assert response.status_code == 200, response.text
+    logs = (await client.get("/admin/logs", headers=admin)).json()
+    assert [log["capture_status"] for log in logs if log["kind"] == "user"] == ["active"]
+
+
 async def test_overview_without_model_requests(running_gateway):
     _, client, admin, _, _, _ = running_gateway
     overview = (await client.get("/admin/overview", headers=admin)).json()
