@@ -1900,15 +1900,15 @@ def _wizard_server(current: dict[str, Any] | None = None) -> dict[str, Any] | No
     return {"host": "0.0.0.0", "port": port, "root_api_key": root_api_key}
 
 
-# Fields of the old standalone/sidecar gateway section; the embedded config rejects them.
-_LEGACY_GATEWAY_FIELDS = ("host", "port", "workers", "url", "openviking_url", "admin_token_env")
-
-
 def _wizard_gateway(
     server: dict[str, Any], current: dict[str, Any] | None = None
 ) -> dict[str, Any]:
     """Enable the gateway on the server port and choose who may configure it."""
-    gateway = {k: v for k, v in (current or {}).items() if k not in _LEGACY_GATEWAY_FIELDS}
+    from openviking_gateway.config import EmbeddedGatewayConfig
+
+    # Settings the embedded gateway no longer reads are dropped on save.
+    removed = EmbeddedGatewayConfig.removed_fields
+    gateway = {k: v for k, v in (current or {}).items() if k not in removed}
     _rule("OpenViking Gateway")
     gateway["enabled"] = _prompt_confirm(
         "Enable OpenViking Gateway on the same port?", default=gateway.get("enabled", False)

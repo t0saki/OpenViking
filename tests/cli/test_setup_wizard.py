@@ -1085,6 +1085,7 @@ class TestGatewayWizard:
             "url": "http://127.0.0.1:1935",
             "openviking_url": "http://127.0.0.1:1933",
             "admin_token_env": "OPENVIKING_GATEWAY_ADMIN_TOKEN",
+            "encryption_key_env": "OPENVIKING_GATEWAY_ENCRYPTION_KEY",
             "public_url": "http://127.0.0.1:1935",
             "storage_path": "/gateway",
         }

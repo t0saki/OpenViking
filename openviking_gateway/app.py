@@ -39,11 +39,13 @@ VIKING_DETAILS = {
 }
 
 
-def create_app(config: GatewayConfig, *, openviking_url: str, vlm_source=None):
-    """Build the gateway; ``vlm_source(account_id)`` returns ``{upstreams, skipped}`` dicts."""
-    encryption_key = config.encryption_key()
-    store = SQLiteKernelStore(config.directory / "kernel.sqlite3", encryption_key)
-    management = ManagementStore(config.directory / "management.sqlite3", encryption_key)
+def create_app(config: GatewayConfig, *, openviking_url: str, vlm_source=None, encryptor=None):
+    """Build the gateway; ``vlm_source(account_id)`` returns ``{upstreams, skipped}`` dicts.
+
+    ``encryptor`` is an OpenViking ``FileEncryptor``; without one, values are stored as plaintext.
+    """
+    store = SQLiteKernelStore(config.directory / "kernel.sqlite3", encryptor)
+    management = ManagementStore(config.directory / "management.sqlite3", encryptor)
 
     @asynccontextmanager
     async def lifespan(app):
@@ -69,8 +71,9 @@ def create_app(config: GatewayConfig, *, openviking_url: str, vlm_source=None):
                     with contextlib.suppress(asyncio.CancelledError):
                         await task
         finally:
-            store.close()
-            management.close()
+            # Storage threads may still wait on this loop for the encryptor.
+            await asyncio.to_thread(store.close)
+            await asyncio.to_thread(management.close)
 
     app = FastAPI(
         title="OpenViking Gateway",

@@ -821,8 +821,9 @@ def create_app(
         ScopedRoute("/mcp", endpoint=create_mcp_app(), methods=["GET", "POST", "DELETE"])
     )
 
-    gateway_config = get_openviking_config().gateway
-    app.state.gateway_app = create_embedded_gateway(gateway_config, config, lambda: service)
+    app.state.gateway_app = create_embedded_gateway(
+        get_openviking_config(), config, lambda: service
+    )
     if app.state.gateway_app is not None:
         mount_gateway(app, app.state.gateway_app)
 

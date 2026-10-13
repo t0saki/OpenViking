@@ -1,6 +1,6 @@
 # Copyright (c) 2026 Beijing Volcano Engine Technology Co., Ltd.
 # SPDX-License-Identifier: AGPL-3.0
-"""SQLite adapters and encrypted management data. Writes have a dedicated executor."""
+"""SQLite adapters with optionally encrypted values. Writes have a dedicated executor."""
 
 import asyncio
 import hashlib
@@ -17,7 +17,8 @@ from typing import Any, Protocol
 from urllib.parse import urlsplit
 
 import orjson
-from cryptography.fernet import Fernet
+
+from openviking.crypto.encryptor import MAGIC
 
 from .cache import TTLCache
 from .capture_store import CaptureQueue, SQLiteCaptureQueue
@@ -27,6 +28,9 @@ from .state_store import SQLiteStateStore, StateStore
 # Pre-release builds stamped versions 1-4 on incompatible layouts; reusing
 # one of them would let old files through and fail on the first write.
 SCHEMA_VERSION = 6
+# Gateway data is not an OpenViking account's; it derives its own key from the root key.
+ENCRYPTION_ACCOUNT = "_gateway"
+LEGACY_KEY_ENVIRONMENT = "OPENVIKING_GATEWAY_ENCRYPTION_KEY"
 
 
 def digest(value: str) -> str:
@@ -45,14 +49,15 @@ class KernelStore(Protocol):
 
 
 class Database:
-    def __init__(self, path: Path, encryption_key: str):
+    def __init__(self, path: Path, encryptor=None):
         path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.path = path
         # Protect the file before SQLite opens it, not once per operation.
         fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o600)
         os.fchmod(fd, 0o600)
         os.close(fd)
-        self.cipher = Fernet(encryption_key.encode())
+        self.encryptor = encryptor
+        self.loop = None
         self.pool = queue.LifoQueue(maxsize=6)
         self.readers = ThreadPoolExecutor(max_workers=4, thread_name_prefix="gateway-read")
         self.writer = ThreadPoolExecutor(max_workers=1, thread_name_prefix="gateway-write")
@@ -92,6 +97,16 @@ class Database:
                 time.sleep(0.05)
         connection.execute("PRAGMA journal_mode=WAL")
 
+    @staticmethod
+    def begin_migration(connection):
+        """Serialize the one-time migration across standalone/server workers."""
+        # Re-encoding a large v5 store outlasts the 30 s busy timeout of workers waiting here.
+        connection.execute("PRAGMA busy_timeout=600000")
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+        finally:
+            connection.execute("PRAGMA busy_timeout=30000")
+
     def close(self):
         self.readers.shutdown(wait=True)
         self.writer.shutdown(wait=True)
@@ -102,20 +117,67 @@ class Database:
                 return
 
     def encode(self, value: Any) -> bytes:
-        return self.cipher.encrypt(orjson.dumps(value))
+        data = orjson.dumps(value)
+        if self.encryptor is None:
+            return data
+        return self.crypt(self.encryptor.encrypt(ENCRYPTION_ACCOUNT, data))
 
     def decode(self, value: bytes) -> Any:
-        return orjson.loads(self.cipher.decrypt(value))
+        # Values written before encryption was enabled stay readable as plaintext.
+        if value.startswith(MAGIC):
+            if self.encryptor is None:
+                raise RuntimeError(
+                    "Gateway data is encrypted; configure the encryption settings it was "
+                    "written with"
+                )
+            value = self.crypt(self.encryptor.decrypt(ENCRYPTION_ACCOUNT, value))
+        return orjson.loads(value)
+
+    def crypt(self, coroutine):
+        """Run an encryptor coroutine on the app loop from a storage thread."""
+        return asyncio.run_coroutine_threadsafe(coroutine, self.loop).result()
 
     async def run(self, fn, *args, write=False):
-        return await asyncio.get_running_loop().run_in_executor(
+        self.loop = asyncio.get_running_loop()
+        return await self.loop.run_in_executor(
             self.writer if write else self.readers, partial(fn, *args)
         )
 
+    def migrate_legacy_values(self, c, tables):
+        """Rewrite v0.5.0 values, which were Fernet-encrypted with a gateway-owned key."""
+        from cryptography.fernet import Fernet
+
+        cipher = None
+        for table in tables:
+            last = 0
+            while rows := c.execute(
+                f"SELECT rowid,value FROM {table} WHERE rowid>? ORDER BY rowid LIMIT 500",
+                (last,),
+            ).fetchall():
+                cipher = cipher or Fernet(self.legacy_key())
+                for rowid, value in rows:
+                    c.execute(
+                        f"UPDATE {table} SET value=? WHERE rowid=?",
+                        (self.encode(orjson.loads(cipher.decrypt(value))), rowid),
+                    )
+                last = rows[-1][0]
+
+    def legacy_key(self) -> bytes:
+        if key := os.environ.get(LEGACY_KEY_ENVIRONMENT):
+            return key.encode()
+        try:
+            return (self.path.parent / "encryption.key").read_bytes().strip()
+        except FileNotFoundError:
+            raise ValueError(
+                f"{self.path} holds data encrypted by OpenViking Gateway 0.5; set "
+                f"{LEGACY_KEY_ENVIRONMENT} or restore {self.path.parent / 'encryption.key'} "
+                "with the original key to migrate it"
+            ) from None
+
 
 class SQLiteKernelStore(Database):
-    def __init__(self, path, encryption_key):
-        super().__init__(path, encryption_key)
+    def __init__(self, path, encryptor=None):
+        super().__init__(path, encryptor)
         self.replay = SQLiteReplayStore(self)
         self.capture = SQLiteCaptureQueue(self)
         self.state = SQLiteStateStore(self)
@@ -149,7 +211,11 @@ class SQLiteKernelStore(Database):
                     CREATE INDEX IF NOT EXISTS capture_ready ON capture(ready,lease);
                     CREATE TABLE IF NOT EXISTS deleted_scopes (scope TEXT PRIMARY KEY);
                 """)
+                self.begin_migration(c)
+                if c.execute("PRAGMA user_version").fetchone()[0] == 5:
+                    self.migrate_legacy_values(c, ("replay", "state", "capture"))
                 c.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
+                c.commit()
 
         await self.run(initialize, write=True)
 
@@ -254,8 +320,8 @@ class SQLiteKernelStore(Database):
 
 
 class ManagementStore(Database):
-    def __init__(self, path, encryption_key):
-        super().__init__(path, encryption_key)
+    def __init__(self, path, encryptor=None):
+        super().__init__(path, encryptor)
         self.cache = TTLCache(ttl=2, capacity=2048)
 
     async def initialize(self):
@@ -276,10 +342,10 @@ class ManagementStore(Database):
                         PRIMARY KEY(account,kind,id));
                     CREATE INDEX IF NOT EXISTS expiry_time ON object_expiry(expires);
                 """)
-                # Serialize the one-time migration across standalone/server workers.
-                c.execute("BEGIN IMMEDIATE")
+                self.begin_migration(c)
                 if c.execute("PRAGMA user_version").fetchone()[0] == 5:
                     c.execute("ALTER TABLE request_logs ADD COLUMN user TEXT")
+                    self.migrate_legacy_values(c, ("objects", "request_logs"))
                     for row in c.execute("SELECT * FROM objects WHERE kind='upstreams'").fetchall():
                         value = self.decode(row["value"])
                         # Keep v5 request URLs: v5 appended /v1 to non-Ark bases lacking it.

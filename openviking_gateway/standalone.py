@@ -2,8 +2,10 @@
 # SPDX-License-Identifier: AGPL-3.0
 """Standalone host: startup checks, Studio, read-only OV administration and /health."""
 
+import asyncio
 import logging
 import os
+from concurrent.futures import ThreadPoolExecutor
 from importlib.util import find_spec
 from pathlib import Path
 from urllib.parse import quote, urlencode
@@ -56,8 +58,23 @@ def studio_directory() -> Path | None:
     return None
 
 
+def build_encryptor(config: StandaloneGatewayConfig):
+    """OpenViking's encryptor for the optional ``encryption`` block; None stores plaintext."""
+    if not (config.encryption or {}).get("enabled"):
+        return None
+    from openviking.crypto.config import bootstrap_encryption
+
+    # uvicorn builds the app inside its running loop, so bootstrap on a separate thread.
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(
+            asyncio.run, bootstrap_encryption({"encryption": config.encryption})
+        ).result()
+
+
 def create_standalone_app(config: StandaloneGatewayConfig, studio_dir=None):
-    app = create_app(config, openviking_url=config.openviking_url)
+    app = create_app(
+        config, openviking_url=config.openviking_url, encryptor=build_encryptor(config)
+    )
     for warning in app.state.warnings:
         logger.warning("%s: %s", warning, WARNINGS[warning])
 

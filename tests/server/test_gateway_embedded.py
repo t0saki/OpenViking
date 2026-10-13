@@ -1,5 +1,6 @@
 """The embedded gateway owns its routes and starts before deletion recovery."""
 
+import sqlite3
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -9,8 +10,18 @@ from fastapi import FastAPI
 from starlette.responses import JSONResponse
 from starlette.testclient import TestClient, WebSocketDenialResponse
 
+from openviking.crypto.encryptor import MAGIC, FileEncryptor
 from openviking.server import gateway_host
+from openviking_cli.utils.config.encryption_config import EncryptionConfig
 from openviking_gateway.config import EmbeddedGatewayConfig
+
+
+def openviking_config(gateway, encryption=None):
+    return SimpleNamespace(
+        gateway=gateway,
+        encryption=encryption or EncryptionConfig(),
+        oauth=SimpleNamespace(enabled=False),
+    )
 
 
 @pytest.mark.parametrize("host,expected", [("0.0.0.0", "127.0.0.1"), ("::", "[::1]")])
@@ -19,10 +30,26 @@ def test_embedded_gateway_targets_loopback_without_version_gate(host, expected, 
         "openviking_gateway.app.create_app", lambda config, **kwargs: {"config": config, **kwargs}
     )
     options = gateway_host.create_embedded_gateway(
-        EmbeddedGatewayConfig(enabled=True), SimpleNamespace(host=host, port=1987), lambda: None
+        openviking_config(EmbeddedGatewayConfig(enabled=True)),
+        SimpleNamespace(host=host, port=1987),
+        lambda: None,
     )
     assert options["openviking_url"] == f"http://{expected}:1987"
     assert options["config"].min_server_version == "0"
+    assert options["encryptor"] is None
+
+
+async def test_embedded_gateway_uses_server_encryption(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "openviking_gateway.app.create_app", lambda config, **kwargs: {"config": config, **kwargs}
+    )
+    encryption = EncryptionConfig(enabled=True, local={"key_file": str(tmp_path / "master.key")})
+    options = gateway_host.create_embedded_gateway(
+        openviking_config(EmbeddedGatewayConfig(enabled=True), encryption),
+        SimpleNamespace(host="127.0.0.1", port=1987),
+        lambda: None,
+    )
+    assert isinstance(options["encryptor"], FileEncryptor)
 
 
 @pytest.mark.parametrize(
@@ -124,12 +151,13 @@ async def test_server_lifespan_routes_defaults_and_cors(tmp_path, monkeypatch, m
     from openviking_gateway.client import VikingClient
 
     gateway_config = EmbeddedGatewayConfig(enabled=True, storage_path=str(tmp_path / "gateway"))
+    encryption = EncryptionConfig(enabled=True, local={"key_file": str(tmp_path / "master.key")})
     # FastMCP's session manager is single-use; keep this lifespan isolated from other tests.
     monkeypatch.setattr(mcp, "_session_manager", None)
     monkeypatch.setattr(
         server_module,
         "get_openviking_config",
-        lambda: SimpleNamespace(gateway=gateway_config, oauth=SimpleNamespace(enabled=False)),
+        lambda: openviking_config(gateway_config, encryption),
     )
     monkeypatch.setattr(global_api, "init_metrics_from_server_config", lambda *args, **kwargs: None)
     monkeypatch.setattr(global_api, "shutdown_metrics_async", AsyncMock())
@@ -236,3 +264,7 @@ async def test_server_lifespan_routes_defaults_and_cors(tmp_path, monkeypatch, m
             assert preflight.status_code == 200
             assert preflight.headers["access-control-allow-origin"] == "https://studio.example"
             assert dumped == ["/admin", "/health"]
+    # Gateway objects are stored with the server's encryption.
+    with sqlite3.connect(tmp_path / "gateway" / "management.sqlite3") as db:
+        values = [row[0] for row in db.execute("SELECT value FROM objects")]
+    assert values and all(value.startswith(MAGIC) for value in values)

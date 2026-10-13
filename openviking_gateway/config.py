@@ -4,20 +4,15 @@
 
 import logging
 import os
-import tempfile
 from pathlib import Path
+from typing import ClassVar
 from urllib.parse import urlsplit, urlunsplit
 
-from cryptography.fernet import Fernet
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 logger = logging.getLogger(__name__)
 
-# v0.5.0 sidecar settings that an upgraded ov.conf may still carry.
-REMOVED_EMBEDDED_FIELDS = frozenset(
-    {"host", "port", "workers", "url", "openviking_url", "admin_token_env"}
-)
-
+ENVIRONMENT_PREFIX = "OPENVIKING_GATEWAY_"
 PUBLIC_OPENVIKING_URLS = frozenset({"https://api.vikingdb.cn-beijing.volces.com/openviking"})
 
 
@@ -39,10 +34,11 @@ def normalize_url(value: str) -> str:
 
 class GatewayConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    # Settings an upgraded configuration may still carry; rejecting them would stop the host.
+    removed_fields: ClassVar[frozenset[str]] = frozenset({"encryption_key_env"})
 
     public_url: str = ""
     storage_path: str = "~/.openviking/gateway"
-    encryption_key_env: str = "OPENVIKING_GATEWAY_ENCRYPTION_KEY"
     management_key: str = Field(default="", repr=False)
     min_server_version: str = "0.4.16"
     session_ttl_days: int = Field(default=30, ge=1)
@@ -51,6 +47,24 @@ class GatewayConfig(BaseModel):
     max_body_bytes: int = Field(default=32 * 1024 * 1024, ge=1024)
     upstream_timeout_seconds: float = Field(default=600, gt=0)
     health_interval_seconds: float = Field(default=60, ge=1)
+
+    @model_validator(mode="before")
+    @classmethod
+    def apply_environment(cls, value):
+        if not isinstance(value, dict):
+            return value
+        if found := cls.removed_fields.intersection(value):
+            logger.warning(
+                "Ignoring removed gateway settings %s. "
+                "See docs/en/guides/22-gateway-operations.md#migration",
+                ", ".join(sorted(found)),
+            )
+        value = {key: item for key, item in value.items() if key not in found}
+        for field in cls.model_fields:
+            # An empty variable, such as a compose default, never overrides the file.
+            if override := os.environ.get(ENVIRONMENT_PREFIX + field.upper()):
+                value[field] = override
+        return value
 
     @field_validator("public_url")
     @classmethod
@@ -69,58 +83,19 @@ class GatewayConfig(BaseModel):
     def directory(self) -> Path:
         return Path(self.storage_path).expanduser()
 
-    def encryption_key(self) -> str:
-        """Publish one durable key before opening SQLite, even with multiple workers."""
-        if key := os.environ.get(self.encryption_key_env):
-            Fernet(key.encode())
-            return key
-        directory = self.directory
-        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
-        target = directory / "encryption.key"
-        if not target.exists():
-            if (
-                any(
-                    (directory / name).exists() for name in ("kernel.sqlite3", "management.sqlite3")
-                )
-                # Another worker may have published the key and created a database meanwhile.
-                and not target.exists()
-            ):
-                raise ValueError(
-                    "Gateway database exists but encryption.key is missing; restore the original "
-                    "key file or configure the original encryption key environment variable"
-                )
-            fd, temporary = tempfile.mkstemp(prefix=".encryption-", dir=directory)
-            try:
-                with os.fdopen(fd, "wb") as file:
-                    file.write(Fernet.generate_key())
-                    file.flush()
-                    os.fsync(file.fileno())
-                try:
-                    os.link(temporary, target)
-                except FileExistsError:
-                    pass
-            finally:
-                os.unlink(temporary)
-        key = target.read_text().strip()
-        Fernet(key.encode())
-        return key
-
 
 class EmbeddedGatewayConfig(GatewayConfig):
-    enabled: bool = False
+    # v0.5.0 sidecar settings: the gateway now runs inside the server on the server port.
+    removed_fields = GatewayConfig.removed_fields | {
+        "host",
+        "port",
+        "workers",
+        "url",
+        "openviking_url",
+        "admin_token_env",
+    }
 
-    @model_validator(mode="before")
-    @classmethod
-    def drop_removed_fields(cls, value):
-        # Rejecting them would stop the whole server, not just the gateway, on upgrade.
-        if isinstance(value, dict) and (found := REMOVED_EMBEDDED_FIELDS.intersection(value)):
-            logger.warning(
-                "Ignoring removed gateway settings %s: the gateway now runs inside the server "
-                "on the server port. See docs/en/guides/22-gateway-operations.md#migration",
-                ", ".join(sorted(found)),
-            )
-            value = {key: item for key, item in value.items() if key not in found}
-        return value
+    enabled: bool = False
 
 
 class StandaloneGatewayConfig(GatewayConfig):
@@ -128,8 +103,18 @@ class StandaloneGatewayConfig(GatewayConfig):
     host: str = "127.0.0.1"
     port: int = Field(default=1935, ge=1, le=65535)
     workers: int = Field(default=1, ge=1, le=64)
+    # Same schema as ov.conf's top-level "encryption"; absent or disabled stores plaintext.
+    encryption: dict | None = Field(default=None, repr=False)
 
     @field_validator("openviking_url")
     @classmethod
     def validate_openviking_url(cls, value: str) -> str:
         return normalize_url(value)
+
+    @field_validator("encryption")
+    @classmethod
+    def validate_encryption(cls, value: dict | None) -> dict | None:
+        # Imported here because the server's config package imports this module.
+        from openviking_cli.utils.config.encryption_config import EncryptionConfig
+
+        return None if value is None else EncryptionConfig.model_validate(value).model_dump()

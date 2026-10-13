@@ -9,13 +9,18 @@ import orjson
 import pytest
 import pytest_asyncio
 from aiohttp import web
-from cryptography.fernet import Fernet
 
+from openviking.crypto import FileEncryptor, LocalFileProvider
 from openviking_gateway.app import create_app
 from openviking_gateway.config import GatewayConfig
 from openviking_gateway.kernel import MemoryKernel
 from openviking_gateway.models import Policy
 from openviking_gateway.storage import SQLiteKernelStore
+
+
+def local_encryptor(key_file):
+    """OpenViking's local-provider encryptor; it creates the root key file on first use."""
+    return FileEncryptor(LocalFileProvider(str(key_file)))
 
 
 def mcp_tool(name, properties, required=()):
@@ -142,12 +147,12 @@ def credential():
 
 @pytest_asyncio.fixture
 async def setup_kernel(tmp_path):
-    key = Fernet.generate_key().decode()
-    store = SQLiteKernelStore(tmp_path / "kernel.sqlite3", key)
+    encryptor = local_encryptor(tmp_path / "master.key")
+    store = SQLiteKernelStore(tmp_path / "kernel.sqlite3", encryptor)
     await store.initialize()
     viking = FakeViking()
     kernel = MemoryKernel(store, viking)
-    yield kernel, store, viking, key
+    yield kernel, store, viking, encryptor
     store.close()
 
 
@@ -192,7 +197,7 @@ async def make_due(store):
 
 
 @pytest_asyncio.fixture
-async def running_gateway(tmp_path, monkeypatch):
+async def running_gateway(tmp_path):
     captured = []
     writes = []
     override = {}
@@ -351,9 +356,10 @@ async def running_gateway(tmp_path, monkeypatch):
     site = web.TCPSite(runner, "127.0.0.1", 0)
     await site.start()
     base = f"http://127.0.0.1:{site._server.sockets[0].getsockname()[1]}"
-    monkeypatch.setenv("OPENVIKING_GATEWAY_ENCRYPTION_KEY", Fernet.generate_key().decode())
     config = GatewayConfig(storage_path=str(tmp_path))
-    app = create_app(config, openviking_url=base)
+    app = create_app(
+        config, openviking_url=base, encryptor=local_encryptor(tmp_path / "master.key")
+    )
     app.state.test_backend = override
     async with app.router.lifespan_context(app):
         async with httpx.AsyncClient(
