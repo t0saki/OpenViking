@@ -17,6 +17,7 @@ export const DEGRADATIONS = [
   'hidden_tool_history_unavailable',
   'hidden_reply_without_anchor',
   'capture_parse_failure',
+  'revocation_check_unavailable',
 ] as const
 
 function label(t: Translate, group: string, value: string): string {

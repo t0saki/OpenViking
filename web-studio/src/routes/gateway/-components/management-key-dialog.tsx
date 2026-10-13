@@ -1,5 +1,5 @@
 import * as React from 'react'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { Button } from '#/components/ui/button'
@@ -13,7 +13,10 @@ import {
   DialogFooter,
 } from '#/components/ui/dialog'
 import { getAccess, toGatewayError } from '../-lib/api'
-import { setManagementKey } from '../-lib/management-key'
+import {
+  MANAGEMENT_UNLOCK_EVENT,
+  setManagementKey,
+} from '../-lib/management-key'
 import { useGateway } from '../-lib/use-gateway'
 import { gatewayErrorMessage } from '../-lib/localize'
 import { SettingField } from './setting-field'
@@ -23,7 +26,6 @@ const MANAGEMENT_CONFIG = 'ov.conf: gateway.management_key'
 export function ManagementKeyDialog() {
   const { t } = useTranslation('gateway')
   const { connection } = useGateway()
-  const queryClient = useQueryClient()
   const [open, setOpen] = React.useState(false)
   const [key, setKey] = React.useState('')
   const [error, setError] = React.useState('')
@@ -33,17 +35,13 @@ export function ManagementKeyDialog() {
       setError('')
       setOpen(true)
     }
-    const expired = () => toast.error(t('management.expired'))
-    window.addEventListener('gateway-management-unlock', show)
-    window.addEventListener('gateway-management-key-expired', expired)
-    return () => {
-      window.removeEventListener('gateway-management-unlock', show)
-      window.removeEventListener('gateway-management-key-expired', expired)
-    }
-  }, [t])
+    window.addEventListener(MANAGEMENT_UNLOCK_EVENT, show)
+    return () => window.removeEventListener(MANAGEMENT_UNLOCK_EVENT, show)
+  }, [])
   const unlock = useMutation({
-    mutationFn: () => getAccess(connection, key.trim()),
-    onSuccess: async (access) => {
+    mutationFn: () => getAccess({ ...connection, managementKey: key.trim() }),
+    // Storing the key changes the query scope, so gateway data reloads with it.
+    onSuccess: (access) => {
       if (!access.can_write_objects) {
         setError(t('management.invalid'))
         return
@@ -52,7 +50,6 @@ export function ManagementKeyDialog() {
       setOpen(false)
       setKey('')
       toast.success(t('management.unlocked'))
-      await queryClient.invalidateQueries({ queryKey: ['gateway'] })
     },
     onError: (failure) =>
       setError(
@@ -85,6 +82,7 @@ export function ManagementKeyDialog() {
                 <code>{MANAGEMENT_CONFIG}</code>
               </li>
               <li>
+                {t('management.environment')}{' '}
                 <code>OPENVIKING_GATEWAY_MANAGEMENT_KEY</code>
               </li>
               <li>{t('management.prefix')}</li>

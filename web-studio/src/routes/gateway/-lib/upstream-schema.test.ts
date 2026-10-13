@@ -205,6 +205,10 @@ describe('validateUpstream', () => {
         stored,
       ),
     ).toEqual({})
+    // A new address drops the stored key, so a new one is required.
+    expect(validateUpstream(input({ api_key: '' }), stored).api_key?.key).toBe(
+      'validation.apiKeyRequired',
+    )
     expect(
       validateUpstream(input({ api_key: '', auth_mode: 'passthrough' })),
     ).toEqual({})
@@ -215,8 +219,16 @@ describe('validateUpstream', () => {
 
   it('checks headers, aliases and context windows', () => {
     const header = (headers: Record<string, string>) =>
-      validateUpstream(input({ headers }), stored).headers
+      validateUpstream(input({ headers, base_url: stored.base_url }), stored)
+        .headers
     expect(header({ 'OpenAI-Organization': '' })).toBeUndefined()
+    // Stored values are dropped with a new address.
+    expect(
+      validateUpstream(
+        input({ headers: { 'OpenAI-Organization': '' } }),
+        stored,
+      ).headers?.key,
+    ).toBe('validation.headerValue')
     expect(header({ 'X-New': '' })).toEqual({
       key: 'validation.headerValue',
       values: { name: 'X-New' },

@@ -1,4 +1,6 @@
 import { useSyncExternalStore } from 'react'
+import i18next from 'i18next'
+import { toast } from 'sonner'
 
 const EVENT = 'gateway-management-key-changed'
 const storageKey = (baseUrl: string) =>
@@ -30,7 +32,7 @@ export function lockManagementKey(baseUrl: string, expired = false) {
   }
   window.dispatchEvent(new Event(EVENT))
   if (expired && hadKey)
-    window.dispatchEvent(new Event('gateway-management-key-expired'))
+    toast.error(i18next.t('management.expired', { ns: 'gateway' }))
 }
 
 function subscribe(callback: () => void) {
@@ -46,6 +48,9 @@ export function useManagementKey(baseUrl: string) {
   )
 }
 
+/** Opens the unlock dialog that the gateway layout mounts. */
+export const MANAGEMENT_UNLOCK_EVENT = 'gateway-management-unlock'
+
 export function requestManagementUnlock() {
-  window.dispatchEvent(new Event('gateway-management-unlock'))
+  window.dispatchEvent(new Event(MANAGEMENT_UNLOCK_EVENT))
 }

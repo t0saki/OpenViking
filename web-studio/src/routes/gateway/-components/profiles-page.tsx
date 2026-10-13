@@ -204,8 +204,7 @@ function ProfileCard({
 /** Context profiles: recall, saving, long conversations and tools. */
 export function ProfilesPage() {
   const { t } = useTranslation('gateway')
-  const { connection, invalidate, access } = useGateway()
-  const readOnly = !access?.can_write_objects
+  const { connection, invalidate, readOnly } = useGateway()
   const [inUseCount, setInUseCount] = React.useState<number | null>(null)
   const profiles = useProfiles()
   const keys = useKeys()
@@ -225,13 +224,15 @@ export function ProfilesPage() {
   const remove = useMutation({
     mutationFn: (profile: Profile) => deleteProfile(connection, profile.id),
     onSuccess: async (_result, profile) => {
+      setInUseCount(null)
       toast.success(t('profiles.toast.deleted', { name: profile.name }))
       await invalidate('profiles')
     },
+    // A profile still in use gets the notice with its next steps instead.
     onError: (error) => {
       const failure = toGatewayError(error)
       if (failure.reason === 'in_use') setInUseCount(failure.keyCount ?? 0)
-      toast.error(gatewayErrorMessage(t, error))
+      else toast.error(gatewayErrorMessage(t, error))
     },
   })
 

@@ -146,7 +146,6 @@ export function GatewayLayout() {
     access,
     managementKey,
     connection,
-    invalidate,
   } = useGateway()
   const probe = useConnectionInfo({ enabled: Boolean(access) })
 
@@ -158,14 +157,11 @@ export function GatewayLayout() {
   if (!allowed) return <GatewayConnect />
   if (accessQuery.isError)
     return (
-      <>
-        <ManagementKeyDialog />
-        <GatewayUnavailable
-          error={accessQuery.error}
-          retrying={accessQuery.isFetching}
-          onRetry={() => void accessQuery.refetch()}
-        />
-      </>
+      <GatewayUnavailable
+        error={accessQuery.error}
+        retrying={accessQuery.isFetching}
+        onRetry={() => void accessQuery.refetch()}
+      />
     )
   if (!access) return <LoadingState />
   const activeTab = gatewayTabFor(pathname)
@@ -195,10 +191,7 @@ export function GatewayLayout() {
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => {
-                  lockManagementKey(connection.baseUrl)
-                  void invalidate()
-                }}
+                onClick={() => lockManagementKey(connection.baseUrl)}
               >
                 {t('management.lock')}
               </Button>

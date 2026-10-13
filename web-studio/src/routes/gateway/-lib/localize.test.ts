@@ -129,7 +129,7 @@ describe('gatewayErrorMessage', () => {
           'root_key_not_allowed',
         ),
       ),
-    ).toBe('不接受 Root 密钥，请使用本账号下的用户密钥。')
+    ).toBe('不接受 Root API 密钥，请使用本账号下的用户 API 密钥。')
     expect(
       gatewayErrorMessage(
         t,
@@ -140,7 +140,7 @@ describe('gatewayErrorMessage', () => {
           'other_account',
         ),
       ),
-    ).toBe('This OpenViking key belongs to another account.')
+    ).toBe('This OpenViking API key belongs to another account.')
   })
 
   it('summarizes by category and keeps unexplained messages', () => {

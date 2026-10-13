@@ -70,15 +70,15 @@ const keys = {
       placeholder: 'Choose an OpenViking user',
       loading: 'Loading users…',
       description:
-        'The gateway recalls and saves memory as this user. Their OpenViking key is read on the server, stored encrypted by the gateway and never shown.',
+        'The gateway recalls and saves memory as this user. Their user API key is read on the server, stored encrypted by the gateway and never shown.',
       roles: {
         admin: 'Admin',
         user: 'User',
       },
-      unavailable: "Key can't be read on the server; paste it instead",
+      unavailable: "User API key can't be read on the server; paste it instead",
       loadFailed:
-        "Couldn't load this account's users, so paste the key instead.",
-      none: "The server can't read the keys of this account's users, so paste the key instead.",
+        "Couldn't load this account's users, so paste the user API key instead.",
+      none: "The server can't read the user API keys of this account's users, so paste one instead.",
       choose: 'Choose a user',
     },
     openvikingKey: {
@@ -87,10 +87,10 @@ const keys = {
         "This is a gateway management key. Paste this user's user API key instead.",
       label: 'OpenViking API key',
       description:
-        "An OpenViking user key from this account. The gateway recalls and saves memory as this user. Root keys aren't accepted. Stored encrypted and never shown again.",
+        "The user API key of a user in this account. The gateway recalls and saves memory as this user. Root API keys aren't accepted. Stored encrypted and never shown again.",
       gatewayKey:
-        "This is a gateway key. Enter the OpenViking user's own key instead.",
-      paste: 'Paste an OpenViking key',
+        "This is a gateway key (for clients). Paste this user's user API key instead.",
+      paste: 'Paste a user API key',
     },
     profile: {
       label: 'Context profile',
@@ -122,9 +122,9 @@ const keys = {
     requiredVersion: 'Required version: {{version}}.',
     title: "Couldn't issue the key",
     rootKey:
-      'This is a root key. Use the key of an OpenViking user in this account.',
+      'This is a root API key. Use the user API key of a user in this account.',
     otherAccount:
-      'This OpenViking key belongs to another account. Use a user key from this account.',
+      'This OpenViking API key belongs to another account. Use a user API key from this account.',
     invalidKey:
       "OpenViking rejected this key. Check that it's complete and hasn't been regenerated.",
     unavailable:

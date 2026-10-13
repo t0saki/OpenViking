@@ -104,9 +104,9 @@ it.each(['', 'root-key'])(
   },
 )
 
-it.each([false, true])(
-  'recognizes gateway health even when the saved OV key is invalid: %s',
-  async (invalidKey) => {
+it.each(['', 'invalid'])(
+  'recognizes gateway health with saved OV key %j',
+  async (apiKey) => {
     const requests: string[] = []
     const server = createServer((req, res) => {
       res.setHeader('Access-Control-Allow-Origin', '*')
@@ -120,11 +120,7 @@ it.each([false, true])(
       }
       requests.push(req.url || '')
       res.setHeader('Content-Type', 'application/json')
-      if (invalidKey && req.headers['x-api-key']) {
-        res.statusCode = 401
-        res.end(JSON.stringify({ detail: { reason: 'openviking_http_401' } }))
-        return
-      }
+      // An invalid key only leaves out the identity fields.
       res.end(
         JSON.stringify({
           status: 'ok',
@@ -146,7 +142,7 @@ it.each([false, true])(
         baseUrl: `http://127.0.0.1:${port}`,
         accountId: 'default',
         userId: 'default',
-        apiKey: invalidKey ? 'invalid' : '',
+        apiKey,
         adminApiKey: '',
       }),
     )

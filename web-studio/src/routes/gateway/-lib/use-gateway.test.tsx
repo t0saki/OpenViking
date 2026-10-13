@@ -171,13 +171,16 @@ it('uses the ordinary OV key without an administrator key', () => {
   expect(result.current.allowed).toBe(true)
   expect(result.current.connection.apiKey).toBe('data-key')
 })
-it('allows development mode without either credential', () => {
-  state.serverMode = 'dev'
-  state.adminApiKey = ''
-  state.apiKey = ''
-  const { result } = renderHook(() => useGateway(), { wrapper })
-  expect(result.current.allowed).toBe(true)
-})
+it.each(['dev', 'trusted'])(
+  'asks /access in %s mode without either credential',
+  (serverMode) => {
+    state.serverMode = serverMode
+    state.adminApiKey = ''
+    state.apiKey = ''
+    const { result } = renderHook(() => useGateway(), { wrapper })
+    expect(result.current.allowed).toBe(true)
+  },
+)
 it('partitions caches by the management key without storing the secret in query keys', () => {
   const locked = gatewayScope('http://ov', 'default', 'ov-key')
   const unlocked = gatewayScope('http://ov', 'default', 'ov-key', 'ovgm-secret')
@@ -185,12 +188,13 @@ it('partitions caches by the management key without storing the secret in query 
   expect(JSON.stringify(unlocked)).not.toContain('ovgm-secret')
 })
 
-it('keeps readonly caches readonly across unlock, invalidation and immediate lock', async () => {
+it('reloads gateway data in its own scope when the key is unlocked or locked', async () => {
   const baseUrl = 'https://ov.example.com'
   api.getAccess.mockImplementation(
     async (connection: Api.GatewayConnection) => ({
       managed: true,
       can_write_objects: Boolean(connection.managementKey),
+      can_issue_for_others: false,
     }),
   )
   api.listUpstreams.mockImplementation(
@@ -205,17 +209,12 @@ it('keeps readonly caches readonly across unlock, invalidation and immediate loc
     () => ({ gateway: useGateway(), upstreams: useUpstreams() }),
     { wrapper },
   )
-  await waitFor(() =>
-    expect(result.current.gateway.access?.can_write_objects).toBe(false),
-  )
+  await waitFor(() => expect(result.current.gateway.access).toBeTruthy())
+  expect(result.current.gateway.readOnly).toBe(true)
+  expect(result.current.gateway.canIssueForOthers).toBe(false)
   const lockedScope = result.current.gateway.scope
-  await act(async () => {
-    setManagementKey(baseUrl, 'ovgm-test-key')
-    await client.invalidateQueries({ queryKey: ['gateway'] })
-  })
-  await waitFor(() =>
-    expect(result.current.gateway.access?.can_write_objects).toBe(true),
-  )
+  act(() => setManagementKey(baseUrl, 'ovgm-test-key'))
+  await waitFor(() => expect(result.current.gateway.readOnly).toBe(false))
   await waitFor(() =>
     expect(result.current.upstreams.data?.[0].header_names).toEqual([
       'X-Secret',
@@ -226,12 +225,7 @@ it('keeps readonly caches readonly across unlock, invalidation and immediate loc
       gatewayQueryKey(lockedScope, 'access'),
     )?.can_write_objects,
   ).toBe(false)
-  await act(async () => {
-    lockManagementKey(baseUrl)
-    await result.current.gateway.invalidate()
-  })
-  await waitFor(() =>
-    expect(result.current.gateway.access?.can_write_objects).toBe(false),
-  )
+  act(() => lockManagementKey(baseUrl))
+  await waitFor(() => expect(result.current.gateway.readOnly).toBe(true))
   expect(result.current.upstreams.data?.[0].header_names).toBeUndefined()
 })

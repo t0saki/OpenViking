@@ -398,27 +398,62 @@ describe('UpstreamEditor', () => {
     const save = screen.getByRole('button', { name: 'actions.save' })
     expect(save.hasAttribute('disabled')).toBe(true)
 
-    fireEvent.change(screen.getByLabelText('upstreams.form.baseUrl.label'), {
-      target: { value: 'https://llm.example.com' },
+    fireEvent.change(screen.getByLabelText('upstreams.form.name.label'), {
+      target: { value: 'OpenAI EU' },
     })
-    expect(
-      screen.getByText('https://llm.example.com/chat/completions'),
-    ).toBeTruthy()
     await waitFor(() => expect(save.hasAttribute('disabled')).toBe(false))
     fireEvent.click(save)
 
     await waitFor(() => expect(api.saveUpstream).toHaveBeenCalledTimes(1))
     expect(api.saveUpstream.mock.lastCall?.[1]).toBe('u1')
     expect(lastSavedBody()).toMatchObject({
-      name: 'OpenAI',
-      base_url: 'https://llm.example.com',
+      name: 'OpenAI EU',
       api_key: '',
       headers: { 'OpenAI-Organization': '' },
       priority: 5,
     })
-    expect(toast.success).toHaveBeenCalledWith('upstreams.toast.saved OpenAI')
+    expect(toast.success).toHaveBeenCalledWith(
+      'upstreams.toast.saved OpenAI EU',
+    )
     await waitFor(() =>
       expect(router.state.location.pathname).toBe('/gateway/upstreams'),
+    )
+  })
+
+  it('asks for the API key and header values again after the address changes', async () => {
+    renderAt('/gateway/upstreams/u1')
+    await screen.findByLabelText('upstreams.form.name.label')
+    const save = screen.getByRole('button', { name: 'actions.save' })
+    fireEvent.change(screen.getByLabelText('upstreams.form.baseUrl.label'), {
+      target: { value: 'https://llm.example.com' },
+    })
+    expect(
+      screen.getByText('https://llm.example.com/chat/completions'),
+    ).toBeTruthy()
+    expect(
+      screen.getByText('upstreams.form.apiKey.addressChanged'),
+    ).toBeTruthy()
+    expect(
+      screen.getByText('upstreams.form.headers.addressChanged'),
+    ).toBeTruthy()
+    expect(save.hasAttribute('disabled')).toBe(true)
+
+    fireEvent.change(
+      screen.getByLabelText('upstreams.form.apiKey.label', { exact: false }),
+      { target: { value: 'sk-new' } },
+    )
+    fireEvent.change(
+      screen.getByPlaceholderText('upstreams.form.headers.value'),
+      { target: { value: 'org-1' } },
+    )
+    await waitFor(() => expect(save.hasAttribute('disabled')).toBe(false))
+    fireEvent.click(save)
+    await waitFor(() =>
+      expect(lastSavedBody()).toMatchObject({
+        base_url: 'https://llm.example.com',
+        api_key: 'sk-new',
+        headers: { 'OpenAI-Organization': 'org-1' },
+      }),
     )
   })
 
@@ -722,6 +757,11 @@ describe('describeTest', () => {
     ],
     [{ ok: false, status: 500 }, 'danger', 'upstreams.test.explain.status'],
     [
+      { ok: false, reason: 'upstream_key_missing' },
+      'danger',
+      'errors.reasons.upstream_key_missing',
+    ],
+    [
       { ok: false, reason: 'upstream_unavailable' },
       'danger',
       'upstreams.test.explain.unreachable',
@@ -921,11 +961,10 @@ describe('upstream access and import', () => {
     expect(screen.getAllByText('upstreams.add')).toHaveLength(2)
   })
 
-  it('hides a forbidden import entry and refreshes access', async () => {
-    api.getAccess.mockResolvedValue({
-      can_write_objects: true,
-      can_import_vlm: true,
-    })
+  it('hides a forbidden import entry once /access is refreshed', async () => {
+    api.getAccess
+      .mockResolvedValueOnce({ can_write_objects: true, can_import_vlm: true })
+      .mockResolvedValue({ can_write_objects: true, can_import_vlm: false })
     api.importVlm.mockRejectedValue(
       new GatewayError('Forbidden', 403, undefined, 'vlm_import_forbidden'),
     )
@@ -941,6 +980,6 @@ describe('upstream access and import', () => {
         screen.queryByRole('button', { name: 'upstreams.import.action' }),
       ).toBeNull(),
     )
-    expect(api.getAccess.mock.calls.length).toBeGreaterThan(1)
+    expect(api.getAccess).toHaveBeenCalledTimes(2)
   })
 })

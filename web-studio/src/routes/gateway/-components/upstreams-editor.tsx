@@ -43,12 +43,12 @@ export function UpstreamEditorPage() {
 /** Loads the upstream (unless creating one) and shows the editor or a state. */
 export function UpstreamEditor({ upstreamId }: { upstreamId: string }) {
   const { t } = useTranslation('gateway')
-  const { access } = useGateway()
+  const { readOnly } = useGateway()
   const isNew = upstreamId === NEW_ID
   const upstreams = useUpstreams({ enabled: !isNew })
   const keys = useKeys({ enabled: !isNew })
 
-  if (isNew && !access?.can_write_objects)
+  if (isNew && readOnly)
     return (
       <Notice
         tone="info"
@@ -68,7 +68,7 @@ export function UpstreamEditor({ upstreamId }: { upstreamId: string }) {
   if (stored) {
     return (
       <UpstreamEditorForm
-        key={`${stored.id}:${stored.revision}:${Boolean(access?.can_write_objects)}`}
+        key={`${stored.id}:${stored.revision}:${readOnly}`}
         stored={stored}
         usedBy={keysUsing(keys.data, { upstreamId: stored.id })}
       />
@@ -135,8 +135,7 @@ type UpstreamEditorFormProps = {
 function UpstreamEditorForm({ stored, usedBy }: UpstreamEditorFormProps) {
   const { t } = useTranslation('gateway')
   const navigate = useNavigate()
-  const { connection, invalidate, access } = useGateway()
-  const readOnly = !access?.can_write_objects
+  const { connection, invalidate, readOnly } = useGateway()
   const [id] = React.useState(() => stored?.id ?? newObjectId())
   const [initial] = React.useState(() =>
     stored ? toUpstreamInput(stored) : UPSTREAM_DEFAULTS,

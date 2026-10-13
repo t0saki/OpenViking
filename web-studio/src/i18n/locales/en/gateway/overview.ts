@@ -8,11 +8,17 @@ const overview = {
   sampleNote_other:
     'Figures cover the latest {{limit}} entries of the request log. Entries are kept for {{count}} days.',
   setup: {
-    providedUpstreams: 'Your gateway admin has provided {{count}} upstreams',
-    importedUpstreams:
+    providedUpstreams_one: 'Your gateway admin has provided {{count}} upstream',
+    providedUpstreams_other:
+      'Your gateway admin has provided {{count}} upstreams',
+    importedUpstreams_one:
+      '{{count}} upstream available from OpenViking model settings',
+    importedUpstreams_other:
       '{{count}} upstreams available from OpenViking model settings',
     waitUpstreams: 'Waiting for your gateway admin to add upstreams',
-    providedProfiles: 'Your gateway admin has provided {{count}} profiles',
+    providedProfiles_one: 'Your gateway admin has provided {{count}} profile',
+    providedProfiles_other:
+      'Your gateway admin has provided {{count}} profiles',
     waitProfiles: 'Waiting for your gateway admin to add profiles',
     codingPlan:
       '{{name}} is a Coding Plan upstream and needs confirmation before use',

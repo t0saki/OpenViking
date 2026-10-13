@@ -60,6 +60,8 @@ const common = {
       '网关管理密钥由部署这台网关的人设置，用来修改上游和上下文配置。它不是 OpenViking API 密钥，也不是客户端用的网关密钥。',
     where: '在哪里找？',
     prefix: 'openviking-server init 生成的值以 ovgm_ 开头。',
+    environment: '独立运行时，也可能在环境变量中：',
+    keyPlaceholder: '<至少 32 个字符>',
     session: '只保存在当前浏览器标签页，关闭后自动锁定。',
     wrongKey: '这是网关密钥（给客户端用的），请输入网关管理密钥。',
     invalid:
@@ -111,7 +113,10 @@ const common = {
       vlm_import_forbidden: '你没有导入 OpenViking 模型配置的权限。',
       vlm_import_unavailable:
         '这台网关不在 OpenViking 服务内运行，读不到服务端的模型配置，请手动添加上游。',
-      in_use: '仍有 {{count}} 个密钥在使用它。',
+      in_use_one: '仍有 {{count}} 个密钥在使用它。',
+      in_use_other: '仍有 {{count}} 个密钥在使用它。',
+      upstream_key_missing:
+        '这个上游没有保存 API Key（或由客户端自带 key），网关无法发起测试。',
       trusted_mode_unsupported: '网关不支持 Trusted 模式。',
       openviking_unreachable: '网关连不上 OpenViking。',
 
@@ -130,8 +135,6 @@ const common = {
     unknownUpstream: '所选的上游中有一个已不存在。',
     keyNotFound: '这段对话使用的网关密钥已被吊销，无法再重新同步。',
     sessionNotFound: '网关中已没有这段对话的记录。',
-    upstreamKeyMissing:
-      '没有可用于测试的已保存 API Key：这个上游由客户端自带 API Key，或者还没有填写 API Key。',
     subscriptionKey: '不支持 Claude 订阅登录，请使用模型 API Key。',
   },
   validation: {

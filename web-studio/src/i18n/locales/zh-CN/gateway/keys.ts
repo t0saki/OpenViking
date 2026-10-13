@@ -67,14 +67,14 @@ const keys = {
       placeholder: '选择 OpenViking 用户',
       loading: '正在加载用户…',
       description:
-        '网关会以这个用户的身份召回和保存记忆。该用户的 OpenViking 密钥在服务端读取，由网关加密保存，不会显示。',
+        '网关会以这个用户的身份召回和保存记忆。该用户的用户 API 密钥在服务端读取，由网关加密保存，不会显示。',
       roles: {
         admin: '管理员',
         user: '用户',
       },
-      unavailable: '服务端读不到这个用户的密钥，请改为粘贴',
-      loadFailed: '无法加载本账号的用户，请直接粘贴密钥。',
-      none: '服务端读不到本账号用户的密钥，请直接粘贴。',
+      unavailable: '服务端读不到这个用户的用户 API 密钥，请改为粘贴',
+      loadFailed: '无法加载本账号的用户，请直接粘贴用户 API 密钥。',
+      none: '服务端读不到本账号用户的用户 API 密钥，请直接粘贴。',
       choose: '选择用户',
     },
     openvikingKey: {
@@ -82,9 +82,9 @@ const keys = {
       managementKey: '这是网关管理密钥，请粘贴该用户的用户 API 密钥。',
       label: 'OpenViking API 密钥',
       description:
-        '本账号中某个 OpenViking 用户的密钥。网关会以这个用户的身份召回和保存记忆。不接受 Root 密钥。密钥加密保存，之后不再显示。',
-      gatewayKey: '这是网关密钥，请填写 OpenViking 用户自己的密钥。',
-      paste: '粘贴 OpenViking 密钥',
+        '本账号中某个用户的用户 API 密钥。网关会以这个用户的身份召回和保存记忆。不接受 Root API 密钥。密钥加密保存，之后不再显示。',
+      gatewayKey: '这是网关密钥（给客户端用的），请粘贴该用户的用户 API 密钥。',
+      paste: '粘贴用户 API 密钥',
     },
     profile: {
       label: '上下文配置',
@@ -114,8 +114,9 @@ const keys = {
   errors: {
     requiredVersion: '要求版本：{{version}}。',
     title: '无法签发密钥',
-    rootKey: '这是 Root 密钥。请改用本账号中某个 OpenViking 用户的密钥。',
-    otherAccount: '这个 OpenViking 密钥属于其他账号，请使用本账号的用户密钥。',
+    rootKey: '这是 Root API 密钥，请改用本账号中某个用户的用户 API 密钥。',
+    otherAccount:
+      '这个 OpenViking API 密钥属于其他账号，请使用本账号的用户 API 密钥。',
     invalidKey:
       'OpenViking 拒绝了这个密钥。请检查密钥是否完整，以及是否已被重新生成。',
     unavailable: '网关连不上 OpenViking，无法校验这个密钥。请稍后重试。',

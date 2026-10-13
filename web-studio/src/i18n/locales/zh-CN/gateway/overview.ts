@@ -8,10 +8,14 @@ const overview = {
   sampleNote_other:
     '以上数据统计自请求日志中最新的 {{limit}} 条记录。日志保留 {{count}} 天。',
   setup: {
-    providedUpstreams: '网关管理员已提供 {{count}} 个上游',
-    importedUpstreams: '已有 {{count}} 个上游，来自 OpenViking 的模型配置',
+    providedUpstreams_one: '网关管理员已提供 {{count}} 个上游',
+    providedUpstreams_other: '网关管理员已提供 {{count}} 个上游',
+    importedUpstreams_one: '已有 {{count}} 个上游，来自 OpenViking 的模型配置',
+    importedUpstreams_other:
+      '已有 {{count}} 个上游，来自 OpenViking 的模型配置',
     waitUpstreams: '等待网关管理员添加上游',
-    providedProfiles: '网关管理员已提供 {{count}} 个上下文配置',
+    providedProfiles_one: '网关管理员已提供 {{count}} 个上下文配置',
+    providedProfiles_other: '网关管理员已提供 {{count}} 个上下文配置',
     waitProfiles: '等待网关管理员添加上下文配置',
     codingPlan: '{{name}} 是 Coding Plan 上游，确认后才能使用',
     confirm: '去确认',

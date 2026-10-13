@@ -428,20 +428,57 @@ describe('KeysIssueDialog', () => {
     await waitFor(() => expect(document.activeElement).toBe(field))
   })
 
-  it('switches to paste after selecting an unreadable user from the account list', async () => {
+  it('asks for a pasted key while an unreadable user is selected', async () => {
     api.listKeyUsers.mockResolvedValue([alice, hashed])
+    api.issueKey.mockResolvedValue({})
     renderIssueDialog()
+    fillName()
     await waitFor(() =>
       expect(userPicker().hasAttribute('disabled')).toBe(false),
     )
-    fireEvent.click(userPicker())
-    const option = await screen.findByRole('option', { name: /hashed/ })
-    fireEvent.mouseMove(option)
-    fireEvent.click(option)
+    const pick = async (name: RegExp) => {
+      fireEvent.click(userPicker())
+      const option = await screen.findByRole('option', { name })
+      fireEvent.mouseMove(option)
+      fireEvent.click(option)
+    }
+    await pick(/hashed/)
     const field = await screen.findByLabelText(
       'keys.form.openvikingKey.forUser',
     )
     await waitFor(() => expect(document.activeElement).toBe(field))
+    // Choosing a user whose key the server can read drops the paste field.
+    await pick(/alice/)
+    await waitFor(() =>
+      expect(
+        screen.queryByLabelText('keys.form.openvikingKey.forUser'),
+      ).toBeNull(),
+    )
+    submit()
+    await waitFor(() =>
+      expect(api.issueKey).toHaveBeenCalledWith(expect.anything(), request),
+    )
+  })
+
+  it('never asks an admin to paste their own key', async () => {
+    api.listKeyUsers.mockResolvedValue([
+      { ...hashed, user_id: 'admin', role: 'admin' },
+      alice,
+    ])
+    api.issueKey.mockResolvedValue({})
+    renderIssueDialog()
+    fillName()
+    await waitFor(() => expect(userPicker().textContent).toContain('admin'))
+    expect(
+      screen.queryByLabelText('keys.form.openvikingKey.forUser'),
+    ).toBeNull()
+    submit()
+    await waitFor(() =>
+      expect(api.issueKey).toHaveBeenCalledWith(expect.anything(), {
+        ...request,
+        user_id: 'admin',
+      }),
+    )
   })
 
   it('switches and focuses the paste field on user_key_unreadable, then retries', async () => {

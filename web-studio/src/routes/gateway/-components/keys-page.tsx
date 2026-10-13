@@ -51,7 +51,6 @@ import { EmptyState, ErrorState, LoadingState } from './empty-state'
 import { ExplainedButton } from './explained-button'
 import { KeysIssueDialog } from './keys-issue-dialog'
 import { KeysSecretDialog } from './keys-secret-dialog'
-import { Notice } from './notice'
 import { SectionHeader } from './section-header'
 import { ToneBadge, protocolTint } from './status-badges'
 
@@ -70,10 +69,8 @@ type Missing = 'upstream' | 'profile' | 'both'
 /** Issue and revoke gateway keys. */
 export function KeysPage() {
   const { t } = useTranslation('gateway')
-  const { connection, invalidate, access, devMode } = useGateway()
-  const canManageUsers =
-    !devMode && ['admin', 'root'].includes(access?.role ?? '')
-  const readOnly = Boolean(access?.managed && !access.can_write_objects)
+  const { connection, invalidate, access, readOnly, canIssueForOthers } =
+    useGateway()
   const keysQuery = useKeys()
   const profilesQuery = useProfiles()
   const upstreamsQuery = useUpstreams()
@@ -222,16 +219,6 @@ export function KeysPage() {
         }
       />
 
-      {missing && keys.length > 0 ? (
-        <Notice tone="info" action={prerequisiteActions}>
-          {t(
-            access?.managed
-              ? 'keys.prerequisites.managed'
-              : `keys.prerequisites.${missing}`,
-          )}
-        </Notice>
-      ) : null}
-
       <Card className="overflow-hidden py-0">
         <CardContent className="p-0">
           {keysQuery.isPending ? (
@@ -276,7 +263,7 @@ export function KeysPage() {
                   <TableHead className={DESKTOP_ONLY}>
                     {t('keys.table.key')}
                   </TableHead>
-                  {canManageUsers ? (
+                  {canIssueForOthers ? (
                     <TableHead className={DESKTOP_ONLY}>
                       {t('keys.table.user')}
                     </TableHead>
@@ -305,9 +292,10 @@ export function KeysPage() {
                     gatewayKey={key}
                     profiles={profilesQuery.isSuccess ? profiles : undefined}
                     upstreams={upstreamsQuery.isSuccess ? upstreams : undefined}
+                    showUser={canIssueForOthers}
                     onRevoke={() => setRevokeTarget(key)}
                     onDeleteUser={
-                      canManageUsers
+                      canIssueForOthers
                         ? () => setUserTarget(key.user_id)
                         : undefined
                     }
@@ -436,6 +424,7 @@ function KeyRow({
   gatewayKey: key,
   profiles,
   upstreams,
+  showUser,
   onRevoke,
   onDeleteUser,
 }: {
@@ -443,6 +432,8 @@ function KeyRow({
   /** Undefined while the list isn't loaded, so nothing shows as missing. */
   profiles?: Profile[]
   upstreams?: Upstream[]
+  /** Admins see whose identity each key acts as. */
+  showUser: boolean
   onRevoke: () => void
   onDeleteUser?: () => void
 }) {
@@ -460,7 +451,7 @@ function KeyRow({
           className="block max-w-56 truncate font-mono text-xs text-muted-foreground md:hidden"
           title={key.user_id}
         >
-          {onDeleteUser ? `${key.prefix}… · ${key.user_id}` : `${key.prefix}…`}
+          {showUser ? `${key.prefix}… · ${key.user_id}` : `${key.prefix}…`}
         </span>
       </TableCell>
       <TableCell
@@ -468,7 +459,7 @@ function KeyRow({
       >
         {`${key.prefix}…`}
       </TableCell>
-      {onDeleteUser ? (
+      {showUser ? (
         <TableCell className={DESKTOP_ONLY}>
           <span
             className="block max-w-40 truncate font-mono text-xs"

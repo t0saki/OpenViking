@@ -91,15 +91,18 @@ it('keeps incorrect candidates out of session storage, then unlocks after server
       'ovgm-correct',
     ),
   )
+  expect(state.getAccess).toHaveBeenLastCalledWith(
+    expect.objectContaining({ managementKey: 'ovgm-correct' }),
+  )
   expect(state.success).toHaveBeenCalledWith('management.unlocked')
 })
-it('reports automatic locking when a stored management key expires', async () => {
-  open()
-  await screen.findByLabelText('management.label')
+it('reports automatic locking only when a stored management key expires', () => {
+  lockManagementKey('https://gateway.example.com', true)
+  expect(state.error).not.toHaveBeenCalled()
   setManagementKey('https://gateway.example.com', 'ovgm-old')
   lockManagementKey('https://gateway.example.com', true)
   expect(getManagementKey('https://gateway.example.com')).toBe('')
-  expect(state.error).toHaveBeenCalledWith('management.expired')
+  expect(state.error).toHaveBeenCalledTimes(1)
 })
 it('tolerates browsers that reject session storage', () => {
   const getter = vi

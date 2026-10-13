@@ -88,8 +88,8 @@ it.each(['ovgw_client', 'ovgm_management'])(
   },
 )
 
-it('keeps the current connection on authentication failure', async () => {
-  health.mockRejectedValue(new Error('Unauthorized'))
+it('keeps the current connection when health omits the identity', async () => {
+  health.mockResolvedValue({ service: 'openviking-gateway' })
   render(<GatewayConnectionSettings />)
   fireEvent.change(screen.getByLabelText('gatewayConnection.apiKey'), {
     target: { value: 'invalid' },

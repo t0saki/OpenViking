@@ -5,11 +5,11 @@ const upstreams = {
     hint: "Uses the server's VLM settings",
     running: 'Importing…',
     summary:
-      'Imported or updated {{imported}} upstreams; {{confirmation}} need confirmation (Coding Plan); {{skipped}} were skipped.',
+      'Imported or updated: {{imported}}. Need confirmation (Coding Plan): {{confirmation}}. Not imported: {{skipped}}.',
     confirm: 'Review',
     dismiss: 'Dismiss',
     repeat:
-      'Importing again updates existing entries without creating duplicates.',
+      "Importing again refreshes addresses and credentials from OpenViking's settings. Your changes to enabled state, priority and models are kept, and nothing is duplicated.",
     reasons: {
       invalid_configuration:
         'The model configuration is invalid. Check the server settings and import again.',
@@ -19,6 +19,8 @@ const upstreams = {
         'Azure OpenAI requires an api-version parameter that the gateway does not support yet. Add an upstream manually.',
       litellm_no_api_base:
         'This LiteLLM credential has no api_base. Add api_base to the server configuration and import again.',
+      litellm_unsupported_route:
+        "This LiteLLM route doesn't speak an OpenAI-compatible protocol, so the gateway can't forward to it. Add an upstream manually.",
       unknown:
         'This credential could not be imported. Check the server model settings.',
     },
@@ -107,13 +109,14 @@ const upstreams = {
     disable: 'Disable',
     disableHint:
       'You can disable it first. These keys will immediately lose access to this upstream.',
-    inUse: '{{count}} keys still use this upstream.',
+    inUse_one: '{{count}} key still uses this upstream.',
+    inUse_other: '{{count}} keys still use this upstream.',
     action: 'Delete',
     blocked_one: 'Used by {{count}} key — revoke it first',
     blocked_other: 'Used by {{count}} keys — revoke them first',
     title: 'Delete “{{name}}”?',
     description:
-      'The upstream and its stored API key and headers will be deleted. Keys that still use it must first be revoked or switched to another upstream.',
+      'The upstream and its stored API key and headers will be deleted. Keys that still use it must be revoked first; issue new keys with another upstream if needed.',
     confirm: 'Delete upstream',
   },
   toast: {
@@ -227,13 +230,15 @@ const upstreams = {
       name: 'Header name',
       value: 'Value',
       add: 'Add header',
+      addressChanged:
+        "The address changed, so enter the header values again. Values stored for the old address aren't sent to the new one.",
     },
     codingPlan: {
       label: 'This key is a Coding Plan or subscription key',
       description:
         "Subscription keys are usually licensed for the provider's own tools only.",
       warning:
-        'While this is checked, the gateway rejects every request to this upstream. Use a model API key instead, or allow it if your plan permits use from other clients.',
+        'While this is checked, the gateway rejects every request to this upstream. Use a model API key instead, or turn on “Allow this plan through the gateway” if your plan permits use from other clients.',
       allow: 'Allow this plan through the gateway',
       allowDescription:
         'Some Coding Plans only authorize use in the provider’s own tools. Check that your plan permits this before enabling it, or the provider may restrict your account.',

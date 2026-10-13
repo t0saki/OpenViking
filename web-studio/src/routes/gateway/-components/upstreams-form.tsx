@@ -202,7 +202,8 @@ export function UpstreamForm({
   const { t, i18n } = useTranslation('gateway')
   const readOnly = useReadOnly()
   const correction = baseUrlCorrection(draft)
-  const changedAddress = baseUrlChanged(draft, stored) && !draft.api_key.trim()
+  const addressChanged = baseUrlChanged(draft, stored)
+  const headersCleared = addressChanged && Boolean(stored?.header_names?.length)
   const preview = endpointPreview(draft)
   const defaultUrl = defaultBaseUrl(draft.vendor, draft.protocol)
   const keyStored = Boolean(stored?.has_api_key)
@@ -252,7 +253,6 @@ export function UpstreamForm({
           description={vendorHint}
         >
           <Select
-            disabled={readOnly}
             value={draft.vendor}
             onValueChange={(value) => {
               const vendor = VENDORS.find((item) => item === value)
@@ -280,7 +280,6 @@ export function UpstreamForm({
           {/* Base UI sets the Tab stop from the checked card only on mount,
               so remount when the provider may have switched the protocol. */}
           <RadioGroup
-            disabled={readOnly}
             key={draft.vendor}
             value={draft.protocol}
             aria-label={t('upstreams.form.protocol.label')}
@@ -405,7 +404,6 @@ export function UpstreamForm({
           <>
             <SettingField label={t('upstreams.form.authMode.label')}>
               <RadioGroup
-                disabled={readOnly}
                 value={draft.auth_mode}
                 aria-label={t('upstreams.form.authMode.label')}
                 className="grid gap-2 md:grid-cols-2"
@@ -443,7 +441,7 @@ export function UpstreamForm({
                 }
                 htmlFor="upstream-api-key"
                 description={t(
-                  changedAddress
+                  addressChanged && !draft.api_key.trim()
                     ? 'upstreams.form.apiKey.addressChanged'
                     : keyStored
                       ? 'upstreams.form.apiKey.storedDescription'
@@ -471,12 +469,16 @@ export function UpstreamForm({
             ) : null}
             <SettingField
               label={t('upstreams.form.headers.label')}
-              description={t('upstreams.form.headers.description')}
+              description={t(
+                headersCleared
+                  ? 'upstreams.form.headers.addressChanged'
+                  : 'upstreams.form.headers.description',
+              )}
               error={error('headers')}
             >
               <KeyValueEditor
                 value={draft.headers}
-                storedKeys={stored?.header_names}
+                storedKeys={addressChanged ? undefined : stored?.header_names}
                 maskValues
                 keyPlaceholder={t('upstreams.form.headers.name')}
                 valuePlaceholder={t('upstreams.form.headers.value')}

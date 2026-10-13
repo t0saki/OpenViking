@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useEffect } from 'react'
+import { useCallback, useMemo } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import type { UseQueryOptions } from '@tanstack/react-query'
 
@@ -85,8 +85,7 @@ export function gatewayQueryKey(
  * gateway data when called without arguments.
  */
 function useGatewayConnection() {
-  const { connection, connectionRole, isConnectionRoleLoading, serverMode } =
-    useAppConnection()
+  const { connection, isConnectionRoleLoading, serverMode } = useAppConnection()
   const { baseUrl, accountId, userId } = connection
   const apiKey = connection.adminApiKey || connection.apiKey
   const managementKey = useManagementKey(baseUrl)
@@ -111,12 +110,17 @@ function useGatewayConnection() {
     [queryClient, scope],
   )
   return {
-    allowed: serverMode === 'dev' || Boolean(apiKey.trim()),
+    /**
+     * Dev mode needs no credential; trusted mode lets /access explain that
+     * the gateway doesn't support it.
+     */
+    allowed:
+      serverMode === 'dev' ||
+      serverMode === 'trusted' ||
+      Boolean(apiKey.trim()),
     /** Local development authenticates as default/default without a credential. */
     devMode: serverMode === 'dev',
     isRoleLoading: isConnectionRoleLoading,
-    /** Role discovered by the Studio connection; permissions come from /access. */
-    role: connectionRole,
     connection: admin,
     scope,
     managementKey,
@@ -153,20 +157,20 @@ export const useAccess = (options?: GatewayQueryOptions<GatewayAccess>) =>
     ...options,
   })
 
+/** Connection plus the permissions /access grants; pages read only these. */
 export function useGateway() {
   const gateway = useGatewayConnection()
   const accessQuery = useAccess()
-  useEffect(() => {
-    const refresh = () => {
-      void gateway.invalidate('access')
-    }
-    window.addEventListener('gateway-access-changed', refresh)
-    return () => window.removeEventListener('gateway-access-changed', refresh)
-  }, [gateway.invalidate])
-  return { ...gateway, access: accessQuery.data, accessQuery }
+  const access = accessQuery.data
+  return {
+    ...gateway,
+    access,
+    accessQuery,
+    /** Upstreams and profiles can be viewed and tested, not changed. */
+    readOnly: !access?.can_write_objects,
+    canIssueForOthers: Boolean(access?.can_issue_for_others),
+  }
 }
-
-export const useGatewayContext = useGateway
 
 /** Gateway address for clients (also tells whether the gateway is reachable). */
 export const useConnectionInfo = (

@@ -159,16 +159,19 @@ export function KeysIssueDialog({
   onIssued,
 }: KeysIssueDialogProps) {
   const { t } = useTranslation('gateway')
-  const { connection, invalidate, access, devMode } = useGateway()
-  const canPickUser = !devMode && Boolean(access?.can_issue_for_others)
-  const selfId = devMode ? 'default' : (access?.user_id ?? connection.userId)
-  const readOnly = Boolean(access?.managed && !access.can_write_objects)
+  const {
+    connection,
+    invalidate,
+    access,
+    devMode,
+    readOnly,
+    canIssueForOthers: canPickUser,
+  } = useGateway()
+  const selfId = access?.user_id ?? connection.userId
   const usersQuery = useKeyUsers({ enabled: open && canPickUser })
   const formId = React.useId()
   const userTriggerRef = React.useRef<HTMLButtonElement>(null)
   const keyInputRef = React.useRef<HTMLInputElement>(null)
-  /** Set by a switch the admin makes, so the new field gets focus. */
-  const focusOwner = React.useRef<OwnerMode | null>(null)
   const [draft, setDraft] = React.useState<KeyDraft>(() => ({
     name: '',
     user_id: '',
@@ -177,7 +180,8 @@ export function KeysIssueDialog({
     upstream_ids: upstreams.length === 1 ? [upstreams[0].id] : [],
     models: [],
   }))
-  const [chosenMode, setChosenMode] = React.useState<OwnerMode>('user')
+  /** 'key' once the admin switches to pasting, or the server asks for it. */
+  const [chosenMode, setChosenMode] = React.useState<'user' | 'key'>('user')
   const [submitted, setSubmitted] = React.useState(false)
 
   const issue = useMutation({
@@ -189,10 +193,7 @@ export function KeysIssueDialog({
     onError: (error) => {
       // A user, profile or upstream changed meanwhile; show the current lists.
       const { status, reason } = toGatewayError(error)
-      if (reason === 'user_key_unreadable') {
-        focusOwner.current = 'key'
-        setChosenMode('key')
-      }
+      if (reason === 'user_key_unreadable') setChosenMode('key')
       if (status === 400 || status === 409) {
         void invalidate('users', 'profiles', 'upstreams')
       }
@@ -209,11 +210,8 @@ export function KeysIssueDialog({
       : canPickUser && usersQuery.isSuccess && !users.length
         ? 'none'
         : undefined
-  const mode: OwnerMode = fallback
-    ? 'key'
-    : !canPickUser && chosenMode !== 'key'
-      ? 'self'
-      : chosenMode
+  const mode: OwnerMode =
+    fallback || chosenMode === 'key' ? 'key' : canPickUser ? 'user' : 'self'
   // Prefer the current identity, and preserve an explicit selection across retries.
   const userId = draft.user_id
     ? users.some((user) => user.user_id === draft.user_id)
@@ -225,18 +223,17 @@ export function KeysIssueDialog({
         ? users[0].user_id
         : ''
   const selectedUser = users.find((user) => user.user_id === userId)
-
-  React.useEffect(() => {
-    if (selectedUser?.api_key_available === false) {
-      focusOwner.current = 'key'
-      setChosenMode('key')
-    }
-  }, [selectedUser?.user_id, selectedUser?.api_key_available])
+  // The server can't read this user's key; the caller's own (non-root) key
+  // is used as is, so issuing for yourself never needs one.
+  const pasteForUser =
+    mode === 'user' &&
+    selectedUser?.api_key_available === false &&
+    (userId !== selfId || access?.role === 'root')
 
   const owner: KeyOwner =
     mode === 'self'
       ? {}
-      : mode === 'user'
+      : mode === 'user' && !pasteForUser
         ? { user_id: userId }
         : {
             openviking_key: draft.openviking_key.trim(),
@@ -278,17 +275,19 @@ export function KeysIssueDialog({
     if (issue.isError) issue.reset()
   }
 
-  // The switch button goes away with its field; move focus to the new one.
+  // A field that appears (a mode switch, a user whose key must be pasted)
+  // takes focus; the switch button goes away with the previous field.
+  const focusField = mode === 'key' || pasteForUser ? 'key' : mode
+  const focusedField = React.useRef(focusField)
   React.useEffect(() => {
-    if (focusOwner.current !== mode) return
-    focusOwner.current = null
-    const field = mode === 'user' ? userTriggerRef : keyInputRef
+    if (focusedField.current === focusField) return
+    focusedField.current = focusField
+    const field = focusField === 'user' ? userTriggerRef : keyInputRef
     field.current?.focus()
-  }, [mode])
+  }, [focusField])
 
-  function switchMode(next: OwnerMode) {
+  function switchMode(next: 'user' | 'key') {
     setChosenMode(next)
-    focusOwner.current = next
     if (issue.isError) issue.reset()
   }
 
@@ -375,26 +374,20 @@ export function KeysIssueDialog({
                   </ModeSwitch>
                 </>
               }
-              error={keyError}
+              error={pasteForUser ? undefined : keyError}
             >
               <Select
                 value={userId || null}
                 disabled={pending || !usersQuery.isSuccess}
                 onValueChange={(value) => {
-                  if (!value) return
-                  update({ user_id: value })
-                  if (
-                    users.find((user) => user.user_id === value)
-                      ?.api_key_available === false
-                  )
-                    switchMode('key')
+                  if (value) update({ user_id: value })
                 }}
               >
                 <SelectTrigger
                   ref={userTriggerRef}
                   id={id('user')}
                   className="w-full"
-                  aria-invalid={Boolean(keyError)}
+                  aria-invalid={!pasteForUser && Boolean(keyError)}
                 >
                   <SelectValue>
                     {selectedUser ? (
@@ -417,7 +410,8 @@ export function KeysIssueDialog({
                 </SelectContent>
               </Select>
             </SettingField>
-          ) : (
+          ) : null}
+          {mode === 'key' || pasteForUser ? (
             <SettingField
               label={t(
                 userId
@@ -437,7 +431,7 @@ export function KeysIssueDialog({
                 ) : (
                   <>
                     {t('keys.form.openvikingKey.description')}{' '}
-                    {canPickUser ? (
+                    {canPickUser && mode === 'key' ? (
                       <ModeSwitch
                         disabled={pending}
                         onClick={() => switchMode('user')}
@@ -465,7 +459,7 @@ export function KeysIssueDialog({
                 }
               />
             </SettingField>
-          )}
+          ) : null}
 
           <SettingField
             label={t('keys.form.profile.label')}

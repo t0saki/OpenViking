@@ -82,15 +82,3 @@ export async function fetchServerHealth(
     throw error
   }
 }
-
-export async function detectServerMode(
-  baseUrl: string,
-  headers?: Record<string, string>,
-): Promise<ServerMode> {
-  try {
-    const data = await fetchServerHealth(baseUrl, headers)
-    return isServerAuthMode(data.auth_mode) ? data.auth_mode : 'api_key'
-  } catch {
-    return 'offline'
-  }
-}

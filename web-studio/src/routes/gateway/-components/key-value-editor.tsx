@@ -79,7 +79,6 @@ export function KeyValueEditor(props: KeyValueEditorProps) {
   }
 
   function update(next: Row[]) {
-    if (disabled) return
     setRows(next)
     const entries = next
       .filter((row) => row.key.trim())

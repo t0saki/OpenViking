@@ -1,5 +1,6 @@
 const profiles = {
-  inUseHelp: 'Revoke these keys or assign them another profile first.',
+  inUseHelp:
+    'Revoke these keys first; issue new keys with another profile if needed.',
   description:
     'How conversations use OpenViking memory and tools. Saved changes apply only to conversations that start afterwards.',
   defaultName: 'Default',

@@ -8,7 +8,8 @@ const upstreams = {
       '已导入或更新 {{imported}} 个上游；{{confirmation}} 个需要确认（Coding Plan）；{{skipped}} 个未导入。',
     confirm: '去确认',
     dismiss: '关闭',
-    repeat: '再次导入会更新已有条目，不会重复创建。',
+    repeat:
+      '再次导入会按 OpenViking 的配置更新地址和凭证，你修改过的启用状态、优先级和模型设置会保留，不会重复创建。',
     reasons: {
       invalid_configuration: '模型配置无效，请检查服务端配置后重新导入。',
       openai_codex:
@@ -17,6 +18,8 @@ const upstreams = {
         'Azure OpenAI 需要 api-version 参数，网关暂不支持。请手动添加上游。',
       litellm_no_api_base:
         '这个 LiteLLM 凭证没有填写 api_base，网关无法确定地址。请在服务端配置里补上 api_base 后重新导入。',
+      litellm_unsupported_route:
+        '这个 LiteLLM 路由不是 OpenAI 兼容协议，网关无法直接转发。请手动添加上游。',
       unknown: '无法导入这个凭证，请检查服务端模型配置。',
     },
   },
@@ -100,13 +103,14 @@ const upstreams = {
     viewKeys: '查看密钥',
     disable: '停用',
     disableHint: '可以先停用它，停用后这些密钥会立即请求不到这个上游。',
-    inUse: '仍有 {{count}} 个密钥在使用它。',
+    inUse_one: '仍有 {{count}} 个密钥在使用它。',
+    inUse_other: '仍有 {{count}} 个密钥在使用它。',
     action: '删除',
     blocked_one: '有 {{count}} 个密钥在使用，请先吊销',
     blocked_other: '有 {{count}} 个密钥在使用，请先吊销',
     title: '删除“{{name}}”？',
     description:
-      '上游会连同保存的 API Key 和请求头一起删除。仍有密钥使用它时，需要先吊销这些密钥或改用其他上游。',
+      '上游会连同保存的 API Key 和请求头一起删除。仍有密钥使用它时，需要先吊销这些密钥；需要时签发使用其他上游的新密钥。',
     confirm: '删除上游',
   },
   toast: {
@@ -215,12 +219,14 @@ const upstreams = {
       name: '请求头名称',
       value: '取值',
       add: '添加请求头',
+      addressChanged:
+        '地址已修改，请重新填写请求头的取值。原来保存的取值不会发往新地址。',
     },
     codingPlan: {
       label: '这是 Coding Plan 或订阅密钥',
       description: '订阅类密钥通常只授权在服务商自己的工具里使用。',
       warning:
-        '勾选后，网关会拒绝所有发往这个上游的请求。请改用模型 API Key；如果套餐允许在其他客户端使用，可以选择仍然允许。',
+        '勾选后，网关会拒绝所有发往这个上游的请求。请改用模型 API Key；如果套餐允许在其他客户端使用，可以打开“允许通过网关使用这个套餐”。',
       allow: '允许通过网关使用这个套餐',
       allowDescription:
         '部分 Coding Plan 只授权在服务商自己的工具里使用。打开前请确认套餐条款允许，否则账号可能被服务商限制。',

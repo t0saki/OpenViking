@@ -160,7 +160,7 @@ function normalizeConnectionDraft(
     // slash here ran on every keystroke and fought the input: typing the "//"
     // of "http://" kept collapsing back to "http:". Trailing slashes are
     // stripped where the URL is actually used instead (ovClient.setOptions,
-    // detectServerMode, detectConnectionRole, and the admin client).
+    // fetchServerHealth, detectConnectionRole, and the admin client).
     baseUrl: connection.baseUrl.trim(),
     userId: connection.userId.trim(),
   }
@@ -589,23 +589,16 @@ export function AppConnectionProvider({
           return
         }
       }
-      const headers = createConnectionHealthHeaders(connection)
       let health: Record<string, unknown>
       try {
-        health = await fetchServerHealth(connection.baseUrl, headers)
+        // The gateway answers an invalid OV key with health minus identity.
+        health = await fetchServerHealth(
+          connection.baseUrl,
+          createConnectionHealthHeaders(connection),
+        )
       } catch {
-        // Gateway health without credentials remains available so an invalid
-        // OV key cannot turn its login page into the server settings page.
-        try {
-          health = await fetchServerHealth(connection.baseUrl)
-        } catch {
-          if (!isCancelled()) setServerMode('offline')
-          return
-        }
-        if (health.service !== 'openviking-gateway') {
-          if (!isCancelled()) setServerMode('offline')
-          return
-        }
+        if (!isCancelled()) setServerMode('offline')
+        return
       }
       if (!isCancelled()) {
         setIsGatewayHost(health.service === 'openviking-gateway')

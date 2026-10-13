@@ -37,7 +37,7 @@ describe('ConnectionScopedRouteContent', () => {
 
 describe('gateway navigation', () => {
   it.each([
-    ['dev', 'root', false, 200, true],
+    ['dev', 'root', true, 200, true],
     ['api_key', 'user', true, 200, true],
     ['api_key', 'user', true, 404, false],
     ['api_key', 'admin', true, 404, true],
@@ -45,14 +45,14 @@ describe('gateway navigation', () => {
     ['api_key', 'unknown', false, 200, false],
     ['offline', 'user', true, 200, false],
   ] as const)(
-    '%s %s with access %s/%s: %s',
-    (serverMode, role, hasCredential, accessStatus, visible) => {
+    '%s %s allowed %s, /access %s: %s',
+    (serverMode, role, allowed, accessStatus, visible) => {
       expect(
         shouldShowGatewayNavigation({
           isGatewayHost: false,
           serverMode,
           role,
-          hasCredential,
+          allowed,
           accessStatus,
         }),
       ).toBe(visible)

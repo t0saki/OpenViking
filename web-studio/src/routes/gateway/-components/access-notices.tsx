@@ -25,7 +25,7 @@ export function ManagementUnlockButton() {
 
 export function AccessNotices({ objectsTab }: { objectsTab: boolean }) {
   const { t, i18n } = useTranslation('gateway')
-  const { access, connection } = useGateway()
+  const { access, connection, readOnly } = useGateway()
   const dismissedKey = `gateway-public-warning:${connection.baseUrl}`
   const [dismissed, setDismissed] = React.useState(() => {
     try {
@@ -73,7 +73,7 @@ export function AccessNotices({ objectsTab }: { objectsTab: boolean }) {
         >
           <p>{t('management.publicDescription')}</p>
           <CodeBlock
-            code="OPENVIKING_GATEWAY_MANAGEMENT_KEY=<at least 32 characters>"
+            code={`OPENVIKING_GATEWAY_MANAGEMENT_KEY=${t('management.keyPlaceholder')}`}
             label={t('unavailable.environment')}
           />
           <p>
@@ -82,15 +82,15 @@ export function AccessNotices({ objectsTab }: { objectsTab: boolean }) {
         </Notice>
       ) : null}
       {objectsTab && access?.managed ? (
-        access.can_write_objects ? (
-          <Notice tone="info">{t('management.shared')}</Notice>
-        ) : (
+        readOnly ? (
           <Notice tone="info" action={<ManagementUnlockButton />}>
             <p>{t('management.readOnly')}</p>
             {['admin', 'root'].includes(access.role) ? (
               <p>{t('management.adminReadOnly')}</p>
             ) : null}
           </Notice>
+        ) : (
+          <Notice tone="info">{t('management.shared')}</Notice>
         )
       ) : null}
     </>

@@ -387,10 +387,8 @@ function readDetail(body: unknown): string | undefined {
 }
 
 function readReason(body: unknown): string | undefined {
-  if (!isRecord(body)) return undefined
-  if (typeof body.reason === 'string') return body.reason
-  return isRecord(body.error) && typeof body.error.reason === 'string'
-    ? body.error.reason
+  return isRecord(body) && typeof body.reason === 'string'
+    ? body.reason
     : undefined
 }
 
@@ -457,13 +455,11 @@ async function send<T>(
   connection: GatewayConnection,
   method: Method,
   segments: string[],
-  options?: RequestOptions,
+  options?: Omit<RequestOptions, 'headers'>,
 ): Promise<T> {
   const url = [BASE_PATH, ...segments.map(encodeURIComponent)].join('/')
   const managementKey =
-    options?.headers?.['X-OpenViking-Gateway-Management-Key'] ??
-    connection.managementKey ??
-    getManagementKey(connection.baseUrl)
+    connection.managementKey ?? getManagementKey(connection.baseUrl)
   try {
     return await call<T>(connection, method, url, {
       ...options,
@@ -474,17 +470,12 @@ async function send<T>(
     })
   } catch (error) {
     const failure = toGatewayError(error)
+    // Lock only a stored key, not a candidate or a key replaced meanwhile.
     if (
       failure.reason === 'management_key_invalid' &&
       managementKey === getManagementKey(connection.baseUrl)
     ) {
       lockManagementKey(connection.baseUrl, true)
-    }
-    if (
-      failure.reason === 'management_key_required' ||
-      failure.reason === 'vlm_import_forbidden'
-    ) {
-      window.dispatchEvent(new Event('gateway-access-changed'))
     }
     throw failure
   }
@@ -506,17 +497,12 @@ export async function getConnectionInfo(
   }
 }
 
+/** Pass `managementKey` in the connection to check a candidate key. */
 export async function getAccess(
   connection: GatewayConnection,
-  managementKey?: string,
 ): Promise<GatewayAccess> {
   try {
-    return await send<GatewayAccess>(connection, 'GET', ['access'], {
-      headers:
-        managementKey === undefined
-          ? undefined
-          : { 'X-OpenViking-Gateway-Management-Key': managementKey },
-    })
+    return await send<GatewayAccess>(connection, 'GET', ['access'])
   } catch (error) {
     const failure = toGatewayError(error)
     if (failure.status === 404)

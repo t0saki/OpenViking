@@ -78,6 +78,13 @@ export function describeTest(t: Translate, outcome: TestOutcome): TestSummary {
       ),
     }
   }
+  if (result.reason === 'upstream_key_missing') {
+    return {
+      tone: 'danger',
+      label: t('upstreams.credentials.keyMissing'),
+      explanation: t('errors.reasons.upstream_key_missing'),
+    }
+  }
   if (result.status === undefined) {
     return {
       tone: 'danger',

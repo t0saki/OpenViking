@@ -137,8 +137,7 @@ function ProfileEditorForm({
 }: ProfileEditorFormProps) {
   const { t } = useTranslation('gateway')
   const navigate = useNavigate()
-  const { connection, invalidate, access } = useGateway()
-  const readOnly = !access?.can_write_objects
+  const { connection, invalidate, readOnly } = useGateway()
   const isNew = profileId === NEW_ID
   const [targetId] = React.useState(() => (isNew ? newObjectId() : profileId))
   const baseline = React.useMemo(
@@ -339,7 +338,7 @@ type ProfileEditorProps = {
  */
 export function ProfileEditor({ profileId, from }: ProfileEditorProps) {
   const { t } = useTranslation('gateway')
-  const { access } = useGateway()
+  const { readOnly } = useGateway()
   const isNew = profileId === NEW_ID
   const sourceId = isNew ? from : profileId
   const profiles = useProfiles({ enabled: Boolean(sourceId) })
@@ -349,7 +348,7 @@ export function ProfileEditor({ profileId, from }: ProfileEditorProps) {
     <BackLink to="/gateway/profiles" label={t('profiles.editor.back')} />
   )
 
-  if (isNew && !access?.can_write_objects)
+  if (isNew && readOnly)
     return (
       <div className="grid gap-4">
         {backLink}

@@ -119,27 +119,21 @@ function useToggleUpstream() {
 /** Model providers the gateway forwards requests to. */
 export function UpstreamsPage() {
   const { t } = useTranslation('gateway')
-  const { connection, access, invalidate, scope } = useGateway()
-  const canWrite = Boolean(access?.can_write_objects)
+  const { connection, access, invalidate, scope, readOnly } = useGateway()
   const [importResult, setImportResult] =
     React.useState<VlmImportResult | null>(null)
-  const [importForbidden, setImportForbidden] = React.useState(false)
-  React.useEffect(() => {
-    setImportResult(null)
-    setImportForbidden(false)
-  }, [scope])
+  React.useEffect(() => setImportResult(null), [scope])
   const importer = useMutation({
     mutationFn: () => importVlm(connection),
     onSuccess: async (result) => {
       setImportResult(result)
       await invalidate('upstreams')
     },
-    onError: async (error) => {
-      if (toGatewayError(error).reason === 'vlm_import_forbidden') {
-        setImportForbidden(true)
-        await invalidate('access')
-      }
-    },
+    // A stale /access offered the import; the refreshed one hides it.
+    onError: (error) =>
+      toGatewayError(error).reason === 'vlm_import_forbidden'
+        ? invalidate('access')
+        : undefined,
   })
   const upstreams = useUpstreams()
   const keys = useKeys()
@@ -153,7 +147,7 @@ export function UpstreamsPage() {
   )
   const refreshing = upstreams.isFetching || keys.isFetching
 
-  const addButton = canWrite ? (
+  const addButton = !readOnly ? (
     <Button
       size="sm"
       nativeButton={false}
@@ -169,7 +163,7 @@ export function UpstreamsPage() {
     </Button>
   ) : null
   const importButton = (empty = false) =>
-    access?.can_import_vlm && !importForbidden ? (
+    access?.can_import_vlm ? (
       <Button
         type="button"
         size="sm"
@@ -206,7 +200,7 @@ export function UpstreamsPage() {
         icon={<ServerIcon />}
         title={t('upstreams.empty.title')}
         description={t(
-          canWrite ? 'upstreams.empty.description' : 'upstreams.readOnly.empty',
+          readOnly ? 'upstreams.readOnly.empty' : 'upstreams.empty.description',
         )}
         action={
           <div className="flex flex-wrap gap-2">
@@ -253,7 +247,7 @@ export function UpstreamsPage() {
             <UpstreamRow
               key={upstream.id}
               upstream={upstream}
-              readOnly={!canWrite}
+              readOnly={readOnly}
               usedBy={keysUsing(keys.data, { upstreamId: upstream.id })}
               toggling={toggling.has(upstream.id)}
               onToggle={(enabled) => toggle({ upstream, enabled })}
@@ -344,9 +338,9 @@ export function UpstreamsPage() {
           {importResult.skipped.map((item) => (
             <p key={item.id}>
               {item.id}:{' '}
-              {t(
-                `upstreams.import.reasons.${['openai_codex', 'azure', 'litellm_no_api_base', 'invalid_configuration'].includes(item.reason) ? item.reason : 'unknown'}`,
-              )}
+              {t(`upstreams.import.reasons.${item.reason}`, {
+                defaultValue: t('upstreams.import.reasons.unknown'),
+              })}
             </p>
           ))}
           <p className="text-xs">{t('upstreams.import.repeat')}</p>

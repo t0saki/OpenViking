@@ -175,15 +175,6 @@ describe('toGatewayError', () => {
       'invalid management key',
     ],
     [
-      'nested reason',
-      403,
-      {
-        error: { reason: 'root_key_not_allowed', message: 'root cannot bind' },
-      },
-      'root_key_not_allowed',
-      'root cannot bind',
-    ],
-    [
       'validation list',
       422,
       { detail: [{ msg: 'Field required' }, { msg: 'Input too long' }] },
@@ -263,7 +254,9 @@ it('locks an expired stored key but does not store an unverified candidate', asy
   request.mockRejectedValue(
     failure(401, { reason: 'management_key_invalid', detail: 'rotated' }),
   )
-  await expect(getAccess(connection, 'wrong-candidate')).rejects.toMatchObject({
+  await expect(
+    getAccess({ ...connection, managementKey: 'wrong-candidate' }),
+  ).rejects.toMatchObject({
     reason: 'management_key_invalid',
   })
   expect(getManagementKey(connection.baseUrl)).toBe('old-key')

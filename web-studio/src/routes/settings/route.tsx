@@ -86,6 +86,11 @@ export function GatewayConnectionSettings() {
         connection.baseUrl,
         apiKey.trim() ? { 'X-API-Key': apiKey.trim() } : {},
       )
+      // The gateway answers an invalid key with health minus identity.
+      if (apiKey.trim() && typeof health.user_id !== 'string') {
+        setError(t('gatewayConnection.invalidKey'))
+        return
+      }
       saveConnection({
         ...connection,
         adminApiKey: '',

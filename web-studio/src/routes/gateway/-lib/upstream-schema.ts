@@ -313,10 +313,16 @@ export function validateUpstream(
   if (apiKey.startsWith('sk-ant-oat')) {
     collect(errors, 'api_key', { key: 'validation.subscriptionKey' })
   }
-  if (input.auth_mode === 'managed' && !apiKey && !stored?.has_api_key) {
+  // A new address drops the stored API key and header values.
+  const addressChanged = baseUrlChanged(input, stored)
+  if (
+    input.auth_mode === 'managed' &&
+    !apiKey &&
+    (addressChanged || !stored?.has_api_key)
+  ) {
     collect(errors, 'api_key', { key: 'validation.apiKeyRequired' })
   }
-  const storedHeaders = stored?.header_names ?? []
+  const storedHeaders = addressChanged ? [] : (stored?.header_names ?? [])
   for (const [name, value] of Object.entries(input.headers)) {
     const values = { name }
     if (!name.trim() || /[\r\n]/.test(name + value)) {

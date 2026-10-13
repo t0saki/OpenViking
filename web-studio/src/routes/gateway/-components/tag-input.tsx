@@ -48,7 +48,6 @@ export function TagInput({
   const [text, setText] = React.useState('')
 
   function add(items: string[]) {
-    if (disabled) return
     const next = [...value]
     for (const item of items) if (!next.includes(item)) next.push(item)
     if (next.length !== value.length) onChange(next)

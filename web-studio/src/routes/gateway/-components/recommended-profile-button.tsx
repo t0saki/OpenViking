@@ -22,7 +22,7 @@ export function RecommendedProfileButton({
   disabled = false,
 }: RecommendedProfileButtonProps) {
   const { t } = useTranslation('gateway')
-  const { connection, invalidate, access } = useGateway()
+  const { connection, invalidate, readOnly } = useGateway()
   const create = useMutation({
     mutationFn: () =>
       saveProfile(connection, newObjectId(), {
@@ -35,7 +35,7 @@ export function RecommendedProfileButton({
     },
     onError: (error) => toast.error(gatewayErrorMessage(t, error)),
   })
-  if (!access?.can_write_objects) return null
+  if (readOnly) return null
   return (
     <Button
       type="button"
