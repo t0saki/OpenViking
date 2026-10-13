@@ -104,16 +104,19 @@ def create_app(config: GatewayConfig, *, openviking_url: str, vlm_source=None, e
         health_at = 0
         cleanup_at = 0
         retry = 1
+        reached = False
         while True:
             try:
                 if time.monotonic() >= health_at:
                     await refresh_health(app)
                     if app.state.health.get("status") == "degraded":
                         health_at = time.monotonic() + retry
-                        retry = min(retry * 2, config.health_interval_seconds)
+                        # An embedded host starts OV after this loop: poll every second until then.
+                        if reached:
+                            retry = min(retry * 2, config.health_interval_seconds)
                     else:
                         health_at = time.monotonic() + config.health_interval_seconds
-                        retry = 1
+                        retry, reached = 1, True
                 if time.monotonic() >= cleanup_at:
                     await store.expire(time.time() - config.session_ttl_days * 86400)
                     await management.expire_logs(time.time() - config.log_retention_days * 86400)
@@ -169,6 +172,9 @@ def create_app(config: GatewayConfig, *, openviking_url: str, vlm_source=None, e
         invalid = "Invalid gateway key. It may have been revoked, or removed because its OpenViking API key was regenerated. Issue a new key in OpenViking Studio → Gateway → Keys."
         if not credential:
             raise HTTPException(401, invalid)
+        if app.state.viking.unavailable_reason:
+            # Like recall, skip the check while OV is down instead of waiting for its timeout.
+            return credential, "revocation_check_unavailable"
         try:
             identity = await app.state.viking.identify(credential["openviking_key"])
         except VikingError as error:

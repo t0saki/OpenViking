@@ -143,6 +143,13 @@ def test_empty_environment_values_keep_file_values(tmp_path, monkeypatch):
     assert config.management_key == "f" * 32
 
 
+def test_kubernetes_service_link_variables_are_ignored(monkeypatch):
+    # A Service named openviking-gateway injects this into every pod in its namespace.
+    monkeypatch.setenv("OPENVIKING_GATEWAY_PORT", "tcp://10.96.0.12:1935")
+    config = StandaloneGatewayConfig.model_validate({"openviking_url": "http://openviking:1933"})
+    assert config.port == StandaloneGatewayConfig.model_fields["port"].default
+
+
 def test_config_lookup_order(tmp_path, monkeypatch):
     home, etc = cli.DEFAULT_CONFIGS
     assert cli.config_path() is None

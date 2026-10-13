@@ -35,6 +35,7 @@ DETAILS = {
     "in_use": "Gateway keys still use this object; revoke them first.",
     "invalid_configuration": "The request body is invalid.",
     "unknown_user": "The user does not exist in this account.",
+    "user_required": "OpenViking root is not an account user; choose the user to issue for.",
     "user_key_unreadable": "OpenViking stores only a hash of this user's API key; paste the key.",
     "unknown_policy": "The context profile does not exist.",
     "unknown_upstream": "An upstream does not exist.",
@@ -203,7 +204,13 @@ def register_management(app):
     @router.get("/tools")
     async def tools(request: Request):
         who = await caller(request)
-        catalog = await app.state.viking.tools(who.credential)
+        key = who.credential
+        if who.role == "root" and who.identity.get("auth_mode") != "dev":
+            # OV refuses root on /mcp. Every caller sees the same catalog, so read it with
+            # a key issued in this account, or fall back to the last catalog read.
+            keys = await management.list(who.account_id, "keys")
+            key = next((k["openviking_key"] for k in keys), "")
+        catalog = await app.state.viking.tools(key) if key else app.state.viking.last_tools or []
         return [
             {
                 "name": t["name"],
@@ -315,21 +322,22 @@ def register_management(app):
     async def issue_key(request: Request):
         who = await caller(request)
         value = await read_body(request, KeyRequest)
+        root = who.role == "root" and who.identity.get("auth_mode") != "dev"
+        if root and not value.user_id and not value.openviking_key:
+            fail(400, "user_required")
         user_id = value.user_id or who.user_id
         if who.role == "user" and user_id != who.user_id:
             fail(403, "forbidden")
         key = value.openviking_key
         if not key:
-            if (
-                user_id == who.user_id
-                and who.identity["account_id"] == who.account_id
-                and (who.role != "root" or who.identity.get("auth_mode") == "dev")
-            ):
+            if user_id == who.user_id and who.identity["account_id"] == who.account_id and not root:
                 key = who.credential
             else:
+                # name matches by pattern; the exact user_id comparison below picks the row.
                 rows = await app.state.viking.request(
                     "GET",
-                    f"/api/v1/admin/accounts/{quote(who.account_id, safe='')}/users?include_credentials=true",
+                    f"/api/v1/admin/accounts/{quote(who.account_id, safe='')}/users"
+                    f"?include_credentials=true&name={quote(user_id, safe='')}",
                     who.credential,
                 )
                 if isinstance(rows, dict):

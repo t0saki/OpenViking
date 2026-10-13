@@ -208,7 +208,8 @@ async def running_gateway(tmp_path):
             key = request.headers.get("X-API-Key")
             override.setdefault("tools_calls", []).append(key)
             # Maps an OpenViking key to the HTTP status its tools/list gets.
-            status = override.get("tools_status", {}).get(key, 200)
+            # Like OV, /mcp refuses root keys.
+            status = override.get("tools_status", {}).get(key, 403 if key == "root" else 200)
             if status != 200:
                 return web.json_response({"error": "private server detail"}, status=status)
             return web.json_response(
@@ -250,6 +251,8 @@ async def running_gateway(tmp_path):
                     {"user_id": "bob", "role": "user", "api_key": "bob-key"},
                 ],
             )
+            if name := request.query.get("name"):
+                users = [u for u in users if u["user_id"] == name]
             if request.query.get("include_credentials") == "false":
                 users = [
                     {

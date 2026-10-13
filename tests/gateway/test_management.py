@@ -143,6 +143,7 @@ async def test_user_selection_and_unreadable_key(running_gateway, caller_key):
     response = await client.post(P + "/keys?account_id=tenant", headers=headers, json=payload)
     assert response.status_code == 200 and response.json()["user_id"] == "bob"
     assert app.state.test_backend["users_calls"][-1][1] == caller_key
+    assert "&name=bob" in app.state.test_backend["users_calls"][-1][0]
     # OpenViking omits api_key when it stores only a hash.
     app.state.test_backend["users"] = [{"user_id": "bob", "role": "user"}]
     response = await client.post(P + "/keys", headers=headers, json=payload)
@@ -151,6 +152,40 @@ async def test_user_selection_and_unreadable_key(running_gateway, caller_key):
         P + "/keys", headers=headers, json={**payload, "openviking_key": "bob-key"}
     )
     assert response.status_code == 200
+
+
+async def test_root_must_name_the_user_it_issues_for(running_gateway):
+    _, client, _, _, _, _ = running_gateway
+    payload = {"name": "k", "policy_id": "default", "upstream_ids": ["chat"]}
+    response = await client.post(
+        P + "/keys?account_id=tenant", headers={"X-API-Key": "root"}, json=payload
+    )
+    assert response.status_code == 400 and response.json()["reason"] == "user_required"
+
+
+async def test_root_reads_tools_with_an_account_key(running_gateway):
+    app, client, _, _, _, _ = running_gateway
+    response = await client.get(P + "/tools?account_id=tenant", headers={"X-API-Key": "root"})
+    assert response.status_code == 200 and response.json()
+    assert app.state.test_backend["tools_calls"] == ["user-key"]
+
+
+async def test_unavailable_openviking_skips_the_revocation_check(running_gateway):
+    app, client, _, key, _, _ = running_gateway
+    health_keys = []
+
+    async def handler(request):
+        if request.path == "/health":
+            health_keys.append(request.headers.get("X-API-Key"))
+
+    app.state.test_backend["handler"] = handler
+    app.state.viking.identities.clear()
+    app.state.viking.unavailable_reason = "openviking_unavailable"
+    response = await client.get("/v1/models", headers={"X-API-Key": key["key"]})
+    assert response.status_code == 200 and health_keys == []
+    # Any successful identify shows OV is back, before the next health probe.
+    await app.state.viking.identify("admin-key")
+    assert not app.state.viking.unavailable_reason
 
 
 async def test_revocation_removes_only_key_and_keeps_user_data(running_gateway):
@@ -774,7 +809,7 @@ async def test_degraded_probe_backs_off_until_success(tmp_path, monkeypatch):
     from openviking_gateway.client import VikingClient, VikingError
     from openviking_gateway.config import GatewayConfig
 
-    clock, probes, results = [0.0], [], [False, False, False, False, True, False, False]
+    clock, probes, results = [0.0], [], [False, False, True, False, False, False, False]
 
     def monotonic():
         clock[0] += 0.125
@@ -799,5 +834,5 @@ async def test_degraded_probe_backs_off_until_success(tmp_path, monkeypatch):
         while results:
             await asyncio.sleep(0)
     gaps = [round(b - a) for a, b in zip(probes, probes[1:], strict=False)]
-    # 1, 2, 4 seconds capped at the interval; a success resets the backoff.
-    assert gaps[:6] == [1, 2, 4, 4, 4, 1]
+    # Every second until OV first answers; later outages back off 1, 2, 4 capped at the interval.
+    assert gaps[:6] == [1, 1, 4, 1, 2, 4]

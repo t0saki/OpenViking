@@ -71,7 +71,11 @@ def upstream_url(upstream, path):
 def upstream_headers(upstream, incoming):
     headers = filtered_headers(incoming, request=True)
     headers.update(upstream.get("headers", {}))
-    headers = {k: v for k, v in headers.items() if k.lower() not in {"authorization", "x-api-key"}}
+    # Drop configured copies of the auth headers set below; other protocols keep x-api-key.
+    own = (
+        {"authorization", "x-api-key"} if upstream["protocol"] == "anthropic" else {"authorization"}
+    )
+    headers = {k: v for k, v in headers.items() if k.lower() not in own}
     key = (
         upstream.get("api_key", "")
         if upstream.get("auth_mode") != "passthrough"

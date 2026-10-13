@@ -58,6 +58,8 @@ class VikingClient:
                 result.get(field) for field in ("account_id", "user_id")
             ):
                 raise VikingError("openviking_identity_missing", 401)
+            # OV answered, so recall and revocation checks may resume before the next probe.
+            self.unavailable_reason = ""
             return {**result, "role": result["role"].lower()}
 
         return await self.identities.get(hashlib.sha256(credential.encode()).hexdigest(), load)

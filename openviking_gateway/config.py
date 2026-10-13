@@ -64,7 +64,9 @@ class GatewayConfig(BaseModel):
         value = {key: item for key, item in value.items() if key not in found}
         for field in cls.model_fields:
             # An empty variable, such as a compose default, never overrides the file.
-            if override := os.environ.get(ENVIRONMENT_PREFIX + field.upper()):
+            override = os.environ.get(ENVIRONMENT_PREFIX + field.upper(), "")
+            # Kubernetes service links set OPENVIKING_GATEWAY_PORT=tcp://... for such a Service.
+            if override and not override.startswith(("tcp://", "udp://")):
                 value[field] = override
         return value
 

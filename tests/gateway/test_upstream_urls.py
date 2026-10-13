@@ -40,7 +40,11 @@ def test_anthropic_base_rejects_v1_suffix(base):
 @pytest.mark.parametrize("protocol", ["chat", "responses", "anthropic"])
 def test_upstream_auth_headers(protocol):
     headers = upstream_headers(
-        {"protocol": protocol, "api_key": "secret", "headers": {"authorization": "wrong"}},
+        {
+            "protocol": protocol,
+            "api_key": "secret",
+            "headers": {"authorization": "wrong", "x-api-key": "gateway-plan-key"},
+        },
         {
             "authorization": "Bearer ovgw_fake",
             "x-api-key": "wrong",
@@ -49,5 +53,6 @@ def test_upstream_auth_headers(protocol):
     )
     assert headers["Authorization"] == "Bearer secret"
     assert "authorization" not in headers
-    assert headers.get("x-api-key") == ("secret" if protocol == "anthropic" else None)
+    # A configured x-api-key reaches Bearer upstreams; Anthropic's own header replaces it.
+    assert headers.get("x-api-key") == ("secret" if protocol == "anthropic" else "gateway-plan-key")
     assert headers["anthropic-version"] == "2023-06-01"
