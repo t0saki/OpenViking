@@ -22,15 +22,11 @@ def normalize_url(value: str) -> str:
         or parsed.password
         or parsed.query
         or parsed.fragment
+        # Reading the port also rejects malformed ones.
+        or parsed.port == 0
     ):
         raise ValueError("expected an HTTP(S) URL without credentials, query or fragment")
-    # Validate ports and canonicalize equivalent public service addresses.
-    port = parsed.port
-    host = parsed.hostname.lower()
-    host = f"[{host}]" if ":" in host else host
-    if port is not None and (parsed.scheme, port) not in {("https", 443), ("http", 80)}:
-        host += f":{port}"
-    return urlunsplit((parsed.scheme, host, parsed.path.rstrip("/"), "", ""))
+    return urlunsplit((parsed.scheme, parsed.netloc.lower(), parsed.path.rstrip("/"), "", ""))
 
 
 class GatewayConfig(BaseModel):
@@ -78,6 +74,7 @@ class GatewayConfig(BaseModel):
                 any(
                     (directory / name).exists() for name in ("kernel.sqlite3", "management.sqlite3")
                 )
+                # Another worker may have published the key and created a database meanwhile.
                 and not target.exists()
             ):
                 raise ValueError(

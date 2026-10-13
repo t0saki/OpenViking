@@ -99,13 +99,17 @@ for (const routerFile of routerFiles) {
     source.match(/router\s*=\s*APIRouter\([^)]*prefix=["']([^"']+)/s)?.[1] ??
     (source.match(/router\s*=\s*APIRouter\([^)]*prefix=PREFIX\b/s) ? prefixConstant : '') ?? ''
   const mountPrefix = file === 'bot.py' ? '/bot/v1' : ''
+  // Gateway upstreams and policies share the handlers that object_routes(kind) registers.
+  const objectKinds = Array.from(source.matchAll(/object_routes\(\s*["']([^"']+)["']/g),
+    (match) => match[1])
   const decorators = [
     ...Array.from(
-      source.matchAll(/@router\.(get|post|put|patch|delete)\(\s*["']([^"']*)/g),
+      source.matchAll(/@router\.(get|post|put|patch|delete)\(\s*f?["']([^"']*)/g),
       (match) => ({
         index: match.index,
         methods: [match[1].toUpperCase()],
-        path: match[2],
+        // Unescape f-string braces.
+        path: match[2].replaceAll('{{', '{').replaceAll('}}', '}'),
         sourceLength: match[0].length,
       })
     ),
@@ -149,22 +153,14 @@ for (const routerFile of routerFiles) {
     }
     // The caller dependency consumes account_id directly from query_params.
     if (isGateway) query.set('account_id', false)
-    let concretePaths = [routePath]
-    if (isGateway && routePath.includes('{kind}')) {
-      const nextDecorator = decorators.find((entry) => entry.index > decorator.index)
-      const body = source.slice(closing + 1, nextDecorator?.index ?? source.length)
-      const allowedKinds = body.match(/if kind not in\s*\{([^}]+)\}/)?.[1]
-      if (!allowedKinds) throw new Error(`Gateway route ${routePath} has no kind allowlist`)
-      concretePaths = Array.from(allowedKinds.matchAll(/["']([^"']+)["']/g),
-        (match) => routePath.replace('{kind}', match[1]))
-    }
+    const concretePaths = routePath.includes('{kind}')
+      ? objectKinds.map((kind) => routePath.replace('{kind}', kind))
+      : [routePath]
     for (const concretePath of concretePaths) {
       const concreteParameters = new Set(
         Array.from(concretePath.matchAll(/\{([^}:]+)(?::[^}]+)?\}/g), (item) => item[1])
       )
       for (const method of decorator.methods) {
-        // Keys are immutable: this shared handler deliberately returns 405.
-        if (isGateway && method === 'PUT' && concretePath.includes('/keys/')) continue
         routes.set(`${method} ${normalizePath(concretePath)}`, {
           query, pathParameters: concreteParameters,
         })

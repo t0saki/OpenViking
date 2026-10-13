@@ -10,7 +10,6 @@ from conftest import MCP_TOOLS, mcp_tool
 from openviking_gateway.capture import capture_messages
 from openviking_gateway.models import Policy, Upstream
 from openviking_gateway.notices import TOOL_NOTICE, tool_tail
-from openviking_gateway.proxy import upstream_url
 from openviking_gateway.storage import SQLiteKernelStore
 from openviking_gateway.tool_catalog import notice_head, select_tools, tool_block_reason
 from openviking_gateway.tool_executor import ToolExecutor, attachment_bytes, attachments
@@ -429,19 +428,6 @@ def test_omitted_hidden_history_drops_tool_notices(protocol):
         {"role": "assistant", "content": [messages[2]["content"][0], messages[2]["content"][2]]},
         messages[4],
     ]
-
-
-@pytest.mark.parametrize(
-    "case",
-    __import__("json").loads(
-        (
-            __import__("pathlib").Path(__file__).parents[1] / "fixtures/gateway_upstream_urls.json"
-        ).read_text()
-    ),
-    ids=lambda case: case["name"],
-)
-def test_sdk_upstream_paths(case):
-    assert upstream_url(case, case["path"]) == case["expected"]
 
 
 @pytest.mark.parametrize("json_response", [False, True])

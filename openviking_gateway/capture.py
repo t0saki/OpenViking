@@ -341,9 +341,8 @@ class CaptureWorker:
         return True
 
     async def log(self, item, state, status, reason):
-        await self.management.record_request(
+        await self.management.log(
             state["account"],
-            state["credential_id"],
             {
                 "kind": "capture",
                 "session": item["session"],
@@ -352,6 +351,8 @@ class CaptureWorker:
                 "capture_status": status,
                 "capture_reason": reason,
             },
+            # Capture states written before schema 6 carry no user.
+            user_id=state.get("user_id"),
         )
 
     async def deliver(self, item):

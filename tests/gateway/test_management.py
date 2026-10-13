@@ -4,8 +4,9 @@ import httpx
 import pytest
 from aiohttp import web
 
-from openviking_gateway.app import create_app
+from openviking_gateway.app import create_app, seed_defaults
 from openviking_gateway.config import StandaloneGatewayConfig
+from openviking_gateway.standalone import check_openviking, create_standalone_app
 from openviking_gateway.storage import digest
 
 P = "/api/v1/admin/gateway"
@@ -13,18 +14,25 @@ MANAGER = {"X-OpenViking-Gateway-Management-Key": "ovgm_" + "m" * 40}
 
 
 @pytest.mark.parametrize(
-    "role,key", [("user", "user-key"), ("admin", "admin-key"), ("root", "root")]
+    "role,key",
+    [("user", "user-key"), ("admin", "admin-key"), ("root", "root"), ("dev", "")],
 )
 @pytest.mark.parametrize("managed", [False, True])
 async def test_permissions_matrix(running_gateway, role, key, managed):
     app, client, _, _, _, _ = running_gateway
     if managed:
         app.state.config.management_key = MANAGER[next(iter(MANAGER))]
-    headers = {"X-API-Key": key}
+    if role == "dev":
+        app.state.test_backend["auth_mode"] = "dev"
+        app.state.viking.identities.clear()
+        chat = await app.state.management.get("tenant", "upstreams", "chat")
+        await app.state.management.save("default", "upstreams", "chat", chat)
+    headers = {"X-API-Key": key} if key else {}
     access = (await client.get(P + "/access", headers=headers)).json()
-    assert access["role"] == role
+    assert access["role"] == ("root" if role == "dev" else role)
     assert access["can_write_objects"] is not managed
-    assert access["can_issue_for_others"] is (role != "user")
+    # Dev has a single default user, so there is nobody else to issue for.
+    assert access["can_issue_for_others"] is (role in {"admin", "root"})
     response = await client.put(P + "/policies/matrix", headers=headers, json={"name": "matrix"})
     assert response.status_code == (403 if managed else 200)
     if managed:
@@ -38,11 +46,13 @@ async def test_permissions_matrix(running_gateway, role, key, managed):
         json={
             "name": "self",
             "openviking_key": "user-key",
-            "policy_id": "default",
+            "policy_id": "matrix",
             "upstream_ids": ["chat"],
         },
     )
-    assert issue.status_code == 200
+    assert issue.status_code == 200, issue.text
+    keys = (await client.get(P + "/keys", headers=headers)).json()
+    assert issue.json()["id"] in [key["id"] for key in keys]
 
 
 async def test_management_key_alone_never_grants_ov_data_access(running_gateway):
@@ -133,9 +143,8 @@ async def test_user_selection_and_unreadable_key(running_gateway, caller_key):
     response = await client.post(P + "/keys?account_id=tenant", headers=headers, json=payload)
     assert response.status_code == 200 and response.json()["user_id"] == "bob"
     assert app.state.test_backend["users_calls"][-1][1] == caller_key
-    app.state.test_backend["users"] = [
-        {"user_id": "bob", "role": "user", "api_key_available": False}
-    ]
+    # OpenViking omits api_key when it stores only a hash.
+    app.state.test_backend["users"] = [{"user_id": "bob", "role": "user"}]
     response = await client.post(P + "/keys", headers=headers, json=payload)
     assert response.status_code == 409 and response.json()["reason"] == "user_key_unreadable"
     response = await client.post(
@@ -174,6 +183,45 @@ async def test_revocation_removes_only_key_and_keeps_user_data(running_gateway):
     assert not await app.state.management.logs("tenant", user_id="alice")
 
 
+@pytest.mark.parametrize("failure", ["unreachable", "server_error", "identity_missing"])
+async def test_unconfirmed_revocation_keeps_key_and_serves(running_gateway, failure):
+    app, client, _, key, _, _ = running_gateway
+    backend = app.state.test_backend
+
+    async def handler(request):
+        if request.path == "/health" and request.headers.get("X-API-Key") == "user-key":
+            if failure == "server_error":
+                return web.json_response({}, status=503)
+            # OV swallows account-store errors and answers without an identity.
+            return web.json_response({"status": "ok", "auth_mode": "api_key"})
+
+    backend["handler"] = handler
+    if failure == "unreachable":
+        app.state.viking.base_url = "http://127.0.0.1:9"
+    app.state.viking.identities.clear()
+    response = await client.post(
+        "/v1/chat/completions",
+        headers={"X-API-Key": key["key"]},
+        json={"model": "model", "messages": [{"role": "user", "content": "hello"}]},
+    )
+    assert response.status_code == 200
+    assert await app.state.management.get("tenant", "keys", key["id"])
+    degradation = (await app.state.management.logs("tenant"))[0]["degradation"]
+    # With OV down, recall reports its own failure instead.
+    assert degradation == "revocation_check_unavailable" or failure == "unreachable"
+    # Nothing unconfirmed is cached: OV recovering takes effect on the next request.
+    assert not app.state.viking.identities.entries
+
+
+async def test_dev_mode_does_not_revoke_keys_of_named_users(running_gateway):
+    app, client, _, key, _, _ = running_gateway
+    app.state.test_backend["auth_mode"] = "dev"
+    app.state.viking.identities.clear()
+    response = await client.get("/v1/models", headers={"X-API-Key": key["key"]})
+    assert response.status_code == 200
+    assert await app.state.management.get("tenant", "keys", key["id"])
+
+
 async def test_health_401_is_reachable_and_recall_works(running_gateway):
     app, client, _, key, _, _ = running_gateway
     app.state.test_backend["health_status"] = {"": 401}
@@ -188,7 +236,8 @@ async def test_health_401_is_reachable_and_recall_works(running_gateway):
         },
     )
     assert response.status_code == 200
-    logs = await app.state.management.logs("tenant")
+    # The request log carries the key's user, so that user's own view finds it.
+    logs = await app.state.management.logs("tenant", user_id="alice")
     assert any(row.get("recall_count", 0) for row in logs)
 
 
@@ -299,7 +348,8 @@ async def test_standalone_health_studio_and_readonly_forwarding(running_gateway,
     config = StandaloneGatewayConfig(
         storage_path=str(tmp_path / "standalone"), openviking_url=upstream.state.openviking_url
     )
-    app = create_app(config, openviking_url=config.openviking_url, studio_dir=studio)
+    upstream.state.test_backend["health_status"] = {"stale-key": 401}
+    app = create_standalone_app(config, studio_dir=studio)
     async with (
         app.router.lifespan_context(app),
         httpx.AsyncClient(
@@ -313,6 +363,10 @@ async def test_standalone_health_studio_and_readonly_forwarding(running_gateway,
         )
         assert "role" not in result and result["auth_mode"] == "api_key"
         assert (await client.get("/health", headers={"X-API-Key": "root"})).json()["role"] == "root"
+        stale = await client.get("/health", headers={"X-API-Key": "stale-key"})
+        assert stale.status_code == 200 and "role" not in stale.json()
+        access = await client.get(P + "/access", headers={"X-API-Key": "stale-key"})
+        assert access.status_code == 401 and access.json()["reason"] == "openviking_http_401"
         assert (await client.get("/")).headers["location"] == "/studio/"
         assert "Studio" in (await client.get("/studio/gateway/keys")).text
         response = await client.get(
@@ -393,6 +447,11 @@ async def test_revoked_key_keeps_pending_capture(running_gateway):
     after = (await app.state.store.capture.get(scope, session)).value
     assert after["pending"][0]["messages"] == before["pending"][0]["messages"]
     assert after["error"]["reason"] == "gateway_key_revoked"
+    logs = await app.state.management.logs("tenant", user_id="alice")
+    assert logs[0]["capture_status"] == "paused"
+    assert logs[0]["capture_reason"] == "gateway_key_revoked"
+    overview = (await client.get(P + "/overview", headers=admin)).json()
+    assert overview["capture_issues"]["paused"] == 1
 
 
 async def test_identity_cache_accepts_root_does_not_cache_failures():
@@ -419,7 +478,7 @@ async def test_identity_cache_accepts_root_does_not_cache_failures():
         await client.health("root")
 
 
-async def test_embedded_background_probe_does_not_block_startup(tmp_path, monkeypatch):
+async def test_first_probe_does_not_block_startup(tmp_path, monkeypatch):
     import asyncio
 
     from openviking_gateway.client import VikingClient
@@ -432,11 +491,7 @@ async def test_embedded_background_probe_does_not_block_startup(tmp_path, monkey
         await asyncio.Event().wait()
 
     monkeypatch.setattr(VikingClient, "health", health)
-    app = create_app(
-        GatewayConfig(storage_path=str(tmp_path)),
-        openviking_url="http://unused",
-        background_first_probe=True,
-    )
+    app = create_app(GatewayConfig(storage_path=str(tmp_path)), openviking_url="http://unused")
     async with app.router.lifespan_context(app):
         await asyncio.wait_for(entered.wait(), 1)
         assert app.state.health == {"status": "starting"}
@@ -452,18 +507,18 @@ async def test_standalone_dev_requires_loopback(tmp_path, monkeypatch):
     config = StandaloneGatewayConfig(
         storage_path=str(tmp_path), openviking_url="http://localhost:1933", host="0.0.0.0"
     )
-    app = create_app(config, openviking_url=config.openviking_url)
     with pytest.raises(ValueError, match="loopback"):
-        async with app.router.lifespan_context(app):
-            pass
+        await check_openviking(config)
 
 
 async def test_connection_test_is_available_for_missing_key_and_blocked_plan(running_gateway):
-    app, client, admin, _, _, _ = running_gateway
+    app, client, admin, _, captured, _ = running_gateway
     upstream = await app.state.management.get("tenant", "upstreams", "chat")
-    await app.state.management.save("tenant", "upstreams", "chat", {**upstream, "api_key": ""})
-    response = await client.post(P + "/upstreams/chat/test", headers=admin)
-    assert response.status_code == 200 and response.json()["reason"] == "upstream_key_rejected"
+    for change in ({"api_key": ""}, {"auth_mode": "passthrough"}):
+        await app.state.management.save("tenant", "upstreams", "chat", {**upstream, **change})
+        response = await client.post(P + "/upstreams/chat/test", headers=admin)
+        assert response.status_code == 200 and response.json()["reason"] == "upstream_key_missing"
+    assert not [path for path, _, _ in captured if path.endswith("/models")]
     await app.state.management.save(
         "tenant", "upstreams", "chat", {**upstream, "coding_plan": True, "allow_coding_plan": False}
     )
@@ -486,10 +541,8 @@ async def test_public_standalone_requires_confirmed_api_key_auth(tmp_path, monke
     config = StandaloneGatewayConfig(
         storage_path=str(tmp_path), openviking_url="http://localhost:1933", host="0.0.0.0"
     )
-    app = create_app(config, openviking_url=config.openviking_url)
     with pytest.raises(ValueError, match="trusted|successful synchronous probe"):
-        async with app.router.lifespan_context(app):
-            pytest.fail("Public gateway started before safe OV authentication was confirmed")
+        await check_openviking(config)
 
 
 async def test_public_standalone_accepts_auth_required_health(tmp_path, monkeypatch):
@@ -502,9 +555,23 @@ async def test_public_standalone_accepts_auth_required_health(tmp_path, monkeypa
     config = StandaloneGatewayConfig(
         storage_path=str(tmp_path), openviking_url="http://localhost:1933", host="0.0.0.0"
     )
-    app = create_app(config, openviking_url=config.openviking_url)
-    async with app.router.lifespan_context(app):
-        assert app.state.health["requires_authentication"]
+    assert (await check_openviking(config))["requires_authentication"]
+
+
+async def test_loopback_standalone_refuses_trusted_only(tmp_path, monkeypatch):
+    from openviking_gateway.client import VikingClient, VikingError
+
+    failure = VikingError("openviking_unavailable")
+
+    async def health(self, *args, **kwargs):
+        raise failure
+
+    monkeypatch.setattr(VikingClient, "health", health)
+    config = StandaloneGatewayConfig(storage_path=str(tmp_path), openviking_url="http://ov.test")
+    assert (await check_openviking(config))["reason"] == "openviking_unavailable"
+    failure = VikingError("trusted_mode_unsupported", 403)
+    with pytest.raises(ValueError, match="trusted"):
+        await check_openviking(config)
 
 
 async def test_non_ascii_management_header_is_rejected_cleanly(running_gateway):
@@ -613,3 +680,123 @@ async def test_version_error_includes_required_version(running_gateway):
         },
     )
     assert response.status_code == 503 and response.json()["required_version"] == "99.0.0"
+
+
+async def test_vlm_reimport_refreshes_source_fields_and_keeps_edits(running_gateway):
+    app, client, _, _, _, _ = running_gateway
+    candidate = {
+        "id": "vlm-main",
+        "name": "main",
+        "protocol": "chat",
+        "base_url": "https://model.example/v1",
+        "api_key": "first",
+        "models": ["model-a"],
+    }
+
+    async def source(account):
+        return {
+            "upstreams": [
+                candidate,
+                {"id": "vlm-bad", "name": "bad", "protocol": "chat", "base_url": "ftp://x"},
+            ],
+            "skipped": [],
+        }
+
+    app.state.vlm_source = source
+    root = {"X-API-Key": "root"}
+    result = (await client.post(P + "/upstreams/import-vlm", headers=root)).json()
+    assert result["skipped"] == [{"id": "vlm-bad", "reason": "invalid_configuration"}]
+    previous = await app.state.management.get("tenant", "upstreams", "vlm-main")
+    edited = {**previous, "name": "renamed", "enabled": False, "priority": 5, "aliases": {"a": "b"}}
+    await app.state.management.save("tenant", "upstreams", "vlm-main", edited)
+    candidate.update(api_key="second", base_url="https://model.example/v2", models=["model-b"])
+    await client.post(P + "/upstreams/import-vlm", headers=root)
+    value = await app.state.management.get("tenant", "upstreams", "vlm-main")
+    assert value["api_key"] == "second" and value["base_url"] == "https://model.example/v2"
+    assert value["name"] == "renamed" and value["enabled"] is False and value["priority"] == 5
+    assert value["models"] == ["model-a"] and value["aliases"] == {"a": "b"}
+
+
+async def test_seed_defaults_is_idempotent(running_gateway):
+    app, _, _, _, _, _ = running_gateway
+    calls = []
+
+    async def source(account):
+        calls.append(account)
+        return {
+            "upstreams": [
+                {"id": "vlm-x", "name": "x", "protocol": "chat", "base_url": "https://x.test"}
+            ]
+        }
+
+    app.state.vlm_source = source
+    for _ in range(2):
+        await seed_defaults(app, "fresh")
+    assert calls == ["fresh"]
+    assert [u["id"] for u in await app.state.management.list("fresh", "upstreams")] == ["vlm-x"]
+    assert await app.state.management.get("fresh", "policies", "default")
+
+
+@pytest.mark.parametrize("base_url", [5, None, ["https://x.test"]])
+async def test_non_string_base_url_is_invalid_configuration(running_gateway, base_url):
+    _, client, admin, _, _, _ = running_gateway
+    response = await client.put(
+        P + "/upstreams/chat",
+        headers=admin,
+        json={"name": "chat", "protocol": "chat", "base_url": base_url},
+    )
+    assert response.status_code == 422 and response.json()["reason"] == "invalid_configuration"
+
+
+async def test_keys_are_immutable_and_errors_explain_themselves(running_gateway):
+    app, client, admin, key, _, _ = running_gateway
+    response = await client.put(P + "/keys/" + key["id"], headers=admin, json={})
+    assert response.status_code == 405 and response.json()["reason"] == "gateway_http_405"
+    response = await client.get(P + "/upstreams/missing", headers=admin)
+    body = response.json()
+    assert response.status_code == 404 and body["reason"] == "not_found"
+    assert body["detail"] != body["reason"]
+    app.state.test_backend["health_status"] = {"stale-key": 401}
+    response = await client.get(P + "/keys", headers={"X-API-Key": "stale-key"})
+    assert response.json() == {
+        "reason": "openviking_http_401",
+        "detail": "OpenViking rejected the API key.",
+    }
+
+
+async def test_degraded_probe_backs_off_until_success(tmp_path, monkeypatch):
+    import asyncio
+    import time
+    from types import SimpleNamespace
+
+    from openviking_gateway import app as module
+    from openviking_gateway.client import VikingClient, VikingError
+    from openviking_gateway.config import GatewayConfig
+
+    clock, probes, results = [0.0], [], [False, False, False, False, True, False, False]
+
+    def monotonic():
+        clock[0] += 0.125
+        return clock[0]
+
+    async def health(self, *args, **kwargs):
+        probes.append(clock[0])
+        if results and not results.pop(0):
+            raise VikingError("openviking_unavailable")
+        return {"status": "ok"}
+
+    async def once():
+        await asyncio.sleep(0)
+        return True
+
+    monkeypatch.setattr(VikingClient, "health", health)
+    monkeypatch.setattr(module, "time", SimpleNamespace(monotonic=monotonic, time=time.time))
+    config = GatewayConfig(storage_path=str(tmp_path), health_interval_seconds=4)
+    app = create_app(config, openviking_url="http://unused")
+    async with app.router.lifespan_context(app):
+        app.state.worker.once = once
+        while results:
+            await asyncio.sleep(0)
+    gaps = [round(b - a) for a, b in zip(probes, probes[1:], strict=False)]
+    # 1, 2, 4 seconds capped at the interval; a success resets the backoff.
+    assert gaps[:6] == [1, 2, 4, 4, 4, 1]

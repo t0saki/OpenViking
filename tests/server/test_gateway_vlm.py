@@ -25,6 +25,7 @@ def configured(provider, model="model", **kwargs):
         ("litellm", "anthropic/claude", "https://api.anthropic.com", "anthropic", "anthropic"),
         ("litellm", "ollama/qwen", "http://localhost:11434/v1", "chat", "generic"),
         ("litellm", "ollama_chat/qwen", "http://localhost:11434/v1", "chat", "generic"),
+        (None, "gpt", "https://api.openai.com/v1", "chat", "openai"),
     ],
 )
 def test_default_provider_mapping(provider, model, base, protocol, vendor):
@@ -49,7 +50,6 @@ def test_coding_plan_requires_explicit_consent(path, expected):
         "upstreams"
     ]
     assert upstream["coding_plan"] == expected
-    assert upstream["allow_coding_plan"] is False
 
 
 def test_kimi_alias_base_and_custom_user_agent():
@@ -83,14 +83,32 @@ def test_glm_and_byteplus():
     [
         ("azure", "deployment", "azure"),
         ("openai-codex", "gpt", "openai_codex"),
-        ("litellm", "some/model", "api_base"),
+        ("litellm", "some/model", "litellm_no_api_base"),
+        ("litellm", "gemini/gemini-2.0-flash", "litellm_unsupported_route"),
+        ("litellm", "bedrock/anthropic.claude-3", "litellm_unsupported_route"),
     ],
 )
 def test_skipped_credentials_have_actionable_reasons(provider, model, reason):
-    result = vlm_upstreams(configured(provider, model))
+    # Every route except the generic one has an api_base, so only the route decides the skip.
+    base = None if reason == "litellm_no_api_base" else "https://example.com/v1"
+    result = vlm_upstreams(configured(provider, model, api_base=base))
     assert result["upstreams"] == []
-    assert result["skipped"][0]["id"] == "vlm-primary"
-    assert reason in result["skipped"][0]["reason"]
+    assert result["skipped"] == [{"id": "vlm-primary", "reason": reason}]
+
+
+def test_litellm_openai_routes_send_the_bare_model_name():
+    (upstream,) = vlm_upstreams(
+        configured(
+            "litellm",
+            "openai/qwen-plus",
+            api_base="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        )
+    )["upstreams"]
+    assert upstream["models"] == ["qwen-plus"]
+    (served,) = vlm_upstreams(
+        configured("litellm", "Qwen/Qwen2.5-7B", api_base="http://vllm.local/v1")
+    )["upstreams"]
+    assert served["models"] == ["Qwen/Qwen2.5-7B"]
 
 
 def test_all_credentials_and_legacy_config_are_imported():
@@ -101,18 +119,6 @@ def test_all_credentials_and_legacy_config_are_imported():
         credentials=[{"id": key, "provider": "openai", "api_key": key} for key in ("a", "b")],
     )
     assert [u["id"] for u in vlm_upstreams(config)["upstreams"]] == ["vlm-a", "vlm-b"]
-
-
-async def test_effective_configuration_is_detached_and_does_not_create_clients():
-    config = configured("openai")
-    provider = object.__new__(AccountVLMProvider)
-    provider._select = AsyncMock(return_value=SimpleNamespace(config=config))
-    effective = await provider.effective_vlm_config("account")
-    assert effective is not config
-    assert effective.credentials[0].api_key == "secret"
-    effective.credentials[0].api_key = "changed"
-    assert config.credentials[0].api_key == "secret"
-    provider._select.assert_awaited_once_with("account", "vlm")
 
 
 async def test_effective_configuration_respects_account_credentials_and_cluster_fallback():

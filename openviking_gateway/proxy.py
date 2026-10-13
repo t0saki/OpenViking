@@ -129,8 +129,6 @@ class ProxyRequest:
     async def run(self):
         if self.request.headers.get("upgrade", "").lower() == "websocket":
             return Response(status_code=426, headers={"Upgrade": "HTTP/1.1"})
-        if self.path.startswith("/admin") or self.path == "/health":
-            raise HTTPException(404)
         raw = bytearray()
         async for chunk in self.request.stream():
             raw.extend(chunk)
@@ -310,23 +308,21 @@ class ProxyRequest:
                 )
             ):
                 await self.app.state.kernel.completed(self.prepared, self.credential, self.capture)
-            response_id = (
+            if (
                 self.capture.response_id
-                if (
-                    self.capture.response_id
-                    and self.path == "/v1/responses"
-                    and self.body
-                    and self.body.get("store") is not False
+                and self.path == "/v1/responses"
+                and self.body
+                and self.body.get("store") is not False
+            ):
+                await self.management.save(
+                    self.credential["account"],
+                    "responses",
+                    digest(self.credential["id"] + self.capture.response_id),
+                    {"upstream_id": self.upstream["id"], "user_id": self.credential["user_id"]},
+                    ttl=self.config.response_ttl_seconds,
                 )
-                else None
-            )
-            await self.management.record_request(
-                self.credential["account"],
-                self.credential["id"],
-                self.metrics,
-                response_id=response_id,
-                upstream_id=self.upstream["id"],
-                response_ttl=self.config.response_ttl_seconds,
+            await self.management.log(
+                self.credential["account"], self.metrics, user_id=self.credential["user_id"]
             )
         except Exception:
             logger.exception("OpenViking Gateway response bookkeeping failed")

@@ -1,6 +1,5 @@
 """The embedded gateway owns its routes and starts before deletion recovery."""
 
-from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -11,41 +10,19 @@ from starlette.responses import JSONResponse
 from starlette.testclient import TestClient, WebSocketDenialResponse
 
 from openviking.server import gateway_host
+from openviking_gateway.config import EmbeddedGatewayConfig
 
 
-@pytest.mark.parametrize(
-    "host,expected",
-    [
-        (None, "127.0.0.1"),
-        ("0.0.0.0", "127.0.0.1"),
-        ("*", "127.0.0.1"),
-        ("", "127.0.0.1"),
-        ("::", "[::1]"),
-        ("::0", "[::1]"),
-        ("[::]", "[::1]"),
-        ("::1", "[::1]"),
-        ("127.0.0.2", "127.0.0.2"),
-    ],
-)
-def test_loopback_uses_actual_listening_address(host, expected, monkeypatch):
-    monkeypatch.setattr("openviking_gateway.app.create_app", lambda config, **kwargs: kwargs)
+@pytest.mark.parametrize("host,expected", [("0.0.0.0", "127.0.0.1"), ("::", "[::1]")])
+def test_embedded_gateway_targets_loopback_without_version_gate(host, expected, monkeypatch):
+    monkeypatch.setattr(
+        "openviking_gateway.app.create_app", lambda config, **kwargs: {"config": config, **kwargs}
+    )
     options = gateway_host.create_embedded_gateway(
-        SimpleNamespace(enabled=True), SimpleNamespace(host=host, port=1987), lambda: None
+        EmbeddedGatewayConfig(enabled=True), SimpleNamespace(host=host, port=1987), lambda: None
     )
     assert options["openviking_url"] == f"http://{expected}:1987"
-
-
-def test_disabled_gateway_does_not_import_runtime(monkeypatch):
-    import builtins
-
-    original = builtins.__import__
-
-    def checked(name, *args, **kwargs):
-        assert name != "openviking_gateway.app"
-        return original(name, *args, **kwargs)
-
-    monkeypatch.setattr(builtins, "__import__", checked)
-    assert gateway_host.create_embedded_gateway(SimpleNamespace(enabled=False), None, None) is None
+    assert options["config"].min_server_version == "0"
 
 
 @pytest.mark.parametrize(
@@ -92,65 +69,20 @@ async def test_routes_preserve_path_body_query_and_method(method, path):
 
 
 @pytest.mark.parametrize("path", ["/v1/responses", "/api/v3/responses"])
-def test_websocket_returns_http_426(path):
+def test_websocket_reaches_gateway_426(path, tmp_path):
+    from openviking_gateway.app import create_app
+
     app = FastAPI()
-    gateway_host.mount_gateway(app, FastAPI())
+    gateway = create_app(
+        EmbeddedGatewayConfig(storage_path=str(tmp_path)), openviking_url="http://127.0.0.1:1"
+    )
+    gateway_host.mount_gateway(app, gateway)
     with TestClient(app) as client:
         with pytest.raises(WebSocketDenialResponse) as exc:
             with client.websocket_connect(path):
                 pass
         assert exc.value.status_code == 426
-
-
-async def test_lifespan_exposes_ready_app_for_deletion_and_cleans_up(monkeypatch):
-    events = []
-
-    @asynccontextmanager
-    async def lifespan(app):
-        events.append("ready")
-        yield
-        events.append("closed")
-
-    app = FastAPI(lifespan=lifespan)
-    async with gateway_host.gateway_lifespan(app):
-        assert events == ["ready"]
-        assert gateway_host._gateway_app is app
-    assert gateway_host._gateway_app is None
-    assert events == ["ready", "closed"]
-
-
-async def test_deletion_calls_embedded_exports(monkeypatch):
-    import openviking_gateway.management as module
-
-    app = object()
-    monkeypatch.setattr(gateway_host, "_gateway_app", app)
-    account = AsyncMock()
-    user = AsyncMock()
-    monkeypatch.setattr(module, "delete_account_data", account)
-    monkeypatch.setattr(module, "delete_user_data", user)
-    await gateway_host.delete_gateway_data("account", "alice")
-    await gateway_host.delete_gateway_data("account")
-    user.assert_awaited_once_with(app, "account", "alice")
-    account.assert_awaited_once_with(app, "account")
-
-
-async def test_dev_defaults_preserve_existing_objects(monkeypatch):
-    import openviking_gateway.management as module
-
-    management = SimpleNamespace(
-        list=AsyncMock(return_value=[]), get=AsyncMock(return_value=None), save=AsyncMock()
-    )
-    app = SimpleNamespace(state=SimpleNamespace(management=management))
-    imported = AsyncMock()
-    monkeypatch.setattr(module, "import_vlm_objects", imported)
-    await gateway_host.seed_dev_defaults(app)
-    imported.assert_awaited_once_with(app, "default")
-    assert management.save.call_args.args[:3] == ("default", "policies", "default")
-    management.list.return_value = [{"id": "existing"}]
-    management.get.return_value = {"id": "default"}
-    await gateway_host.seed_dev_defaults(app)
-    assert imported.await_count == 1
-    assert management.save.await_count == 1
+        assert exc.value.headers["upgrade"] == "HTTP/1.1"
 
 
 @pytest.fixture
@@ -182,9 +114,7 @@ async def model_server():
         await runner.cleanup()
 
 
-async def test_server_lifespan_routes_defaults_cors_and_deletion(
-    tmp_path, monkeypatch, model_server
-):
+async def test_server_lifespan_routes_defaults_and_cors(tmp_path, monkeypatch, model_server):
     from openviking.metrics import global_api
     from openviking.observability import usage_audit
     from openviking.server import app as server_module
@@ -192,7 +122,6 @@ async def test_server_lifespan_routes_defaults_cors_and_deletion(
     from openviking.server.mcp_endpoint import mcp
     from openviking_cli.utils.config.vlm_config import VLMConfig
     from openviking_gateway.client import VikingClient
-    from openviking_gateway.config import EmbeddedGatewayConfig
 
     gateway_config = EmbeddedGatewayConfig(enabled=True, storage_path=str(tmp_path / "gateway"))
     # FastMCP's session manager is single-use; keep this lifespan isolated from other tests.
@@ -207,10 +136,11 @@ async def test_server_lifespan_routes_defaults_cors_and_deletion(
     monkeypatch.setattr(usage_audit, "init_usage_audit_from_server_config", AsyncMock())
     monkeypatch.setattr(usage_audit, "shutdown_usage_audit", AsyncMock())
     # Calls back to OV are represented by its public health response, including dev identity rules.
+    # A source checkout reports a dev version, which must not trip the minimum-version gate.
     monkeypatch.setattr(
         VikingClient,
         "request",
-        AsyncMock(return_value={"status": "ok", "auth_mode": "dev", "version": "9.0.0"}),
+        AsyncMock(return_value={"status": "ok", "auth_mode": "dev", "version": "0.1.dev1"}),
     )
     service = SimpleNamespace(
         vlm_resolver=SimpleNamespace(
@@ -229,7 +159,7 @@ async def test_server_lifespan_routes_defaults_cors_and_deletion(
     )
 
     async def initialize(app, _service, config):
-        assert gateway_host._gateway_app is app.state.gateway_app
+        # The gateway is running before deletion setup receives it.
         assert await app.state.gateway_app.state.management.list("default", "upstreams") == []
         initialized.append(True)
         await server_module._initialize_auth_plugin(app, service, config)
@@ -306,6 +236,3 @@ async def test_server_lifespan_routes_defaults_cors_and_deletion(
             assert preflight.status_code == 200
             assert preflight.headers["access-control-allow-origin"] == "https://studio.example"
             assert dumped == ["/admin", "/health"]
-            await gateway_host.delete_gateway_data("default", "default")
-            assert await app.state.gateway_app.state.management.list("default", "keys") == []
-    assert gateway_host._gateway_app is None

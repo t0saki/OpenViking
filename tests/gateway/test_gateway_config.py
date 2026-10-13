@@ -92,8 +92,25 @@ def test_standalone_config_file_and_env_precedence(tmp_path, monkeypatch):
     assert config.management_key == "m" * 32
 
 
+def test_empty_environment_values_keep_file_values(tmp_path, monkeypatch):
+    for field in StandaloneGatewayConfig.model_fields:
+        monkeypatch.setenv("OPENVIKING_GATEWAY_" + field.upper(), "")
+    config_file = tmp_path / "gateway.conf"
+    config_file.write_text(
+        json.dumps({"openviking_url": "https://example.test", "management_key": "f" * 32})
+    )
+    monkeypatch.setenv("OPENVIKING_GATEWAY_CONFIG_FILE", str(config_file))
+    config = load_config()
+    assert config.openviking_url == "https://example.test"
+    assert config.management_key == "f" * 32
+
+
 def test_public_url_normalization():
     config = StandaloneGatewayConfig(
-        openviking_url="https://API.VIKINGDB.CN-BEIJING.VOLCES.COM:443/openviking/"
+        openviking_url="https://API.VIKINGDB.CN-BEIJING.VOLCES.COM/openviking/"
     )
     assert config.openviking_url in PUBLIC_OPENVIKING_URLS
+    ipv6 = StandaloneGatewayConfig(openviking_url="http://[::1]:1933/")
+    assert ipv6.openviking_url == "http://[::1]:1933"
+    with pytest.raises(ValidationError):
+        StandaloneGatewayConfig(openviking_url="http://localhost:99999")

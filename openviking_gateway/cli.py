@@ -3,13 +3,13 @@
 """Standalone gateway entry point; it never reads the server's ov.conf."""
 
 import argparse
+import asyncio
 import json
-import logging
 import os
-from importlib.util import find_spec
 from pathlib import Path
 
-from .config import PUBLIC_OPENVIKING_URLS, StandaloneGatewayConfig
+from .config import StandaloneGatewayConfig
+from .standalone import check_openviking, create_standalone_app
 
 PREFIX = "OPENVIKING_GATEWAY_"
 
@@ -18,33 +18,15 @@ def load_config() -> StandaloneGatewayConfig:
     path = os.environ.get(PREFIX + "CONFIG_FILE")
     raw = json.loads(Path(path).expanduser().read_text()) if path else {}
     for field in StandaloneGatewayConfig.model_fields:
-        if (value := os.environ.get(PREFIX + field.upper())) is not None:
+        # An empty variable, such as a compose default, never overrides the file.
+        if value := os.environ.get(PREFIX + field.upper()):
             raw[field] = value
     return StandaloneGatewayConfig.model_validate(raw)
 
 
-def studio_directory() -> Path | None:
-    if path := os.environ.get("OPENVIKING_WEB_STUDIO_DIR"):
-        return Path(path).expanduser()
-    spec = find_spec("openviking")
-    if spec and spec.submodule_search_locations:
-        path = Path(next(iter(spec.submodule_search_locations))) / "web_studio" / "dist"
-        if path.is_dir():
-            return path
-    return None
-
-
-def create_standalone_app():
-    from .app import create_app
-
-    config = load_config()
-    if not config.management_key and config.openviking_url in PUBLIC_OPENVIKING_URLS:
-        logging.getLogger(__name__).warning(
-            "public_openviking_without_management_key: This gateway is open to every "
-            "OpenViking Cloud user. Set OPENVIKING_GATEWAY_MANAGEMENT_KEY to restrict "
-            "changes to upstreams and profiles."
-        )
-    return create_app(config, openviking_url=config.openviking_url, studio_dir=studio_directory())
+def factory():
+    """uvicorn factory: every worker rebuilds the configuration from the environment."""
+    return create_standalone_app(load_config())
 
 
 def main():
@@ -64,8 +46,9 @@ def main():
     config = load_config()
     import uvicorn
 
+    asyncio.run(check_openviking(config))
     uvicorn.run(
-        "openviking_gateway.cli:create_standalone_app",
+        "openviking_gateway.cli:factory",
         factory=True,
         host=config.host,
         port=config.port,

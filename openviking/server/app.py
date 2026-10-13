@@ -25,6 +25,12 @@ from openviking.server.config import (
 )
 from openviking.server.dependencies import set_server_config, set_service
 from openviking.server.error_mapping import map_exception
+from openviking.server.gateway_host import (
+    ScopedRoute,
+    create_embedded_gateway,
+    is_gateway_path,
+    mount_gateway,
+)
 from openviking.server.identity import Role
 from openviking.server.models import ERROR_CODE_TO_HTTP_STATUS, ErrorInfo, Response
 from openviking.server.profile_middleware import ProfileMiddleware
@@ -175,6 +181,7 @@ async def _initialize_runtime_state(
         manager=app.state.api_key_manager,
         oauth_store=getattr(app.state, "oauth_store", None),
         usage_audit_runtime=getattr(app.state, "usage_audit_runtime", None),
+        gateway_app=getattr(app.state, "gateway_app", None),
     )
     logger.info("OpenVikingService initialization complete")
 
@@ -385,16 +392,20 @@ def create_app(
         init_otel_log_handler_from_server_config(config)
 
         # Start MCP session manager (must be active before /mcp requests)
-        from openviking.server.gateway_host import gateway_lifespan, seed_dev_defaults
         from openviking.server.mcp_endpoint import mcp_lifespan
 
+        gateway = app.state.gateway_app
         async with AsyncExitStack() as stack:
             await stack.enter_async_context(mcp_lifespan())
-            await stack.enter_async_context(gateway_lifespan(app.state.gateway_app))
+            # Deletion setup receives the gateway, so it must be running first.
+            if gateway is not None:
+                await stack.enter_async_context(gateway.router.lifespan_context(gateway))
             if service is not None:
                 await _initialize_runtime_state(app, service, config)
-            if config.get_effective_auth_mode() == "dev":
-                await seed_dev_defaults(app.state.gateway_app)
+            if gateway is not None and config.get_effective_auth_mode() == "dev":
+                from openviking_gateway.app import seed_defaults
+
+                await seed_defaults(gateway, "default")
             yield
 
         # Cleanup
@@ -467,8 +478,6 @@ def create_app(
 
         @app.middleware("http")
         async def dump_http_body(request: Request, call_next: Callable):
-            from openviking.server.gateway_host import is_gateway_path
-
             if is_gateway_path(request.url.path):
                 return await call_next(request)
             return await _dump_body_fn(request, call_next)
@@ -806,26 +815,11 @@ def create_app(
     # MCP endpoint — serves 16 tools (find, search, read, write, edit,
     # list, tree, remember, add_resource, add_skill, list_watches, cancel_watch,
     # grep, glob, forget, health) via streamable HTTP for MCP clients.
-    from starlette.routing import Match, Route
-
     from openviking.server.mcp_endpoint import create_mcp_app
 
-    class _ScopedRoute(Route):
-        """Expose the selected route through ``scope["route"]``, matching
-        ``APIRoute.matches``, so outer observability can resolve the static
-        ``/mcp`` route template."""
-
-        def matches(self, scope):
-            match, child_scope = super().matches(scope)
-            if match != Match.NONE:
-                child_scope["route"] = self
-            return match, child_scope
-
     app.routes.append(
-        _ScopedRoute("/mcp", endpoint=create_mcp_app(), methods=["GET", "POST", "DELETE"])
+        ScopedRoute("/mcp", endpoint=create_mcp_app(), methods=["GET", "POST", "DELETE"])
     )
-
-    from openviking.server.gateway_host import create_embedded_gateway, mount_gateway
 
     gateway_config = get_openviking_config().gateway
     app.state.gateway_app = create_embedded_gateway(gateway_config, config, lambda: service)

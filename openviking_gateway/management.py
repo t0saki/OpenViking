@@ -5,7 +5,6 @@
 import asyncio
 import copy
 import hmac
-import inspect
 import secrets
 import time
 from dataclasses import dataclass
@@ -17,18 +16,52 @@ from pydantic import ValidationError
 
 from .capture import reset_capture
 from .client import VikingError
-from .config import PUBLIC_OPENVIKING_URLS, normalize_url
 from .models import CaptureReset, KeyRequest, Policy, Upstream
 from .proxy import upstream_headers, upstream_url
 from .records import RecordKind as K
-from .storage import digest
+from .storage import delete_account_data, delete_user_data, digest
 
 PREFIX = "/api/v1/admin/gateway"
 MANAGEMENT_HEADER = "x-openviking-gateway-management-key"
+# Fields a VLM re-import refreshes; everything else may have been edited in the gateway.
+VLM_SOURCE_FIELDS = ("base_url", "api_key", "headers", "protocol", "vendor", "coding_plan")
+DETAILS = {
+    "management_key_invalid": "The gateway management key is incorrect.",
+    "management_key_required": "Changing upstreams and profiles requires the management key.",
+    "other_account": "This OpenViking API key cannot access the selected account.",
+    "forbidden": "This OpenViking role cannot perform the operation.",
+    "not_found": "The object does not exist.",
+    "in_use": "Gateway keys still use this object; revoke them first.",
+    "invalid_configuration": "The request body is invalid.",
+    "unknown_user": "The user does not exist in this account.",
+    "user_key_unreadable": "OpenViking stores only a hash of this user's API key; paste the key.",
+    "unknown_policy": "The context profile does not exist.",
+    "unknown_upstream": "An upstream does not exist.",
+    "vlm_import_unavailable": "This gateway cannot read OpenViking model settings.",
+    "vlm_import_forbidden": "Importing OpenViking model settings requires the management key "
+    "or, without one, OpenViking root.",
+}
 
 
-def fail(status, reason, **extra):
-    raise HTTPException(status, {"reason": reason, "detail": reason, **extra})
+def fail(status, reason, detail=None, **extra):
+    raise HTTPException(status, {"reason": reason, "detail": detail or DETAILS[reason], **extra})
+
+
+async def read_body(request, model, prepare=None):
+    """Validate a JSON body; error details never echo submitted values."""
+    try:
+        payload = await request.json()
+        return model.model_validate(prepare(payload) if prepare else payload)
+    except ValidationError as error:
+        fail(
+            422,
+            "invalid_configuration",
+            "; ".join(
+                item["msg"] for item in error.errors(include_input=False, include_context=False)
+            ),
+        )
+    except ValueError:
+        fail(422, "invalid_configuration")
 
 
 def request_credential(request):
@@ -89,45 +122,29 @@ async def caller(request, *, require_identity=True, write=False):
     return Caller(account, credential, identity, manager, can_write)
 
 
-async def delete_user_data(app, account_id, user_id):
-    from .storage import delete_user_data as delete
-
-    await delete(app.state.management, app.state.store, account_id, user_id)
-    return {"deleted": True}
-
-
-async def delete_account_data(app, account_id):
-    from .storage import delete_account_data as delete
-
-    await delete(app.state.management, app.state.store, account_id)
-    return {"deleted": True}
-
-
 async def import_vlm_objects(app, account_id):
-    source = app.state.vlm_source
-    if source is None:
-        fail(404, "vlm_import_unavailable")
-    result = source(account_id)
-    if inspect.isawaitable(result):
-        result = await result
-    imported, confirmation = [], []
+    """Save the host's VLM candidates as upstreams; a re-import keeps gateway-side edits."""
+    management = app.state.management
+    result = await app.state.vlm_source(account_id)
+    imported, confirmation, skipped = [], [], list(result.get("skipped", []))
     for candidate in result.get("upstreams", []):
         payload = dict(candidate)
         identifier = payload.pop("id")
-        value = Upstream.model_validate(payload).model_dump()
-        previous = await app.state.management.get(account_id, "upstreams", identifier)
-        if previous and previous.get("allow_coding_plan"):
-            value["allow_coding_plan"] = True
-        await app.state.management.save(account_id, "upstreams", identifier, value)
+        if previous := await management.get(account_id, "upstreams", identifier):
+            kept = {k: v for k, v in previous.items() if k not in {"id", "revision"}}
+            payload = {**kept, **{k: payload[k] for k in VLM_SOURCE_FIELDS if k in payload}}
+        try:
+            value = Upstream.model_validate(payload).model_dump()
+        except ValueError:
+            # Validation errors can include secrets from the input; never expose them.
+            skipped.append({"id": identifier, "reason": "invalid_configuration"})
+            continue
+        await management.save(account_id, "upstreams", identifier, value)
         row = {"id": identifier, "name": value["name"]}
         (
             confirmation if value["coding_plan"] and not value["allow_coding_plan"] else imported
         ).append(row)
-    return {
-        "imported": imported,
-        "needs_confirmation": confirmation,
-        "skipped": result.get("skipped", []),
-    }
+    return {"imported": imported, "needs_confirmation": confirmation, "skipped": skipped}
 
 
 def can_import(app, who):
@@ -144,12 +161,6 @@ def register_management(app):
     @router.get("/access")
     async def access(request: Request):
         who = await caller(request, require_identity=False)
-        warnings = []
-        if (
-            not app.state.config.management_key
-            and normalize_url(app.state.openviking_url) in PUBLIC_OPENVIKING_URLS
-        ):
-            warnings.append("public_openviking_without_management_key")
         return {
             "managed": bool(app.state.config.management_key),
             "can_write_objects": who.can_write,
@@ -159,7 +170,7 @@ def register_management(app):
             "role": who.role,
             "account_id": who.account_id,
             "user_id": who.user_id,
-            "warnings": warnings,
+            "warnings": app.state.warnings,
         }
 
     @router.get("/overview")
@@ -203,14 +214,16 @@ def register_management(app):
         who = await caller(request)
         if who.role not in {"root", "admin"}:
             fail(403, "forbidden")
-        return await delete_user_data(app, who.account_id, user_id)
+        await delete_user_data(management, store, who.account_id, user_id)
+        return {"deleted": True}
 
     @router.delete("/account/data")
     async def delete_account(request: Request):
         who = await caller(request)
         if who.role != "root":
             fail(403, "forbidden")
-        return await delete_account_data(app, who.account_id)
+        await delete_account_data(management, store, who.account_id)
+        return {"deleted": True}
 
     @router.post("/upstreams/import-vlm")
     async def import_vlm(request: Request):
@@ -221,88 +234,83 @@ def register_management(app):
             fail(403, "vlm_import_forbidden")
         return await import_vlm_objects(app, who.account_id)
 
-    @router.get("/{kind}")
-    async def list_objects(kind: str, request: Request):
-        if kind not in {"upstreams", "policies", "keys"}:
-            fail(404, "not_found")
-        who = await caller(request, require_identity=kind == "keys")
-        values = await management.list(
-            who.account_id, kind, user_id=who.log_user if kind == "keys" else None
-        )
-        return [public_object(kind, value, read_only=not who.can_write) for value in values]
+    def object_routes(kind, model):
+        @router.get(f"/{kind}")
+        async def list_objects(request: Request):
+            who = await caller(request, require_identity=False)
+            values = await management.list(who.account_id, kind)
+            return [public_object(kind, value, read_only=not who.can_write) for value in values]
 
-    @router.get("/{kind}/{identifier}")
-    async def get_object(kind: str, identifier: str, request: Request):
-        if kind not in {"upstreams", "policies", "keys"}:
-            fail(404, "not_found")
-        who = await caller(request, require_identity=kind == "keys")
-        value = await management.get(who.account_id, kind, identifier)
-        if not value or kind == "keys" and who.role == "user" and value["user_id"] != who.user_id:
-            fail(404, "not_found")
-        return public_object(kind, value, read_only=not who.can_write)
+        @router.get(f"/{kind}/{{identifier}}")
+        async def get_object(identifier: str, request: Request):
+            who = await caller(request, require_identity=False)
+            value = await management.get(who.account_id, kind, identifier)
+            if not value:
+                fail(404, "not_found")
+            return public_object(kind, value, read_only=not who.can_write)
 
-    @router.api_route("/{kind}/{identifier}", methods=["PUT", "DELETE"])
-    async def change_object(kind: str, identifier: str, request: Request):
-        if kind not in {"upstreams", "policies", "keys"}:
-            fail(404, "not_found")
-        who = await caller(request, require_identity=kind == "keys", write=kind != "keys")
-        previous = await management.get(who.account_id, kind, identifier)
-        if (
-            kind == "keys"
-            and who.role == "user"
-            and previous
-            and previous["user_id"] != who.user_id
-        ):
-            fail(404, "not_found")
-        if request.method == "DELETE":
-            if kind != "keys":
-                keys = await management.list(who.account_id, "keys")
-                count = sum(
-                    k["policy_id"] == identifier
-                    if kind == "policies"
-                    else identifier in k["upstream_ids"]
-                    for k in keys
+        @router.put(f"/{kind}/{{identifier}}")
+        async def save_object(identifier: str, request: Request):
+            who = await caller(request, require_identity=False, write=True)
+            if kind == "upstreams":
+                previous = await management.get(who.account_id, kind, identifier) or {}
+                value = await read_body(
+                    request, model, lambda payload: keep_upstream_secrets(payload, previous)
                 )
-                if count:
-                    fail(409, "in_use", key_count=count)
+            else:
+                value = await read_body(request, model)
+            saved = await management.save(who.account_id, kind, identifier, value.model_dump())
+            return public_object(kind, saved)
+
+        @router.delete(f"/{kind}/{{identifier}}")
+        async def delete_object(identifier: str, request: Request):
+            who = await caller(request, require_identity=False, write=True)
+            count = sum(
+                key["policy_id"] == identifier
+                if kind == "policies"
+                else identifier in key["upstream_ids"]
+                for key in await management.list(who.account_id, "keys")
+            )
+            if count:
+                fail(409, "in_use", key_count=count)
             await management.delete(who.account_id, kind, identifier)
             return {"deleted": True}
-        if kind == "keys":
-            fail(405, "replacement_key_required")
-        try:
-            payload = await request.json()
-            if kind == "upstreams":
-                payload = keep_upstream_secrets(payload, previous or {})
-                value = Upstream.model_validate(payload).model_dump()
-            else:
-                value = Policy.model_validate(payload).model_dump()
-        except ValidationError as error:
-            fail(
-                422,
-                "invalid_configuration",
-                detail="; ".join(
-                    item["msg"] for item in error.errors(include_input=False, include_context=False)
-                ),
-            )
-        except ValueError:
-            fail(422, "invalid_configuration")
-        return public_object(kind, await management.save(who.account_id, kind, identifier, value))
+
+    object_routes("upstreams", Upstream)
+    object_routes("policies", Policy)
+
+    def hidden(who, key):
+        """A user sees only the keys issued for that user."""
+        return who.role == "user" and key["user_id"] != who.user_id
+
+    @router.get("/keys")
+    async def list_keys(request: Request):
+        who = await caller(request)
+        values = await management.list(who.account_id, "keys", user_id=who.log_user)
+        return [public_object("keys", value) for value in values]
+
+    @router.get("/keys/{identifier}")
+    async def get_key(identifier: str, request: Request):
+        who = await caller(request)
+        value = await management.get(who.account_id, "keys", identifier)
+        if not value or hidden(who, value):
+            fail(404, "not_found")
+        return public_object("keys", value)
+
+    # Keys are immutable: no PUT route, so a replacement must be issued.
+    @router.delete("/keys/{identifier}")
+    async def revoke_key(identifier: str, request: Request):
+        who = await caller(request)
+        value = await management.get(who.account_id, "keys", identifier)
+        if value and hidden(who, value):
+            fail(404, "not_found")
+        await management.delete(who.account_id, "keys", identifier)
+        return {"deleted": True}
 
     @router.post("/keys")
     async def issue_key(request: Request):
         who = await caller(request)
-        try:
-            value = KeyRequest.model_validate(await request.json())
-        except ValidationError as error:
-            fail(
-                422,
-                "invalid_configuration",
-                detail="; ".join(
-                    item["msg"] for item in error.errors(include_input=False, include_context=False)
-                ),
-            )
-        except ValueError:
-            fail(422, "invalid_configuration")
+        value = await read_body(request, KeyRequest)
         user_id = value.user_id or who.user_id
         if who.role == "user" and user_id != who.user_id:
             fail(403, "forbidden")
@@ -367,7 +375,7 @@ def register_management(app):
     async def reset(identifier: str, data: CaptureReset, request: Request):
         who = await caller(request)
         key = await management.get(who.account_id, "keys", identifier)
-        if not key or who.role == "user" and key["user_id"] != who.user_id:
+        if not key or hidden(who, key):
             fail(404, "not_found")
         scope = digest(who.account_id + "\0" + key["user_id"] + "\0" + data.protocol)
         for session in (digest(data.session), data.session):
@@ -386,9 +394,16 @@ def register_management(app):
             fail(404, "not_found")
         url = upstream_url(upstream, "/v1/models")
         try:
+            headers = upstream_headers(upstream, {})
+        except HTTPException as error:
+            if error.status_code != 401:
+                raise
+            # No stored key (passthrough keys come from clients): nothing is sent.
+            return {"ok": False, "reason": "upstream_key_missing", "url": url}
+        try:
             async with app.state.http.get(
                 url,
-                headers=upstream_headers(upstream, {}),
+                headers=headers,
                 timeout=aiohttp.ClientTimeout(total=10),
                 allow_redirects=False,
             ) as response:
@@ -418,14 +433,6 @@ def register_management(app):
                         False,
                     )
                 return {"ok": ok, "status": status, "reason": reason, "url": url}
-        except HTTPException as error:
-            # Provider credential configuration must not look like a failed OV login.
-            return {
-                "ok": False,
-                "status": error.status_code,
-                "reason": "upstream_key_rejected",
-                "url": url,
-            }
         except (aiohttp.ClientError, asyncio.TimeoutError):
             return {"ok": False, "reason": "upstream_unavailable", "url": url}
 
@@ -453,7 +460,9 @@ def keep_upstream_secrets(payload, previous):
     """
     if not isinstance(payload, dict):
         raise ValueError("expected an upstream object")
-    same_base = payload.get("base_url", "").rstrip("/") == previous.get("base_url", "").rstrip("/")
+    same_base = str(payload.get("base_url") or "").rstrip("/") == previous.get(
+        "base_url", ""
+    ).rstrip("/")
     if not payload.get("api_key"):
         payload["api_key"] = previous.get("api_key", "") if same_base else ""
     stored = previous.get("headers", {}) if same_base else {}

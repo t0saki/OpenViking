@@ -34,7 +34,12 @@ def v5_database(tmp_path):
             "https://ark.test/api/compatible/v1",
             "https://ark.test/api/compatible",
         ),
+        # v5 requested base + /v1/...; this GLM base was already wrong and stays so.
         ("generic", "chat", "https://glm.test/api/paas/v4", "https://glm.test/api/paas/v4"),
+        ("generic", "chat", "https://openrouter.ai/api", "https://openrouter.ai/api/v1"),
+        ("generic", "responses", "https://api.groq.com/openai", "https://api.groq.com/openai/v1"),
+        ("openai", "chat", "https://proxy.test/v1", "https://proxy.test/v1"),
+        ("ark", "chat", "https://ark.test/custom", "https://ark.test/custom"),
         ("generic", "anthropic", "https://anthropic.test", "https://anthropic.test"),
     ]
     with sqlite3.connect(path) as connection:
@@ -69,6 +74,14 @@ def v5_database(tmp_path):
     return path, key, records
 
 
+def migrated(values):
+    return {v["id"]: (v["base_url"], v["revision"]) for v in values}
+
+
+def expected(records):
+    return {str(i): (r[3], 7 + (r[2] != r[3])) for i, r in enumerate(records)}
+
+
 @pytest.mark.asyncio
 async def test_v5_migration_is_idempotent_and_preserves_encrypted_secrets(v5_database):
     path, key, records = v5_database
@@ -76,9 +89,8 @@ async def test_v5_migration_is_idempotent_and_preserves_encrypted_secrets(v5_dat
     try:
         await store.initialize()
         values = await store.list("a", "upstreams")
-        assert [v["base_url"] for v in values] == [r[3] for r in records]
+        assert migrated(values) == expected(records)
         assert all(v["api_key"] == "kept-secret" for v in values)
-        assert [v["revision"] for v in values] == [7 + (r[2] != r[3]) for r in records]
         await store.initialize()
         assert await store.list("a", "upstreams") == values
         assert len(await store.logs("a")) == 1
@@ -130,6 +142,9 @@ async def test_user_filtering_and_deletion_preserves_other_users(tmp_path):
                 scope = digest(account + "\0" + user + "\0" + protocol)
                 with kernel.connect() as connection:
                     kernel.touch(connection, scope, "session")
+        with management.connect() as connection:
+            users = [r[0] for r in connection.execute("SELECT user FROM request_logs ORDER BY id")]
+        assert users == ["alice", "bob", "alice"]
         assert len(await management.list("a", "keys", user_id="alice")) == 1
         assert len(await management.logs("a", user_id="alice")) == 1
         await delete_user_data(management, kernel, "a", "alice")
@@ -161,9 +176,7 @@ async def test_workers_can_migrate_same_v5_database(v5_database):
     try:
         await asyncio.gather(*(worker.initialize() for worker in workers))
         for worker in workers:
-            values = await worker.list("a", "upstreams")
-            assert [v["base_url"] for v in values] == [r[3] for r in records]
-            assert [v["revision"] for v in values] == [7 + (r[2] != r[3]) for r in records]
+            assert migrated(await worker.list("a", "upstreams")) == expected(records)
     finally:
         for worker in workers:
             worker.close()

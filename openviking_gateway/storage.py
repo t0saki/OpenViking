@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import os
 import queue
+import re
 import sqlite3
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -266,18 +267,22 @@ class ManagementStore(Database):
                     c.execute("ALTER TABLE request_logs ADD COLUMN user TEXT")
                     for row in c.execute("SELECT * FROM objects WHERE kind='upstreams'").fetchall():
                         value = self.decode(row["value"])
+                        # Keep v5 request URLs: v5 appended /v1 to non-Ark bases lacking it.
+                        # Bases already ending in another version (/api/paas/v4) produced
+                        # .../v4/v1 in v5, which no provider serves; leave them as entered.
                         base = value["base_url"].rstrip("/")
-                        if not urlsplit(base).path:
-                            if value.get("vendor") in {"ark", "byteplus"}:
-                                base += (
-                                    "/api/compatible"
-                                    if value["protocol"] == "anthropic"
-                                    else "/api/v3"
-                                )
-                            elif value["protocol"] != "anthropic":
-                                base += "/v1"
-                        if value["protocol"] == "anthropic" and base.endswith("/v1"):
-                            base = base[:-3]
+                        path = urlsplit(base).path
+                        ark = value.get("vendor") in {"ark", "byteplus"}
+                        if value["protocol"] == "anthropic":
+                            if ark and not path:
+                                base += "/api/compatible"
+                            if base.endswith("/v1"):
+                                base = base[:-3]
+                        elif ark:
+                            if not path:
+                                base += "/api/v3"
+                        elif not re.search(r"/v\d+$", path):
+                            base += "/v1"
                         if base != value["base_url"]:
                             value["base_url"] = base
                             c.execute(
@@ -398,64 +403,6 @@ class ManagementStore(Database):
 
         await self.run(log, write=True)
 
-    async def record_request(
-        self,
-        account,
-        credential_id,
-        value,
-        *,
-        response_id=None,
-        upstream_id=None,
-        response_ttl=None,
-    ):
-        """Record a completed request only while its gateway key still exists.
-
-        The key check and both writes share SQLite's write transaction, so user/account
-        deletion in another worker cannot be followed by late stream bookkeeping.
-        """
-
-        def record():
-            with self.connect() as c:
-                c.execute("BEGIN IMMEDIATE")
-                row = c.execute(
-                    "SELECT value FROM objects WHERE account=? AND kind='keys' AND id=?",
-                    (account, credential_id),
-                ).fetchone()
-                if not row:
-                    return False
-                credential = self.decode(row["value"])
-                now = time.time()
-                if credential.get("expires_at", float("inf")) <= now:
-                    return False
-                user_id = credential["user_id"]
-                if response_id is not None:
-                    if upstream_id is None or response_ttl is None:
-                        raise ValueError("Response bookkeeping requires an upstream and TTL")
-                    identifier = digest(credential_id + response_id)
-                    response = {
-                        "upstream_id": upstream_id,
-                        "user_id": user_id,
-                        "expires_at": now + response_ttl,
-                    }
-                    c.execute(
-                        "INSERT INTO objects VALUES (?,'responses',?,1,?) "
-                        "ON CONFLICT(account,kind,id) DO UPDATE "
-                        "SET revision=revision+1,value=excluded.value",
-                        (account, identifier, self.encode(response)),
-                    )
-                    c.execute(
-                        "INSERT OR REPLACE INTO object_expiry VALUES (?,'responses',?,?)",
-                        (account, identifier, response["expires_at"]),
-                    )
-                c.execute(
-                    "INSERT INTO request_logs(account,time,value,user) VALUES (?,?,?,?)",
-                    (account, now, self.encode(value), user_id),
-                )
-                c.commit()
-                return True
-
-        return await self.run(record, write=True)
-
     async def logs(self, account, limit=200, user_id=None):
         def read():
             with self.connect() as c:
@@ -527,9 +474,10 @@ class ManagementStore(Database):
 
 async def delete_user_data(management, store, account, user_id):
     """Revoke keys and erase gateway state; OpenViking memory is unaffected."""
+    # Keys go first, so a response finishing meanwhile no longer finds one to record state for.
+    await management.delete_user(account, user_id)
     for protocol in ("chat", "responses", "anthropic"):
         await store.expire(0, digest(account + "\0" + user_id + "\0" + protocol))
-    await management.delete_user(account, user_id)
 
 
 async def delete_account_data(management, store, account):
