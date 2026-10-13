@@ -93,7 +93,7 @@ const common = {
       description:
         '运行 openviking-server init 并选择 Update gateway；也可以在 ov.conf 中加入下面的配置，然后重启 OpenViking。',
     },
-    contact: '请联系部署这台 OpenViking 的人开启网关。',
+    contact: '请联系部署 OpenViking 的人开启网关。',
     trusted: {
       title: '网关不支持 Trusted 模式',
       description:
@@ -111,6 +111,46 @@ const common = {
     terminal: '终端',
     environment: '环境变量',
     docs: '部署说明',
+    enable: {
+      description: 'Studio 可以直接开启：把设置写入 ov.conf，然后重启服务。',
+      descriptionManualRestart:
+        'Studio 可以把设置写入 ov.conf。这台服务不能从 Studio 重启，保存后请自行重启。',
+      action: '开启网关',
+      confirmTitle: '开启网关？',
+      confirmRestart:
+        'Studio 会在 ov.conf 中写入 gateway.enabled: true，然后重启服务。重启期间请求会中断几秒。',
+      confirmManualRestart:
+        'Studio 会在 ov.conf 中写入 gateway.enabled: true。重启服务后网关才会开启。',
+      protect: '只有持有网关管理密钥的人才能修改上游和上下文配置',
+      protectHint:
+        'Studio 会生成密钥，写入 ov.conf 的 gateway.management_key，保存后只显示一次。',
+      checking: '正在读取 ov.conf…',
+      saving: '正在保存 ov.conf…',
+      restarting: '正在保存 ov.conf 并重启服务…',
+      savedRestart:
+        '已保存到 ov.conf。重启服务后网关才会开启，重启完成后点“重试”。',
+      readOnly:
+        '这台服务的 ov.conf 是只读的（例如由 Helm ConfigMap 挂载），Studio 改不了它。请在部署配置中开启网关，然后重启服务：',
+      helm: 'Helm values',
+      stillOff:
+        '服务已重启，但网关仍未开启。请检查 OPENVIKING_GATEWAY_ENABLED 是否设成了 false 之类的值，它会覆盖 ov.conf。',
+      rolledBack:
+        '服务拒绝了新配置，继续使用原来的配置，所以网关仍未开启。原因请查看服务日志。',
+      conflict: 'ov.conf 在页面加载后被改过，请重新读取后再试。',
+      reload: '重新读取 ov.conf',
+      failed: '开启网关失败：{{message}}',
+      restartFailed:
+        'ov.conf 已保存，但无法确认服务是否重启成功：{{message}}。请检查服务状态，然后点“重试”。',
+      keyTitle: '保存网关管理密钥',
+      keyOnce:
+        '密钥只显示这一次。修改上游和上下文配置时需要它；关闭这个浏览器标签页之前，当前页面保持解锁。',
+      copyKey: '复制网关管理密钥',
+      copyFailed: '复制失败，密钥已选中，请按 Ctrl+C 或 ⌘C 复制。',
+      keyOnceManual:
+        '密钥只显示这一次。修改上游和上下文配置时需要它；重启服务后，在网关页面点“输入网关管理密钥”并粘贴。',
+      keySaved: '已保存',
+      continue: '已保存，打开网关',
+    },
   },
   errors: {
     reasons: {

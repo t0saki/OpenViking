@@ -224,7 +224,7 @@ Claude Code、Codex 和 pi 需要按项目区分记忆，或者要求每次工�
    - 回答 yes：每个登录的用户都能配置本账号的上游和上下文配置。
    - 回答 no：init 生成一个以 `ovgm_` 开头的网关管理密钥，打印出来并写入 `ov.conf` 的 `gateway.management_key`。只有输入这个密钥才能修改上游和上下文配置，见[网关管理密钥](22-gateway-operations.md#网关管理密钥)。
 
-   然后重启服务。
+   然后重启服务。也可以用 root 密钥登录 Studio，在 OpenViking 网关页面点**开启网关**：Studio 会写入 `ov.conf` 并重启服务（仅限只有一个 worker 的服务端）。
 2. **准备 OpenViking API 密钥。** 用你自己的用户 API 密钥，或者按[认证](04-authentication.md)用 root 密钥创建账号和用户。
 3. **登录 Studio。** 打开 `https://ov.example.com/studio/`，在**连接设置**中填入 API 密钥，然后在侧边栏选择 **OpenViking 网关**。
 4. **添加上游。** 在“上游”标签页点**添加上游**，选择服务商和客户端使用的协议（下面的测试请求用 Chat Completions），粘贴服务商的 API Key 后保存。在上游列表里点**测试**，确认网关能连上服务商。如果标签页是只读的，说明部署者设置了网关管理密钥，见[在 Studio 中管理网关](22-gateway-operations.md#在-studio-中管理网关)。

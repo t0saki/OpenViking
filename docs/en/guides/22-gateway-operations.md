@@ -89,6 +89,8 @@ You can also merge this into `ov.conf` and restart:
 }
 ```
 
+On a server that uses API keys, root can also choose **Enable gateway** on Studio's OpenViking Gateway page, which writes `gateway.enabled: true` to `ov.conf` and restarts the server (the restart from Studio needs a single-worker server; otherwise Studio only saves the file and you restart the server yourself).
+
 Open `/studio/` on the server and choose **OpenViking Gateway** in the sidebar. In dev mode, if the default account has no upstreams, the gateway imports the server's usable VLM credentials as upstreams at startup and creates a `default` context profile. Imported Coding Plan upstreams need confirmation before use. If nothing can be imported, add an upstream by hand.
 
 **Letting an agent change the configuration.** An agent that holds the root API key can edit `ov.conf` and restart the server through the [runtime configuration API](../api/08-admin.md#runtime-configuration). A standalone gateway does not offer this API.
@@ -781,7 +783,7 @@ When an embedded gateway cannot start, the whole OpenViking Server stops. Read t
 
 | Card | What to do |
 | --- | --- |
-| The gateway is not enabled on this OpenViking server (404) | Run `openviking-server init` → **Update gateway**, or set `gateway.enabled: true` in `ov.conf` and restart. Regular users see a card that only asks them to contact whoever deployed the server. |
+| The gateway is not enabled on this OpenViking server (404) | Run `openviking-server init` → **Update gateway**, or set `gateway.enabled: true` in `ov.conf` and restart. On a server that uses API keys, root can choose **Enable gateway** on that page instead. Account admins and regular users see a card that only asks them to contact whoever deployed the server. |
 | Connect to OpenViking first, or Your OpenViking API key is invalid (401) | Open connection settings and enter your current OpenViking API key. |
 | The gateway does not support Trusted mode (`trusted_mode_unsupported`) | Switch the server to `api_key` authentication. |
 | The gateway cannot reach OpenViking (`openviking_unreachable`) | Standalone gateways only: check `openviking_url` (in `gateway.conf` or `OPENVIKING_GATEWAY_OPENVIKING_URL`) and the network. |

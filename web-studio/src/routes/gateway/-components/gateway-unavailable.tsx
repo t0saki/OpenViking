@@ -1,47 +1,15 @@
-import type * as React from 'react'
 import { Link } from '@tanstack/react-router'
-import { KeyRoundIcon, RefreshCwIcon, ServerOffIcon } from 'lucide-react'
+import { KeyRoundIcon, RefreshCwIcon } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '#/components/ui/button'
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '#/components/ui/card'
 import { useAppConnection } from '#/hooks/use-app-connection'
 import type { GatewayError } from '../-lib/api'
 import { gatewayErrorMessage } from '../-lib/localize'
 import { CodeBlock } from './code-block'
+import { EnableGatewayCard } from './gateway-enable'
+import { SetupCard } from './setup-card'
 
 const CONFIG_FILE = 'ov.conf'
-
-function SetupCard({
-  title,
-  description,
-  children,
-  actions,
-}: {
-  title: string
-  description: string
-  children?: React.ReactNode
-  actions?: React.ReactNode
-}) {
-  return (
-    <Card className="mx-auto mt-6 w-full max-w-2xl">
-      <CardHeader className="gap-3">
-        <ServerOffIcon className="size-6 text-muted-foreground" />
-        <CardTitle>{title}</CardTitle>
-        <CardDescription className="leading-6">{description}</CardDescription>
-      </CardHeader>
-      <CardContent className="grid gap-4">
-        {children}
-        <div className="flex flex-wrap gap-2">{actions}</div>
-      </CardContent>
-    </Card>
-  )
-}
 
 export function GatewayConnect({ invalid = false }: { invalid?: boolean }) {
   const { t } = useTranslation('gateway')
@@ -64,19 +32,22 @@ export function GatewayConnect({ invalid = false }: { invalid?: boolean }) {
 export function GatewayUnavailable({
   error,
   onRetry,
+  checkAccess,
   retrying = false,
 }: {
   error: GatewayError
   onRetry: () => void
+  /** Asks for /access again; resolves true when the gateway answers. */
+  checkAccess: () => Promise<boolean>
   retrying?: boolean
 }) {
   const { t } = useTranslation('gateway')
   const { connectionRole, serverMode, openvikingUrl, isGatewayHost } =
     useAppConnection()
-  const canConfigure =
-    serverMode === 'dev' ||
-    connectionRole === 'admin' ||
-    connectionRole === 'root'
+  const isRoot = serverMode === 'dev' || connectionRole === 'root'
+  // On an OpenViking server only root can change ov.conf; a standalone
+  // gateway host keeps showing the instructions to its admins as well.
+  const canConfigure = isRoot || (isGatewayHost && connectionRole === 'admin')
   const retry = (
     <Button variant="outline" size="sm" disabled={retrying} onClick={onRetry}>
       <RefreshCwIcon className={retrying ? 'animate-spin' : undefined} />
@@ -85,31 +56,39 @@ export function GatewayUnavailable({
   )
   if (error.status === 401 && error.reason !== 'management_key_invalid')
     return <GatewayConnect invalid />
-  if (error.reason === 'not_enabled' || error.status === 404)
-    return (
+  if (error.reason === 'not_enabled' || error.status === 404) {
+    if (!canConfigure)
+      return (
+        <SetupCard
+          title={t('unavailable.notEnabled.title')}
+          description={t('unavailable.contact')}
+          actions={retry}
+        />
+      )
+    const instructions = (
       <SetupCard
         title={t('unavailable.notEnabled.title')}
-        description={t(
-          canConfigure
-            ? 'unavailable.notEnabled.description'
-            : 'unavailable.contact',
-        )}
+        description={t('unavailable.notEnabled.description')}
         actions={retry}
       >
-        {canConfigure ? (
-          <>
-            <CodeBlock
-              label={t('unavailable.terminal')}
-              code="openviking-server init"
-            />
-            <CodeBlock
-              label={CONFIG_FILE}
-              code={'{"gateway":{"enabled":true}}'}
-            />
-          </>
-        ) : null}
+        <CodeBlock
+          label={t('unavailable.terminal')}
+          code="openviking-server init"
+        />
+        <CodeBlock label={CONFIG_FILE} code={'{"gateway":{"enabled":true}}'} />
       </SetupCard>
     )
+    // Studio edits ov.conf through the admin API, which needs a root key.
+    if (isGatewayHost || serverMode !== 'api_key') return instructions
+    return (
+      <EnableGatewayCard
+        retry={retry}
+        retrying={retrying}
+        onOpenGateway={checkAccess}
+        fallback={instructions}
+      />
+    )
+  }
   if (error.reason === 'trusted_mode_unsupported')
     return (
       <SetupCard

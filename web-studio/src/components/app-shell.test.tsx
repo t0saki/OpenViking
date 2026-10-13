@@ -37,25 +37,29 @@ describe('ConnectionScopedRouteContent', () => {
 
 describe('gateway navigation', () => {
   it.each([
-    ['dev', 'root', true, 200, true],
-    ['api_key', 'user', true, 200, true],
-    ['api_key', 'user', true, 404, false],
-    ['api_key', 'admin', true, 404, true],
-    ['api_key', 'root', true, 404, true],
-    ['api_key', 'unknown', false, 200, false],
-    ['offline', 'user', true, 200, false],
-  ] as const)(
-    '%s %s allowed %s, /access %s: %s',
-    (serverMode, role, allowed, accessStatus, visible) => {
-      expect(
-        shouldShowGatewayNavigation({
-          isGatewayHost: false,
-          serverMode,
-          role,
-          allowed,
-          accessStatus,
-        }),
-      ).toBe(visible)
-    },
-  )
+    ['dev', true, true],
+    ['api_key', true, true],
+    ['trusted', true, true],
+    ['api_key', false, false],
+    ['offline', true, false],
+    ['checking', true, false],
+  ] as const)('%s allowed %s: %s', (serverMode, allowed, visible) => {
+    expect(
+      shouldShowGatewayNavigation({
+        isGatewayHost: false,
+        serverMode,
+        allowed,
+      }),
+    ).toBe(visible)
+  })
+
+  it('always shows the entry on a standalone gateway', () => {
+    expect(
+      shouldShowGatewayNavigation({
+        isGatewayHost: true,
+        serverMode: 'offline',
+        allowed: false,
+      }),
+    ).toBe(true)
+  })
 })

@@ -224,7 +224,7 @@ For a server that people reach over the network, with `api_key` authentication.
    - Yes: every signed-in user can configure their account's upstreams and context profiles.
    - No: init generates a gateway management key starting with `ovgm_`, prints it and saves it to `gateway.management_key` in `ov.conf`. Only requests that carry this key can change upstreams and context profiles; see [Gateway management key](22-gateway-operations.md#gateway-management-key).
 
-   Then restart the server.
+   Then restart the server. Alternatively, sign in to Studio with the root key and choose **Enable gateway** on the OpenViking Gateway page: Studio writes `ov.conf` and restarts the server (single-worker server only).
 2. **Get an OpenViking API key.** Use your own user API key, or use the root key to create an account and user as described in [Authentication](04-authentication.md).
 3. **Sign in to Studio.** Open `https://ov.example.com/studio/`, enter your API key under **Connection Settings**, and choose **OpenViking Gateway** in the sidebar.
 4. **Add an upstream.** On the Upstreams tab, choose **Add upstream**, pick the provider and the protocol your client uses (the test request below uses Chat Completions), paste the provider's API key and save. Choose **Test** in the upstream list to check that the gateway reaches the provider. If the tab is read-only, the deployer set a gateway management key; see [Manage the gateway in Studio](22-gateway-operations.md#manage-the-gateway-in-studio).

@@ -97,8 +97,7 @@ const common = {
       description:
         'Run openviking-server init and choose Update gateway, or add the configuration below to ov.conf and restart OpenViking.',
     },
-    contact:
-      'Ask whoever deployed this OpenViking server to enable the gateway.',
+    contact: 'Ask the person who deployed OpenViking to enable it.',
     trusted: {
       title: 'The gateway does not support Trusted mode',
       description:
@@ -116,6 +115,50 @@ const common = {
     terminal: 'Terminal',
     environment: 'Environment variable',
     docs: 'How to deploy',
+    enable: {
+      description:
+        'Studio can turn it on for you: it saves the setting to ov.conf and restarts the server.',
+      descriptionManualRestart:
+        "Studio can save the setting to ov.conf. This server can't be restarted from Studio, so restart it yourself afterwards.",
+      action: 'Enable gateway',
+      confirmTitle: 'Enable the gateway?',
+      confirmRestart:
+        'Studio writes gateway.enabled: true to ov.conf and restarts the server. Requests are interrupted for a few seconds while it restarts.',
+      confirmManualRestart:
+        'Studio writes gateway.enabled: true to ov.conf. The gateway turns on after you restart the server.',
+      protect:
+        'Only people with the gateway management key can change upstreams and context profiles',
+      protectHint:
+        'Studio generates the key and saves it as gateway.management_key in ov.conf, then shows it to you once.',
+      checking: 'Reading ov.conf…',
+      saving: 'Saving ov.conf…',
+      restarting: 'Saving ov.conf and restarting the server…',
+      savedRestart:
+        'Saved to ov.conf. Restart the server to turn the gateway on, then choose Retry.',
+      readOnly:
+        "ov.conf on this server is read-only (for example, mounted from a Helm ConfigMap), so Studio can't change it. Turn the gateway on in your deployment, then restart the server:",
+      helm: 'Helm values',
+      stillOff:
+        'The server restarted, but the gateway is still off. Check whether OPENVIKING_GATEWAY_ENABLED is set to a false value; it overrides ov.conf.',
+      rolledBack:
+        'The server rejected the new configuration and kept the old one, so the gateway is still off. Check the server log for the reason.',
+      conflict:
+        'ov.conf changed after this page loaded. Reload it and try again.',
+      reload: 'Reload ov.conf',
+      failed: "Couldn't enable the gateway: {{message}}",
+      restartFailed:
+        "ov.conf was saved, but Studio couldn't confirm the restart: {{message}}. Check the server, then choose Retry.",
+      keyTitle: 'Save your gateway management key',
+      keyOnce:
+        'Studio shows it only this once. You need it to change upstreams and context profiles; this browser tab stays unlocked until you close it.',
+      copyKey: 'Copy gateway management key',
+      copyFailed:
+        "Couldn't copy. The key is selected; press Ctrl+C or ⌘C to copy it.",
+      keyOnceManual:
+        'Studio shows it only this once. You need it to change upstreams and context profiles; after you restart the server, choose Enter gateway management key on the gateway page and paste it.',
+      keySaved: 'I saved it',
+      continue: 'I saved it, open the gateway',
+    },
   },
   errors: {
     reasons: {

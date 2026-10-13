@@ -161,6 +161,7 @@ export function GatewayLayout() {
         error={accessQuery.error}
         retrying={accessQuery.isFetching}
         onRetry={() => void accessQuery.refetch()}
+        checkAccess={async () => (await accessQuery.refetch()).isSuccess}
       />
     )
   if (!access) return <LoadingState />

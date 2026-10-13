@@ -143,7 +143,10 @@ describe('layout gates', () => {
     expect(api.getConnectionInfo).not.toHaveBeenCalled()
   })
 
-  it('explains how to turn the gateway on', async () => {
+  it('explains how to turn the gateway on in development mode', async () => {
+    state.serverMode = 'dev'
+    state.role = 'root'
+    state.credential = ''
     api.getAccess.mockRejectedValue(
       new GatewayError(
         'OpenViking Gateway is not enabled',
@@ -156,6 +159,15 @@ describe('layout gates', () => {
     expect(await screen.findByText('unavailable.notEnabled.title')).toBeTruthy()
     expect(screen.getByText(/"enabled":true/)).toBeTruthy()
     expect(screen.queryByText('tabs.overview')).toBeNull()
+  })
+
+  it('asks an account admin to contact the deployer', async () => {
+    api.getAccess.mockRejectedValue(
+      new GatewayError('Not Found', 404, undefined, 'not_enabled'),
+    )
+    renderLayout()
+    expect(await screen.findByText('unavailable.contact')).toBeTruthy()
+    expect(screen.queryByText(/"enabled":true/)).toBeNull()
   })
 
   it('shows gateway pages in development mode without credentials', async () => {

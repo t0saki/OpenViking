@@ -89,6 +89,8 @@ v0.5 网关用自己的密钥加密数据，这些数据会在首次启动时转
 }
 ```
 
+使用 API 密钥的服务端上，root 也可以在 Studio 的 OpenViking 网关页面点**开启网关**：Studio 会把 `gateway.enabled: true` 写入 `ov.conf` 并重启服务（从 Studio 重启要求服务端只有一个 worker，否则 Studio 只保存文件，需要你自行重启）。
+
 打开服务端的 `/studio/`，在侧边栏选择 **OpenViking 网关**。dev 模式下，如果默认账号还没有上游，网关启动时会导入服务端可用的 VLM 凭证作为上游，并创建 `default` 上下文配置。导入的 Coding Plan 上游需要确认后才能使用；没有可导入的凭证时，请手动添加上游。
 
 **让 Agent 修改配置。** 持有 root API 密钥的 Agent 可以通过[运行时配置接口](../api/08-admin.md#runtime-configuration)修改 `ov.conf` 并重启服务。独立网关不提供这组接口。
@@ -781,7 +783,7 @@ URL 必须是 HTTP(S)，不能含凭证、查询参数或 fragment。未知字�
 
 | 卡片 | 处理 |
 | --- | --- |
-| 这台 OpenViking 没有开启网关（404） | 运行 `openviking-server init` → **Update gateway**，或者在 `ov.conf` 中设置 `gateway.enabled: true` 后重启。普通用户看到的卡片只提示联系部署者开启网关。 |
+| 这台 OpenViking 没有开启网关（404） | 运行 `openviking-server init` → **Update gateway**，或者在 `ov.conf` 中设置 `gateway.enabled: true` 后重启。使用 API 密钥的服务端上，root 也可以直接在这个页面点**开启网关**。账号管理员和普通用户看到的卡片只提示联系部署者开启网关。 |
 | 先连接 OpenViking，或者 OpenViking API 密钥无效（401） | 打开连接设置，填入当前的 OpenViking API 密钥。 |
 | 网关不支持 Trusted 模式（`trusted_mode_unsupported`） | 把 Server 改为 `api_key` 认证。 |
 | 网关连不上 OpenViking（`openviking_unreachable`） | 只出现在独立网关：检查 `openviking_url`（`gateway.conf` 或 `OPENVIKING_GATEWAY_OPENVIKING_URL`）和网络。 |

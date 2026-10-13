@@ -59,7 +59,6 @@ import {
   AppConnectionProvider,
   useAppConnection,
 } from '#/hooks/use-app-connection'
-import type { ConnectionRole } from '#/hooks/use-app-connection'
 import type { ServerMode } from '#/hooks/use-server-mode'
 import { cn } from '#/lib/utils'
 import { useGateway } from '#/routes/gateway/-lib/use-gateway'
@@ -297,26 +296,23 @@ export function ConnectionScopedRouteContent({
   return serverMode === 'checking' ? null : children
 }
 
+/**
+ * Every signed-in user of an OpenViking server sees the gateway entry, even
+ * while the gateway is off: the page explains how to turn it on.
+ */
 export function shouldShowGatewayNavigation({
   isGatewayHost,
   serverMode,
-  role,
   allowed,
-  accessStatus,
 }: {
   isGatewayHost: boolean
   serverMode: ServerMode
-  role: ConnectionRole
   /** `useGateway().allowed`: the gateway can be asked for /access. */
   allowed: boolean
-  accessStatus?: number
 }): boolean {
   return (
     isGatewayHost ||
-    (serverMode !== 'checking' &&
-      serverMode !== 'offline' &&
-      allowed &&
-      (accessStatus !== 404 || role === 'admin' || role === 'root'))
+    (serverMode !== 'checking' && serverMode !== 'offline' && allowed)
   )
 }
 
@@ -362,9 +358,7 @@ function AppShellInner({ children }: { children: React.ReactNode }) {
   const showGateway = shouldShowGatewayNavigation({
     isGatewayHost,
     serverMode,
-    role: connectionRole,
     allowed: gateway.allowed,
-    accessStatus: gateway.accessQuery.error?.status,
   })
   // A standalone gateway serves only its own pages and the connection page.
   const navSections = isGatewayHost ? [] : NAV_SECTIONS
