@@ -198,7 +198,7 @@ Check `reason`, not the text of `detail`. When the server does not have the gate
 
 | HTTP | `reason` | Meaning and fix |
 | --- | --- | --- |
-| 401 | `management_key_invalid` | The management key is wrong. Ask the deployer for the current one. |
+| 401 | `management_key_invalid` | The management key is wrong. Ask the deployer for the current one, or see [Lost the management key](../guides/22-gateway-operations.md#lost-the-management-key). |
 | 403 | `management_key_required` | A management key is set, and changing upstreams or context profiles requires it. |
 | 401 | `openviking_http_401` | OpenViking rejected the API key. Use a currently valid key. |
 | 401 | `openviking_identity_missing` | OpenViking returned no user for this key. |

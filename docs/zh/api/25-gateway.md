@@ -198,7 +198,7 @@ curl -X POST "$SERVER_URL/gateway/admin/keys?account_id=team" \
 
 | HTTP | `reason` | 含义和处理 |
 | --- | --- | --- |
-| 401 | `management_key_invalid` | 管理密钥不正确。向部署者确认当前的管理密钥。 |
+| 401 | `management_key_invalid` | 管理密钥不正确。向部署者确认当前的管理密钥，或者见[忘记网关管理密钥](../guides/22-gateway-operations.md#忘记网关管理密钥)。 |
 | 403 | `management_key_required` | 已设置管理密钥，修改上游或上下文配置时必须带上它。 |
 | 401 | `openviking_http_401` | OpenViking 拒绝了 API 密钥。换用当前有效的密钥。 |
 | 401 | `openviking_identity_missing` | OpenViking 没有返回这把密钥对应的用户。 |
