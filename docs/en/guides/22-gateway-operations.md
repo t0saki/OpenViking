@@ -378,7 +378,7 @@ Users see only their own requests; account admins and root see the whole account
 
 The **Overview** tab summarizes the latest 10,000 requests within the log retention period (30 days by default):
 
-- Until the first request arrives, a **Get started** checklist, in the order upstream → context profile → key → client.
+- Until the first request arrives, a **Get started** checklist, in the order upstream → context profile → key → client. Until the first key exists, its **Quick mode** card does the first three steps in one click: it imports OpenViking's VLM settings when no upstream is usable, creates a context profile with the recommended settings when there is none, and issues a key for the current user. Outside local dev mode, root picks the key's user in the issue dialog instead.
 - **Requests**: the number of model requests, when the last one arrived, and their output tokens.
 - **First-call cache hit rate**: the share of input tokens served from the provider's prompt cache on the first model call of each new user message. This is the most important sign of a healthy gateway. It should stay close to what the provider reaches without the gateway. A clear drop usually means the history the gateway sends no longer matches the previous request; see [The first-call cache hit rate dropped](#the-first-call-cache-hit-rate-dropped).
 - **Within-turn cache hit rate**: the same for later calls in a turn, such as tool steps and OpenViking tool rounds. It is usually high.
