@@ -213,8 +213,9 @@ const common = {
     unknownCategory: 'Unknown category “{{name}}”',
     quotasAllZero: 'Set at least one category above 0, or turn the limit off',
     softBelowHard: 'Must be below the hard reminder',
-    baseUrl:
-      'Enter an http:// or https:// URL without credentials, query or fragment',
+    baseUrl: 'Enter an http:// or https:// URL without credentials or fragment',
+    baseUrlPlaceholder:
+      'The URL can only use the {api_key} placeholder, and not in the host',
     subscriptionKey:
       "Claude subscription tokens (sk-ant-oat…) aren't supported. Use a model API key.",
     apiKeyRequired:

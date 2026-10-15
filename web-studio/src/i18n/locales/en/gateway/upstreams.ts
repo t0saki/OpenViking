@@ -20,8 +20,6 @@ const upstreams = {
         'The model configuration is invalid. Check the server settings and import again.',
       openai_codex:
         'Codex OAuth credentials refresh periodically and cannot be used long term by the gateway. Add an upstream manually.',
-      azure:
-        'Azure OpenAI requires an api-version parameter that the gateway does not support yet. Add an upstream manually.',
       litellm_no_api_base:
         'This LiteLLM credential has no api_base. Add api_base to the server configuration and import again.',
       litellm_unsupported_route:
@@ -87,6 +85,8 @@ const upstreams = {
     passthrough:
       'Each client sends its own key, so there is no stored key to test with.',
     noKey: 'Add an API key first.',
+    exactEndpoint:
+      "An exact endpoint can't be tested without a real model request.",
     result: {
       unverified: 'Reachable, key unverified · {{status}}',
       ok: 'Reachable · {{status}}',
@@ -192,7 +192,7 @@ const upstreams = {
     baseUrl: {
       label: 'Base URL',
       description:
-        "Use base_url from the provider's SDK documentation. The gateway appends /chat/completions, /responses or /v1/messages. Add separate upstreams when a provider uses different base URLs for different protocols.",
+        "Use base_url from the provider's SDK documentation. The gateway appends /chat/completions, /responses or /v1/messages. Add separate upstreams when a provider uses different base URLs for different protocols. The URL may include a query; write the key as {api_key}.",
       preview: 'Requests go to',
       missingPath:
         'This provider needs a path in base_url. A domain alone sends requests to the wrong address.',
@@ -206,6 +206,13 @@ const upstreams = {
       label: 'Append protocol endpoint path',
       description:
         'Adds the path for the selected protocol to the Base URL. Turn this off when the Base URL is already the complete request endpoint.',
+    },
+    keyHeader: {
+      label: 'Send the key as',
+      authorization: 'Authorization: Bearer',
+      apiKey: 'api-key header (Azure OpenAI)',
+      xApiKey: 'x-api-key header',
+      inUrl: 'In the URL ({api_key}); no auth header is sent',
     },
     authMode: {
       label: 'Who provides the API key',

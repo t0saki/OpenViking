@@ -35,8 +35,13 @@ import type { Tone } from './status-badges'
 
 /** Why the stored upstream cannot be tested, or undefined when it can. */
 function testBlockedReason(
-  upstream: Pick<Upstream, 'auth_mode' | 'has_api_key'>,
-): 'passthrough' | 'noKey' | undefined {
+  upstream: Pick<
+    Upstream,
+    'auth_mode' | 'has_api_key' | 'append_endpoint_path'
+  >,
+): 'exactEndpoint' | 'passthrough' | 'noKey' | undefined {
+  // Upstreams saved before the setting existed append the path.
+  if (upstream.append_endpoint_path === false) return 'exactEndpoint'
   if (upstream.auth_mode === 'passthrough') return 'passthrough'
   return upstream.has_api_key ? undefined : 'noKey'
 }

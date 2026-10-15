@@ -197,8 +197,8 @@ const common = {
     unknownCategory: '未知分类“{{name}}”',
     quotasAllZero: '至少把一个分类设为大于 0，或关闭分类限额',
     softBelowHard: '须低于硬提醒时机',
-    baseUrl:
-      '请输入 http:// 或 https:// 地址，不能包含账号密码、查询参数或片段',
+    baseUrl: '请输入 http:// 或 https:// 地址，不能包含账号密码或 # 片段',
+    baseUrlPlaceholder: '地址里只能使用 {api_key} 占位符，且不能放在域名里',
     subscriptionKey:
       '不支持 Claude 订阅令牌（sk-ant-oat…），请使用模型 API Key。',
     apiKeyRequired: '请填写 API Key，或改为由每个客户端自带 API Key',
