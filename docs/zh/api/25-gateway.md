@@ -92,10 +92,11 @@ curl -X PUT "$SERVER_URL/gateway/admin/upstreams/openai?account_id=team" \
 
 ### 连接测试
 
-`POST /gateway/admin/upstreams/{identifier}/test` 用已存的凭证请求服务商的模型列表，超时 10 秒，返回 `{ok, status, reason, url}`；没有收到响应时不含 `status`。只读调用方也能使用。Anthropic 上游同时在 `x-api-key` 和 `Authorization: Bearer` 中发送密钥，Chat Completions 和 Responses 上游只发送 Bearer。
+`POST /gateway/admin/upstreams/{identifier}/test` 用已存的凭证请求服务商的模型列表，超时 10 秒，返回 `{ok, status, reason, url}`；没有收到响应时不含 `status`。只读调用方也能使用。Anthropic 上游同时在 `x-api-key` 和 `Authorization: Bearer` 中发送密钥，Chat Completions 和 Responses 上游只发送 Bearer。`key_header` 不是 `authorization`，或者 `base_url` 含 `{api_key}` 时，按[凭证](../guides/22-gateway-operations.md#凭证)中的规则发送。返回的 `url` 保留 `{api_key}` 占位符。
 
 | 服务商的响应 | `reason` | `ok` |
 | --- | --- | --- |
+| 上游是完整请求地址（`append_endpoint_path` 为 `false`），没有模型列表可测。网关不发请求，`url` 为该地址。 | `exact_endpoint_untestable` | `false` |
 | 没有可用的 API Key：没有保存，或者上游要求每个客户端自带。网关不发请求。 | `upstream_key_missing` | `false` |
 | 2xx，响应体带 `data` 数组 | `passed` | `true` |
 | 2xx 但响应体表示失败，或者 401、403 | `upstream_key_rejected` | `false` |
@@ -109,7 +110,7 @@ curl -X PUT "$SERVER_URL/gateway/admin/upstreams/openai?account_id=team" \
 
 `POST /gateway/admin/upstreams/import-vlm` 把 OpenViking Server 的 VLM 凭证导入为所选账号的上游，只在嵌入部署中可用；独立网关返回 404 `vlm_import_unavailable`。
 
-每个导入的上游 ID 固定为 `vlm-<credential id>`，重复导入不会产生重复的上游。再次导入时，来自服务端的字段（`base_url`、`api_key`、`headers`、`protocol`、`vendor`、`coding_plan`）按服务端配置刷新，其他字段保留在网关里改过的值，包括 `name`、`enabled`、`priority`、`models`、`aliases`、`context_windows` 和 `allow_coding_plan`。路径中含 `coding` 或 `plan` 段的上游会被标为 Coding Plan，在设置 `allow_coding_plan` 之前归入 `needs_confirmation`。
+每个导入的上游 ID 固定为 `vlm-<credential id>`，重复导入不会产生重复的上游。再次导入时，来自服务端的字段（`base_url`、`api_key`、`headers`、`protocol`、`vendor`、`coding_plan`、`append_endpoint_path`、`key_header`）按服务端配置刷新，其他字段保留在网关里改过的值，包括 `name`、`enabled`、`priority`、`models`、`aliases`、`context_windows` 和 `allow_coding_plan`。路径中含 `coding` 或 `plan` 段的上游会被标为 Coding Plan，在设置 `allow_coding_plan` 之前归入 `needs_confirmation`。
 
 ```json
 {
@@ -122,7 +123,6 @@ curl -X PUT "$SERVER_URL/gateway/admin/upstreams/openai?account_id=team" \
 | 跳过原因 `reason` | 说明 |
 | --- | --- |
 | `openai_codex` | Codex OAuth 令牌会定期刷新，网关无法长期使用。 |
-| `azure` | Azure OpenAI 需要 `api-version` 参数，网关不发送它。 |
 | `litellm_no_api_base` | LiteLLM 凭证没有 `api_base`。在 OpenViking 配置中补上后重新导入。 |
 | `litellm_unsupported_route` | LiteLLM 路由不使用 OpenAI Chat Completions API，例如 `gemini/`、`bedrock/` 或 `vertex_ai/`。请手动把这个服务商添加为上游。 |
 | `invalid_configuration` | 凭证构不成有效的上游，例如 base URL 无效。 |

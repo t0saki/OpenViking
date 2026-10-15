@@ -246,9 +246,11 @@ ov.example.com {
   - Chat Completions 和 Responses 拼接 `/chat/completions` 或 `/responses`。只填域名时不会自动补 `/v1`，OpenAI 要写 `https://api.openai.com/v1`。
   - Anthropic Messages 拼接 `/v1/messages`，所以 Base URL 不能以 `/v1` 结尾，否则保存时被拒绝。
   - 末尾的斜杠会被去掉。`/api/paas/v4` 这类带版本路径的地址可以直接使用。
+  - Base URL 可以带查询参数，例如 `?api-version=…`。客户端的查询参数接在后面，同名参数以 Base URL 里的为准。
   - 客户端用方舟路径（`/gateway/api/v3/`、`/gateway/api/compatible/v1/`）发来的请求，按同样的规则拼接。
+  - Azure OpenAI v1 接口填 `https://RES.openai.azure.com/openai/v1`，Microsoft Foundry 上的 Claude 用 Anthropic Messages 协议、填 `https://RES.services.ai.azure.com/anthropic`，Gemini 的 OpenAI 兼容接口填 `https://generativelanguage.googleapis.com/v1beta/openai`，都按拼接规则使用。
   - 一个上游只有一个 Base URL。同一服务商的不同协议地址不同时，要分别建上游：例如智谱 Chat Completions 用 `https://open.bigmodel.cn/api/paas/v4`，Responses 用 `https://open.bigmodel.cn/api/v1`。方舟 Coding Plan 的 Chat Completions 和 Responses 用 `…/api/coding/v3`，Anthropic Messages 用 `…/api/coding`。
-- **拼接协议接口路径**默认开启。如果 Base URL 已经是完整的请求地址，可以关闭它；关闭后，网关的所有上游请求都直接使用该 URL，不再拼接协议路径。
+- **拼接协议接口路径**默认开启。如果 Base URL 已经是完整的请求地址，可以关闭它；关闭后，网关把该协议的请求直接发往这个 URL，不再拼接协议路径。子路径接在后面：Anthropic 的 Token 计数发往 `…/count_tokens`。Embeddings、模型列表等其他接口不会路由到这样的上游，连接测试也会跳过它。例如 Azure OpenAI 部署：协议选 *Chat Completions*，服务商选*通用*，Base URL 填 `https://RES.openai.azure.com/openai/deployments/DEPLOYMENT/chat/completions?api-version=2024-10-21`，关闭这个开关，**密钥发送方式**选 *api-key 请求头*。
 
   编辑页会实时预览最终的请求地址；OpenAI、方舟这类地址漏掉路径，或者 Anthropic 地址多了 `/v1` 时，会给出提示和一键修正。
 
@@ -256,7 +258,9 @@ ov.example.com {
 
 - **API Key 由谁提供**：
   - **由网关保管 API Key**（默认）：网关发送上游的 API Key，客户端只需要网关密钥。
-  - **每个客户端自带 API Key**：每个请求除了网关密钥，还要在 `X-OpenViking-Upstream-Key` 请求头里带上客户端自己的服务商 API Key，缺少时返回 401 "Upstream API key is missing"。网关按服务商惯用的请求头转发这个 API Key，`X-OpenViking-*` 请求头本身从不转发。
+  - **每个客户端自带 API Key**：每个请求除了网关密钥，还要在 `X-OpenViking-Upstream-Key` 请求头里带上客户端自己的服务商 API Key，缺少时返回 401 "Upstream API key is missing"。网关按**密钥发送方式**转发这个 API Key（Base URL 含 `{api_key}` 时填进地址），`X-OpenViking-*` 请求头本身从不转发。
+- **密钥发送方式**（仅服务商为*通用*时）：`Authorization: Bearer`（默认）、`api-key` 请求头（Azure OpenAI）或 `x-api-key` 请求头。
+- **密钥放在地址里**：服务商要求把密钥写在地址里时，在 Base URL 的路径或查询参数中写 `{api_key}`，例如 `?key={api_key}`。网关发送时填入 URL 编码后的密钥，并且不再发送鉴权请求头。不要把密钥本身写进地址：能查看上游的人都能看到 Base URL。
 - **API Key 和额外请求头只写不读**：留空表示保留已存的值，删除请求头行就删除这个请求头。**修改 Base URL 会清除已存的 API Key 和请求头值**，所以每次改地址都要重新填写，已存的密钥不会被发往新地址。
 - **额外请求头**加在发往这个上游的每个请求上，例如服务商的版本或组织请求头，并覆盖客户端发送的同名请求头。不能设置 `Host`、`Content-Length`、`Transfer-Encoding` 和 `Connection`。
 - **这是 Coding Plan 或订阅密钥**：服务商通常只允许 Coding Plan 这类订阅密钥用在自家的编程工具里，通过共享网关使用可能导致订阅被封禁。勾选后，发往这个上游的请求一律被拒绝，返回 403 "Coding Plan upstreams are disabled; configure a model API key"，除非同时勾选**允许通过网关使用这个套餐**。网关无法从密钥本身分辨它是不是订阅密钥，需要你自己标记。Claude 订阅令牌（`sk-ant-oat…`）始终被拒绝。
@@ -289,7 +293,8 @@ ov.example.com {
 
 - 结果分三组显示：已导入、需要确认、未导入。路径中带 `coding` 或 `plan` 的上游被标为 Coding Plan，确认服务商条款允许后，勾选**允许通过网关使用这个套餐**才能使用。
 - 重复导入不会产生重复的上游。再次导入时，地址、API Key、请求头、协议和服务商按服务端配置刷新；你在网关里改过的名称、启用状态、优先级、模型、别名、上下文窗口和 Coding Plan 确认都保留。
-- Codex OAuth 和 Azure 凭证、缺少 `api_base` 的 LiteLLM 凭证，以及不使用 OpenAI Chat Completions API 的 LiteLLM 路由会被跳过，原因见[导入 VLM 配置](../api/25-gateway.md#导入-vlm-配置)。
+- Azure OpenAI 凭证（服务商 `azure`，或 LiteLLM 的 `azure/<deployment>`）会导入为完整请求地址的上游，带上配置的 `api_version`，密钥放在 `api-key` 请求头里发送。
+- Codex OAuth 凭证、缺少 `api_base` 的 LiteLLM 凭证，以及不使用 OpenAI Chat Completions API 的 LiteLLM 路由会被跳过，原因见[导入 VLM 配置](../api/25-gateway.md#导入-vlm-配置)。
 
 ### 上下文配置
 
@@ -721,6 +726,7 @@ URL 必须是 HTTP(S)，不能含凭证、查询参数或 fragment。未知字�
 | 服务商 | `vendor` | `generic` | `generic`、`anthropic`、`openai`、`deepseek`、`ark`（火山方舟）或 `byteplus`（BytePlus 方舟）。Studio 只提供服务商支持的协议，API 接受任意组合。 |
 | Base URL | `base_url` | | 服务商地址；默认地址和拼接规则见[上游](#上游)。 |
 | 拼接协议接口路径 | `append_endpoint_path` | `true` | 拼接所选协议的接口路径；关闭时把 `base_url` 直接作为完整请求地址。 |
+| 密钥发送方式 | `key_header` | `authorization` | `authorization`（Bearer）、`api-key` 或 `x-api-key`。`base_url` 含 `{api_key}` 时不生效。 |
 | API Key 由谁提供 | `auth_mode` | `managed` | `managed`（由网关保管 API Key）或 `passthrough`（每个客户端自带 API Key）。 |
 | API Key | `api_key` | | 只写，见[凭证](#凭证)。 |
 | 额外请求头 | `headers` | `{}` | 只写，见[凭证](#凭证)。 |

@@ -92,10 +92,11 @@ Deleting an object that gateway keys still use returns 409 `in_use` with `key_co
 
 ### Connection tests
 
-`POST /gateway/admin/upstreams/{identifier}/test` asks the provider for its model list with the stored credentials, with a 10-second timeout, and returns `{ok, status, reason, url}`. `status` is left out when no response arrived. Read-only callers can run it too. Anthropic upstreams send the key in both `x-api-key` and `Authorization: Bearer`; Chat Completions and Responses upstreams send only Bearer.
+`POST /gateway/admin/upstreams/{identifier}/test` asks the provider for its model list with the stored credentials, with a 10-second timeout, and returns `{ok, status, reason, url}`. `status` is left out when no response arrived. Read-only callers can run it too. Anthropic upstreams send the key in both `x-api-key` and `Authorization: Bearer`; Chat Completions and Responses upstreams send only Bearer. A `key_header` other than `authorization`, or `{api_key}` in `base_url`, changes this as described in [Credentials](../guides/22-gateway-operations.md#credentials). `url` keeps the `{api_key}` placeholder.
 
 | Provider response | `reason` | `ok` |
 | --- | --- | --- |
+| The upstream is an exact endpoint (`append_endpoint_path` is `false`), which has no model list. No request is sent; `url` is the endpoint. | `exact_endpoint_untestable` | `false` |
 | No API key to use: none is stored, or the upstream expects each client to send its own. No request is sent. | `upstream_key_missing` | `false` |
 | 2xx with a `data` array in the body | `passed` | `true` |
 | 2xx with a body that signals failure, or 401 or 403 | `upstream_key_rejected` | `false` |
@@ -109,7 +110,7 @@ A passed test only shows that the address and key work. It does not show that a 
 
 `POST /gateway/admin/upstreams/import-vlm` turns OpenViking Server's VLM credentials into upstreams in the selected account. It is available only in embedded deployments; a standalone gateway returns 404 `vlm_import_unavailable`.
 
-Each imported upstream gets the fixed ID `vlm-<credential id>`, so importing again does not create duplicates. A repeat import refreshes the fields that come from the server (`base_url`, `api_key`, `headers`, `protocol`, `vendor`, `coding_plan`) and keeps every other field as it was edited in the gateway, including `name`, `enabled`, `priority`, `models`, `aliases`, `context_windows` and `allow_coding_plan`. Upstreams whose path has a `coding` or `plan` segment are marked as Coding Plan and listed under `needs_confirmation` until `allow_coding_plan` is set.
+Each imported upstream gets the fixed ID `vlm-<credential id>`, so importing again does not create duplicates. A repeat import refreshes the fields that come from the server (`base_url`, `api_key`, `headers`, `protocol`, `vendor`, `coding_plan`, `append_endpoint_path`, `key_header`) and keeps every other field as it was edited in the gateway, including `name`, `enabled`, `priority`, `models`, `aliases`, `context_windows` and `allow_coding_plan`. Upstreams whose path has a `coding` or `plan` segment are marked as Coding Plan and listed under `needs_confirmation` until `allow_coding_plan` is set.
 
 ```json
 {
@@ -122,7 +123,6 @@ Each imported upstream gets the fixed ID `vlm-<credential id>`, so importing aga
 | Skip `reason` | Meaning |
 | --- | --- |
 | `openai_codex` | Codex OAuth tokens refresh periodically, so the gateway cannot use them long term. |
-| `azure` | Azure OpenAI needs an `api-version` parameter, which the gateway does not send. |
 | `litellm_no_api_base` | The LiteLLM credential has no `api_base`. Add it in the OpenViking configuration and import again. |
 | `litellm_unsupported_route` | The LiteLLM route does not use the OpenAI Chat Completions API, such as `gemini/`, `bedrock/` or `vertex_ai/`. Add that provider as an upstream by hand. |
 | `invalid_configuration` | The credential does not make a valid upstream, for example because the base URL is invalid. |

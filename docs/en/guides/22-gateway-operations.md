@@ -246,9 +246,11 @@ When you choose a provider in the editor, its default Base URL is filled in:
   - Chat Completions and Responses append `/chat/completions` or `/responses`. A bare domain does not get `/v1` added, so OpenAI needs `https://api.openai.com/v1`.
   - Anthropic Messages appends `/v1/messages`, so the Base URL must not end in `/v1`; saving such a URL is rejected.
   - A trailing slash is removed. Addresses with a version path, such as `/api/paas/v4`, work as is.
+  - The Base URL may carry a query, such as `?api-version=…`. The client's query parameters follow it, and on a name clash the Base URL's value wins.
   - Requests that clients send to the Ark paths (`/gateway/api/v3/`, `/gateway/api/compatible/v1/`) follow the same rules.
+  - Azure OpenAI's v1 API uses `https://RES.openai.azure.com/openai/v1`, Claude in Microsoft Foundry uses the Anthropic Messages protocol with `https://RES.services.ai.azure.com/anthropic`, and Gemini's OpenAI-compatible API uses `https://generativelanguage.googleapis.com/v1beta/openai`; all of them follow these joining rules.
   - An upstream has one Base URL. If a provider uses different addresses for different protocols, create separate upstreams. For example, Zhipu uses `https://open.bigmodel.cn/api/paas/v4` for Chat Completions and `https://open.bigmodel.cn/api/v1` for Responses. Ark Coding Plan uses `…/api/coding/v3` for Chat Completions and Responses and `…/api/coding` for Anthropic Messages.
-- **Append protocol endpoint path** is on by default. Turn it off when Base URL is already the complete request endpoint; the gateway then sends every upstream request to that exact URL without adding a protocol path.
+- **Append protocol endpoint path** is on by default. Turn it off when Base URL is already the complete request endpoint; the gateway then sends the protocol's requests to that exact URL without adding a protocol path. Sub-paths continue after it: Anthropic token counting goes to `…/count_tokens`. Other APIs, such as embeddings and the model list, are not routed to such an upstream, and the connection test skips it. For example, an Azure OpenAI deployment uses protocol *Chat Completions*, provider *Generic*, Base URL `https://RES.openai.azure.com/openai/deployments/DEPLOYMENT/chat/completions?api-version=2024-10-21`, this setting off, and **Send the key as** *api-key header*.
 
   The editor previews the final request URL as you type. If an OpenAI or Ark address is missing its path, or an Anthropic address ends in `/v1`, it warns you and offers a one-click fix.
 
@@ -256,7 +258,9 @@ When you choose a provider in the editor, its default Base URL is filled in:
 
 - **Who provides the API key**:
   - **The gateway holds the API key** (the default): the gateway sends the upstream's API key, and clients need only their gateway key.
-  - **Each client sends its own key**: besides the gateway key, every request carries the client's own provider API key in the `X-OpenViking-Upstream-Key` header. Without it the request fails with 401 "Upstream API key is missing". The gateway passes the key to the provider in the provider's usual header; `X-OpenViking-*` headers themselves are never forwarded.
+  - **Each client sends its own key**: besides the gateway key, every request carries the client's own provider API key in the `X-OpenViking-Upstream-Key` header. Without it the request fails with 401 "Upstream API key is missing". The gateway passes the key on as set in **Send the key as** (or fills it into the URL when the Base URL contains `{api_key}`); `X-OpenViking-*` headers themselves are never forwarded.
+- **Send the key as** (provider *Generic* only): `Authorization: Bearer` (the default), the `api-key` header (Azure OpenAI) or the `x-api-key` header.
+- **Key in the URL**: for a provider that expects the key in the address, write `{api_key}` in the Base URL's path or query, for example `?key={api_key}`. The gateway fills in the URL-encoded key when sending and then sends no auth header. Don't write the key itself into the address: the Base URL is visible to everyone who can view upstreams.
 - **API key and extra headers are write-only.** Leave a field blank to keep the stored value; remove a header row to delete that header. **Changing the Base URL clears the stored API key and header values**, so enter them again whenever you change the address. A stored key is never sent to a new address.
 - **Extra headers** are added to every request to this upstream, such as a provider's version or organization header, and replace any client header with the same name. `Host`, `Content-Length`, `Transfer-Encoding` and `Connection` cannot be set.
 - **This key is a Coding Plan or subscription key**: providers usually allow subscription keys such as Coding Plan keys only in their own coding tools, and using one through a shared gateway can get the subscription suspended. When you check this, every request to the upstream is rejected with 403 "Coding Plan upstreams are disabled; configure a model API key", unless you also check **Allow this plan through the gateway**. The gateway cannot tell from the key itself whether it is a subscription key, so you have to mark it. Claude subscription tokens (`sk-ant-oat…`) are always rejected.
@@ -289,7 +293,8 @@ In an embedded deployment, **Use OpenViking's model settings** (**Import from Op
 
 - The result shows three groups: imported, needs confirmation and not imported. Upstreams whose path contains `coding` or `plan` are marked as Coding Plan. Once you have confirmed that the provider's terms allow it, check **Allow this plan through the gateway** to use one.
 - Importing again does not create duplicates. It refreshes the address, API key, headers, protocol and provider from the server, and keeps what you changed in the gateway: name, enabled state, priority, models, aliases, context windows and the Coding Plan confirmation.
-- Codex OAuth and Azure credentials, LiteLLM credentials without `api_base`, and LiteLLM routes that do not use the OpenAI Chat Completions API are skipped. The reasons are listed in [Import VLM settings](../api/25-gateway.md#import-vlm-settings).
+- Azure OpenAI credentials (provider `azure`, or LiteLLM `azure/<deployment>`) become exact-endpoint upstreams that send the key in the `api-key` header, with the configured `api_version`.
+- Codex OAuth credentials, LiteLLM credentials without `api_base`, and LiteLLM routes that do not use the OpenAI Chat Completions API are skipped. The reasons are listed in [Import VLM settings](../api/25-gateway.md#import-vlm-settings).
 
 ### Context profiles
 
@@ -721,6 +726,7 @@ URLs must be HTTP(S) and contain no credentials, query or fragment. Unknown fiel
 | Provider | `vendor` | `generic` | `generic`, `anthropic`, `openai`, `deepseek`, `ark` (Volcano Engine Ark) or `byteplus` (BytePlus ModelArk). Studio offers only the protocols a provider supports; the API accepts any pair. |
 | Base URL | `base_url` | | Provider address; defaults and path rules are in [Upstreams](#upstreams). |
 | Append protocol endpoint path | `append_endpoint_path` | `true` | Appends the selected protocol's path; when false, uses `base_url` as the complete request URL. |
+| Send the key as | `key_header` | `authorization` | `authorization` (Bearer), `api-key` or `x-api-key`. Ignored when `base_url` contains `{api_key}`. |
 | Who provides the API key | `auth_mode` | `managed` | `managed` (the gateway holds the API key) or `passthrough` (each client sends its own key). |
 | API key | `api_key` | | Write-only; see [Credentials](#credentials). |
 | Extra headers | `headers` | `{}` | Write-only; see [Credentials](#credentials). |
