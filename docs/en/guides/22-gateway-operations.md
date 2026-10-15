@@ -427,8 +427,10 @@ When the model calls OpenViking tools and client tools in the same reply, the ga
 
 New context profiles have **OpenViking tools** on, including those made with **Create with recommended settings**. The **Tools** list comes from your OpenViking service, and only read-only tools are selected by default:
 
-- **Selected by default**: `find`, `search`, `grep`, `glob`, `list`, `tree`, `read`, `list_watches`, `get_acl`, `list_users`, `list_groups` and `health`.
+- **Selected by default**: `find`, `search`, `grep`, `glob`, `list`, `tree`, `read`, `download`, `list_watches`, `get_acl`, `list_users`, `list_groups` and `health`.
 - **Not selected by default** (they change data): `remember`, `write`, `edit`, `add_resource`, `add_skill`, `forget`, `set_acl` and `cancel_watch`. Check `remember` to let the model save memories, and `add_resource` to let it import web pages or attachments.
+
+`download` returns a one-time link to OpenViking's `/api/v1/content/download`, not to the gateway, so it only works when the server's `OPENVIKING_PUBLIC_BASE_URL` (or `server.public_base_url`) is an address the client can reach and the client has a shell tool to fetch the file.
 
 Tools that OpenViking adds later are available by default; ongoing conversations keep the tool list they started with. Existing context profiles keep their selection.
 

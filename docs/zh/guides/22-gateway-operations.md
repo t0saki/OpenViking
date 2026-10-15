@@ -427,8 +427,10 @@ ov.example.com {
 
 新建的上下文配置默认开启 **OpenViking 工具**，“使用推荐设置创建”也一样。**工具**清单来自你的 OpenViking 服务，默认只勾选只读工具：
 
-- **默认勾选**：`find`、`search`、`grep`、`glob`、`list`、`tree`、`read`、`list_watches`、`get_acl`、`list_users`、`list_groups` 和 `health`。
+- **默认勾选**：`find`、`search`、`grep`、`glob`、`list`、`tree`、`read`、`download`、`list_watches`、`get_acl`、`list_users`、`list_groups` 和 `health`。
 - **默认不勾选**（会修改数据）：`remember`、`write`、`edit`、`add_resource`、`add_skill`、`forget`、`set_acl` 和 `cancel_watch`。想让模型保存记忆就勾选 `remember`，想让它导入网页或附件就勾选 `add_resource`。
+
+`download` 返回的一次性链接指向 OpenViking 的 `/api/v1/content/download`，不经过网关，所以只有 Server 的 `OPENVIKING_PUBLIC_BASE_URL`（或 `server.public_base_url`）是客户端能访问的地址、并且客户端有 shell 工具下载文件时，它才能用。
 
 OpenViking 以后新增的工具会默认可用，已有对话仍沿用开始时的工具清单。已有的上下文配置保留原来的勾选。
 
