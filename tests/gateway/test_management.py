@@ -836,3 +836,28 @@ async def test_degraded_probe_backs_off_until_success(tmp_path, monkeypatch):
     gaps = [round(b - a) for a, b in zip(probes, probes[1:], strict=False)]
     # Every second until OV first answers; later outages back off 1, 2, 4 capped at the interval.
     assert gaps[:6] == [1, 1, 4, 1, 2, 4]
+
+
+async def test_connection_test_fills_url_key_and_skips_exact_endpoints(running_gateway):
+    app, client, admin, _, captured, _ = running_gateway
+    upstream = await app.state.management.get("tenant", "upstreams", "chat")
+    stored = upstream["base_url"] + "?tenant=a&key={api_key}"
+    await app.state.management.save("tenant", "upstreams", "chat", {**upstream, "base_url": stored})
+    seen = []
+
+    async def handler(request):
+        if request.path == "/v1/models":
+            seen.append((request.query_string, dict(request.headers)))
+
+    app.state.test_backend["handler"] = handler
+    result = (await client.post(P + "/upstreams/chat/test", headers=admin)).json()
+    assert result["ok"] and result["url"] == upstream["base_url"] + "/models?tenant=a&key={api_key}"
+    assert seen[-1][0] == "tenant=a&key=model-secret" and "Authorization" not in seen[-1][1]
+
+    endpoint = upstream["base_url"] + "/chat/completions?api-version=1"
+    exact = {**upstream, "base_url": endpoint, "append_endpoint_path": False}
+    await app.state.management.save("tenant", "upstreams", "chat", exact)
+    before = len(captured)
+    result = (await client.post(P + "/upstreams/chat/test", headers=admin)).json()
+    assert result == {"ok": False, "reason": "exact_endpoint_untestable", "url": endpoint}
+    assert len(captured) == before

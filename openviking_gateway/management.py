@@ -18,14 +18,23 @@ from .capture import reset_capture
 from .client import VikingError
 from .config import MOUNT_PATH
 from .models import CaptureReset, KeyRequest, Policy, Upstream
-from .proxy import upstream_headers, upstream_url
+from .proxy import PRIMARY_PATH, fill_key, upstream_headers, upstream_key, upstream_url
 from .records import RecordKind as K
 from .storage import delete_account_data, delete_user_data, digest
 
 PREFIX = "/admin"
 MANAGEMENT_HEADER = "x-openviking-gateway-management-key"
 # Fields a VLM re-import refreshes; everything else may have been edited in the gateway.
-VLM_SOURCE_FIELDS = ("base_url", "api_key", "headers", "protocol", "vendor", "coding_plan")
+VLM_SOURCE_FIELDS = (
+    "base_url",
+    "api_key",
+    "headers",
+    "protocol",
+    "vendor",
+    "coding_plan",
+    "append_endpoint_path",
+    "key_header",
+)
 DETAILS = {
     "management_key_invalid": "The gateway management key is incorrect.",
     "management_key_required": "Changing upstreams and profiles requires the management key.",
@@ -404,9 +413,13 @@ def register_management(app):
         upstream = await management.get(who.account_id, "upstreams", identifier)
         if not upstream:
             fail(404, "not_found")
+        if not upstream.get("append_endpoint_path", True):
+            url = upstream_url(upstream, PRIMARY_PATH[upstream["protocol"]])
+            return {"ok": False, "reason": "exact_endpoint_untestable", "url": url}
         url = upstream_url(upstream, "/v1/models")
         try:
             headers = upstream_headers(upstream, {})
+            target = fill_key(url, upstream_key(upstream, {}))
         except HTTPException as error:
             if error.status_code != 401:
                 raise
@@ -414,7 +427,7 @@ def register_management(app):
             return {"ok": False, "reason": "upstream_key_missing", "url": url}
         try:
             async with app.state.http.get(
-                url,
+                target,
                 headers=headers,
                 timeout=aiohttp.ClientTimeout(total=10),
                 allow_redirects=False,

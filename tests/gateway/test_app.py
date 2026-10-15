@@ -1244,3 +1244,80 @@ async def test_model_restricted_key_rejects_bodies_without_a_readable_model(runn
     response = await client.post("/v1/chat/completions", headers=unrestricted, content=compressed)
     assert response.status_code != 415 and len(seen) > before + 1
     assert seen[-1][0] == "/v1/chat/completions"
+
+
+@pytest.mark.parametrize(
+    ("suffix", "key_header", "query", "auth"),
+    [
+        (
+            "/openai/deployments/dep/chat/completions?api-version=2024-10-21",
+            "api-key",
+            "api-version=2024-10-21&beta=true",
+            {"api-key": "model-secret"},
+        ),
+        (
+            "/proxy/chat?key={api_key}",
+            "authorization",
+            "key=model-secret&beta=true&api-version=old",
+            {},
+        ),
+    ],
+)
+async def test_exact_endpoint_chat_request(running_gateway, suffix, key_header, query, auth):
+    app, client, _, key, _, _ = running_gateway
+    upstream = await app.state.management.get("tenant", "upstreams", "chat")
+    base = upstream["base_url"].removesuffix("/v1") + suffix
+    await app.state.management.save(
+        "tenant",
+        "upstreams",
+        "chat",
+        {**upstream, "base_url": base, "append_endpoint_path": False, "key_header": key_header},
+    )
+    seen = []
+
+    async def handler(request):
+        if not request.path.startswith(("/api/", "/mcp", "/health")):
+            seen.append((request.path, request.query_string, request.headers))
+
+    app.state.test_backend["handler"] = handler
+    response = await client.post(
+        "/v1/chat/completions?beta=true&api-version=old",
+        headers={"Authorization": "Bearer " + key["key"]},
+        json={"model": "model", "messages": [{"role": "user", "content": "hi"}]},
+    )
+    assert response.status_code == 200, response.text
+    path, sent_query, headers = seen[-1]
+    assert (path, sent_query) == (suffix.split("?")[0], query)
+    names = {"authorization", "api-key", "x-api-key"}
+    assert {k.lower(): v for k, v in headers.items() if k.lower() in names} == auth
+
+
+async def test_stored_response_from_an_exact_endpoint(running_gateway):
+    app, client, admin, _, _, _ = running_gateway
+    upstream = await app.state.management.get("tenant", "upstreams", "responses")
+    await app.state.management.save(
+        "tenant",
+        "upstreams",
+        "responses",
+        {
+            **upstream,
+            "base_url": upstream["base_url"] + "/responses",
+            "append_endpoint_path": False,
+        },
+    )
+    minted = await client.post(
+        "/admin/keys",
+        headers=admin,
+        json={
+            "name": "exact",
+            "openviking_key": "user-key",
+            "policy_id": "default",
+            "upstream_ids": ["responses"],
+        },
+    )
+    headers = {"Authorization": "Bearer " + minted.json()["key"]}
+    body = {"model": "model", "input": "hi"}
+    assert (await client.post("/v1/responses", headers=headers, json=body)).status_code == 200
+    assert (await client.get("/v1/responses/resp-1", headers=headers)).status_code == 200
+    embeddings = await client.post("/v1/embeddings", headers=headers, json={"model": "model"})
+    assert embeddings.status_code == 404
