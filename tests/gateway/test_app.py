@@ -5,7 +5,7 @@ from pathlib import Path
 import orjson
 import pytest
 from aiohttp import web
-from conftest import MCP_TOOLS
+from conftest import MCP_TOOLS, TEXT, mcp_tool
 
 from openviking_gateway.protocols import normalize
 from openviking_gateway.tool_loop import REFUSED
@@ -810,6 +810,148 @@ async def test_shell_upload_instructions_use_public_proxy(running_gateway):
     )
     assert response.status_code == 200, response.text
     assert response.json()["choices"][0]["message"]["tool_calls"][0]["function"]["name"] == "bash"
+
+
+OV_DOWNLOAD = "http://private-ov/api/v1/content/download?token=AbC123xyz_"
+OV_UPLOAD = "http://private-ov/api/v1/resources/temp_upload?token=signed-once"
+OV_NOTE = (
+    "\n\nNote for the user: this download URL was auto-detected from the incoming request "
+    "because OPENVIKING_PUBLIC_BASE_URL is not set on the server."
+)
+
+
+async def gateway_tool_result(running_gateway, session, name, arguments, mcp_text, shell=True):
+    """Run one gateway tool call; return its result as the model sees it and the MCP calls."""
+    app, client, _, key, _, _ = running_gateway
+    app.state.test_backend["catalog"] = [*MCP_TOOLS, mcp_tool("download", {"uri": TEXT}, ("uri",))]
+    model_requests, mcp_calls = [], []
+
+    async def backend(request):
+        if request.path == "/mcp":
+            mcp_calls.append((await request.json())["params"])
+            return web.json_response(
+                {"id": 1, "result": {"content": [{"type": "text", "text": mcp_text}]}}
+            )
+        if request.path == "/v1/chat/completions":
+            model_requests.append(await request.json())
+            if len(model_requests) == 1:
+                return web.json_response(
+                    completion(
+                        {
+                            "role": "assistant",
+                            "content": None,
+                            "tool_calls": [tool_call("openviking_" + name, arguments=arguments)],
+                        },
+                        "tool_calls",
+                    )
+                )
+            return web.json_response(completion({"role": "assistant", "content": "Done."}))
+        return None
+
+    app.state.test_backend["handler"] = backend
+    body = {"model": "model", "messages": [{"role": "user", "content": "fetch it"}]}
+    if shell:
+        body["tools"] = [{"type": "function", "function": {"name": "bash"}}]
+    response = await client.post(
+        "/v1/chat/completions",
+        headers={"Authorization": "Bearer " + key["key"], "X-OpenViking-Session": session},
+        json=body,
+    )
+    assert response.status_code == 200, response.text
+    return model_requests[1]["messages"][-1]["content"], mcp_calls
+
+
+async def test_download_link_uses_public_proxy(running_gateway):
+    app, client, admin, _, _, _ = running_gateway
+    app.state.config.public_url = "https://gateway.example"
+    await enable_tools(client, admin)
+    result, _ = await gateway_tool_result(
+        running_gateway,
+        "download",
+        "download",
+        {"uri": "viking://resources/a.pdf"},
+        f"Download link:\n\n  curl -fL -o ./a.pdf '{OV_DOWNLOAD}'" + OV_NOTE,
+    )
+    assert "curl -fL -o ./a.pdf 'https://gateway.example/gateway/downloads?token=AbC123xyz_'" in (
+        result
+    )
+    assert "private-ov" not in result and "OPENVIKING_PUBLIC_BASE_URL" not in result
+    fetched = []
+
+    async def backend(request):
+        if request.path == "/api/v1/content/download":
+            fetched.append(dict(request.query))
+            assert "Authorization" not in request.headers and "X-API-Key" not in request.headers
+            if request.query["token"] != "AbC123xyz_":
+                return web.json_response({"error": "invalid token"}, status=401)
+            return web.Response(
+                body=b"%PDF-1.7 bytes",
+                content_type="application/pdf",
+                headers={"Content-Disposition": 'attachment; filename="a.pdf"'},
+            )
+        return None
+
+    app.state.test_backend["handler"] = backend
+    response = await client.get(
+        "/downloads?token=AbC123xyz_&uri=viking://resources/other.pdf",
+        headers={"Authorization": "Bearer not-forwarded"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.content == b"%PDF-1.7 bytes"
+    assert response.headers["content-type"] == "application/pdf"
+    assert response.headers["content-disposition"] == 'attachment; filename="a.pdf"'
+    assert fetched == [{"token": "AbC123xyz_"}]
+    response = await client.get("/downloads?token=expired")
+    assert response.status_code == 401 and response.json() == {"error": "invalid token"}
+    assert (await client.get("/downloads")).status_code == 400
+
+
+async def test_direct_file_links_pass_through(running_gateway):
+    app, client, admin, _, _, _ = running_gateway
+    app.state.config.public_url = ""
+    app.state.config.mcp_file_links = "direct"
+    await enable_tools(client, admin)
+    result, _ = await gateway_tool_result(
+        running_gateway,
+        "direct-download",
+        "download",
+        {"uri": "viking://a.pdf"},
+        OV_DOWNLOAD + OV_NOTE,
+    )
+    assert result == OV_DOWNLOAD + OV_NOTE
+    result, _ = await gateway_tool_result(
+        running_gateway,
+        "direct-upload",
+        "add_resource",
+        {"path": "/home/client/file.md"},
+        "POST to " + OV_UPLOAD,
+    )
+    assert result == "POST to " + OV_UPLOAD
+
+
+async def test_proxied_download_requires_public_url(running_gateway):
+    app, client, admin, _, _, _ = running_gateway
+    app.state.config.public_url = ""
+    await enable_tools(client, admin)
+    result, mcp_calls = await gateway_tool_result(
+        running_gateway, "download", "download", {"uri": "viking://a.pdf"}, OV_DOWNLOAD
+    )
+    assert result == "Set gateway.public_url for client uploads and downloads"
+    assert len(mcp_calls) == 1
+
+
+async def test_download_requires_client_shell(running_gateway):
+    _, client, admin, _, _, _ = running_gateway
+    await enable_tools(client, admin)
+    result, mcp_calls = await gateway_tool_result(
+        running_gateway,
+        "download",
+        "download",
+        {"uri": "viking://a.pdf"},
+        OV_DOWNLOAD,
+        shell=False,
+    )
+    assert "requires a client shell" in result and mcp_calls == []
 
 
 @pytest.mark.parametrize("vendor", ["ark", "byteplus"])

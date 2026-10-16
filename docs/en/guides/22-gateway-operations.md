@@ -122,7 +122,7 @@ A standalone gateway serves the same `/gateway` paths on its own port, plus thes
 - `/` redirects to `/studio/`, where Studio has only the gateway and connection pages.
 - `/health` returns `service: "openviking-gateway"`, `auth_mode` and `openviking_url`, and also the caller's identity when the request carries a valid OpenViking credential.
 
-**Public address.** For a shared deployment, set `public_url` to the address clients use to reach the server (or the standalone gateway), without `/gateway`; the gateway appends `/gateway` itself. When it is empty, an embedded gateway uses the server's public address (`OPENVIKING_PUBLIC_BASE_URL` or `server.public_base_url`). Studio's setup guides build client settings from it: Anthropic clients use `<public_url>/gateway`, and OpenAI-style clients `<public_url>/gateway/v1`. Without it, the guides use the address the browser used to open Studio, but upload links for file imports only work with `public_url` set; see [Import files and skills](#import-files-and-skills).
+**Public address.** For a shared deployment, set `public_url` to the address clients use to reach the server (or the standalone gateway), without `/gateway`; the gateway appends `/gateway` itself. When it is empty, an embedded gateway uses the server's public address (`OPENVIKING_PUBLIC_BASE_URL` or `server.public_base_url`). Studio's setup guides build client settings from it: Anthropic clients use `<public_url>/gateway`, and OpenAI-style clients `<public_url>/gateway/v1`. Without it, the guides use the address the browser used to open Studio, but upload and download links only work with `public_url` set; see [Import files and skills](#import-files-and-skills).
 
 ### Docker Compose
 
@@ -430,7 +430,7 @@ New context profiles have **OpenViking tools** on, including those made with **C
 - **Selected by default**: `find`, `search`, `grep`, `glob`, `list`, `tree`, `read`, `download`, `list_watches`, `get_acl`, `list_users`, `list_groups` and `health`.
 - **Not selected by default** (they change data): `remember`, `write`, `edit`, `add_resource`, `add_skill`, `forget`, `set_acl` and `cancel_watch`. Check `remember` to let the model save memories, and `add_resource` to let it import web pages or attachments.
 
-`download` returns a one-time link to OpenViking's `/api/v1/content/download`, not to the gateway, so it only works when the server's `OPENVIKING_PUBLIC_BASE_URL` (or `server.public_base_url`) is an address the client can reach and the client has a shell tool to fetch the file.
+`download` returns a one-time `curl` command, so it needs a client shell tool (see [Import files and skills](#import-files-and-skills) for which names count). Like upload links, the download link goes through the gateway at `public_url` plus `/gateway/downloads` by default. Set `mcp_file_links` to `direct` to pass OpenViking's own upload and download links through unchanged; they then point at the server, whose `OPENVIKING_PUBLIC_BASE_URL` (or `server.public_base_url`) must be an address the client can reach.
 
 Tools that OpenViking adds later are available by default; ongoing conversations keep the tool list they started with. Existing context profiles keep their selection.
 
@@ -488,7 +488,7 @@ A false match also lasts for the whole conversation; start a new one.
 
 The model can import material when your OpenViking service provides the import tools and the profile has them checked. Importing by URL needs nothing more. Importing a local file needs one of these:
 
-- **A client shell tool** (named like bash, shell, exec_command, terminal or run_command): the import tool returns a one-time upload link, and the model uploads the file with the client's shell tool, which goes through the client's permission prompt. Skill directories are zipped first. The link points to `public_url` plus `/gateway/uploads`, so `public_url` must be an address the client can reach, and any proxy in front must forward that path like the others. Without `public_url`, imports fail with "Set gateway.public_url for client uploads".
+- **A client shell tool** (named like bash, shell, exec_command, terminal or run_command): the import tool returns a one-time upload link, and the model uploads the file with the client's shell tool, which goes through the client's permission prompt. Skill directories are zipped first. The link points to `public_url` plus `/gateway/uploads`, so `public_url` must be an address the client can reach, and any proxy in front must forward that path like the others. Without `public_url`, imports fail with "Set gateway.public_url for client uploads and downloads". With `mcp_file_links` set to `direct`, the link points at OpenViking Server instead.
 - **An attachment on the user message**: without a shell tool, the model can import a file attached to a user message, sent either as base64 data or as attachment text. This covers embedded `base64` and `text` data in Responses `input_file` and Anthropic `document.source`. Open WebUI usually sends only the extracted text, which is imported as a text file. Attachment URLs and provider file IDs are not fetched; to import a remote resource, use the import tool's URL parameter.
 
 Uploads are limited by `max_body_bytes` (32 MiB by default).
@@ -663,7 +663,8 @@ Both forms use the same fields; they differ only in where the file lives and how
 | `port` | Standalone | `1935` | Listen port |
 | `workers` | Standalone | `1` | Worker processes, 1–64 |
 | `encryption` | Standalone | not set (plain text) | Same fields as the `encryption` section of `ov.conf`; see [Encryption](#encryption). Embedded gateways use the server's section |
-| `public_url` | Both | empty | The external address clients use, without `/gateway` (the gateway appends it); when empty, an embedded gateway uses the server's public address; with neither, setup guides use the request's origin and file uploads do not work |
+| `public_url` | Both | empty | The external address clients use, without `/gateway` (the gateway appends it); when empty, an embedded gateway uses the server's public address; with neither, setup guides use the request's origin, and MCP file uploads and downloads do not work unless `mcp_file_links` is `direct` |
+| `mcp_file_links` | Both | `proxy` | How links from the MCP upload and download tools reach the client: `proxy` rewrites them to `public_url` plus `/gateway/uploads` or `/gateway/downloads` and needs `public_url`; `direct` passes OpenViking's links through unchanged and needs the server's `OPENVIKING_PUBLIC_BASE_URL` (or `server.public_base_url`) to be reachable by the client |
 | `storage_path` | Both | `~/.openviking/gateway` | Local storage directory |
 | `management_key` | Both | empty | Optional gateway management key, at least 32 characters |
 | `min_server_version` | Both | `0.4.16` | Lowest OpenViking Server version a standalone gateway accepts |
@@ -866,12 +867,12 @@ When the provider rejects a long conversation as too long, it is usually one of 
 - **The conversation's profile has compaction off.** Profile changes only reach new conversations.
 - **Compaction failed.** The request detail shows the reason, and the gateway tries again after 60 seconds. If summaries keep getting cut off at the length limit, raise **Summary length**. `still_over_threshold` means the system prompt, tools and summary alone fill most of the window: lower **Summary length**, or check the model's context window setting.
 
-### File imports fail
+### File imports or downloads fail
 
-- "Set gateway.public_url for client uploads": set `public_url` to an address the client can reach.
-- The upload link is unreachable or returns 404: make sure `public_url` is not an old `:1935` address, does not already end in `/gateway`, and that your proxy forwards `/gateway/uploads` like the other paths.
+- "Set gateway.public_url for client uploads and downloads": set `public_url` to an address the client can reach, or set `mcp_file_links` to `direct`.
+- The upload or download link is unreachable or returns 404: make sure `public_url` is not an old `:1935` address, does not already end in `/gateway`, and that your proxy forwards `/gateway/uploads` and `/gateway/downloads` like the other paths. With `mcp_file_links` set to `direct`, check the server's `OPENVIKING_PUBLIC_BASE_URL` instead.
 - 413: the file is larger than `max_body_bytes` or the proxy's limit.
-- 502 "OpenViking upload is unavailable": the gateway cannot reach OpenViking Server.
+- 502 "OpenViking upload is unavailable" or "OpenViking download is unavailable": the gateway cannot reach OpenViking Server.
 - The model has no import tool: the OpenViking service does not provide it, the profile has it unchecked, or this request cannot use gateway tools. Check the tool list and the request detail.
 
 ### Issues on degraded requests

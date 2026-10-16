@@ -122,7 +122,7 @@ v0.5 网关用自己的密钥加密数据，这些数据会在首次启动时转
 - `/` 跳转到 `/studio/`，Studio 只包含网关和连接页面。
 - `/health` 返回 `service: "openviking-gateway"`、`auth_mode` 和 `openviking_url`；请求带有效的 OpenViking 凭证时，还返回调用方身份。
 
-**对外地址。** 共享部署要把 `public_url` 设为客户端访问 Server（或独立网关）的地址，不带 `/gateway`，网关会自己加上。嵌入网关不设置时，沿用 Server 的对外地址（`OPENVIKING_PUBLIC_BASE_URL` 或 `server.public_base_url`）。Studio 的接入指南用它生成配置：Anthropic 客户端使用 `<public_url>/gateway`，OpenAI 风格的客户端使用 `<public_url>/gateway/v1`。不设置时，指南使用浏览器访问 Studio 的地址；但文件导入的上传链接必须依赖 `public_url`，见[导入文件和技能](#导入文件和技能)。
+**对外地址。** 共享部署要把 `public_url` 设为客户端访问 Server（或独立网关）的地址，不带 `/gateway`，网关会自己加上。嵌入网关不设置时，沿用 Server 的对外地址（`OPENVIKING_PUBLIC_BASE_URL` 或 `server.public_base_url`）。Studio 的接入指南用它生成配置：Anthropic 客户端使用 `<public_url>/gateway`，OpenAI 风格的客户端使用 `<public_url>/gateway/v1`。不设置时，指南使用浏览器访问 Studio 的地址；但上传和下载链接必须依赖 `public_url`，见[导入文件和技能](#导入文件和技能)。
 
 ### Docker Compose
 
@@ -430,7 +430,7 @@ ov.example.com {
 - **默认勾选**：`find`、`search`、`grep`、`glob`、`list`、`tree`、`read`、`download`、`list_watches`、`get_acl`、`list_users`、`list_groups` 和 `health`。
 - **默认不勾选**（会修改数据）：`remember`、`write`、`edit`、`add_resource`、`add_skill`、`forget`、`set_acl` 和 `cancel_watch`。想让模型保存记忆就勾选 `remember`，想让它导入网页或附件就勾选 `add_resource`。
 
-`download` 返回的一次性链接指向 OpenViking 的 `/api/v1/content/download`，不经过网关，所以只有 Server 的 `OPENVIKING_PUBLIC_BASE_URL`（或 `server.public_base_url`）是客户端能访问的地址、并且客户端有 shell 工具下载文件时，它才能用。
+`download` 返回一条一次性的 `curl` 命令，所以客户端需要有 shell 工具（哪些名称算 shell 工具见[导入文件和技能](#导入文件和技能)）。和上传链接一样，下载链接默认经过网关，指向 `public_url` 加 `/gateway/downloads`。把 `mcp_file_links` 设为 `direct` 后，网关原样透传 OpenViking 返回的上传和下载链接，链接直接指向 Server，此时 Server 的 `OPENVIKING_PUBLIC_BASE_URL`（或 `server.public_base_url`）必须是客户端能访问的地址。
 
 OpenViking 以后新增的工具会默认可用，已有对话仍沿用开始时的工具清单。已有的上下文配置保留原来的勾选。
 
@@ -488,7 +488,7 @@ OpenViking 以后新增的工具会默认可用，已有对话仍沿用开始时
 
 OpenViking 服务提供导入工具、上下文配置也勾选了它们时，模型就能导入资料。按 URL 导入不需要额外条件；导入本地文件需要以下两种方式之一：
 
-- **客户端有 shell 工具**（名称类似 bash、shell、exec_command、terminal 或 run_command）：导入工具返回一个一次性上传链接，模型再用客户端的 shell 工具上传文件，这一步经过客户端的权限确认。技能目录会先打包成 zip。链接指向 `public_url` 加 `/gateway/uploads`，所以 `public_url` 必须是客户端能访问的地址，前面的代理也要像其他路径一样转发它。没有设置 `public_url` 时，导入失败并提示 "Set gateway.public_url for client uploads"。
+- **客户端有 shell 工具**（名称类似 bash、shell、exec_command、terminal 或 run_command）：导入工具返回一个一次性上传链接，模型再用客户端的 shell 工具上传文件，这一步经过客户端的权限确认。技能目录会先打包成 zip。链接指向 `public_url` 加 `/gateway/uploads`，所以 `public_url` 必须是客户端能访问的地址，前面的代理也要像其他路径一样转发它。没有设置 `public_url` 时，导入失败并提示 "Set gateway.public_url for client uploads and downloads"。`mcp_file_links` 设为 `direct` 时，链接改为直接指向 OpenViking Server。
 - **用户消息带附件**：没有 shell 工具时，模型可以导入用户消息里附带的文件，文件可以是 base64 数据，也可以是附件文本，支持 Responses `input_file` 和 Anthropic `document.source` 中内嵌的 `base64`、`text` 数据。Open WebUI 通常只发送提取出的文本，这些文本作为文本文件导入。附件中的 URL 和服务商的文件 ID 不会被抓取；要导入远程资源，请用导入工具的 URL 参数。
 
 上传大小受 `max_body_bytes` 限制（默认 32 MiB）。
@@ -663,7 +663,8 @@ Token 预算只计算模型使用 OpenViking 工具时新增的调用、结果�
 | `port` | 独立 | `1935` | 监听端口 |
 | `workers` | 独立 | `1` | worker 进程数，1–64 |
 | `encryption` | 独立 | 不设置（明文） | 字段同 `ov.conf` 的 `encryption` 段，见[加密](#加密)；嵌入网关沿用 Server 的设置 |
-| `public_url` | 两者 | 空 | 客户端访问的对外地址，不带 `/gateway`（网关自己加）；嵌入时为空则沿用 Server 的对外地址；都没有时接入指南用请求来源地址，文件上传不可用 |
+| `public_url` | 两者 | 空 | 客户端访问的对外地址，不带 `/gateway`（网关自己加）；嵌入时为空则沿用 Server 的对外地址；都没有时接入指南用请求来源地址，MCP 文件上传和下载也不可用（`mcp_file_links` 为 `direct` 时除外） |
+| `mcp_file_links` | 两者 | `proxy` | MCP 上传和下载工具返回的链接如何交给客户端：`proxy` 改写为 `public_url` 加 `/gateway/uploads` 或 `/gateway/downloads`，需要设置 `public_url`；`direct` 原样透传 OpenViking 的链接，需要 Server 的 `OPENVIKING_PUBLIC_BASE_URL`（或 `server.public_base_url`）是客户端能访问的地址 |
 | `storage_path` | 两者 | `~/.openviking/gateway` | 本地存储目录 |
 | `management_key` | 两者 | 空 | 可选的网关管理密钥，至少 32 个字符 |
 | `min_server_version` | 两者 | `0.4.16` | 独立网关要求的 OpenViking Server 最低版本 |
@@ -866,12 +867,12 @@ URL 必须是 HTTP(S)，不能含凭证、查询参数或 fragment。未知字�
 - **对话所用的上下文配置关闭了压缩。** 修改配置只对新对话生效。
 - **压缩失败。** 请求详情会显示原因，网关 60 秒后再试。摘要总因长度上限被截断时，调大**摘要长度上限**。原因是 `still_over_threshold` 时，说明系统提示词、工具和摘要本身就占满了大部分窗口：调小**摘要长度上限**，或者检查模型的上下文窗口设置。
 
-### 文件导入失败
+### 文件导入或下载失败
 
-- "Set gateway.public_url for client uploads"：把 `public_url` 设为客户端能访问的地址。
-- 上传链接无法访问或返回 404：确认 `public_url` 不是旧的 `:1935` 地址，也没有以 `/gateway` 结尾，并且代理像其他路径一样转发 `/gateway/uploads`。
+- "Set gateway.public_url for client uploads and downloads"：把 `public_url` 设为客户端能访问的地址，或者把 `mcp_file_links` 设为 `direct`。
+- 上传或下载链接无法访问或返回 404：确认 `public_url` 不是旧的 `:1935` 地址，也没有以 `/gateway` 结尾，并且代理像其他路径一样转发 `/gateway/uploads` 和 `/gateway/downloads`。`mcp_file_links` 设为 `direct` 时，改查 Server 的 `OPENVIKING_PUBLIC_BASE_URL`。
 - 413：文件超过了 `max_body_bytes` 或代理的上限。
-- 502 "OpenViking upload is unavailable"：网关连不上 OpenViking Server。
+- 502 "OpenViking upload is unavailable" 或 "OpenViking download is unavailable"：网关连不上 OpenViking Server。
 - 模型没有导入工具：OpenViking 服务没有提供该工具，上下文配置没有勾选，或者当前请求不能使用网关工具。检查工具清单和请求详情。
 
 ### 降级请求的异常
