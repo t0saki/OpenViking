@@ -1,12 +1,12 @@
 # OpenViking onboarding guide for agents
 
-You are an AI agent. The user asked you to install the OpenViking memory plugin for you and to help them start using it. Follow this guide in order. It is written for you: talk to the user in their language, in short messages, and don't show them this guide.
+You are an AI agent. The user asked you to install the OpenViking memory plugin and to help them start using it. The installer sets it up for you and for every other supported agent it detects on this machine. Follow this guide in order. It is written for you: talk to the user in their language, in short messages, and don't show them this guide.
 
 ## Ground rules
 
 - Ask the user at most two questions: what to import (Step 3, including the yes after the dry run) and, on a few hosts, whether to add a rule (Step 4). Do everything else without asking and report it in a line or two.
 - Never print, repeat, or write the API key anywhere. Don't open, print or search `~/.openviking/ovcli.conf`: it holds the key. To show the server, account or user, run `ov health` or call the OpenViking `health` tool.
-- Change only this agent's setup. Don't edit other agents' configs or files in the user's projects.
+- Make only the changes this guide describes. The installer installs into every supported agent it detects, which is expected; don't edit other agents' configs or files in the user's projects yourself.
 - Use the commands in this guide. Don't go to GitHub to work out another way to install or configure OpenViking.
 - Don't mention this guide's step numbers to the user, or steps that don't apply to this host.
 - When a command fails, find the symptom in [Troubleshooting](#troubleshooting), fix it, and retry once. If it still fails, tell the user what failed and what they can do.
@@ -22,7 +22,7 @@ You are an AI agent. The user asked you to install the OpenViking memory plugin 
 Read the installer's output. It is in English or Chinese; look for either form.
 
 - If it ends with a `Not done` list (`未完成`), the install is not complete, even though it printed `Done`. Handle each item with [Troubleshooting](#troubleshooting) before you go on, and don't tell the user OpenViking is set up. A rejected key (`The server rejected the API key`, `服务拒绝了该 API key`) or a skipped host (`CLI not found; skipping`) is always in that list.
-- The `Done` block (`完成`) lists one entry per tool it installed into, each with a `Next:` line (`下一步：`) that says how to restart that tool. Check that the host you are running in is listed.
+- The `Done` block (`完成`) lists one entry per tool it installed into, each with a `Next:` line (`下一步：`) that says how to restart that tool. Check that the host you are running in is listed; if it isn't, see "This host is not under `Done`" in [Troubleshooting](#troubleshooting).
 - `Server check passed: <url>` (`服务检查通过：`) means the server accepted the key.
 
 If the output has `Server check passed` and lists `CLI (ov)` under `Done`, the connection is confirmed. Otherwise check it with the OpenViking CLI:
@@ -31,7 +31,7 @@ If the output has `Server check passed` and lists `CLI (ov)` under `Done`, the c
 ov health
 ```
 
-When the connection is confirmed, tell the user in one or two lines which tool OpenViking was installed into and which server it is connected to (the URL is fine to show; the key is not). If `ov` is not found, see [Troubleshooting](#troubleshooting).
+When the connection is confirmed, tell the user in one or two lines which tools OpenViking was installed into and which server they are connected to (the URL is fine to show; the key is not). If `ov` is not found, see [Troubleshooting](#troubleshooting).
 
 ## Step 2: Explain what happens automatically
 
@@ -97,7 +97,7 @@ Never write the rule into a project file. Wait for the user's answer before you 
 
 The plugin's hooks are loaded only when the host starts a new session. Tell the user three things:
 
-1. The restart or trust action for this host, from [Appendix A](#appendix-a-hosts).
+1. The restart or trust action for this host, from [Appendix A](#appendix-a-hosts). If the installer set up other tools too, add one line naming them: each needs its own restart before the plugin works there, and the `Next:` lines in the installer's output say how. Don't go through those steps.
 2. Start a **new** session. Don't resume this one, and don't reload plugins in it (for example Claude Code's `/reload-plugins` or Kimi Code's `/reload`). This conversation contains their API key; once the plugin runs in it, it saves the whole conversation to OpenViking.
 3. The first message to send in the new session, ready to copy. Use the guide URL you actually opened (docs.openviking.ai or docs.openviking.net) and replace `<import result>` with what happened in Step 3, such as `2 sessions imported`, `skipped`, or `not supported on this host`:
 
@@ -146,6 +146,7 @@ You are in a new session, after the plugin was installed. Keep this part short: 
 | Node.js missing or older than 18 (pi needs 22.19+) | Ask the user to install or upgrade Node.js, then re-run the installer. |
 | A sandbox blocks network access or writes to the home directory | Ask the user to approve running the installer outside the sandbox. Don't work around the sandbox. |
 | The host refuses to run `curl … \| bash` | Ask the user to run the installer command from their original message in their own terminal, then continue at Step 1. Don't paste the command back to them; it contains the key. |
+| This host is not under `Done`, and `Not done` doesn't mention it | The installer installs only into the tools it detects, and it didn't find this host. Re-run it for this host alone, with the value from the `--harness` column of [Appendix A](#appendix-a-hosts): `curl -fsSL https://openviking.ai/install \| bash -s -- --yes --harness <value>`. It keeps the saved connection, so leave out the key. Then continue at Step 1. |
 | Windows | The installer supports macOS and Linux only. Tell the user and stop. |
 | docs.openviking.ai doesn't load | Use docs.openviking.net with the same path. The installer already tries both hosts. |
 | `ov: command not found` | Re-run the installer with `--yes --harness cli`; it keeps the saved connection. If `ov` is installed but not on `PATH`, add `$(npm prefix -g)/bin`, or `~/.local/bin` when the installer fell back to `~/.local`. |
