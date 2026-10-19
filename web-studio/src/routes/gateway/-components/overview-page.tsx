@@ -2,6 +2,7 @@ import { useIsFetching } from '@tanstack/react-query'
 import {
   ActivityIcon,
   BrainIcon,
+  LightbulbIcon,
   RefreshCwIcon,
   RepeatIcon,
   ZapIcon,
@@ -11,7 +12,14 @@ import { useTranslation } from 'react-i18next'
 import { Button } from '#/components/ui/button'
 import { Card } from '#/components/ui/card'
 
-import type { CacheStats, LogRecord, Overview } from '../-lib/api'
+import type {
+  CacheMiss,
+  CacheMissSummary,
+  CacheStats,
+  LogRecord,
+  Overview,
+  Upstream,
+} from '../-lib/api'
 import {
   EMPTY_VALUE,
   formatClockTime,
@@ -21,15 +29,18 @@ import {
   formatNumber,
   formatPercent,
   formatRelativeTime,
+  shortenId,
 } from '../-lib/format'
 import {
   gatewayQueryKey,
   useGateway,
   useLogs,
   useOverview,
+  useUpstreams,
 } from '../-lib/use-gateway'
 import { ErrorState, LoadingState } from './empty-state'
 import { MetricCard } from './metric-card'
+import { Notice } from './notice'
 import { RecentRequests } from './overview-recent'
 import { OverviewSetup } from './overview-setup'
 import { DegradedRequestsCard, OpenVikingCard } from './overview-status'
@@ -131,6 +142,138 @@ function MetricRow({ data }: { data: Overview }) {
   )
 }
 
+/** Conversations and upstreams listed in the cache notices. */
+const CACHE_NOTICE_LIMIT = 3
+
+/** Upstream name, or its shortened id once deleted or not yet loaded. */
+function upstreamName(id: string, upstreams?: Upstream[]): string {
+  return (
+    upstreams?.find((upstream) => upstream.id === id)?.name ?? shortenId(id)
+  )
+}
+
+/** One conversation: model · upstream · streak · last call. */
+function CacheMissRow({
+  miss,
+  upstreams,
+}: {
+  miss: CacheMiss
+  upstreams?: Upstream[]
+}) {
+  const { t, i18n } = useTranslation('gateway')
+  const locale = i18n.resolvedLanguage
+  return (
+    <li className="flex min-w-0 flex-wrap gap-x-1.5 text-xs leading-5 text-foreground/80">
+      {miss.model ? (
+        <>
+          <span className="truncate font-mono">{miss.model}</span>
+          <span aria-hidden>·</span>
+        </>
+      ) : null}
+      <span title={miss.upstream_id}>
+        {upstreamName(miss.upstream_id, upstreams)}
+      </span>
+      <span aria-hidden>·</span>
+      <span className="tabular-nums">
+        {t('overview.cacheMiss.streak', { count: miss.streak })}
+      </span>
+      <span aria-hidden>·</span>
+      <span title={formatDateTime(miss.last_at, locale, true)}>
+        {formatRelativeTime(miss.last_at, locale)}
+      </span>
+    </li>
+  )
+}
+
+/**
+ * Long conversations that keep missing the prompt cache, and upstreams that
+ * never report a hit; upstream names load only while there is one to show.
+ */
+function CacheNotices({
+  misses,
+  summary,
+  unreported,
+}: {
+  misses: CacheMiss[]
+  summary?: CacheMissSummary | null
+  unreported: NonNullable<Overview['cache_unreported']>
+}) {
+  const { t, i18n } = useTranslation('gateway')
+  const locale = i18n.resolvedLanguage
+  const upstreams = useUpstreams().data
+  const listed = misses.slice(0, CACHE_NOTICE_LIMIT)
+  const sharedUpstream =
+    summary && summary.conversations > 1 && summary.upstreams.length === 1
+      ? summary.upstreams[0]
+      : undefined
+  return (
+    <div className="grid gap-3">
+      {summary && listed.length > 0 ? (
+        <Notice
+          tone="warning"
+          title={t('overview.cacheMiss.title', {
+            count: summary.conversations,
+          })}
+        >
+          <p className="text-foreground/80">
+            {t('overview.cacheMiss.body', {
+              count: summary.conversations,
+              streak: summary.streak,
+              // Rounded down, so "at least" holds for every conversation.
+              tokens: formatCompact(
+                Math.floor(summary.input_tokens / 1000) * 1000,
+                locale,
+              ),
+            })}
+          </p>
+          {sharedUpstream ? (
+            <p className="text-foreground/80">
+              {t('overview.cacheMiss.sameUpstream', {
+                upstream: upstreamName(sharedUpstream, upstreams),
+              })}
+            </p>
+          ) : null}
+          <p className="flex gap-1.5 text-xs leading-5 text-foreground/80">
+            <LightbulbIcon className="mt-0.5 size-3.5 shrink-0" />
+            <span>
+              <span className="sr-only">
+                {t('overview.degraded.suggestion')}
+              </span>
+              {t(
+                summary.no_writes
+                  ? 'overview.cacheMiss.noWrites'
+                  : 'overview.cacheMiss.action',
+              )}
+            </span>
+          </p>
+          <ul className="mt-1 grid gap-0.5">
+            {listed.map((miss, index) => (
+              <CacheMissRow
+                key={`${miss.upstream_id}-${miss.last_at}-${index}`}
+                miss={miss}
+                upstreams={upstreams}
+              />
+            ))}
+          </ul>
+        </Notice>
+      ) : null}
+      {unreported.slice(0, CACHE_NOTICE_LIMIT).map(({ upstream_id: id }) => (
+        <Notice
+          key={id}
+          tone="info"
+          title={t('overview.cacheUnreported.title', {
+            name: upstreamName(id, upstreams),
+          })}
+        >
+          <p className="text-foreground/80">
+            {t('overview.cacheUnreported.body')}
+          </p>
+        </Notice>
+      ))}
+    </div>
+  )
+}
+
 /** Gateway health, usage and recent requests, with a setup checklist until the first request. */
 export function OverviewPage() {
   const { t, i18n } = useTranslation('gateway')
@@ -175,6 +318,13 @@ export function OverviewPage() {
         <>
           {data.last_request_at == null ? <OverviewSetup /> : null}
           <MetricRow data={data} />
+          {data.cache_misses?.length || data.cache_unreported?.length ? (
+            <CacheNotices
+              misses={data.cache_misses ?? []}
+              summary={data.cache_miss_summary}
+              unreported={data.cache_unreported ?? []}
+            />
+          ) : null}
           <div className="grid gap-3 lg:grid-cols-2">
             <OpenVikingCard
               health={data.openviking}

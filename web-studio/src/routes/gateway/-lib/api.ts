@@ -207,6 +207,31 @@ export type OpenVikingHealth = {
   reason?: string
 }
 
+/** A conversation whose latest long model calls all missed the prompt cache. */
+export type CacheMiss = {
+  protocol: string
+  upstream_id: string
+  model: string
+  /** Long calls in a row without a cache hit. */
+  streak: number
+  /** Smallest first-call input across the streak. */
+  input_tokens: number
+  /** Epoch seconds of the newest call. */
+  last_at: number
+  /** Every call in the streak wrote cache. */
+  writes: boolean
+}
+
+export type CacheMissSummary = {
+  conversations: number
+  upstreams: string[]
+  /** Shortest streak and smallest first-call input among them. */
+  streak: number
+  input_tokens: number
+  /** All are Anthropic conversations that never wrote the cache either. */
+  no_writes: boolean
+}
+
 export type Overview = {
   /** Model requests in the sample (memory-sync events excluded). */
   requests: number
@@ -226,6 +251,12 @@ export type Overview = {
   sample_limit: number
   /** Days the request log keeps records. */
   log_retention_days: number
+  /** Newest first, at most 20; older gateways leave it out. */
+  cache_misses?: CacheMiss[]
+  /** Every cache miss, not only the listed ones; null without any. */
+  cache_miss_summary?: CacheMissSummary | null
+  /** Upstreams whose long calls have not hit the cache lately. */
+  cache_unreported?: { upstream_id: string; conversations: number }[]
 }
 
 /** One request-log record (metadata only); every field but `time` is optional. */
@@ -257,6 +288,7 @@ export type LogRecord = {
   first_upstream_output_tokens?: number
   first_upstream_cached_tokens?: number
   first_upstream_cache_write_tokens?: number
+  first_upstream_cache_reported?: boolean
   hidden_upstream_input_tokens?: number
   hidden_upstream_output_tokens?: number
   hidden_upstream_cached_tokens?: number
@@ -280,6 +312,8 @@ export type LogRecord = {
   output_tokens?: number
   cached_tokens?: number
   cache_write_tokens?: number
+  /** The upstream named a cache-read field at all. */
+  cache_reported?: boolean
   cache_min_tokens?: number
   cache_eligible?: boolean
   duration_ms?: number

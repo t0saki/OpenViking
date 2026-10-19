@@ -383,20 +383,61 @@ def replays_reasoning(upstream: dict) -> bool:
     return upstream.get("vendor") in REASONING_VENDORS if value is None else value
 
 
-def usage_of(value: dict) -> dict:
-    """Token counts from any protocol's usage, including compatible endpoints that mix forms."""
+# Fields relays put cache counts in, at the top of usage or in its token details.
+CACHE_READ = ("cache_read_input_tokens", "cached_tokens", "prompt_cache_hit_tokens")
+CACHE_WRITE = (
+    "cache_creation_input_tokens",
+    "cache_write_tokens",
+    "cached_creation_tokens",
+    "cache_creation_tokens",
+)
+
+
+def token_count(value) -> int | float:
+    return value if isinstance(value, (int, float)) and not isinstance(value, bool) else 0
+
+
+def usage_of(value: dict, excludes_cache: bool = False) -> dict:
+    """Token counts from any protocol's usage, including compatible endpoints that mix forms.
+
+    ``input_tokens`` always includes cached and written tokens: Anthropic counts them apart
+    (``excludes_cache``), Chat and Responses totals already hold them. ``cache_reported``
+    says the upstream named a cache read at all, so a reported zero is a real miss.
+    """
     usage = value.get("usage") or {}
-    details = usage.get("prompt_tokens_details") or usage.get("input_tokens_details") or {}
-    cached = usage.get("cache_read_input_tokens", details.get("cached_tokens", 0)) or 0
-    written = usage.get("cache_creation_input_tokens", 0) or 0
-    input_tokens = usage.get("prompt_tokens", usage.get("input_tokens", 0)) or 0
-    if "cache_read_input_tokens" in usage:
-        input_tokens += cached + written
+    scopes = [usage, *(usage.get(k) for k in ("prompt_tokens_details", "input_tokens_details"))]
+    scopes = [scope for scope in scopes if isinstance(scope, dict)]
+    if isinstance(split := usage.get("cache_creation"), dict):
+        # Anthropic's per-TTL split, for endpoints that send it without the total.
+        scopes.append({"cache_creation_tokens": sum(map(token_count, split.values()))})
+
+    def largest(keys):
+        # Relays copy one count into several fields and zero-fill the rest.
+        found = [
+            scope[key]
+            for scope in scopes
+            for key in keys
+            if isinstance(scope.get(key), (int, float)) and not isinstance(scope[key], bool)
+        ]
+        return max(found) if found else None
+
+    cached, written = largest(CACHE_READ), largest(CACHE_WRITE)
+    cache = (cached or 0) + (written or 0)
+    # Each protocol's own total first; compatible endpoints often fill both, one with zero.
+    totals = (
+        ("input_tokens", "prompt_tokens") if excludes_cache else ("prompt_tokens", "input_tokens")
+    )
+    input_tokens = next((n for key in totals if (n := token_count(usage.get(key)))), 0)
+    # A total below its own cache counted the cache apart, as older relays do too.
+    if excludes_cache or input_tokens < cache:
+        input_tokens += cache
     return {
         "input_tokens": input_tokens,
-        "output_tokens": usage.get("completion_tokens", usage.get("output_tokens", 0)) or 0,
-        "cached_tokens": cached,
-        "cache_write_tokens": written,
+        "output_tokens": token_count(usage.get("completion_tokens"))
+        or token_count(usage.get("output_tokens")),
+        "cached_tokens": cached or 0,
+        "cache_write_tokens": written or 0,
+        "cache_reported": cached is not None,
     }
 
 

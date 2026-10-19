@@ -746,6 +746,7 @@ def test_sse_chunk_boundaries_and_anthropic_usage():
         "output_tokens": 20,
         "cached_tokens": 88,
         "cache_write_tokens": 0,
+        "cache_reported": True,
     }
 
 

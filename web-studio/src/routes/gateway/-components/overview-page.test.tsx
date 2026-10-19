@@ -34,6 +34,8 @@ import i18n from '#/i18n'
 import { GatewayError } from '../-lib/api'
 import type * as Api from '../-lib/api'
 import type {
+  CacheMiss,
+  CacheMissSummary,
   GatewayAccess,
   IssuedKey,
   LogRecord,
@@ -170,6 +172,32 @@ const LOGS: LogRecord[] = [
     degradation: 'upstream_changed',
   },
 ]
+
+const UPSTREAMS = [{ id: 'u1', name: 'OpenAI production' }] as Upstream[]
+
+function cacheMiss(fields: Partial<CacheMiss>): CacheMiss {
+  return {
+    protocol: 'chat',
+    upstream_id: 'u1',
+    model: 'gpt-5',
+    streak: 5,
+    input_tokens: 50000,
+    last_at: NOW - 60,
+    writes: false,
+    ...fields,
+  }
+}
+
+function missSummary(fields: Partial<CacheMissSummary>): CacheMissSummary {
+  return {
+    conversations: 1,
+    upstreams: ['u1'],
+    streak: 5,
+    input_tokens: 50000,
+    no_writes: false,
+    ...fields,
+  }
+}
 
 /** Pages the overview links to; links only get an href for known routes. */
 const LINK_TARGETS = [
@@ -372,12 +400,161 @@ describe('OverviewPage', () => {
     expect(screen.queryByText('Memory sync')).toBeNull()
     expect(screen.queryByText('Paused')).toBeNull()
     expect(screen.getByText('502')).toBeTruthy()
+    // Gateways that predate the cache notices leave both lists out.
+    expect(screen.queryByText(/prompt cache|cache hits lately/)).toBeNull()
     expect(hrefOf('View all')).toBe('/gateway/requests')
     expect(
       screen.getByText(
         'Figures cover the latest 10,000 entries of the request log. Entries are kept for 7 days.',
       ),
     ).toBeTruthy()
+  })
+
+  it('warns about long conversations that keep missing the prompt cache', async () => {
+    api.getOverview.mockResolvedValue({
+      ...BUSY_OVERVIEW,
+      cache_misses: [
+        cacheMiss({
+          model: 'claude-sonnet-4-5',
+          streak: 7,
+          input_tokens: 48213,
+        }),
+        cacheMiss({ upstream_id: 'deadbeefcafe0001', streak: 5 }),
+        cacheMiss({ model: 'kimi-k2', streak: 9, last_at: NOW - 7200 }),
+        cacheMiss({ model: 'glm-4.6', streak: 3 }),
+      ],
+      cache_miss_summary: missSummary({
+        conversations: 25,
+        upstreams: ['deadbeefcafe0001', 'u1'],
+        streak: 3,
+        input_tokens: 33950,
+      }),
+      cache_unreported: [
+        { upstream_id: 'u1', conversations: 2 },
+        { upstream_id: 'deadbeefcafe0001', conversations: 1 },
+        { upstream_id: 'u3', conversations: 1 },
+        { upstream_id: 'u4', conversations: 1 },
+      ],
+    })
+    api.listUpstreams.mockResolvedValue(UPSTREAMS)
+    renderOverview()
+
+    expect(
+      await screen.findByText(
+        '25 long conversations keep missing the prompt cache',
+      ),
+    ).toBeTruthy()
+    // The summary speaks for every conversation, listed or not, rounded down.
+    expect(
+      screen.getByText(
+        /^Their last 3 model calls each sent at least 33K input tokens and got a 0% cache hit rate\./,
+      ),
+    ).toBeTruthy()
+    expect(screen.queryByText(/^They all go through/)).toBeNull()
+    expect(
+      screen.getByText(/^Compare with your provider's cache records\./),
+    ).toBeTruthy()
+    // Three conversations at most, newest first, upstreams by name.
+    expect(screen.getByText('7 misses in a row')).toBeTruthy()
+    expect(screen.getByText('5 misses in a row')).toBeTruthy()
+    expect(screen.getByText('9 misses in a row')).toBeTruthy()
+    expect(screen.queryByText('glm-4.6')).toBeNull()
+    expect(screen.getAllByText('claude-sonnet-4-5').length).toBeGreaterThan(0)
+    expect(screen.getByText('2 hours ago')).toBeTruthy()
+    expect(await screen.findAllByText('OpenAI production')).toHaveLength(2)
+    expect(screen.getByText('deadbeef…').getAttribute('title')).toBe(
+      'deadbeefcafe0001',
+    )
+
+    // One note per upstream that never reports a hit, three at most.
+    expect(
+      screen.getByText(
+        "OpenAI production hasn't reported any cache hits lately",
+      ),
+    ).toBeTruthy()
+    expect(
+      screen.getByText("deadbeef… hasn't reported any cache hits lately"),
+    ).toBeTruthy()
+    expect(
+      screen.getByText("u3 hasn't reported any cache hits lately"),
+    ).toBeTruthy()
+    expect(screen.queryByText(/^u4 hasn't/)).toBeNull()
+    expect(
+      screen.getAllByText(/^Long conversations through it keep showing/),
+    ).toHaveLength(3)
+  })
+
+  it('names the upstream when every missing conversation shares it', async () => {
+    api.getOverview.mockResolvedValue({
+      ...BUSY_OVERVIEW,
+      cache_misses: [
+        cacheMiss({ streak: 6, input_tokens: 32000 }),
+        cacheMiss({ model: 'gpt-5-mini', streak: 4 }),
+      ],
+      cache_miss_summary: missSummary({
+        conversations: 2,
+        streak: 4,
+        input_tokens: 32000,
+      }),
+      cache_unreported: [],
+    })
+    api.listUpstreams.mockResolvedValue(UPSTREAMS)
+    renderOverview()
+
+    expect(
+      await screen.findByText(
+        '2 long conversations keep missing the prompt cache',
+      ),
+    ).toBeTruthy()
+    expect(
+      screen.getByText(
+        /^Their last 4 model calls each sent at least 32K input tokens/,
+      ),
+    ).toBeTruthy()
+    expect(screen.getByText('6 misses in a row')).toBeTruthy()
+    expect(
+      await screen.findByText('They all go through OpenAI production.'),
+    ).toBeTruthy()
+    expect(screen.queryByText(/cache hits lately/)).toBeNull()
+  })
+
+  it('points Anthropic conversations that never write the cache at cache_control', async () => {
+    api.getOverview.mockResolvedValue({
+      ...BUSY_OVERVIEW,
+      cache_misses: [cacheMiss({ protocol: 'anthropic', streak: 3 })],
+      cache_miss_summary: missSummary({ streak: 3, no_writes: true }),
+      cache_unreported: [],
+    })
+    api.listUpstreams.mockResolvedValue(UPSTREAMS)
+    renderOverview()
+
+    expect(
+      await screen.findByText(
+        '1 long conversation keeps missing the prompt cache',
+      ),
+    ).toBeTruthy()
+    expect(
+      screen.getByText(/^Its last 3 model calls each sent at least 50K/),
+    ).toBeTruthy()
+    expect(
+      screen.getByText(/the client most likely doesn't set cache_control/),
+    ).toBeTruthy()
+    expect(screen.queryByText(/^Compare with your provider's/)).toBeNull()
+    // One conversation needs no "they all go through".
+    expect(screen.queryByText(/^They all go through/)).toBeNull()
+  })
+
+  it('shows no cache notice when both lists are empty', async () => {
+    api.getOverview.mockResolvedValue({
+      ...BUSY_OVERVIEW,
+      cache_misses: [],
+      cache_unreported: [],
+    })
+    renderOverview()
+
+    expect(await screen.findByText('92%')).toBeTruthy()
+    expect(screen.queryByText(/prompt cache|cache hits lately/)).toBeNull()
+    expect(api.listUpstreams).not.toHaveBeenCalled()
   })
 
   it('shows the error with a retry when the overview fails', async () => {
@@ -411,11 +588,22 @@ describe('OverviewPage', () => {
     expect(api.saveProfile.mock.calls[0][2].name).toBe('默认')
     cleanup()
 
-    api.getOverview.mockResolvedValue(BUSY_OVERVIEW)
+    api.getOverview.mockResolvedValue({
+      ...BUSY_OVERVIEW,
+      cache_misses: [cacheMiss({ model: 'kimi-k2', streak: 6 })],
+      cache_miss_summary: missSummary({ streak: 6 }),
+      cache_unreported: [{ upstream_id: 'u1', conversations: 1 }],
+    })
     api.listLogs.mockResolvedValue(LOGS)
+    api.listUpstreams.mockResolvedValue(UPSTREAMS)
     const busy = renderOverview()
     expect(await screen.findByText('claude-sonnet-4-5')).toBeTruthy()
     expect(screen.getByText('1,234 条新消息')).toBeTruthy()
+    expect(screen.getByText('有 1 段长对话连续没有命中提示词缓存')).toBeTruthy()
+    expect(screen.getByText('连续 6 次未命中')).toBeTruthy()
+    expect(
+      await screen.findByText('上游 OpenAI production 最近没有返回过缓存命中'),
+    ).toBeTruthy()
     expect(busy.container.textContent).not.toMatch(
       /overview\.|enums\.|states\.|actions\./,
     )

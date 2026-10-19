@@ -19,7 +19,7 @@ from dataclasses import dataclass
 import orjson
 
 from ..notices import TOOL_NOTICE, without_recall_notice
-from ..protocols import prefix_chain, usage_of
+from ..protocols import prefix_chain, token_count, usage_of
 
 PREFIX = "openviking_"
 # None is the Chat Completions [DONE] marker; all other events are native JSON.
@@ -73,13 +73,24 @@ def merge_delta(target, delta):
 
 
 def add_usage(total, usage):
+    """Sum per-round usage; a null in one round never erases or breaks another's counts."""
     for key, value in usage.items():
+        if value is None:
+            continue
         if isinstance(value, dict):
-            add_usage(total.setdefault(key, {}), value)
-        elif isinstance(value, (int, float)):
-            total[key] = total.get(key, 0) + value
+            if not isinstance(total.get(key), dict):
+                total[key] = {}
+            add_usage(total[key], value)
+        elif isinstance(value, (int, float)) and not isinstance(value, bool):
+            total[key] = token_count(total.get(key)) + value
         else:
             total[key] = value
+
+
+def merge_usage(total, usage):
+    """Overlay a later usage event; nulls, and zeros over counts, never erase earlier ones."""
+    if isinstance(usage, dict):
+        total.update({k: v for k, v in usage.items() if v is not None and (v or not total.get(k))})
 
 
 def without(value, path):
@@ -202,6 +213,8 @@ class ToolProtocol(ABC):
     # Thinking signatures cover the history before them, so history the gateway
     # cannot resend exactly must go upstream without its thinking.
     signed_thinking = False
+    # Usage counts cached and written prompt tokens apart from the input total.
+    usage_excludes_cache = False
 
     def __init__(self, body: dict):
         self.body = body
@@ -384,7 +397,9 @@ class ToolProtocol(ABC):
         return {
             "message": message,
             "output_items": items,
-            "usage": usage_of({"usage": self.usage}) if self.usage else None,
+            "usage": (
+                usage_of({"usage": self.usage}, self.usage_excludes_cache) if self.usage else None
+            ),
             "response_id": self.envelope.get("id") or "",
             "complete": ended and not handoff,
             "handoff": handoff,

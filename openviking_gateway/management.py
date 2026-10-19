@@ -64,6 +64,18 @@ DETAILS = {
     "vlm_import_forbidden": "Importing OpenViking model settings requires the management key "
     "or, without one, OpenViking root.",
 }
+# A conversation this long that misses the cache this many times in a row raises an alert.
+LONG_CONTEXT = 32_000
+MISS_STREAK = 3
+CACHE_TTL = 300
+STALE_AFTER = 24 * 3600
+# Degradations that change the prompt prefix, so the next call cannot hit.
+PREFIX_RESETS = {
+    "upstream_changed",
+    "missing_injection_record",
+    "hidden_tool_history_unavailable",
+    "ark_cache_parameters_changed",
+}
 
 
 def upstream_test_payload(upstream, model, tools):
@@ -625,7 +637,124 @@ def keep_upstream_secrets(payload, previous):
     return payload
 
 
-def overview_summary(logs):
+def first_call(log, name):
+    """The first upstream call's usage field, falling back to the request's own."""
+    return log.get(f"first_upstream_{name}", log.get(name))
+
+
+def started(log):
+    """When the request reached the gateway; logs are written once it finishes."""
+    return log.get("time", 0) - log.get("duration_ms", 0) / 1000
+
+
+def cache_alerts(requests, now):
+    """Long conversations that keep missing the prompt cache, their summary, and upstreams
+    that have not hit lately."""
+    hit_fields = ("first_upstream_cached_tokens", "hidden_upstream_cached_tokens", "cached_tokens")
+    hits = {
+        log.get("upstream_id")
+        for log in requests
+        if now - log.get("time", 0) <= STALE_AFTER and any(log.get(n) or 0 for n in hit_fields)
+    }
+    conversations, long_calls = {}, {}
+    for log in requests:
+        if (
+            log.get("kind") in {"user", "continuation"}
+            and log.get("status", 600) < 300
+            and first_call(log, "input_tokens") is not None
+            and log.get("session")
+        ):
+            key = log.get("credential_id"), log.get("protocol"), log["session"]
+            conversations.setdefault(key, []).append(log)
+            if (
+                first_call(log, "input_tokens") >= LONG_CONTEXT
+                and now - log.get("time", 0) <= STALE_AFTER
+            ):
+                long_calls.setdefault(log.get("upstream_id"), {}).setdefault(key, []).append(log)
+    misses, unreported = [], set()
+    for (_, protocol, _), calls in conversations.items():
+        calls.sort(key=started, reverse=True)
+        if now - calls[0].get("time", 0) > STALE_AFTER:
+            continue
+        streak, newer = [], None
+        for call in calls:
+            size = first_call(call, "input_tokens")
+            if newer is not None:
+                gap = started(newer) - call.get("time", 0)
+                if gap < 0:
+                    continue  # Concurrent with the newer call, so neither could warm the other.
+                if (
+                    gap > CACHE_TTL
+                    or size > first_call(newer, "input_tokens") * 1.3
+                    or any(
+                        call.get(name) != newer.get(name)
+                        for name in ("model", "upstream_id", "tool_skip_reason")
+                    )
+                    or bool(call.get("tools_tokens")) != bool(newer.get("tools_tokens"))
+                ):
+                    break
+            # Persistent degradations show on the degraded-requests card, so just stop here.
+            if (
+                size < LONG_CONTEXT
+                or first_call(call, "cache_reported") is not True
+                or first_call(call, "cached_tokens")
+                or call.get("window_reset")
+                or call.get("compaction_tokens")
+                or call.get("degradation") in PREFIX_RESETS
+            ):
+                break
+            streak.append(call)
+            newer = call
+        if len(streak) < MISS_STREAK:
+            continue
+        upstream = calls[0].get("upstream_id")
+        if upstream not in hits:
+            unreported.add(upstream)
+            continue
+        misses.append(
+            {
+                "protocol": protocol,
+                "upstream_id": upstream,
+                "model": calls[0].get("model"),
+                "streak": len(streak),
+                "input_tokens": min(first_call(call, "input_tokens") for call in streak),
+                "last_at": calls[0].get("time"),
+                "writes": all(first_call(call, "cache_write_tokens") or 0 for call in streak),
+            }
+        )
+    for upstream, by_key in long_calls.items():
+        reports = [first_call(log, "cache_reported") for logs in by_key.values() for log in logs]
+        if (
+            upstream not in hits
+            and len(reports) >= MISS_STREAK
+            and all(report is False for report in reports)
+        ):
+            unreported.add(upstream)
+    misses.sort(key=lambda miss: miss["last_at"] or 0, reverse=True)
+    # The page lists a few conversations but speaks for all of them.
+    summary = misses and {
+        "conversations": len(misses),
+        "upstreams": sorted({miss["upstream_id"] for miss in misses}, key=str),
+        "streak": min(miss["streak"] for miss in misses),
+        "input_tokens": min(miss["input_tokens"] for miss in misses),
+        # Anthropic writes the cache whenever a request asks for it, so no write at all
+        # means the client never asked (no cache_control) or the relay dropped the count.
+        "no_writes": all(m["protocol"] == "anthropic" and not m["writes"] for m in misses),
+    }
+    return (
+        misses[:20],
+        summary or None,
+        sorted(
+            (
+                {"upstream_id": upstream, "conversations": len(long_calls.get(upstream, {}))}
+                for upstream in unreported
+            ),
+            key=lambda item: (-item["conversations"], str(item["upstream_id"])),
+        ),
+    )
+
+
+def overview_summary(logs, now=None):
     """Aggregate newest-first request-log records into the management overview."""
     requests = [log for log in logs if log.get("kind") != "capture"]
     groups = {}
@@ -658,6 +787,7 @@ def overview_summary(logs):
     for log in logs:
         if log.get("session") and log.get("capture_status"):
             capture.setdefault((log["session"], log.get("protocol")), log["capture_status"])
+    misses, summary, unreported = cache_alerts(requests, time.time() if now is None else now)
     return {
         "requests": len(requests),
         "last_request_at": requests[0].get("time") if requests else None,
@@ -673,5 +803,8 @@ def overview_summary(logs):
             status: sum(1 for value in capture.values() if value == status)
             for status in ("retrying", "paused")
         },
+        "cache_misses": misses,
+        "cache_miss_summary": summary,
+        "cache_unreported": unreported,
         "sample_limit": 10000,
     }
