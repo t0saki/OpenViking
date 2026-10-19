@@ -101,6 +101,21 @@ def text_content(message: dict) -> str:
     return ""
 
 
+def canonical_arguments(value: Any) -> Any:
+    """Tool-call arguments as compact JSON in their own key order, else unchanged.
+
+    Clients such as pi-ai parse the arguments a reply streamed and send them back
+    re-serialized, so an upstream that spaces its JSON never matches its own reply.
+    Numbers keep their JSON spelling, so ``30.0`` and ``30`` still differ.
+    """
+    if not isinstance(value, str):
+        return value
+    try:
+        return orjson.dumps(orjson.loads(value)).decode()
+    except orjson.JSONDecodeError:
+        return value
+
+
 def normalize(value: Any) -> Any:
     if isinstance(value, list):
         return [
@@ -123,6 +138,8 @@ def normalize(value: Any) -> Any:
             for k, v in value.items()
             if k != "cache_control"
         }
+        if "arguments" in out:
+            out["arguments"] = canonical_arguments(out["arguments"])
         if "content" in out:
             content = out["content"]
             if isinstance(content, list) and len(content) == 1 and isinstance(content[0], dict):

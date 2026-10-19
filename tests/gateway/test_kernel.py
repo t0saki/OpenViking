@@ -18,6 +18,7 @@ from openviking_gateway.protocols import (
     LOWERED_AUXILIARY,
     REI_CASE_EXCEPTIONS,
     auxiliary,
+    canonical_arguments,
     classify,
     client_openviking_tools,
     normalize,
@@ -696,6 +697,16 @@ def test_client_openviking_tools_outside_tool_list():
     assert not client_openviking_tools({"messages": [reply]}, OV_NAMES)
     assert not client_openviking_tools({"tools": [{"name": "Read"}]}, [])
     assert not client_openviking_tools({"tools": None, "mcp_servers": None}, OV_NAMES)
+
+
+def test_tool_arguments_compact_in_their_own_order():
+    assert (
+        canonical_arguments('{"b": 1, "a": ["x", {"c": null}]}') == '{"b":1,"a":["x",{"c":null}]}'
+    )
+    assert canonical_arguments('{"q": "\\u84dd"}') == '{"q":"蓝"}'
+    # Partial or free-form arguments, and the parsed objects some protocols carry, stay as sent.
+    for value in ('{"b": 1', "pwd", {"b": 1}, None):
+        assert canonical_arguments(value) == value
 
 
 def test_capture_pairs_tools_and_strips_noise():
