@@ -117,7 +117,7 @@ Relevant memory from OpenViking. Use the openviking_read tool to expand URIs.
 - **改动过的历史会重新保存。** 客户端编辑或删除了之前的消息、在回答保存后重新生成，或者自己压缩了对话时，网关把当前的完整历史保存到一个新的 OpenViking 会话，已经保存的轮次留在旧会话里。
 - **特别长的会话可能碰到请求大小上限。** 网关压缩对话后，客户端仍然发送完整历史，而超过 32 MiB 的请求体默认会被拒绝。详见[副作用](05-long-conversations.md#side-effects)。
 - **一个密钥只对应一位记忆归属者。** 共用一个密钥的人共享它背后那位 OpenViking 用户的记忆，所以应该一人一个密钥。详见[每人一把密钥](09-gateway-keys.md#one-key-per-person)。
-- **不支持订阅登录。** 带 Claude 订阅令牌的请求会被拒绝。请为上游配置服务商的 API Key，或者把订阅代理作为[自定义上游](07-upstreams.md#custom-upstreams)接在网关后面。
+- **客户端不能用订阅账号登录。** 带 Claude 订阅令牌的请求会被拒绝。请为上游配置服务商的 API Key，或者把订阅代理作为[自定义上游](07-upstreams.md#custom-upstreams)接在网关后面。Codex 就可以这样通过 CLIProxyAPI 使用 ChatGPT 订阅，见[使用 ChatGPT 订阅](03-connect-clients.md#codex-chatgpt-subscription)。
 - **Responses 需要完整历史。** 依赖服务商端已存状态的 Responses 请求不补充记忆，直接转发，详见[客户端要求](04-openviking-tools.md#client-requirements)。
 - **其他接口直接转发。** 三种模型 API 和模型列表之外的接口（例如 embeddings）不补充记忆，直接转发给密钥绑定的、提供所请求模型且优先级最高的上游。
 

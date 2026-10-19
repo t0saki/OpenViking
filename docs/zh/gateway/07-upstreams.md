@@ -216,7 +216,7 @@ Coding Plan 上游在勾选**允许通过网关使用这个套餐**之前，仍�
 任何兼容这三种 API 之一的服务都能添加为上游，不一定是模型服务商本身。两种常见用法：
 
 - **计费、配额和负载均衡。** 网关不做这些。需要时在网关后面接一层 LiteLLM、new-api 这类服务，把它添加为上游。
-- **使用订阅额度。** 客户端不能用订阅账号登录网关，但可以把 [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) 这类反向代理添加为上游。它把 ChatGPT（Codex）、Claude 等订阅账号包装成 API，例如 Codex 就能经网关使用 ChatGPT 订阅额度。OpenAI Codex 负责人 Tibo 曾[公开介绍](https://x.com/thsottiaux/status/2076119366647894371)过用 CLIProxyAPI 接入 Codex 订阅的做法。**是否符合服务商的使用条款，请自行确认。**
+- **使用订阅额度。** 客户端不能用订阅账号登录网关，但可以把 [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) 这类反向代理添加为上游。它把 ChatGPT（Codex）、Claude 等订阅账号包装成 API，例如 Codex 就能经网关使用 ChatGPT 订阅额度。Codex 的这种用法得到了 OpenAI 的认可：OpenAI Codex 负责人 Tibo 曾[公开介绍](https://x.com/thsottiaux/status/2076119366647894371)过用 CLIProxyAPI 接入 Codex 订阅的做法，具体步骤见[使用 ChatGPT 订阅](03-connect-clients.md#codex-chatgpt-subscription)。**其他订阅（例如 Claude）是否符合服务商的使用条款，请自行确认。**
 
 添加时服务商选*通用*，然后按[添加上游](#add-an-upstream)操作。
 

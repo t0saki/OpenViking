@@ -8,7 +8,7 @@ This page gives the exact settings for each client and a way to check that they 
 
 Two limits apply to every client:
 
-- Subscription logins, such as a Claude or ChatGPT login, do not work through the gateway. The upstream needs a provider API key (see [Behaviors to expect](01-how-it-works.md#what-to-expect)).
+- A client cannot sign in to the gateway with a subscription login. The upstream needs a provider API key, or a subscription proxy: Codex can use a ChatGPT subscription through a CLIProxyAPI upstream (see [Use a ChatGPT subscription](#codex-chatgpt-subscription)). A Claude subscription login does not work (see [Behaviors to expect](01-how-it-works.md#what-to-expect)).
 - Responses clients must send the full conversation history with every request (see [Client requirements](04-openviking-tools.md#client-requirements)).
 
 ## Client settings at a glance {#connect-clients}
@@ -85,7 +85,15 @@ export OPENVIKING_GATEWAY_KEY='<gateway-key>'
 - Codex first tries a WebSocket connection. The gateway declines it, and Codex falls back to HTTP.
 - Codex sends its own session ID, which the gateway uses to recognize the conversation, including after `codex resume`.
 - Codex may warn that it has no metadata for an unfamiliar model name. The warning does not affect requests.
-- A ChatGPT login does not work through the gateway. Configure the upstream with a provider API key.
+- To use a ChatGPT subscription instead of an API key, see the next section.
+
+### Use a ChatGPT subscription {#codex-chatgpt-subscription}
+
+Codex can use your ChatGPT subscription through the gateway. Codex does not send its ChatGPT login to the gateway; instead, [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) (CPA) sits behind the gateway as an upstream, signs in with your ChatGPT account and serves it as a Responses API. OpenAI accepts this setup: Tibo, who leads Codex at OpenAI, has [publicly walked through](https://x.com/thsottiaux/status/2076119366647894371) connecting a Codex subscription through CLIProxyAPI.
+
+1. Run CPA and sign it in with your ChatGPT account, following its README.
+2. In Studio, add CPA as an upstream: provider *Generic*, protocol Responses, CPA's address as the **Base URL**, and one of CPA's API keys. See [Custom upstreams](07-upstreams.md#custom-upstreams).
+3. Issue a gateway key bound to that upstream and configure Codex as above. Codex keeps talking to the gateway with the gateway key; the subscription stays in CPA.
 
 Next, [check the connection](#check-the-connection).
 

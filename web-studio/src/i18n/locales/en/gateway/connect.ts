@@ -103,7 +103,7 @@ const connect = {
         metadata:
           "Codex may warn that it has no metadata for an unfamiliar model name. The warning doesn't affect requests.",
         login:
-          "A ChatGPT login doesn't work through the gateway. Give the upstream a provider API key.",
+          "Codex can't sign in to the gateway with a ChatGPT login. To use a ChatGPT subscription, add CLIProxyAPI as the upstream, a setup OpenAI's Codex team has endorsed; otherwise give the upstream a provider API key.",
       },
     },
     chat: {

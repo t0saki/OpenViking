@@ -21,7 +21,7 @@ For an animated walkthrough of how the gateway works, see [openviking.ai/gateway
 ## Who it is for {#who-it-is-for}
 
 - **For**: clients that cannot install a plugin or MCP server, such as chat apps, SDK scripts and low-code platforms, and teams that want to manage providers, keys and memory settings in one place.
-- **Not for**: clients signed in directly with a subscription (use a [subscription proxy upstream](../gateway/07-upstreams.md#custom-upstreams) instead), and clients such as Cursor and Trae whose model calls leave from the vendor's servers.
+- **Not for**: clients signed in directly with a subscription (use a [subscription proxy upstream](../gateway/07-upstreams.md#custom-upstreams) instead; Codex can use a ChatGPT subscription this way, see [Use a ChatGPT subscription](../gateway/03-connect-clients.md#codex-chatgpt-subscription)), and clients such as Cursor and Trae whose model calls leave from the vendor's servers.
 
 The gateway supports three model APIs: Anthropic Messages, OpenAI Chat Completions and OpenAI Responses (when every request carries the full history; see [Client requirements](../gateway/04-openviking-tools.md#client-requirements)). It forwards each request to a model endpoint you configure, called an **upstream**. A request goes out in the same API it came in; the gateway never converts between APIs.
 
@@ -82,7 +82,7 @@ OpenViking also connects to agents through plugins, such as those for Claude Cod
 | --- | --- | --- |
 | Where it runs | One shared service between clients and the model provider. It sees only model requests. | Inside each agent, through its hooks or extension API. It sees the agent's sessions, events and workspace. |
 | Clients | Any client whose base URL and API key you can set, in Anthropic Messages, Chat Completions or Responses: chat apps, SDK scripts, low-code platforms and coding agents. Not Cursor or TRAE, whose model calls leave from the vendor's servers. | Only agents that have an OpenViking plugin. Other MCP clients can add the OpenViking tools, without automatic recall or saving. |
-| Model sign-in | Needs a provider API key, held by the gateway or [sent by each client](../gateway/03-connect-clients.md#bring-your-own-provider-key). Claude and ChatGPT subscription logins do not work, except through a [subscription proxy upstream](../gateway/07-upstreams.md#custom-upstreams). | Does not touch model calls, so the agent keeps its own sign-in, subscriptions included. |
+| Model sign-in | Needs a provider API key, held by the gateway or [sent by each client](../gateway/03-connect-clients.md#bring-your-own-provider-key). Clients cannot sign in with a subscription; use a [subscription proxy upstream](../gateway/07-upstreams.md#custom-upstreams) instead. Codex can use a ChatGPT subscription through [CLIProxyAPI](../gateway/03-connect-clients.md#codex-chatgpt-subscription); Claude subscription logins do not work. | Does not touch model calls, so the agent keeps its own sign-in, subscriptions included. |
 | Recall | For each new user message, appended to that message; the search waits at most 2 seconds by default. Searches memories, resources and skills by default. | On the agent's prompt event. Most plugins send the session ID so the server can expand the query from the conversation, and leave resources out of automatic recall. |
 | Saving | Finished turns, with the client's own tool calls and results, one turn behind. Sub-agent and housekeeping requests are not saved. | On the agent's events, usually at the end of each turn. Sub-agents differ: Claude Code, OpenCode and DSH save them as separate sessions, Codex folds them into the main session, Hermes skips them. |
 | OpenViking tools | The gateway runs them during the reply, so clients without tool or MCP support get them too. Read-only tools by default. Calls [skip the client's permission prompts](../gateway/04-openviking-tools.md#risks-and-controls) and show a one-line notice. | The agent runs them as its own tools, so calls and results appear in the transcript and follow the agent's tool permissions. |
@@ -107,11 +107,13 @@ Choose the gateway when:
 
 Choose a plugin when:
 
-- you sign in to the agent with a subscription, such as Claude Code with a Claude login or Codex with a ChatGPT login;
+- you sign in to Claude Code with a Claude subscription;
 - you use Cursor or TRAE, which only a plugin can reach;
 - you want each repository's memory tagged without setup, or every OpenViking tool call shown and approved in the agent;
 - you want saving to follow the agent's events, such as sub-agent sessions, a save before the agent compacts and a commit at exit;
 - you do not want another service on the model call path.
+
+Codex with a ChatGPT subscription works either way: with its plugin, or through the gateway with a [CLIProxyAPI upstream](../gateway/03-connect-clients.md#codex-chatgpt-subscription).
 
 You can mix them: give your coding agents their plugins and send everything else through the gateway. For one client with both, see the next section.
 

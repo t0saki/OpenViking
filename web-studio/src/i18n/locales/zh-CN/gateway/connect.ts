@@ -99,7 +99,8 @@ const connect = {
           'Codex 会先尝试 WebSocket 连接，网关拒绝后它会自动改用 HTTP。',
         metadata:
           '遇到不认识的模型名，Codex 可能提示缺少模型元数据，这个提示不影响请求。',
-        login: 'ChatGPT 登录无法通过网关使用，请为上游配置服务商的 API Key。',
+        login:
+          'Codex 不能用 ChatGPT 账号登录网关。想用 ChatGPT 订阅，可以把 CLIProxyAPI 添加为上游（OpenAI Codex 团队认可这种用法）；否则请为上游配置服务商的 API Key。',
       },
     },
     chat: {

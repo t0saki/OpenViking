@@ -21,7 +21,7 @@ OpenViking 网关是一个模型 API 代理：客户端只要能修改 Base URL�
 ## 适合谁 {#who-it-is-for}
 
 - **适合**：装不了插件或 MCP 的客户端，例如聊天应用、SDK 脚本和低代码平台；以及想集中管理模型服务商、密钥和记忆设置的团队。
-- **不适用**：直接用订阅账号登录的客户端（可以改用[订阅反代上游](../gateway/07-upstreams.md#custom-upstreams)），以及 Cursor、Trae 这类从厂商服务器发起模型调用的客户端。
+- **不适用**：直接用订阅账号登录的客户端（可以改用[订阅反代上游](../gateway/07-upstreams.md#custom-upstreams)，Codex 就可以这样使用 ChatGPT 订阅，见[使用 ChatGPT 订阅](../gateway/03-connect-clients.md#codex-chatgpt-subscription)），以及 Cursor、Trae 这类从厂商服务器发起模型调用的客户端。
 
 网关支持三种模型 API：Anthropic Messages、OpenAI Chat Completions 和 OpenAI Responses（要求每个请求带完整历史，见[客户端要求](../gateway/04-openviking-tools.md#client-requirements)）。请求转发到你配置的模型服务地址，称为**上游**。请求用哪种 API 发来，网关就用同一种 API 转发，不做协议转换。
 
@@ -82,7 +82,7 @@ OpenViking 也能以插件形式接入 Agent，例如 Claude Code、Codex、Curs
 | --- | --- | --- |
 | 运行位置 | 客户端和模型服务商之间的一个共享服务，只看得到模型请求。 | 通过 hook 或扩展接口运行在每个 Agent 内部，看得到 Agent 的会话、事件和工作区。 |
 | 适用客户端 | 能设置 Base URL 和 API Key、使用 Anthropic Messages、Chat Completions 或 Responses 的客户端：聊天应用、SDK 脚本、低代码平台和编程 Agent。Cursor 和 TRAE 不行，它们的模型调用从厂商服务器发出。 | 只有带 OpenViking 插件的 Agent。其他 MCP 客户端可以接入 OpenViking 工具，但没有自动召回和保存。 |
-| 模型登录方式 | 需要服务商的 API Key，由网关保管，或[由客户端各自发送](../gateway/03-connect-clients.md#bring-your-own-provider-key)。Claude、ChatGPT 的订阅登录不能直接用，只能通过[订阅反代上游](../gateway/07-upstreams.md#custom-upstreams)。 | 不经手模型调用，Agent 原来怎么登录就怎么登录，订阅也可以。 |
+| 模型登录方式 | 需要服务商的 API Key，由网关保管，或[由客户端各自发送](../gateway/03-connect-clients.md#bring-your-own-provider-key)。客户端不能用订阅账号登录，可以改用[订阅反代上游](../gateway/07-upstreams.md#custom-upstreams)。Codex 可以通过 [CLIProxyAPI](../gateway/03-connect-clients.md#codex-chatgpt-subscription) 使用 ChatGPT 订阅；Claude 订阅登录不能使用。 | 不经手模型调用，Agent 原来怎么登录就怎么登录，订阅也可以。 |
 | 召回 | 每条新的用户消息召回一次，结果附加在这条消息末尾；检索默认最多等 2 秒。默认检索记忆、资源和技能。 | 在 Agent 的提问事件里进行。多数插件会带上会话 ID，让服务端结合对话扩展查询；自动召回不含资源。 |
 | 保存 | 晚一轮保存已完成的轮次，连同客户端自己的工具调用和结果。子 Agent 请求和杂项请求不保存。 | 跟随 Agent 的事件，通常在每轮结束时。子 Agent 各不相同：Claude Code、OpenCode 和 DSH 存成单独的会话，Codex 并入主会话，Hermes 不保存。 |
 | OpenViking 工具 | 由网关在回复过程中执行，不支持工具或 MCP 的客户端也能用。默认只开放只读工具。调用[不经过客户端的权限确认](../gateway/04-openviking-tools.md#risks-and-controls)，每次调用显示一行提示。 | 由 Agent 当作自己的工具执行，调用和结果出现在对话记录里，遵循 Agent 的工具权限设置。 |
@@ -107,11 +107,13 @@ OpenViking 也能以插件形式接入 Agent，例如 Claude Code、Codex、Curs
 
 以下情况选插件：
 
-- 你用订阅账号登录 Agent，例如用 Claude 账号登录 Claude Code、用 ChatGPT 账号登录 Codex；
+- 你用 Claude 订阅账号登录 Claude Code；
 - 你用 Cursor 或 TRAE，只有插件能接入；
 - 你希望记忆不用配置就按代码仓库标记，或者希望每次 OpenViking 工具调用都在 Agent 里展示并经过确认；
 - 你希望保存跟随 Agent 的事件，例如子 Agent 的会话、Agent 压缩前的保存、退出时的提交；
 - 你不想在模型调用链路上多加一个服务。
+
+用 ChatGPT 订阅的 Codex 两种方式都行：装它的插件，或者经网关接 [CLIProxyAPI 上游](../gateway/03-connect-clients.md#codex-chatgpt-subscription)。
 
 两者也可以混用：编程 Agent 用各自的插件，其他客户端都走网关。同一个客户端两者都装时，见下一节。
 

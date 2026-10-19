@@ -8,7 +8,7 @@ description: 把 Claude Code、Codex、聊天应用、SDK 等客户端接入 Ope
 
 以下两条限制对所有客户端都适用：
 
-- 订阅登录（如 Claude 或 ChatGPT 账号登录）不能通过网关使用，上游需要配置服务商的 API Key（见[使用须知](01-how-it-works.md#what-to-expect)）。
+- 客户端不能用订阅账号登录网关。上游需要配置服务商的 API Key，或者接一个订阅反代：Codex 可以通过 CLIProxyAPI 上游使用 ChatGPT 订阅（见[使用 ChatGPT 订阅](#codex-chatgpt-subscription)）。Claude 订阅登录不能使用（见[使用须知](01-how-it-works.md#what-to-expect)）。
 - 使用 Responses 的客户端，每个请求都必须带上完整的对话历史（见[客户端要求](04-openviking-tools.md#client-requirements)）。
 
 ## 客户端设置一览 {#connect-clients}
@@ -85,7 +85,15 @@ export OPENVIKING_GATEWAY_KEY='<gateway-key>'
 - Codex 会先尝试 WebSocket 连接，被网关拒绝后自动改用 HTTP。
 - Codex 发送自己的会话 ID，网关据此识别对话，`codex resume` 之后也一样。
 - 遇到不认识的模型名，Codex 可能提示缺少模型元数据，不影响请求。
-- ChatGPT 登录不能通过网关使用，请为上游配置服务商的 API Key。
+- 想用 ChatGPT 订阅代替 API Key，见下一节。
+
+### 使用 ChatGPT 订阅 {#codex-chatgpt-subscription}
+
+Codex 可以经网关使用你的 ChatGPT 订阅。Codex 不会把 ChatGPT 登录信息发给网关，而是由 [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI)（CPA）作为上游接在网关后面：CPA 用你的 ChatGPT 账号登录，再以 Responses API 的形式提供服务。这种用法得到了 OpenAI 的认可：OpenAI Codex 负责人 Tibo 曾[公开介绍](https://x.com/thsottiaux/status/2076119366647894371)过用 CLIProxyAPI 接入 Codex 订阅的做法。
+
+1. 按 CPA 的 README 运行 CPA，并用你的 ChatGPT 账号登录。
+2. 在 Studio 中把 CPA 添加为上游：服务商选*通用*，协议选 Responses，**Base URL** 填 CPA 的地址，API Key 填 CPA 的某个 API 密钥。见[自定义上游](07-upstreams.md#custom-upstreams)。
+3. 签发绑定该上游的网关密钥，再按上文配置 Codex。Codex 仍用网关密钥连接网关，订阅只保存在 CPA 里。
 
 配好后，[检查接入是否生效](#check-the-connection)。
 
