@@ -750,6 +750,48 @@ def test_text_clients_add_for_the_user_is_not_a_user_turn():
     assert classify({}, {}, [title])[0] == "auxiliary"
 
 
+async def test_tool_less_request_in_a_session_with_client_tools_is_auxiliary(
+    setup_kernel, credential, policy
+):
+    kernel, _, viking, _ = setup_kernel
+    policy = {**policy, "show_recall": True}
+
+    def body(text, tools=()):
+        return {
+            "model": "m",
+            "max_tokens": 64,
+            "messages": [{"role": "user", "content": text}],
+            **({"tools": list(tools)} if tools else {}),
+        }
+
+    bash = {"name": "Bash", "input_schema": {"type": "object"}}
+    # A helper request may come first; until the client sends tools, nothing changes.
+    first = await prepare(kernel, body("Say hi"), credential, policy, "anthropic")
+    assert first.kind == "user"
+    main = await prepare(
+        kernel, body("Deploy the blue cluster", [bash]), credential, policy, "anthropic"
+    )
+    assert main.kind == "user" and main.reply_lead
+    # Claude Code summarizes a fetched page under the conversation's session header.
+    page = body("Web page content:\n---\nExample Domain\n---\n\nWhat is the title?")
+    side = await prepare(kernel, page, credential, policy, "anthropic")
+    assert side.kind == "auxiliary" and not side.reply_lead
+    assert not context_blocks(side.body["messages"][0]) and len(viking.recalls) == 2
+    # The conversation's own turn with tools switched off resends its replies and is a turn.
+    off = body("Deploy the blue cluster")
+    off["messages"] += [
+        {"role": "assistant", "content": "Which region?"},
+        {"role": "user", "content": "Singapore"},
+    ]
+    assert (await prepare(kernel, off, credential, policy, "anthropic")).kind == "user"
+    assert len(viking.recalls) == 3
+    # A session that never sent client tools, such as one-shot SDK questions, recalls each time.
+    for question in ("Where do I deploy?", "Who owns the cluster?"):
+        sdk = await prepare(kernel, body(question), credential, policy, "anthropic", session="sdk")
+        assert sdk.kind == "user"
+    assert len(viking.recalls) == 5
+
+
 def test_capture_pairs_tools_and_strips_noise():
     messages = [
         {"role": "user", "content": "<system-reminder>noise</system-reminder>please deploy"},
