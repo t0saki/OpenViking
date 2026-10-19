@@ -8,7 +8,7 @@ description: 把 Claude Code、Codex、聊天应用、SDK 等客户端接入 Ope
 
 以下两条限制对所有客户端都适用：
 
-- 客户端不能用订阅账号登录网关。上游需要配置服务商的 API Key，或者接一个订阅反代：Codex 可以通过 CLIProxyAPI 上游使用 ChatGPT 订阅（见[使用 ChatGPT 订阅](#codex-chatgpt-subscription)）。Claude 订阅登录不能使用（见[使用须知](01-how-it-works.md#what-to-expect)）。
+- 客户端不能用订阅账号登录网关。上游需要配置服务商的 API Key，或者接一个订阅反代：Codex 可以通过 CLIProxyAPI 上游使用 ChatGPT 订阅（见[使用 ChatGPT 订阅](#codex-chatgpt-subscription)）。其他订阅服务请自行确认其使用条款（另见[使用须知](01-how-it-works.md#what-to-expect)）。
 - 使用 Responses 的客户端，每个请求都必须带上完整的对话历史（见[客户端要求](04-openviking-tools.md#client-requirements)）。
 
 ## 客户端设置一览 {#connect-clients}

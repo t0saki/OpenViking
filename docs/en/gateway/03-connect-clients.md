@@ -8,7 +8,7 @@ This page gives the exact settings for each client and a way to check that they 
 
 Two limits apply to every client:
 
-- A client cannot sign in to the gateway with a subscription login. The upstream needs a provider API key, or a subscription proxy: Codex can use a ChatGPT subscription through a CLIProxyAPI upstream (see [Use a ChatGPT subscription](#codex-chatgpt-subscription)). A Claude subscription login does not work (see [Behaviors to expect](01-how-it-works.md#what-to-expect)).
+- A client cannot sign in to the gateway with a subscription login. The upstream needs a provider API key, or a subscription proxy: Codex can use a ChatGPT subscription through a CLIProxyAPI upstream (see [Use a ChatGPT subscription](#codex-chatgpt-subscription)). For other subscription services, check their terms yourself (see also [Behaviors to expect](01-how-it-works.md#what-to-expect)).
 - Responses clients must send the full conversation history with every request (see [Client requirements](04-openviking-tools.md#client-requirements)).
 
 ## Client settings at a glance {#connect-clients}

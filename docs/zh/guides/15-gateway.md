@@ -82,7 +82,7 @@ OpenViking 也能以插件形式接入 Agent，例如 Claude Code、Codex、Curs
 | --- | --- | --- |
 | 运行位置 | 客户端和模型服务商之间的一个共享服务，只看得到模型请求。 | 通过 hook 或扩展接口运行在每个 Agent 内部，看得到 Agent 的会话、事件和工作区。 |
 | 适用客户端 | 能设置 Base URL 和 API Key、使用 Anthropic Messages、Chat Completions 或 Responses 的客户端：聊天应用、SDK 脚本、低代码平台和编程 Agent。Cursor 和 TRAE 不行，它们的模型调用从厂商服务器发出。 | 只有带 OpenViking 插件的 Agent。其他 MCP 客户端可以接入 OpenViking 工具，但没有自动召回和保存。 |
-| 模型登录方式 | 需要服务商的 API Key，由网关保管，或[由客户端各自发送](../gateway/03-connect-clients.md#bring-your-own-provider-key)。客户端不能用订阅账号登录，可以改用[订阅反代上游](../gateway/07-upstreams.md#custom-upstreams)。Codex 可以通过 [CLIProxyAPI](../gateway/03-connect-clients.md#codex-chatgpt-subscription) 使用 ChatGPT 订阅；Claude 订阅登录不能使用。 | 不经手模型调用，Agent 原来怎么登录就怎么登录，订阅也可以。 |
+| 模型登录方式 | 需要服务商的 API Key，由网关保管，或[由客户端各自发送](../gateway/03-connect-clients.md#bring-your-own-provider-key)。客户端不能用订阅账号登录，可以改用[订阅反代上游](../gateway/07-upstreams.md#custom-upstreams)。Codex 可以通过 [CLIProxyAPI](../gateway/03-connect-clients.md#codex-chatgpt-subscription) 使用 ChatGPT 订阅；其他订阅服务请自行确认其使用条款。 | 不经手模型调用，Agent 原来怎么登录就怎么登录，订阅也可以。 |
 | 召回 | 每条新的用户消息召回一次，结果附加在这条消息末尾；检索默认最多等 2 秒。默认检索记忆、资源和技能。 | 在 Agent 的提问事件里进行。多数插件会带上会话 ID，让服务端结合对话扩展查询；自动召回不含资源。 |
 | 保存 | 晚一轮保存已完成的轮次，连同客户端自己的工具调用和结果。子 Agent 请求和杂项请求不保存。 | 跟随 Agent 的事件，通常在每轮结束时。子 Agent 各不相同：Claude Code、OpenCode 和 DSH 存成单独的会话，Codex 并入主会话，Hermes 不保存。 |
 | OpenViking 工具 | 由网关在回复过程中执行，不支持工具或 MCP 的客户端也能用。默认只开放只读工具。调用[不经过客户端的权限确认](../gateway/04-openviking-tools.md#risks-and-controls)，每次调用显示一行提示。 | 由 Agent 当作自己的工具执行，调用和结果出现在对话记录里，遵循 Agent 的工具权限设置。 |
