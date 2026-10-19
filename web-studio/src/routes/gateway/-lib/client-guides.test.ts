@@ -182,6 +182,9 @@ it('links the docs in the UI language', () => {
   expect(gatewayDocsUrl('operations', 'zh-CN')).toBe(
     'https://docs.openviking.ai/zh/guides/22-gateway-operations',
   )
+  expect(gatewayDocsUrl('operations', 'zh-CN', 'cacheHitRate')).toBe(
+    'https://docs.openviking.ai/zh/guides/22-gateway-operations#首次调用缓存命中率下降',
+  )
 })
 
 describe('protocols', () => {

@@ -875,7 +875,7 @@ URL 必须是 HTTP(S)，不能含凭证、查询参数或 fragment。未知字�
 - **上游已切换**（`upstream_changed`）：对话原来的上游被停用、没有绑定到客户端当前用的密钥，或者不再提供这个模型，于是对话转到了另一个上游。
 - **缓存参数有变化**（`ark_cache_parameters_changed`）：在火山方舟或 BytePlus 方舟上，客户端在同一段对话里改变了模型、思考模式、采样参数、系统提示词或工具。
 - **没有标出异常**：客户端本身可能每轮都在改动之前的消息或系统提示词，例如插入当前时间，网关无法修正。每次压缩、模型每次开启新的上下文窗口，也都会造成一次未命中，这是预期内的。
-- **一直是 0%**：先对照服务商或中转服务后台的缓存记录。那边有命中，说明上游没有把缓存用量传回网关，例如中转服务转换协议时丢掉了缓存字段；网关读取 `cache_read_input_tokens`、`prompt_tokens_details.cached_tokens`、`input_tokens_details.cached_tokens`、`prompt_cache_hit_tokens` 等常见字段，取其中最大的值。那边也没有，检查服务商是否支持提示缓存、Anthropic 客户端是否设置了 `cache_control`，以及中转服务是否在多个账号或渠道之间轮换。
+- **一直是 0%**：先对照服务商或中转服务后台的缓存记录。那边有命中，说明上游没有把缓存用量传回网关，例如中转服务转换协议时丢掉了缓存字段；网关读取 `cache_read_input_tokens`、`prompt_tokens_details.cached_tokens`、`input_tokens_details.cached_tokens`、`prompt_cache_hit_tokens` 等常见字段。那边也没有，检查服务商是否支持提示缓存、Anthropic 客户端是否设置了 `cache_control`，以及中转服务是否在多个账号或渠道之间轮换。
 
 ### 长对话超出上下文长度
 

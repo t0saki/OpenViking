@@ -26,12 +26,6 @@ def added_tokens(value):
     return (len(orjson.dumps(value)) + 2) // 3
 
 
-def tally(metrics, key, value):
-    # Counts add up across rounds; a cache any round reported was reported.
-    is_flag = isinstance(value, bool)
-    metrics[key] = (metrics.get(key, False) or value) if is_flag else metrics.get(key, 0) + value
-
-
 class HiddenToolLoop:
     def __init__(self, prepared, executor, store, capture):
         self.prepared, self.executor, self.store, self.capture = prepared, executor, store, capture
@@ -111,10 +105,10 @@ class HiddenToolLoop:
             self.prepared.metrics["hidden_upstream_calls"] = self.rounds
         prefix = "hidden_upstream_" if self.rounds else "first_upstream_"
         for key, value in normalized.items():
-            tally(self.prepared.metrics, prefix + key, value)
+            self.prepared.metrics[prefix + key] = self.prepared.metrics.get(prefix + key, 0) + value
             if self.round.usage:
                 # Rounds may report usage in different forms, so the log sums them read one by one.
-                tally(self.counted, key, value)
+                self.counted[key] = self.counted.get(key, 0) + value
 
     def stream(self, events):
         # Adapters update visible history either way; only streams send events.

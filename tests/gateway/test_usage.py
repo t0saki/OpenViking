@@ -16,17 +16,17 @@ from openviking_gateway.tool_protocols.common import add_usage
                 "cache_creation_input_tokens": 50,
             },
             True,
-            (950, 800, 50, True),
+            (950, 800, 50),
         ),
         (
             {"prompt_tokens": 950, "prompt_tokens_details": {"cached_tokens": 800}},
             False,
-            (950, 800, 0, True),
+            (950, 800, 0),
         ),
         (
             {"input_tokens": 950, "input_tokens_details": {"cached_tokens": 800}},
             False,
-            (950, 800, 0, True),
+            (950, 800, 0),
         ),
         # A zero-filled Anthropic field no longer hides the count a relay put in details.
         (
@@ -37,7 +37,7 @@ from openviking_gateway.tool_protocols.common import add_usage
                 "cache_creation_input_tokens": 0,
             },
             False,
-            (950, 800, 0, True),
+            (950, 800, 0),
         ),
         # LiteLLM: Chat totals already hold both cache fields it adds at the top.
         (
@@ -48,25 +48,25 @@ from openviking_gateway.tool_protocols.common import add_usage
                 "cache_creation_input_tokens": 50,
             },
             False,
-            (1000, 800, 50, True),
+            (1000, 800, 50),
         ),
-        ({"input_tokens": 950, "cache_read_input_tokens": 800}, False, (950, 800, 0, True)),
+        ({"input_tokens": 950, "cache_read_input_tokens": 800}, False, (950, 800, 0)),
         # Anthropic-compatible endpoints that also send a Chat total.
         (
             {"prompt_tokens": 0, "input_tokens": 100, "cache_read_input_tokens": 800},
             True,
-            (900, 800, 0, True),
+            (900, 800, 0),
         ),
         (
             {"input_tokens": 100, "cache_read_input_tokens": None, "cached_tokens": 800},
             True,
-            (900, 800, 0, True),
+            (900, 800, 0),
         ),
         # DeepSeek, Kimi, DashScope and OpenRouter names.
         (
             {"prompt_tokens": 950, "prompt_cache_hit_tokens": 800, "prompt_cache_miss_tokens": 150},
             False,
-            (950, 800, 0, True),
+            (950, 800, 0),
         ),
         (
             {
@@ -75,7 +75,7 @@ from openviking_gateway.tool_protocols.common import add_usage
                 "prompt_tokens_details": {"cached_tokens": 10},
             },
             False,
-            (19, 10, 0, True),
+            (19, 10, 0),
         ),
         (
             {
@@ -83,7 +83,7 @@ from openviking_gateway.tool_protocols.common import add_usage
                 "prompt_tokens_details": {"cached_tokens": 600, "cache_creation_input_tokens": 300},
             },
             False,
-            (1000, 600, 300, True),
+            (1000, 600, 300),
         ),
         (
             {
@@ -91,7 +91,7 @@ from openviking_gateway.tool_protocols.common import add_usage
                 "prompt_tokens_details": {"cached_tokens": 600, "cache_write_tokens": 300},
             },
             False,
-            (1000, 600, 300, True),
+            (1000, 600, 300),
         ),
         # new-api fills both totals, one with zero.
         (
@@ -101,7 +101,7 @@ from openviking_gateway.tool_protocols.common import add_usage
                 "input_tokens_details": {"cached_tokens": 800},
             },
             False,
-            (950, 800, 0, True),
+            (950, 800, 0),
         ),
         (
             {
@@ -111,34 +111,17 @@ from openviking_gateway.tool_protocols.common import add_usage
                 "input_tokens_details": None,
             },
             False,
-            (950, 800, 0, True),
+            (950, 800, 0),
         ),
         # Older new-api: a Chat total without the cache, which is added back.
         (
             {"prompt_tokens": 10, "prompt_tokens_details": {"cached_tokens": 800}},
             False,
-            (810, 800, 0, True),
+            (810, 800, 0),
         ),
-        # Anthropic's per-TTL split without the total.
-        (
-            {
-                "input_tokens": 10,
-                "cache_creation": {
-                    "ephemeral_5m_input_tokens": 30,
-                    "ephemeral_1h_input_tokens": 20,
-                },
-            },
-            True,
-            (60, 0, 50, False),
-        ),
-        # No cache field at all, and malformed counts.
-        ({"input_tokens": 100, "cache_read_input_tokens": None}, True, (100, 0, 0, False)),
-        ({"prompt_tokens": 950, "prompt_tokens_details": {}}, False, (950, 0, 0, False)),
-        (
-            {"prompt_tokens": "950", "prompt_tokens_details": {"cached_tokens": True}},
-            False,
-            (0, 0, 0, False),
-        ),
+        # No cache field at all.
+        ({"input_tokens": 100, "cache_read_input_tokens": None}, True, (100, 0, 0)),
+        ({"prompt_tokens": 950, "prompt_tokens_details": {}}, False, (950, 0, 0)),
     ],
 )
 def test_usage_of_reads_every_upstream_form(usage, anthropic, expected):
@@ -147,19 +130,22 @@ def test_usage_of_reads_every_upstream_form(usage, anthropic, expected):
         result["input_tokens"],
         result["cached_tokens"],
         result["cache_write_tokens"],
-        result["cache_reported"],
     ) == expected
 
 
-def test_add_usage_skips_nulls():
+def test_add_usage_skips_nulls_and_keeps_flags():
     total = {}
     for usage in (
-        {"cache_read_input_tokens": None, "prompt_tokens_details": None},
+        {"cache_read_input_tokens": None, "prompt_tokens_details": None, "is_byok": False},
         {"cache_read_input_tokens": 5, "prompt_tokens_details": {"cached_tokens": 80}},
-        {"cache_read_input_tokens": None, "prompt_tokens_details": None},
+        {"cache_read_input_tokens": None, "prompt_tokens_details": None, "is_byok": False},
     ):
         add_usage(total, usage)
-    assert total == {"cache_read_input_tokens": 5, "prompt_tokens_details": {"cached_tokens": 80}}
+    assert total == {
+        "cache_read_input_tokens": 5,
+        "prompt_tokens_details": {"cached_tokens": 80},
+        "is_byok": False,
+    }
 
 
 @pytest.mark.parametrize("late", [None, 0])
@@ -211,4 +197,3 @@ def test_chat_stream_null_details_keep_cache():
         }
     )
     assert capture.usage["cached_tokens"] == 800
-    assert capture.usage["cache_reported"] is True

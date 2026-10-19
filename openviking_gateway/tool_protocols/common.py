@@ -19,7 +19,7 @@ from dataclasses import dataclass
 import orjson
 
 from ..notices import TOOL_NOTICE, without_recall_notice
-from ..protocols import prefix_chain, token_count, usage_of
+from ..protocols import prefix_chain, usage_of
 
 PREFIX = "openviking_"
 # None is the Chat Completions [DONE] marker; all other events are native JSON.
@@ -73,24 +73,22 @@ def merge_delta(target, delta):
 
 
 def add_usage(total, usage):
-    """Sum per-round usage; a null in one round never erases or breaks another's counts."""
+    """Sum per-round usage; a null in one round never erases another's counts."""
     for key, value in usage.items():
         if value is None:
             continue
         if isinstance(value, dict):
-            if not isinstance(total.get(key), dict):
-                total[key] = {}
-            add_usage(total[key], value)
+            add_usage(total.setdefault(key, {}), value)
+        # Flags such as OpenRouter's is_byok are kept, not summed.
         elif isinstance(value, (int, float)) and not isinstance(value, bool):
-            total[key] = token_count(total.get(key)) + value
+            total[key] = total.get(key, 0) + value
         else:
             total[key] = value
 
 
 def merge_usage(total, usage):
     """Overlay a later usage event; nulls, and zeros over counts, never erase earlier ones."""
-    if isinstance(usage, dict):
-        total.update({k: v for k, v in usage.items() if v is not None and (v or not total.get(k))})
+    total.update({k: v for k, v in usage.items() if v is not None and (v or not total.get(k))})
 
 
 def without(value, path):

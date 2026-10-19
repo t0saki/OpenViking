@@ -357,12 +357,22 @@ export const SESSION_HEADERS = [
   'session-id',
 ]
 
+/** Headings Studio links to, by each docs language's anchor. */
+const DOCS_SECTIONS = {
+  cacheHitRate: {
+    en: 'the-first-call-cache-hit-rate-dropped',
+    zh: '首次调用缓存命中率下降',
+  },
+}
+
 /** OpenViking docs page for the gateway, in the UI language. */
 export function gatewayDocsUrl(
   page: 'guide' | 'operations',
   language?: string,
+  section?: keyof typeof DOCS_SECTIONS,
 ): string {
   const locale = language?.startsWith('zh') ? 'zh' : 'en'
   const slug = page === 'guide' ? '15-gateway' : '22-gateway-operations'
-  return `https://docs.openviking.ai/${locale}/guides/${slug}`
+  const anchor = section ? `#${DOCS_SECTIONS[section][locale]}` : ''
+  return `https://docs.openviking.ai/${locale}/guides/${slug}${anchor}`
 }

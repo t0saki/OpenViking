@@ -1,6 +1,7 @@
 """Native wire contracts: hidden calls, exact replay and one visible stream."""
 
 import copy
+from types import SimpleNamespace
 
 import orjson
 import pytest
@@ -8,7 +9,9 @@ from aiohttp import web
 from test_app import enable_tools
 
 from openviking_gateway.protocols import SSEDecoder
-from openviking_gateway.tool_protocols.common import sse
+from openviking_gateway.tool_loop import HiddenToolLoop
+from openviking_gateway.tool_protocols import ResponseCapture
+from openviking_gateway.tool_protocols.common import ToolRound, sse
 
 PATHS = {"responses": "/v1/responses", "anthropic": "/v1/messages"}
 
@@ -1396,12 +1399,6 @@ async def test_admin_disabling_anthropic_tools_preserves_history_and_logs(
 
 async def test_tool_loop_logs_rounds_read_one_by_one(setup_kernel, credential, policy):
     """Rounds in different usage forms still add up, and nulls never break the sum."""
-    from types import SimpleNamespace
-
-    from openviking_gateway.tool_loop import HiddenToolLoop
-    from openviking_gateway.tool_protocols import ResponseCapture
-    from openviking_gateway.tool_protocols.common import ToolRound
-
     kernel, store, _, _ = setup_kernel
     policy.update(gateway_tools=True, recall=False)
     prepared = await kernel.prepare(
@@ -1424,7 +1421,5 @@ async def test_tool_loop_logs_rounds_read_one_by_one(setup_kernel, credential, p
     await loop.persist()
     assert loop.capture.usage["input_tokens"] == 2100
     assert loop.capture.usage["cached_tokens"] == 1700
-    assert loop.capture.usage["cache_reported"] is True
     assert prepared.metrics["first_upstream_cached_tokens"] == 800
-    assert prepared.metrics["first_upstream_cache_reported"] is True
     assert prepared.metrics["hidden_upstream_cached_tokens"] == 900
