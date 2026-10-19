@@ -220,6 +220,13 @@ function hrefOf(text: string) {
   return screen.getByText(text).closest('a')?.getAttribute('href')
 }
 
+/** Hrefs of every link with this text, in page order. */
+function hrefsOf(text: string) {
+  return screen
+    .getAllByText(text)
+    .map((node) => node.closest('a')?.getAttribute('href'))
+}
+
 function renderOverview() {
   const root = createRootRoute({ component: Outlet })
   const router = createRouter({
@@ -384,6 +391,13 @@ describe('OverviewPage', () => {
       '/gateway/requests?filter=issues',
       '/gateway/requests?filter=issues',
     ])
+    // Each problem links the docs section that troubleshoots it.
+    expect(hrefsOf('Troubleshooting')).toEqual([
+      gatewayDocsUrl('openvikingDegraded', 'en'),
+      gatewayDocsUrl('notSaved', 'en'),
+      gatewayDocsUrl('degradedRequests', 'en'),
+    ])
+    expect(hrefOf('Docs')).toBe(gatewayDocsUrl('overview', 'en'))
 
     const reasons = screen
       .getAllByText(/^(Upstream switched|OpenViking plugin in use)$/, {
@@ -460,9 +474,9 @@ describe('OverviewPage', () => {
       'deadbeefcafe0001',
     )
     expect(screen.queryByText(/cache hits lately/)).toBeNull()
-    expect(
-      screen.getByText('Troubleshooting').closest('a')?.getAttribute('href'),
-    ).toBe(gatewayDocsUrl('operations', 'en', 'cacheHitRate'))
+    expect(hrefsOf('Troubleshooting')).toContain(
+      gatewayDocsUrl('cacheHitRate', 'en'),
+    )
   })
 
   it('points Anthropic conversations that never write the cache at cache_control', async () => {
@@ -643,6 +657,7 @@ describe('OverviewPage quick mode', () => {
     ).toBeTruthy()
     expect(screen.getByText('Context profile: use “Default”')).toBeTruthy()
     expect(screen.getByText('Or set up step by step')).toBeTruthy()
+    expect(hrefsOf('Learn more')).toContain(gatewayDocsUrl('quickMode', 'en'))
     api.listKeys.mockResolvedValue([ISSUED])
     fireEvent.click(await quickButton())
 

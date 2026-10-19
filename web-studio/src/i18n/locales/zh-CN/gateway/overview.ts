@@ -108,7 +108,6 @@ const overview = {
       none: '还没有召回',
     },
   },
-  cacheDocs: '排查说明',
   cacheMiss: {
     title_one: '有 {{count}} 段长对话连续没有命中提示词缓存',
     title_other: '有 {{count}} 段长对话连续没有命中提示词缓存',

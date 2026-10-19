@@ -292,7 +292,10 @@ export type LogRecord = {
   degradation?: string
   /** Anchor of the cut whose replacement this request used. */
   compaction_applied?: string
-  /** Why generating a summary failed; the full history was sent. */
+  /**
+   * Why compaction failed. The full history was sent, except for
+   * `still_over_threshold`, where the summary was written and kept.
+   */
   compaction_failed?: string
   /** Estimated size of the summary written for this request. */
   compaction_tokens?: number

@@ -28,6 +28,7 @@ import {
   useLogs,
   useOverview,
 } from '../-lib/use-gateway'
+import { DocsLink } from './docs-link'
 import { ErrorState, LoadingState } from './empty-state'
 import { MetricCard } from './metric-card'
 import { CacheNotices } from './overview-cache'
@@ -150,6 +151,7 @@ export function OverviewPage() {
         description={t('overview.description')}
         actions={
           <>
+            <DocsLink section="overview" />
             {overview.dataUpdatedAt ? (
               <span className="text-xs text-muted-foreground tabular-nums">
                 {t('states.updatedAt', {

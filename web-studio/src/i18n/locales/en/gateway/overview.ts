@@ -114,7 +114,6 @@ const overview = {
       none: 'No recalls yet',
     },
   },
-  cacheDocs: 'Troubleshooting',
   cacheMiss: {
     title_one: '{{count}} long conversation keeps missing the prompt cache',
     title_other: '{{count}} long conversations keep missing the prompt cache',

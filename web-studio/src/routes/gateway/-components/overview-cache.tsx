@@ -1,7 +1,5 @@
-import { ExternalLinkIcon, LightbulbIcon } from 'lucide-react'
+import { LightbulbIcon } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-
-import { Button } from '#/components/ui/button'
 
 import type { CacheAlerts, CacheMiss, Upstream } from '../-lib/api'
 import {
@@ -10,8 +8,8 @@ import {
   formatRelativeTime,
   shortenId,
 } from '../-lib/format'
-import { gatewayDocsUrl } from '../-lib/client-guides'
 import { useUpstreams } from '../-lib/use-gateway'
+import { DocsLink } from './docs-link'
 import { Notice } from './notice'
 
 /** Upstream name, or its shortened id once deleted or not yet loaded. */
@@ -64,21 +62,7 @@ export function CacheNotices({ alerts }: { alerts: CacheAlerts }) {
   const upstreams = useUpstreams().data
   const { misses, unreported } = alerts
   const docs = (
-    <Button
-      size="sm"
-      variant="outline"
-      nativeButton={false}
-      render={
-        <a
-          href={gatewayDocsUrl('operations', locale, 'cacheHitRate')}
-          target="_blank"
-          rel="noreferrer"
-        />
-      }
-    >
-      <ExternalLinkIcon />
-      {t('overview.cacheDocs')}
-    </Button>
+    <DocsLink section="cacheHitRate">{t('docs.troubleshoot')}</DocsLink>
   )
   return (
     <div className="grid gap-3">
