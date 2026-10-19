@@ -709,6 +709,47 @@ def test_tool_arguments_compact_in_their_own_order():
         assert canonical_arguments(value) == value
 
 
+def test_text_clients_add_for_the_user_is_not_a_user_turn():
+    # As DSH sends a turn over Chat Completions: the runtime-context snapshot follows the
+    # prompt, and pi-ai sends a tool result's image as a user message after the tool result.
+    prompt = {"role": "user", "content": "Read red.png"}
+    snapshot = {
+        "role": "user",
+        "content": "Current runtime context. This snapshot supersedes earlier runtime-context "
+        'snapshots.\n\nCurrent working directory: "/work".',
+    }
+    call = {"id": "1", "type": "function", "function": {"name": "read", "arguments": "{}"}}
+    image = {
+        "role": "user",
+        "content": [
+            {"type": "text", "text": "Attached image(s) from tool result:"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}},
+        ],
+    }
+    turn = [prompt, snapshot]
+    assert classify({}, {}, turn) == ("user", 0)
+    turn += [
+        {"role": "assistant", "content": None, "tool_calls": [call]},
+        {"role": "tool", "tool_call_id": "1", "content": "(see attached image)"},
+        image,
+    ]
+    assert classify({}, {}, turn) == ("continuation", 0)
+    # DSH's time context, appended before a step once ten minutes have passed.
+    time = "Time sampled while preparing turn 1, step 4: 2026-10-19T17:02:11+08:00[Asia/Shanghai]"
+    turn += [
+        {"role": "user", "content": time + "\nElapsed since the preceding step context: 10m 2s."}
+    ]
+    assert classify({}, {}, turn) == ("continuation", 0)
+    # The user quoting the label is still the user.
+    quoted = {"role": "user", "content": 'Why does it say "Attached image(s) from tool result:"?'}
+    assert classify({}, {}, [*turn, quoted])[0] == "user"
+    title = {
+        "role": "user",
+        "content": 'Generate the session title from this JSON array:\n[{"seq":8}]',
+    }
+    assert classify({}, {}, [title])[0] == "auxiliary"
+
+
 def test_capture_pairs_tools_and_strips_noise():
     messages = [
         {"role": "user", "content": "<system-reminder>noise</system-reminder>please deploy"},

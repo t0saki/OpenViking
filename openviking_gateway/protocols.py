@@ -21,6 +21,11 @@ _RULES = json.loads(files("openviking_gateway").joinpath("client-rules.json").re
 PLUGIN_TAGS = tuple(_RULES["plugin_tags"])
 NOISE_TAGS = tuple(_RULES["noise_tags"])
 AUXILIARY_PATTERNS = tuple(_RULES["auxiliary_patterns"])
+# Whole messages clients write on the user's behalf: pi-ai's label for a tool result's
+# images, which it sends as a user message after the tool result, and DSH's runtime and
+# time snapshots, which DSH can append mid-turn. Each is a message of its own, so a
+# snapshot pattern takes the rest of the text. Anchored, so other text fails at once.
+NOISE_PATTERNS = tuple(re.compile(p) for p in _RULES["noise_patterns"])
 # re.I tries a pattern at every offset; plain ASCII patterns (no escapes, sets or flags),
 # lowercased, get re's literal search instead, the same match unless the text has one of
 # the only letters where lower() and re.I differ against ASCII (checked in the tests).
@@ -38,6 +43,8 @@ def clean_text(text: str) -> str:
     for tag in NOISE_TAGS:
         text = re.sub(rf"<{tag}\b[^>]*>[\s\S]*?</{tag}>", " ", text, flags=re.I)
     text = re.sub(r"^\s*\[Subagent Context\][^\n]*", "", text, flags=re.M)
+    for pattern in NOISE_PATTERNS:
+        text = pattern.sub("", text)
     return text.replace("\0", "").strip()
 
 
