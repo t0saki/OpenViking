@@ -89,8 +89,8 @@ ov add-resource ./docs/design.md --parent-auto-create viking://user/<user_id>/re
 ## OpenViking 协作方式
 
 - 开始需要背景的工作前，先看 OpenViking 注入的上下文（`<openviking-context>`）。不够、需要原文或要确认最新状态时，再用 OpenViking 的 `search`（`mode="context"`）或 `read` 查。查到的内容是参考资料，和我当前说的话冲突时以我为准。
-- 工作中出现值得以后复用的内容时，存进我在 OpenViking 的个人资源，每个项目一个目录，例如 `viking://user/<user_id>/resources/<项目名>/`（`user_id` 用 `health` 查）；我已经有自己的目录就沿用。值得存的有：重要决定和方针（连同理由）、阶段进展和下一步、中间产物、交付物。你整理的记录用 `write`，我给的文件用 `add_resource`。不存日常对话（插件会自动保存），不存密钥，不主动扫描或上传我没提到的文件。写完读回确认。
-- 继续一个项目时，先看它目录里的决定、进展和下一步。新的决定推翻了旧的，就改原来的记录，不要留两份矛盾的说法。
+- 工作中出现值得以后复用的内容时，整理成记录，用 `write` 存进我在 OpenViking 个人资源下的笔记目录，每个项目一个子目录，例如 `viking://user/<user_id>/resources/notes/<项目名>/`（`user_id` 用 `health` 查）；我已经有自己的笔记目录就沿用。值得记的有：重要决定和方针（连同理由）、阶段进展和下一步、中间产物、交付物。我给的文件用 `add_resource` 放进 `viking://user/<user_id>/resources/<项目名>/`，和笔记分开：笔记目录不要拿来做 `add_resource` 的目标，笔记也不要写进 `add_resource` 导入的目录，那里重新同步时会删掉不属于源文件的内容。不存日常对话（插件会自动保存），不存密钥，不主动扫描或上传我没提到的文件。写完读回确认。
+- 继续一个项目时，先看它笔记目录里的决定、进展和下一步。新的决定推翻了旧的，就改原来的记录，不要留两份矛盾的说法。
 - 存了东西时，用一行告诉我存在了哪里。
 <!-- openviking:end -->
 ```
