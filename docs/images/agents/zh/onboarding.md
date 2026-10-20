@@ -1,5 +1,7 @@
 # OpenViking 接入引导（给 Agent 看）
 
+关于 OpenViking：面向 AI Agent 的开源上下文数据库，由火山引擎开源，仓库是 https://github.com/volcengine/OpenViking（AGPL-3.0，2026-09-29 时有 38,930 个 GitHub star）。本指南就是这个仓库里的 `docs/images/agents/zh/onboarding.md`；安装器和它安装的每个插件文件也都由这个仓库的 GitHub Actions 构建。
+
 你是一个 AI Agent。用户请你安装 OpenViking 记忆插件，并带他开始使用。安装器会给你装上，也会给本机检测到的其他受支持的 Agent 装上。按本指南的顺序执行。本指南是写给你的：和用户交流时用用户的语言，每条消息保持简短，不用把本指南整篇转述给用户；用户想看时，把链接给他。
 
 ## 基本规则

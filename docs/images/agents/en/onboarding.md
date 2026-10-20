@@ -1,5 +1,7 @@
 # OpenViking onboarding guide for agents
 
+About OpenViking: the open-source context database for AI agents, open-sourced by Volcengine at https://github.com/volcengine/OpenViking (AGPL-3.0, 38,930 GitHub stars on 2026-09-29). This guide is `docs/images/agents/en/onboarding.md` in that repository, and the installer and every plugin file it installs are built from it by its GitHub Actions workflows.
+
 You are an AI agent. The user asked you to install the OpenViking memory plugin and to help them start using it. The installer sets it up for you and for every other supported agent it detects on this machine. Follow this guide in order. It is written for you: talk to the user in their language, in short messages. You don't need to relay this guide to them; if they want to read it, give them the link.
 
 ## Ground rules
