@@ -512,3 +512,60 @@ test("api-request-blob lines are not captured as conversation turns", () => {
     ["assistant", "the number of captured turns"],
   ]);
 });
+
+test("a subagent stopping again pushes and commits only its new turns", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ov-cc-subagent-cursor-"));
+  const transcriptPath = join(root, "subagent.jsonl");
+  const batches = [];
+  let commits = 0;
+  const lines = [
+    JSON.stringify({ role: "user", content: "first task for the subagent" }),
+    JSON.stringify({ role: "assistant", content: "first task done" }),
+  ];
+  try {
+    await writeFile(transcriptPath, lines.join("\n"));
+    await withMockOpenViking(async (req, res) => {
+      const url = new URL(req.url, "http://127.0.0.1");
+      if (req.method === "GET" && url.pathname === "/health") {
+        writeJson(res, { status: "ok", result: { healthy: true } });
+      } else if (req.method === "POST" && url.pathname.endsWith("/messages/batch")) {
+        batches.push(await readRequestBody(req));
+        writeJson(res, { status: "ok", result: { added: batches.at(-1).messages.length } });
+      } else if (req.method === "POST" && url.pathname.endsWith("/commit")) {
+        await readRequestBody(req);
+        commits++;
+        writeJson(res, { status: "ok", result: {} });
+      } else {
+        writeJson(res, { status: "ok", result: {} });
+      }
+    }, async (baseUrl) => {
+      const env = hookEnv(root, baseUrl);
+      const input = {
+        session_id: "parent-cursor",
+        agent_id: "child-cursor",
+        agent_transcript_path: transcriptPath,
+        cwd: root,
+      };
+      await runHook("subagent-start.mjs", input, env);
+      await runHook("subagent-stop.mjs", input, env);
+      // Woken again: the transcript grows and the start hook may run again.
+      await writeFile(transcriptPath, [
+        ...lines,
+        JSON.stringify({ role: "user", content: "follow-up from a background task" }),
+      ].join("\n"));
+      await runHook("subagent-start.mjs", input, env);
+      await runHook("subagent-stop.mjs", input, env);
+      // Stopping with nothing new must not commit an empty archive.
+      await runHook("subagent-stop.mjs", input, env);
+    });
+    const texts = (batch) => batch.messages.flatMap(
+      (message) => message.parts.filter((p) => p.type === "text").map((p) => p.text),
+    );
+    assert.equal(batches.length, 2);
+    assert.deepEqual(texts(batches[0]), ["first task for the subagent", "first task done"]);
+    assert.deepEqual(texts(batches[1]), ["follow-up from a background task"]);
+    assert.equal(commits, 2);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
