@@ -7,20 +7,24 @@ import time
 import pytest
 from conftest import replay_records
 
+from openviking_gateway import protocols
 from openviking_gateway.blocks import gateway_note
 from openviking_gateway.capture import CaptureWorker, capture_messages
 from openviking_gateway.capture_store import Document
 from openviking_gateway.client import VikingError
+from openviking_gateway.config import ClientRules
 from openviking_gateway.kernel import token_estimate
 from openviking_gateway.models import Policy
 from openviking_gateway.protocols import (
+    AUXILIARY,
     AUXILIARY_PATTERNS,
-    LOWERED_AUXILIARY,
     REI_CASE_EXCEPTIONS,
     auxiliary,
     canonical_arguments,
     classify,
+    clean_text,
     client_openviking_tools,
+    configure_rules,
     normalize,
     parse_body,
     plugin_present,
@@ -587,7 +591,8 @@ def test_classification_and_plugin_namespaces():
 
 
 def test_lowercase_agrees_with_case_insensitive_matching():
-    assert LOWERED_AUXILIARY
+    # Every packaged pattern stays on the literal-search fast path.
+    assert all(fast for fast, _ in AUXILIARY)
     ascii_any_case = re.compile(r"[\x00-\x7f]", re.I)
     differing = set()
     for code in range(sys.maxunicode + 1):
@@ -623,6 +628,58 @@ def test_lowercase_agrees_with_case_insensitive_matching():
 def test_auxiliary_matches_patterns_ignoring_case(text, expected):
     assert any(re.search(p, text, re.I) for p in AUXILIARY_PATTERNS) == expected
     assert auxiliary(text) == expected
+
+
+@pytest.fixture
+def client_rules():
+    yield lambda changes: configure_rules(ClientRules.model_validate(changes))
+    configure_rules()
+
+
+def test_client_rules_add_to_and_remove_from_the_packaged_rules(client_rules):
+    user = {"role": "user", "content": "Write the Acme release title for v2"}
+    side = [{"role": "user", "content": "You are the ACME title writer.\n\nv2 notes"}]
+    assert classify({}, {}, side)[0] == "user"
+    unknown = client_rules(
+        {
+            "auxiliary_patterns": {
+                "add": ["You are the Acme title writer", r"\Aacme \d+\Z"],
+                "remove": ["Create a short.{0,40}title", "not packaged"],
+            },
+            "noise_tags": {"add": ["acme-context", "acme.note"], "remove": ["system-reminder"]},
+            "noise_patterns": {"add": [r"\A\[Acme: keep going\]\Z"]},
+            "plugin_tags": {"add": ["acme-memory"]},
+        }
+    )
+    assert unknown == ["auxiliary_patterns: not packaged"]
+    assert classify({}, {}, side)[0] == "auxiliary"
+    assert classify({"system": "Create a short release title"}, {}, [user])[0] == "user"
+    assert auxiliary("ACME 12") and not auxiliary("acme 12 fixes")
+    # Each part is matched on its own and as text, so anchors and line breaks hold.
+    numbered = [{"role": "user", "content": "acme 12"}]
+    assert classify({"system": "You are helpful"}, {}, numbered)[0] == "auxiliary"
+    assert classify({"instructions": "Be brief"}, {}, numbered)[0] == "auxiliary"
+    blocks = [{"type": "text", "text": "Intro\nYou are the Acme title writer"}]
+    assert classify({"system": blocks}, {}, [user])[0] == "auxiliary"
+    # A configured regex leaves every packaged pattern on the fast path.
+    assert [fast is None for fast, _ in protocols.AUXILIARY].count(True) == 1
+    assert clean_text("<acme-context>cwd</acme-context> fix it") == "fix it"
+    assert clean_text("<acme.note a='1'>x</acme.note> fix it") == "fix it"
+    assert clean_text("<acmeXnote>x</acmeXnote> fix it") == "<acmeXnote>x</acmeXnote> fix it"
+    assert "<system-reminder>" in clean_text("<system-reminder>x</system-reminder> fix it")
+    loop = [
+        user,
+        {"role": "assistant", "content": "On it"},
+        {"role": "user", "content": "[Acme: keep going]"},
+    ]
+    assert classify({}, {}, loop) == ("continuation", 0)
+    assert plugin_present(
+        {"messages": [{"role": "user", "content": "<acme-memory>m</acme-memory>"}]}, {}
+    )
+    # Each call starts again from the packaged rules.
+    assert client_rules({}) == []
+    assert classify({}, {}, side)[0] == "user"
+    assert protocols.AUXILIARY_PATTERNS == AUXILIARY_PATTERNS
 
 
 OV_NAMES = ["read", "ls", "glob", "find", "search", "add_resource"]
