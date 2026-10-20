@@ -380,10 +380,17 @@ def classify(body: dict, headers: dict, messages: list[dict]) -> tuple[str, int]
             "x-claude-code-request-type",
             "x-claude-code-request-kind",
             "x-claude-code-agent-type",
-            "x-codex-turn-metadata",
         )
     )
     if re.search(r"compact|summar|title|classif|heartbeat|suggest|permission", hints, re.I):
+        return "auxiliary", anchor
+    # Codex sends the whole turn metadata (workspace paths, remotes, tool names) on every
+    # request; only its request_kind says what the request is.
+    try:
+        turn = orjson.loads(headers.get("x-codex-turn-metadata") or "null")
+    except orjson.JSONDecodeError:
+        turn = None
+    if isinstance(turn, dict) and turn.get("request_kind") in ("compaction", "memory"):
         return "auxiliary", anchor
     # Each part on its own and as plain text, so a pattern's anchors and line breaks hold.
     parts = [text_content({"content": body.get(key, "")}) for key in ("system", "instructions")]

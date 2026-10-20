@@ -1,5 +1,6 @@
 import asyncio
 import copy
+import json
 import re
 import sys
 import time
@@ -577,10 +578,22 @@ def test_classification_and_plugin_namespaces():
     assert classify({}, {}, [user, tool])[0] == "continuation"
     assert classify({}, {"x-claude-code-request-class": "compaction"}, [user])[0] == "auxiliary"
     assert classify({}, {"x-claude-code-request-class": "auxiliary"}, [user])[0] == "auxiliary"
-    assert (
-        classify({}, {"x-codex-turn-metadata": '{"request_kind":"compact"}'}, [user])[0]
-        == "auxiliary"
-    )
+    for kind in ("compaction", "memory"):
+        metadata = json.dumps({"request_kind": kind})
+        assert classify({}, {"x-codex-turn-metadata": metadata}, [user])[0] == "auxiliary"
+    # Workspace paths, remotes and tool names in Codex's metadata are not request hints.
+    turn = {
+        "request_kind": "turn",
+        "workspaces": {
+            "/home/u/subtitle-tool": {
+                "associated_remote_urls": {"origin": "git@github.com:acme/summary-bot.git"}
+            }
+        },
+        "tool_namespaces_info": [{"tools": ["mcp__notes__summarize_page", "permission_check"]}],
+    }
+    malformed = ('{"request_kind":"compaction"', '{"request_kind":[]}', "compaction", "[]")
+    for metadata in (json.dumps(turn), *malformed):
+        assert classify({}, {"x-codex-turn-metadata": metadata}, [user])[0] == "user"
     assert classify({}, {"x-claude-code-agent-id": "child"}, [user])[0] == "subagent"
     # OpenViking tools alone, as from an MCP connection, are not a plugin.
     namespaces = {
