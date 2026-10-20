@@ -12,6 +12,21 @@
 //
 // Nothing is sent without --yes. Run `--help` for every option.
 //
+// Any other agent: a small converter writes its sessions to a JSONL file, one
+// session per line, and this script imports that file the same way:
+//
+//   node import-history.mjs --harness opencode --input sessions.jsonl
+//
+//   {"id": "<the agent's session id>", "cwd": "<absolute dir it ran in>",
+//    "messages": [{"role": "user"|"assistant", "text": "...", "created_at": "<ISO 8601>"}],
+//    "updated_at": "<ISO 8601, optional>", "subagent": false}
+//
+// id and messages are required; without cwd a session belongs to no project;
+// a session with no ISO 8601 time at all is skipped. Other roles are dropped.
+// A line that is not such an object, has a user or assistant text that is not
+// a string, or whose id maps to the session id of an earlier line, refuses the
+// whole file.
+//
 // What it sends, per session: the user and assistant text only (tool calls and
 // tool output are dropped, secrets are redacted), with the original
 // timestamps, under the session id `import__<harness>__<native id>` that
@@ -40,25 +55,85 @@ export const VERSION = "1.0.0";
 const USER_AGENT = `openviking-import-history/${VERSION}`;
 const BATCH_LIMIT = 100;
 
+// The id the live plugin gives a session, so `classify` can tell one it
+// already captured. The hook hosts (Cursor, TRAE, ZCode, Kimi Code) take the
+// host's id through safePart (lib/agent-hook-runtime.mjs); OpenCode and pi
+// use it as is (deriveHarnessSessionId in lib/session-model.mjs).
+const hookLiveId = (prefix) => (id) => `${prefix}${String(id || "unknown").replace(/[^A-Za-z0-9._-]/g, "-")}`;
+const codexLiveId = (id) => `cx-${String(id || "unknown").replace(/[^A-Za-z0-9._-]/g, "_")}`;
+
+/** Copy of deriveDshSessionId in dsh-memory-plugin/session-id.mjs. */
+function dshLiveId(id) {
+  const original = `dsh-${id}`;
+  const portable = original.replace(/[<>:"/\\|?*\u0000-\u001F]/g, "_").replace(/[. ]+$/g, (m) => "_".repeat(m.length));
+  return portable === original ? original : `${portable}__${createHash("sha256").update(original).digest("hex").slice(0, 12)}`;
+}
+
+/**
+ * Copy of openClawSessionToOvStorageId in openclaw-plugin/routing/identity-routing.ts,
+ * without the sessionKey branch: a converter has only the session id, so a
+ * session the plugin stored under sha256(sessionKey) is not recognized.
+ */
+function openclawLiveId(id) {
+  const sid = String(id || "").trim();
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sid)) return sid.toLowerCase();
+  if (/[:<>"\\/|?\u0000-\u001f]/.test(sid)) return createHash("sha256").update(`openclaw-session:${sid}`).digest("hex");
+  return sid;
+}
+
+// Keyed by the name in the session id `import__<name>__<id>`: the
+// `openviking-server ingest` source where one exists (claude_code, codex,
+// cursor, opencode, openclaw, hermes), so the two importers skip each other's
+// sessions. `native` hosts are read from disk; the rest only with --input.
 const HARNESSES = {
-  claude_code: { label: "Claude Code", livePrefix: "cc-" },
-  codex: { label: "Codex", livePrefix: "cx-" },
+  claude_code: { label: "Claude Code", native: true, liveId: (id) => `cc-${id}` },
+  codex: { label: "Codex", native: true, liveId: codexLiveId },
+  cursor: { label: "Cursor", liveId: hookLiveId("cu-") },
+  trae: { label: "TRAE", liveId: hookLiveId("tr-") },
+  trae_cn: { label: "TRAE CN", liveId: hookLiveId("trcn-") },
+  // The installer sets TRAE CLI up as the Codex plugin run by traecli, so its
+  // live sessions are Codex's (cx-). No ingest source reads its history.
+  trae_cli: { label: "TRAE CLI", liveId: codexLiveId },
+  zcode: { label: "ZCode", liveId: hookLiveId("zc-") },
+  kimicode: { label: "Kimi Code", liveId: hookLiveId("kc-") },
+  // Sub-agent sessions are `oc-<parent>__subagent-<child>` live; --input skips them.
+  opencode: { label: "OpenCode", liveId: (id) => `oc-${id}` },
+  pi: { label: "pi", liveId: (id) => `pi-${id}` },
+  dsh: { label: "dsh", liveId: dshLiveId },
+  openclaw: { label: "OpenClaw", liveId: openclawLiveId },
+  // Hermes stores a session under its own id, unprefixed. Whether that is the
+  // stem of the file `ingest` reads (`<ts>_<id>.jsonl`) is not known.
+  hermes: { label: "Hermes", liveId: (id) => String(id) },
 };
-const HARNESS_ALIASES = { claude: "claude_code", "claude-code": "claude_code", claude_code: "claude_code", codex: "codex" };
-const UNSUPPORTED = ["cursor", "trae", "trae-cn", "trae-cli", "zcode", "kimicode", "opencode", "pi", "dsh", "openclaw", "hermes"];
+const HARNESS_ALIASES = {
+  claude: "claude_code", "claude-code": "claude_code", claude_code: "claude_code", codex: "codex",
+  cursor: "cursor", trae: "trae", "trae-cn": "trae_cn", trae_cn: "trae_cn", "trae-cli": "trae_cli", trae_cli: "trae_cli",
+  zcode: "zcode", kimicode: "kimicode", opencode: "opencode", pi: "pi", dsh: "dsh", openclaw: "openclaw", hermes: "hermes",
+};
+const INPUT_NAMES = "claude, codex, cursor, trae, trae-cn, trae-cli, zcode, kimicode, opencode, pi, dsh, openclaw, hermes";
 // The harness name the plugin passes to its config loader, for ov.conf's
-// legacy section and the `{harness}` peer template variable.
-const PLUGIN_HARNESS = { claude_code: "claude-code", codex: "codex" };
+// legacy section and the `{harness}` peer template variable. OpenClaw and
+// Hermes do not use that loader and name their peers after the agent, not
+// the directory, so no peer is derived for them.
+const PLUGIN_HARNESS = {
+  claude_code: "claude-code", codex: "codex", cursor: "cursor", trae: "trae", trae_cn: "trae-cn", trae_cli: "codex",
+  zcode: "zcode", kimicode: "kimicode", opencode: "opencode", pi: "pi", dsh: "dsh",
+};
 
 const DEFAULTS = { since: "14d", maxSessions: 20, skipActive: "2h", maxMessageChars: 20000 };
 
 const USAGE = `Usage: node import-history.mjs --harness claude|codex [options]
+       node import-history.mjs --harness <name> --input <file.jsonl> [options]
 
 Imports recent sessions of one agent into OpenViking. Without --yes it only
-reports what it would import.
+reports what it would import. Claude Code and Codex history is read where
+they keep it; for another agent, a converter writes its sessions to a JSONL
+file and --input imports that.
 
 Options:
-  --harness <name>        claude (Claude Code) or codex
+  --harness <name>        claude (Claude Code) or codex; with --input also cursor, trae,
+                          trae-cn, trae-cli, zcode, kimicode, opencode, pi, dsh, openclaw, hermes
+  --input <file.jsonl>    import the sessions in this file instead of the agent's history
   --cwd <dir>             the project whose sessions to import (default: the current directory)
   --all-projects          import sessions from every project instead
   --since <age|date>      only sessions active since then: 14d, 36h, 2w, 2026-09-01 or all (default: ${DEFAULTS.since})
@@ -72,6 +147,20 @@ Options:
   --wait                  after importing, wait up to 120s for memory extraction to finish
   --json                  print the result as JSON
   -h, --help              this text
+
+Input file (--input): one session per line, a JSON object:
+  {"id": "<the agent's own session id>", "cwd": "<absolute dir the session ran in>",
+   "messages": [{"role": "user", "text": "...", "created_at": "2026-10-01T09:30:00Z"}, ...],
+   "updated_at": "<ISO 8601, optional>", "subagent": false}
+  id and messages are required. A session without cwd belongs to no project, so
+  only --all-projects imports it; a cwd must be absolute. Give each message its
+  created_at (ISO 8601): a session with no such time at all is skipped. Roles
+  other than user and assistant are dropped and counted; subagent: true sessions
+  are skipped. A line that is not such an object, has a user or assistant
+  message whose text is not a string, or whose id repeats an earlier one (also
+  once reduced to the letters, digits and ._@- a session id keeps) refuses the
+  whole file, with its line number. Blank lines are ignored. --input cannot be
+  combined with --history-dir.
 `;
 
 // ---------------------------------------------------------------------------
@@ -81,7 +170,7 @@ Options:
 export function parseArgs(argv) {
   const opts = {
     harness: "", cwd: "", allProjects: false, since: DEFAULTS.since, maxSessions: DEFAULTS.maxSessions,
-    skipActive: DEFAULTS.skipActive, peer: "", historyDir: "", maxMessageChars: DEFAULTS.maxMessageChars,
+    skipActive: DEFAULTS.skipActive, peer: "", historyDir: "", input: "", maxMessageChars: DEFAULTS.maxMessageChars,
     dryRun: false, yes: false, wait: false, json: false, help: false,
   };
   const valueOf = (i, name) => {
@@ -111,6 +200,7 @@ export function parseArgs(argv) {
       case "--skip-active": opts.skipActive = take(); break;
       case "--peer": opts.peer = take(); break;
       case "--history-dir": opts.historyDir = take(); break;
+      case "--input": opts.input = take(); break;
       case "--max-message-chars": opts.maxMessageChars = positiveInt(take(), arg); break;
       case "--dry-run": opts.dryRun = true; break;
       case "--yes": case "-y": opts.yes = true; break;
@@ -827,6 +917,93 @@ export function discoverSessionFiles(harness, root) {
   });
 }
 
+class InputError extends Error {
+  constructor(message, problems = []) {
+    super(message);
+    this.problems = problems;
+  }
+}
+
+const MAX_REPORTED_PROBLEMS = 10;
+// ISO 8601 only: Date.parse reads almost anything ("1" is 2001-01-01), and the
+// string is sent to the server as is.
+const ISO_TIME = /^\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?)?$/;
+const parseableTime = (value) => (typeof value === "string" && ISO_TIME.test(value.trim()) && Number.isFinite(Date.parse(value.trim())) ? value.trim() : "");
+
+/**
+ * The sessions of an --input file (format in USAGE), shaped like the readers'
+ * output. One bad line refuses the whole file: it is a converter bug, and a
+ * half import would hide it.
+ */
+export function readInputSessions(path) {
+  let text;
+  try {
+    text = readFileSync(path, "utf-8");
+  } catch (error) {
+    throw new InputError(`cannot read --input ${path} (${error?.code || error?.message || error})`);
+  }
+  const sessions = [];
+  const problems = [];
+  const seen = new Map();
+  let droppedMessages = 0;
+  text.replace(/^﻿/, "").split("\n").forEach((raw, index) => {
+    const line = index + 1;
+    if (!raw.trim()) return;
+    const problem = (reason) => { problems.push({ line, reason }); };
+    let record;
+    try {
+      record = JSON.parse(raw);
+    } catch {
+      return problem("not valid JSON");
+    }
+    if (!isPlainObject(record)) return problem("not a JSON object");
+    const id = typeof record.id === "string" ? record.id.trim() : "";
+    if (!id) return problem('"id" must be a non-empty string');
+    if (!Array.isArray(record.messages)) return problem('"messages" must be an array');
+    const cwd = record.cwd ?? "";
+    if (typeof cwd !== "string" || (cwd && !isAbsolute(cwd))) return problem('"cwd" must be an absolute directory');
+    // Keyed on what the session id keeps of it: "abc:1" and "abc/1" would
+    // both be import__<harness>__abc-1 and land in one server session.
+    const part = sessionIdPart(id);
+    if (part === "unknown" && id !== "unknown") return problem('"id" has no letter, digit or ._@- a session id can keep');
+    if (seen.has(part)) {
+      const first = seen.get(part);
+      return problem(first.id === id ? `repeats the id of line ${first.line}` : `id becomes the same session id as line ${first.line} (${part})`);
+    }
+    seen.set(part, { id, line });
+    const messages = [];
+    let dropped = 0;
+    for (const [i, message] of record.messages.entries()) {
+      if (!isPlainObject(message)) return problem(`messages[${i}] is not an object`);
+      // Tool calls, system prompts and the like: never sent, only counted.
+      if (message.role !== "user" && message.role !== "assistant") {
+        dropped += 1;
+        continue;
+      }
+      if (typeof message.text !== "string") return problem(`messages[${i}].text must be a string`);
+      const clean = cleanText(message.text);
+      if (clean) messages.push({ role: message.role, text: clean, createdAt: parseableTime(message.created_at) });
+    }
+    droppedMessages += dropped;
+    const updated = Date.parse(parseableTime(record.updated_at));
+    sessions.push({
+      nativeId: id,
+      liveId: id,
+      cwd,
+      messages,
+      utility: record.subagent === true,
+      updatedAtMs: Number.isFinite(updated) ? updated : 0,
+      line,
+    });
+  });
+  if (problems.length) {
+    const shown = problems.slice(0, MAX_REPORTED_PROBLEMS).map((p) => `  line ${p.line}: ${p.reason}`);
+    if (problems.length > shown.length) shown.push(`  ... and ${problems.length - shown.length} more`);
+    throw new InputError(`${path}: ${plural(problems.length, "line")} cannot be read; nothing was sent. Fix the converter and run again:\n${shown.join("\n")}`, problems);
+  }
+  return { sessions, droppedMessages };
+}
+
 // ---------------------------------------------------------------------------
 // Planning
 // ---------------------------------------------------------------------------
@@ -865,15 +1042,17 @@ export function mergeTurns(messages) {
   return out;
 }
 
+const sessionIdPart = (value) => String(value || "").trim().replace(/[^a-zA-Z0-9_.@-]+/g, "-").replace(/-{2,}/g, "-").replace(/^[-.]+|[-.]+$/g, "") || "unknown";
+
 export function sessionId(harness, nativeId) {
-  const clean = (value) => String(value || "").trim().replace(/[^a-zA-Z0-9_.@-]+/g, "-").replace(/-{2,}/g, "-").replace(/^[-.]+|[-.]+$/g, "") || "unknown";
-  return ["import", harness, nativeId].map(clean).join("__");
+  return ["import", harness, nativeId].map(sessionIdPart).join("__");
 }
 
 export function liveSessionId(harness, liveId) {
-  if (harness === "claude_code") return `cc-${liveId}`;
-  return `cx-${String(liveId || "unknown").replace(/[^A-Za-z0-9._-]/g, "_")}`;
+  return (HARNESSES[harness]?.liveId || codexLiveId)(liveId);
 }
+
+const NO_DERIVED_PEER = Object.freeze({ peerId: "", origin: "not derived" });
 
 /**
  * Read the history and decide, locally, which sessions are in scope. The
@@ -881,7 +1060,8 @@ export function liveSessionId(harness, liveId) {
  */
 export function planImport(opts, { env = process.env, now = Date.now(), connection } = {}) {
   const harness = opts.harness;
-  const root = historyRoot(harness, env, opts.historyDir);
+  const inputPath = opts.input ? expandHome(opts.input, env) : "";
+  const root = inputPath || historyRoot(harness, env, opts.historyDir);
   const sinceMs = parseSince(opts.since, now);
   const activeMs = parseAge(opts.skipActive);
   const projectDir = opts.allProjects ? "" : canonical(opts.cwd || process.cwd());
@@ -889,6 +1069,7 @@ export function planImport(opts, { env = process.env, now = Date.now(), connecti
   const peerCache = new Map();
   const peerFor = (cwd) => {
     if (forcedPeer) return forcedPeer;
+    if (!PLUGIN_HARNESS[harness]) return NO_DERIVED_PEER;
     if (!peerCache.has(cwd)) peerCache.set(cwd, resolvePeer({ cwd, harness, connection, env }));
     return peerCache.get(cwd);
   };
@@ -896,14 +1077,20 @@ export function planImport(opts, { env = process.env, now = Date.now(), connecti
   const secrets = [connection?.apiKey].filter(Boolean);
 
   const skipped = { outsideWindow: 0, otherProject: 0, active: 0, empty: 0, utility: 0, overLimit: 0 };
+  // An input file is read whole (and refused whole) before anything else.
+  const input = inputPath ? readInputSessions(inputPath) : null;
+  if (input) skipped.undated = 0;
+  const sources = input
+    ? input.sessions.map((parsed) => ({ path: `${inputPath}:${parsed.line}`, mtimeMs: 0, parsed }))
+    : discoverSessionFiles(harness, root);
   const candidates = [];
-  for (const file of discoverSessionFiles(harness, root)) {
+  for (const file of sources) {
     // A file last written before the window holds nothing newer.
     if (sinceMs && file.mtimeMs && file.mtimeMs < sinceMs) {
       skipped.outsideWindow += 1;
       continue;
     }
-    const parsed = harness === "claude_code" ? parseClaudeSession(file.path) : parseCodexSession(file.path);
+    const parsed = file.parsed || (harness === "claude_code" ? parseClaudeSession(file.path) : parseCodexSession(file.path));
     const firstUser = parsed.messages.find((message) => message.role === "user");
     if (parsed.utility || (firstUser && UTILITY_PROMPTS.some((re) => re.test(firstUser.text)))) {
       skipped.utility += 1;
@@ -913,7 +1100,12 @@ export function planImport(opts, { env = process.env, now = Date.now(), connecti
       skipped.empty += 1;
       continue;
     }
-    const last = lastActivity(parsed, file.mtimeMs);
+    const last = lastActivity(parsed, file.mtimeMs || parsed.updatedAtMs);
+    // No time to hold --since or --skip-active against.
+    if (input && !last) {
+      skipped.undated += 1;
+      continue;
+    }
     if (sinceMs && last < sinceMs) {
       skipped.outsideWindow += 1;
       continue;
@@ -961,7 +1153,7 @@ export function planImport(opts, { env = process.env, now = Date.now(), connecti
       turns,
     };
   });
-  return { harness, root, projectDir, projectPeer, sinceMs, activeMs, sessions, skipped };
+  return { harness, root, projectDir, projectPeer, sinceMs, activeMs, sessions, skipped, droppedMessages: input?.droppedMessages };
 }
 
 // ---------------------------------------------------------------------------
@@ -1127,8 +1319,10 @@ export function summarize(plan, { mode, connection, results = [], serverChecked 
     project: plan.projectDir || null,
     projectPeer: plan.projectPeer?.peerId || null,
     window: { since: plan.sinceMs ? new Date(plan.sinceMs).toISOString() : null, skipActiveMs: plan.activeMs },
+    peerNote: PLUGIN_HARNESS[plan.harness] ? undefined : `${HARNESSES[plan.harness].label} names its peers after the agent, not the directory; none is derived (use --peer)`,
     serverChecked,
     serverNote: serverNote || undefined,
+    droppedMessages: plan.droppedMessages,
     toImport: { sessions: t.sessions, messages: t.messages, chars: t.chars, estimatedTokens: Math.round(t.chars / 4) },
     skipped: {
       ...plan.skipped,
@@ -1160,13 +1354,15 @@ function printText(summary, env) {
   lines.push(`  harness:    ${label} (${shortHome(summary.historyDir, env)})`);
   lines.push(`  server:     ${summary.server} (credentials: ${summary.credentials || "none"})`);
   if (summary.project) {
-    lines.push(`  project:    ${shortHome(summary.project, env)} (peer ${summary.projectPeer || "none: not a repository"})`);
+    const none = summary.peerNote ? "none" : "none: not a repository";
+    lines.push(`  project:    ${shortHome(summary.project, env)} (peer ${summary.projectPeer || none})`);
   } else {
     lines.push("  project:    all projects");
   }
   const since = summary.window.since ? `since ${summary.window.since.slice(0, 10)}` : "any age";
   const active = summary.window.skipActiveMs ? `, skipping sessions active in the last ${duration(summary.window.skipActiveMs)}` : "";
   lines.push(`  window:     ${since}${active}`);
+  if (summary.peerNote && !summary.projectPeer) lines.push(`  peer:       ${summary.peerNote}`);
   if (!summary.serverChecked) lines.push(`  note:       ${summary.serverNote}; sessions already on the server are counted as new`);
   const t = summary.toImport;
   const verb = summary.mode === "import" ? "imported" : "to import";
@@ -1194,8 +1390,12 @@ function printText(summary, env) {
     [s.outsideWindow, "older than the window"],
     [s.otherProject, s.otherProject === 1 ? "other project" : "other projects"],
     [s.empty + s.utility, "empty or plugin-internal"],
+    [s.undated, "undated (no time on any message)"],
   ].filter(([n]) => n).map(([n, what]) => `${n} ${what}`);
   if (skippedParts.length) lines.push(`  skipped:    ${skippedParts.join(", ")}`);
+  if (summary.droppedMessages) {
+    lines.push(`  dropped:    ${plural(summary.droppedMessages, "message")} in the input with a role other than user or assistant`);
+  }
   const listed = summary.sessions.filter((x) => x.state !== "imported" && x.state !== "live");
   if (listed.length) {
     lines.push("  sessions:");
@@ -1237,13 +1437,18 @@ export async function main(argv = process.argv.slice(2), { env = process.env, st
     stderr.write(`import-history: --harness is required\n\n${USAGE}`);
     return 2;
   }
-  const harness = HARNESS_ALIASES[requested];
+  const harness = Object.hasOwn(HARNESS_ALIASES, requested) ? HARNESS_ALIASES[requested] : undefined;
   if (!harness) {
-    if (UNSUPPORTED.includes(requested)) {
-      stdout.write(`History import for ${requested} is not supported yet. Supported: claude (Claude Code), codex.\n`);
-      return 0;
-    }
-    stderr.write(`import-history: unknown harness ${JSON.stringify(opts.harness)}; use claude or codex\n`);
+    stderr.write(`import-history: unknown harness ${JSON.stringify(opts.harness)}; use claude or codex, or with --input one of ${INPUT_NAMES}\n`);
+    return 2;
+  }
+  if (!opts.input && !HARNESSES[harness].native) {
+    stdout.write(`History import for ${requested} is not supported yet. Supported: claude (Claude Code), codex.\n`
+      + `Its sessions can be imported with --input <file.jsonl>, written by a converter (see --help).\n`);
+    return 0;
+  }
+  if (opts.input && opts.historyDir) {
+    stderr.write(`import-history: --input and --history-dir cannot be used together\n\n${USAGE}`);
     return 2;
   }
   opts.harness = harness;
@@ -1252,7 +1457,7 @@ export async function main(argv = process.argv.slice(2), { env = process.env, st
     return 1;
   }
 
-  const connection = resolveConnection(PLUGIN_HARNESS[harness], { env });
+  const connection = resolveConnection(PLUGIN_HARNESS[harness] || harness, { env });
   let plan;
   try {
     plan = planImport(opts, { env, now, connection });
@@ -1261,9 +1466,14 @@ export async function main(argv = process.argv.slice(2), { env = process.env, st
       stderr.write(`import-history: ${error.message}\n`);
       return 2;
     }
+    if (error instanceof InputError) {
+      stderr.write(`import-history: ${error.message}\n`);
+      if (opts.json) stdout.write(`${JSON.stringify({ error: "invalid input", message: error.message, input: opts.input, problems: error.problems }, null, 2)}\n`);
+      return 1;
+    }
     throw error;
   }
-  if (!existsSync(plan.root)) {
+  if (!opts.input && !existsSync(plan.root)) {
     stdout.write(`No ${HARNESSES[harness].label} history at ${shortHome(plan.root, env)}; nothing to import.\n`);
     return 0;
   }

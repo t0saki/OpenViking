@@ -19,6 +19,7 @@ import { fileURLToPath } from "node:url";
 import {
   cleanText,
   codexNativeId,
+  liveSessionId,
   main,
   parseClaudeSession,
   parseCodexSession,
@@ -26,9 +27,14 @@ import {
   redactSecrets,
   resolveConnection as scriptConnection,
   resolvePeer,
+  sessionId,
 } from "./import-history.mjs";
+import { HOSTS as HOOK_HOSTS } from "../agent-hook-plugin/hosts/index.mjs";
+import { deriveDshSessionId } from "../dsh-memory-plugin/session-id.mjs";
+import { deriveAgentSessionId } from "./lib/agent-hook-runtime.mjs";
 import { resolveConnection as libConnection } from "./lib/credentials.mjs";
 import { buildPluginConfig } from "./lib/plugin-config.mjs";
+import { deriveCodexSessionId, deriveHarnessSessionId } from "./lib/session-model.mjs";
 import { resolveEffectivePeerId } from "./lib/workspace-peer.mjs";
 
 const SCRIPT = join(dirname(fileURLToPath(import.meta.url)), "import-history.mjs");
@@ -523,4 +529,302 @@ test("runs as a standalone file with node", () => {
   assert.match(result.stdout, /Usage: node import-history\.mjs --harness claude\|codex/);
   const syntax = spawnSync(process.execPath, ["--check", SCRIPT], { encoding: "utf8" });
   assert.equal(syntax.status, 0, syntax.stderr);
+});
+
+// ---------------------------------------------------------------------------
+// --input: sessions a converter wrote for an agent the script cannot read
+// ---------------------------------------------------------------------------
+
+function inputHome(root, url) {
+  const home = join(root, "home");
+  const repo = join(home, "src", "app");
+  gitRepo(repo, "https://github.com/acme/app.git");
+  const other = join(home, "src", "other");
+  gitRepo(other, "https://github.com/acme/other.git");
+  mkdirSync(join(home, ".openviking"), { recursive: true });
+  writeFileSync(join(home, ".openviking", "ovcli.conf"), JSON.stringify({ url, api_key: "the-real-key-123" }));
+  return { home, repo, other };
+}
+
+function writeInput(path, lines) {
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `${lines.map((l) => (typeof l === "string" ? l : JSON.stringify(l))).join("\n")}\n`);
+  return path;
+}
+
+/** A user/assistant exchange per pair, a minute apart, ending at `end`. */
+function exchange(end, pairs) {
+  const out = [];
+  pairs.forEach(([user, assistant], i) => {
+    const at = end - (pairs.length - i) * 60_000;
+    out.push({ role: "user", text: user, created_at: iso(at) }, { role: "assistant", text: assistant, created_at: iso(at + 30_000) });
+  });
+  return out;
+}
+
+test("--input: a malformed file is refused whole, with line numbers, and nothing is sent", async (t) => {
+  const root = tempRoot(t);
+  const server = await fakeServer(t);
+  const { home, repo } = inputHome(root, server.url);
+  const good = { id: "ok-1", cwd: repo, messages: exchange(NOW - DAY, [["hi", "hello"]]) };
+  const input = writeInput(join(home, "sessions.jsonl"), [
+    good,
+    "",
+    "{not json",
+    "[1, 2]",
+    { cwd: repo, messages: [] },
+    { id: "no-messages", cwd: repo },
+    { id: "bad-text", cwd: repo, messages: [{ role: "user", text: { secret: "converter bug" } }] },
+    { ...good },
+    { id: "relative", cwd: "src/app", messages: [] },
+    // Different ids, one session id: they would merge into one server session.
+    { id: "x/y", cwd: repo, messages: [] },
+    { id: "x:y", cwd: repo, messages: [] },
+    { id: "会话一", cwd: repo, messages: [] },
+    { id: "tool-object", cwd: repo, messages: [{ role: "tool", text: { k: 1 } }] },
+  ]);
+
+  const run = await runMain(["--harness", "opencode", "--input", input, "--cwd", repo, "--yes"], { HOME: home });
+  assert.equal(run.code, 1);
+  for (const expected of [
+    /line 3: not valid JSON/,
+    /line 4: not a JSON object/,
+    /line 5: "id" must be a non-empty string/,
+    /line 6: "messages" must be an array/,
+    /line 7: messages\[0\]\.text must be a string/,
+    /line 8: repeats the id of line 1/,
+    /line 9: "cwd" must be an absolute directory/,
+    /line 11: id becomes the same session id as line 10 \(x-y\)/,
+    /line 12: "id" has no letter, digit or \._@- a session id can keep/,
+    /9 lines cannot be read; nothing was sent/,
+  ]) assert.match(run.err, expected);
+  assert.doesNotMatch(run.err, /line 1:|line 2:|line 10:|line 13:|converter bug/);
+  assert.equal(server.calls.length, 0, "nothing is sent, not even a read");
+
+  // At most ten are listed; --json carries them all.
+  const many = writeInput(join(home, "many.jsonl"), Array.from({ length: 14 }, () => "nope"));
+  const json = await runMain(["--harness", "pi", "--input", many, "--json"], { HOME: home });
+  assert.equal(json.code, 1);
+  assert.match(json.err, /line 10: not valid JSON\n {2}\.\.\. and 4 more/);
+  assert.doesNotMatch(json.err, /line 11:/);
+  assert.equal(JSON.parse(json.out).problems.length, 14);
+
+  const missing = await runMain(["--harness", "pi", "--input", join(home, "absent.jsonl")], { HOME: home });
+  assert.equal(missing.code, 1);
+  assert.match(missing.err, /cannot read --input .*absent\.jsonl \(ENOENT\)/);
+  const missingJson = await runMain(["--harness", "pi", "--input", join(home, "absent.jsonl"), "--json"], { HOME: home });
+  assert.match(JSON.parse(missingJson.out).message, /cannot read --input .*absent\.jsonl \(ENOENT\)/);
+  assert.equal(server.calls.length, 0);
+});
+
+test("--input runs the same pipeline: filters, roles, dates, redaction, dedupe", async (t) => {
+  const root = tempRoot(t);
+  const server = await fakeServer(t);
+  const { home, repo, other } = inputHome(root, server.url);
+  server.sessions.set("oc-ses_live", { messages: [{}], commits: 1 });
+  const input = writeInput(join(home, "sessions.jsonl"), [
+    {
+      id: "ses_new",
+      cwd: repo,
+      messages: [
+        { role: "system", text: "system prompt that must not be imported", created_at: iso(NOW - 3 * DAY) },
+        ...exchange(NOW - 3 * DAY, [["Add rate limiting, key is --api-key the-real-key-123 and sk-ant-api03-ABCDEFGHIJKLMNOPQRSTUVWX, bare: the-real-key-123", "Added a token bucket."]]),
+        { role: "tool", text: { output: "tool output that must not be imported" } },
+        { role: "assistant", text: "<system-reminder>internal note</system-reminder>And tested it.", created_at: iso(NOW - 3 * DAY) },
+      ],
+    },
+    { id: "ses_sub", cwd: join(repo, "src"), messages: exchange(NOW - 2 * DAY, [["Why is CI red?", "A missing env var."], ["Fix it", "Fixed."]]) },
+    { id: "ses_updated", cwd: repo, updated_at: iso(NOW - 4 * DAY), messages: [{ role: "user", text: "no per-message time" }, { role: "assistant", text: "ok" }] },
+    { id: "ses_undated", cwd: repo, messages: [{ role: "user", text: "when was this?", created_at: "1" }, { role: "assistant", text: "nobody knows", created_at: "yesterday-ish" }] },
+    { id: "ses_child", cwd: repo, subagent: true, messages: exchange(NOW - DAY, [["sub-agent prompt", "sub-agent answer"]]) },
+    { id: "ses_live", cwd: repo, messages: exchange(NOW - DAY, [["Already captured by the plugin", "yes"]]) },
+    { id: "ses_active", cwd: repo, messages: exchange(NOW - 10 * 60_000, [["this very conversation", "still running"]]) },
+    { id: "ses_old", cwd: repo, messages: exchange(NOW - 30 * DAY, [["ancient work", "ok"]]) },
+    { id: "ses_other", cwd: other, messages: exchange(NOW - DAY, [["other project work", "done"]]) },
+    { id: "ses_nocwd", messages: exchange(NOW - DAY, [["somewhere", "anywhere"]]) },
+    { id: "ses_empty", cwd: repo, messages: [{ role: "tool", text: "x" }] },
+  ]);
+  const env = { HOME: home };
+  const args = ["--harness", "opencode", "--input", input, "--cwd", repo];
+
+  const dry = await runMain([...args, "--json"], env);
+  assert.equal(dry.code, 0, dry.err);
+  const plan = JSON.parse(dry.out);
+  assert.equal(plan.mode, "dry-run");
+  assert.equal(plan.harness, "opencode");
+  assert.equal(plan.historyDir, input);
+  assert.equal(plan.projectPeer, "github.com-acme-app");
+  assert.deepEqual(plan.sessions.map((s) => [s.id, s.state]), [
+    ["import__opencode__ses_live", "live"],
+    ["import__opencode__ses_sub", "new"],
+    ["import__opencode__ses_new", "new"],
+    ["import__opencode__ses_updated", "new"],
+  ]);
+  assert.equal(plan.sessions.find((s) => s.id.endsWith("ses_updated")).lastActivity, iso(NOW - 4 * DAY));
+  assert.deepEqual(plan.skipped, {
+    outsideWindow: 1, otherProject: 2, active: 1, empty: 1, utility: 1, overLimit: 0, undated: 1, alreadyImported: 0, capturedByPlugin: 1,
+  });
+  assert.equal(plan.droppedMessages, 3);
+  assert.ok(server.calls.every((c) => c.method === "GET"), "a dry run only reads");
+  assert.ok(server.calls.some((c) => c.url === "/api/v1/sessions/oc-ses_new"), "checks for the plugin's own capture");
+
+  const text = await runMain(args, env);
+  assert.match(text.out, /harness: {4}OpenCode \(~\/sessions\.jsonl\)/);
+  assert.match(text.out, /1 undated \(no time on any message\)/);
+  assert.match(text.out, /dropped: {4}3 messages in the input with a role other than user or assistant/);
+  assert.doesNotMatch(text.out, /the-real-key-123|system prompt|tool output|sub-agent/);
+
+  const imported = await runMain([...args, "--yes", "--json"], env);
+  assert.equal(imported.code, 0, imported.err);
+  assert.deepEqual(JSON.parse(imported.out).results.map((r) => [r.id, r.ok]), [
+    ["import__opencode__ses_sub", true],
+    ["import__opencode__ses_new", true],
+    ["import__opencode__ses_updated", true],
+  ]);
+  const created = server.sessions.get("import__opencode__ses_new");
+  assert.equal(created.commits, 1);
+  assert.equal(created.autoCommit, null);
+  assert.deepEqual(created.messages.map((m) => m.role), ["user", "assistant"]);
+  // The bare key is caught only because it is the connection's key.
+  assert.match(created.messages[0].parts[0].text, /--api-key \[REDACTED\] and \[REDACTED\], bare: \[REDACTED\]/);
+  assert.equal(created.messages[1].parts[0].text, "Added a token bucket.\n\nAnd tested it.");
+  assert.equal(created.messages[0].created_at, iso(NOW - 3 * DAY - 60_000));
+  assert.ok(created.messages.every((m) => m.peer_id === "github.com-acme-app"));
+  assert.equal(server.sessions.get("import__opencode__ses_updated").messages[0].created_at, undefined);
+  assert.doesNotMatch(JSON.stringify([...server.sessions.values()]), /the-real-key-123|ABCDEFGHIJKLMNOP|system prompt|tool output|internal note|sub-agent/);
+
+  const writes = server.calls.length;
+  const again = await runMain([...args, "--yes", "--json"], env);
+  assert.equal(again.code, 0, again.err);
+  const second = JSON.parse(again.out);
+  assert.equal(second.results.length, 0);
+  assert.equal(second.skipped.alreadyImported, 3);
+  assert.ok(server.calls.slice(writes).every((c) => c.method === "GET"), "a re-run writes nothing");
+
+  // Every project and any age: the other repository, the one without a cwd and the old one too.
+  const all = JSON.parse((await runMain(["--harness", "opencode", "--input", input, "--all-projects", "--since", "60d", "--json"], env)).out);
+  const byId = Object.fromEntries(all.sessions.map((s) => [s.id, s.peer]));
+  assert.equal(byId["import__opencode__ses_other"], "github.com-acme-other");
+  assert.equal(byId["import__opencode__ses_nocwd"], null);
+  assert.equal(byId["import__opencode__ses_old"], "github.com-acme-app");
+  // --since narrows it.
+  const recent = JSON.parse((await runMain([...args, "--since", "36h", "--json"], env)).out);
+  assert.deepEqual(recent.sessions.map((s) => s.id), ["import__opencode__ses_live"]);
+  assert.equal(recent.skipped.outsideWindow, 4);
+});
+
+test("--input: session ids, live ids and peers follow each host's plugin", async (t) => {
+  const root = tempRoot(t);
+  mkdirSync(join(root, "home"), { recursive: true });
+  const repo = join(root, "repo");
+  gitRepo(repo, "git@github.com:Volcengine/OpenViking.git");
+  const plain = join(root, "plain");
+  mkdirSync(plain);
+
+  // Live ids, against the plugins' own derivations.
+  const ids = ["ses_4f2a9c", "sess_01J9ZX", "0199AAAA-bbbb-7ccc-8ddd-eeeeeeeeeeee", "a:b/c d?.", "im?a"];
+  for (const id of ids) {
+    for (const [name, host] of Object.entries(HOOK_HOSTS)) {
+      const key = name.replace(/-/g, "_");
+      assert.equal(liveSessionId(key, id), deriveAgentSessionId(host.prefix, { session_id: id }), `${name} ${id}`);
+    }
+    assert.equal(liveSessionId("opencode", id), deriveHarnessSessionId("oc-", id), `opencode ${id}`);
+    assert.equal(liveSessionId("pi", id), deriveHarnessSessionId("pi-", id), `pi ${id}`);
+    assert.equal(liveSessionId("dsh", id), deriveDshSessionId(id), `dsh ${id}`);
+    assert.equal(liveSessionId("trae_cli", id), deriveCodexSessionId(id), `trae-cli ${id}`);
+    assert.equal(liveSessionId("codex", id), deriveCodexSessionId(id), `codex ${id}`);
+  }
+  assert.equal(liveSessionId("openclaw", "0199AAAA-bbbb-7ccc-8ddd-eeeeeeeeeeee"), "0199aaaa-bbbb-7ccc-8ddd-eeeeeeeeeeee");
+  assert.equal(liveSessionId("openclaw", "a:b"), createHash("sha256").update("openclaw-session:a:b").digest("hex"));
+  assert.equal(liveSessionId("hermes", "20261001_abc"), "20261001_abc");
+  // Session ids sanitize the way `openviking-server ingest` does.
+  assert.equal(sessionId("opencode", "a:b/c d?."), "import__opencode__a-b-c-d");
+
+  // Peers, against the plugin loader with each host's harness name.
+  const ovcli = (body) => writeFileSync(join(root, "ovcli.conf"), JSON.stringify(body));
+  const hosts = [["cursor", "cursor"], ["trae", "trae"], ["trae-cn", "trae_cn"], ["trae-cli", "trae_cli", "codex"], ["zcode", "zcode"],
+    ["kimicode", "kimicode"], ["opencode", "opencode"], ["pi", "pi"], ["dsh", "dsh"]];
+  for (const [name, key, pluginName = name] of hosts) {
+    const scenarios = [
+      { cwd: repo },
+      { cwd: plain },
+      { cwd: repo, file: { url: "http://127.0.0.1:1933", api_key: "k", plugin: { peerSource: "{harness}-{dir}" } } },
+      { cwd: repo, file: { url: "http://127.0.0.1:1933", api_key: "k", plugin: { [pluginName]: { peerId: `${key}-peer` } } } },
+      { cwd: repo, file: { url: "http://127.0.0.1:1933", api_key: "k", plugin: { [pluginName.replace(/-/g, "_")]: { peerId: "snake-peer" } } } },
+    ];
+    for (const scenario of scenarios) {
+      ovcli(scenario.file || { url: "http://127.0.0.1:1933", api_key: "k" });
+      const env = isolatedEnv(root);
+      const cfg = buildPluginConfig(pluginName, { cwd: scenario.cwd, env });
+      const expected = resolveEffectivePeerId({ cfg, cwd: scenario.cwd, env }).peerId;
+      const actual = resolvePeer({ cwd: scenario.cwd, harness: key, connection: scriptConnection(pluginName, { env }), env }).peerId;
+      assert.equal(actual, expected, `${name}: ${JSON.stringify(scenario)}`);
+    }
+  }
+  ovcli({ url: "http://127.0.0.1:1933", api_key: "k", plugin: { peerSource: "{harness}-{dir}" } });
+  const env = isolatedEnv(root);
+  assert.equal(resolvePeer({ cwd: repo, harness: "trae_cn", connection: scriptConnection("trae-cn", { env }), env }).peerId, "trae-cn-repo");
+});
+
+test("--input end to end for opencode, pi and kimicode: ids, the plugin's capture, the peer", async (t) => {
+  const root = tempRoot(t);
+  const server = await fakeServer(t);
+  const { home, repo } = inputHome(root, server.url);
+  const cases = [
+    ["opencode", "ses_4f2a9c", "oc-ses_4f2a9c"],
+    ["pi", "0199aaaa-bbbb-7ccc-8ddd-eeeeeeeeeeee", "pi-0199aaaa-bbbb-7ccc-8ddd-eeeeeeeeeeee"],
+    ["kimicode", "k1:sess 7", "kc-k1-sess-7"],
+  ];
+  for (const [harness, id, live] of cases) {
+    const input = writeInput(join(home, `${harness}.jsonl`), [
+      { id, cwd: repo, messages: exchange(NOW - 2 * DAY, [["remember the deploy steps", "Noted."]]) },
+      { id: `${id}-captured`, cwd: repo, messages: exchange(NOW - DAY, [["captured live", "yes"]]) },
+    ]);
+    server.sessions.set(`${live}-captured`, { messages: [{}], commits: 1 });
+    const run = await runMain(["--harness", harness, "--input", input, "--cwd", repo, "--yes", "--json"], { HOME: home });
+    assert.equal(run.code, 0, run.err);
+    const result = JSON.parse(run.out);
+    const own = sessionId(harness, id);
+    assert.deepEqual(result.sessions.map((s) => [s.id, s.state]), [[sessionId(harness, `${id}-captured`), "live"], [own, "new"]], harness);
+    assert.ok(server.calls.some((c) => c.url === `/api/v1/sessions/${encodeURIComponent(live)}`), `${harness}: checks ${live}`);
+    assert.deepEqual(server.sessions.get(own).messages.map((m) => [m.role, m.peer_id]), [["user", "github.com-acme-app"], ["assistant", "github.com-acme-app"]]);
+  }
+  assert.ok(server.sessions.has("import__kimicode__k1-sess-7"));
+});
+
+test("--input for OpenClaw and Hermes derives no peer; other hosts point at --input", async (t) => {
+  const root = tempRoot(t);
+  const server = await fakeServer(t);
+  const { home, repo } = inputHome(root, server.url);
+  const input = writeInput(join(home, "claw.jsonl"), [{ id: "0199AAAA-bbbb-7ccc-8ddd-eeeeeeeeeeee", cwd: repo, messages: exchange(NOW - DAY, [["hi", "hello"]]) }]);
+  const dry = await runMain(["--harness", "openclaw", "--input", input, "--cwd", repo, "--json"], { HOME: home });
+  assert.equal(dry.code, 0, dry.err);
+  const plan = JSON.parse(dry.out);
+  assert.equal(plan.projectPeer, null);
+  assert.match(plan.peerNote, /OpenClaw names its peers after the agent/);
+  assert.deepEqual(plan.sessions.map((s) => [s.id, s.peer]), [["import__openclaw__0199AAAA-bbbb-7ccc-8ddd-eeeeeeeeeeee", null]]);
+  assert.ok(server.calls.some((c) => c.url === "/api/v1/sessions/0199aaaa-bbbb-7ccc-8ddd-eeeeeeeeeeee"));
+  const text = await runMain(["--harness", "hermes", "--input", input, "--cwd", repo], { HOME: home });
+  assert.match(text.out, /peer: {7}Hermes names its peers after the agent/);
+
+  for (const harness of ["kimicode", "trae-cn", "openclaw"]) {
+    const run = await runMain(["--harness", harness], { HOME: "/nonexistent" });
+    assert.equal(run.code, 0);
+    assert.match(run.out, new RegExp(`History import for ${harness} is not supported yet\\..*\\n.*--input <file\\.jsonl>.*see --help`));
+  }
+  assert.equal((await runMain(["--harness", "copilot", "--input", input], { HOME: home })).code, 2);
+  for (const name of ["constructor", "__proto__", "toString"]) {
+    const run = await runMain(["--harness", name, "--input", input], { HOME: home });
+    assert.equal(run.code, 2);
+    assert.match(run.err, /unknown harness/);
+  }
+  assert.equal((await runMain(["--harness", "pi", "--input", input, "--history-dir", home], { HOME: home })).code, 2);
+
+  const help = spawnSync(process.execPath, [SCRIPT, "--help"], { encoding: "utf8" });
+  assert.match(help.stdout, /--input <file\.jsonl>/);
+  assert.match(help.stdout, /Input file \(--input\): one session per line/);
+  // Every option's description starts in the same column.
+  const options = help.stdout.split("\n").filter((l) => /^ {2}-/.test(l));
+  assert.ok(options.length > 10);
+  for (const line of options) assert.match(line, /^ {2}\S.{22} \S/, line);
 });
