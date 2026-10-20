@@ -44,9 +44,9 @@ ov health
 
 ## 步骤 3：决定点 1，要不要导入近期工作
 
-导入脚本读取的是 Claude Code 和 Codex 的历史会话。在 Claude Code 上用 `--harness claude`，在 Codex 上用 `--harness codex`。
+导入脚本能直接读 Claude Code 和 Codex 的历史会话：在 Claude Code 上用 `--harness claude`，在 Codex 上用 `--harness codex`。其他宿主的会话它读不了，要由你先转成 JSONL，再交给同一个脚本，见下面的「其他宿主：先把会话转成 JSONL」。
 
-在其他宿主上，先看 `~/.claude/projects` 或 `~/.codex/sessions` 是否存在。存在的话，用户可能在 Claude Code 或 Codex 里做过这个项目：提议导入那边的历史，`--harness` 填对应的值，按下面的选项走。两个都不存在，就告诉用户「暂不支持从这个宿主导入历史会话，OpenViking 会从现在起在你的会话中积累记忆」，然后进入步骤 4。
+在其他宿主上，如果 `~/.claude/projects` 或 `~/.codex/sessions` 存在，用户可能也在 Claude Code 或 Codex 里做过这个项目，可以在同一个问题里一并提议导入那边的历史（`--harness` 填对应的值）。
 
 只问一次，给出这三个选项：
 
@@ -68,7 +68,38 @@ node "${TMPDIR:-/tmp}/ov-import-history.mjs" --harness <claude|codex> --cwd "$PW
 
 告诉用户导入了多少个会话、跳过了多少个。重复运行是安全的，已经导入过的会话会被跳过。
 
-用户问起脚本做了什么时，可以这样解释：它读取本机的会话文件（Claude Code 在 `~/.claude/projects/`，Codex 在 `~/.codex/sessions/`），只保留用户和助手的文字，去掉工具调用及其输出，删除其中的 API key，跳过最近几小时内仍有活动的会话，并把会话归到插件使用的同一个项目下，之后就能被召回。试运行只从服务端读取信息，用来找出已经导入过的会话。
+**其他宿主：先把会话转成 JSONL。**
+
+1. 运行 `echo "${TMPDIR:-/tmp}"`，记下这个临时目录，下面写作 `<tmp>`。之后写文件、跑命令都用这个绝对路径，不要再写 `${TMPDIR:-/tmp}`。下载导入脚本：
+
+   ```bash
+   curl -fsSL https://docs.openviking.net/dl/memory-plugin-shared/import-history.mjs -o "<tmp>/ov-import-history.mjs"
+   ```
+
+2. 找到当前宿主在本机保存会话的地方。[附录 A](#附录-a-各宿主说明) 的「历史导入」一列是提示，以本机实际为准。只读，不要改。
+3. 在 `<tmp>` 下写一个小转换脚本，把会话写进 `<tmp>/ov-sessions.jsonl`，每行一个会话：
+
+   ```json
+   {"id": "<宿主自己的会话 id>", "cwd": "<会话所在目录的绝对路径>", "messages": [{"role": "user", "text": "……", "created_at": "2026-10-16T08:00:00Z"}, {"role": "assistant", "text": "……", "created_at": "2026-10-16T08:00:05Z"}]}
+   ```
+
+   - `id` 用宿主记录里的原生会话 id，不要自己生成；`cwd` 用会话实际所在的目录；每条消息都带上 ISO 8601 时间。子代理的会话加上 `"subagent": true`。
+   - 只放用户和助手说的话。工具调用、工具输出、系统提示、思考过程，以及宿主或插件注入的内容（例如 `<openviking-context>`、提醒、通知）都不要放。
+   - 存储里的会话全部写进去，不要按项目、目录或时间筛选：脚本会按 `--cwd` 判断哪些属于这个项目（包括子目录），按 `--since` 筛时间，试运行会显示跳过了多少。唯一要排除的是当前这段对话，因为它含有安装命令里的 key；认不出是哪一段时，排除最近 2 小时内有更新的会话。
+   - 不用自己删 key，脚本会做；也不要自己去查 JSONL 里有没有 key，命令里不能出现 key 或它的任何一段。转换脚本只读本地文件、只写这一个 JSONL，输出路径直接写 `<tmp>` 的绝对路径，不发送任何东西。
+   - 检查转换结果时只看摘要，例如行数和每行的 id、cwd、消息数，不要把整个 JSONL 打印到对话里：里面有其他项目的对话。
+4. 试运行。`<值>` 取附录 A 的 `--harness` 列：
+
+   ```bash
+   node "<tmp>/ov-import-history.mjs" --harness <值> --input "<tmp>/ov-sessions.jsonl" --cwd "$PWD" --since 14d --max-sessions 20 --dry-run
+   ```
+
+   脚本指出某一行格式不对时，改转换脚本、重新生成，再试运行。数量明显不对（例如 0 个会话，或消息数远少于实际对话）时，先检查转换，不要直接导入。
+5. 之后和上面一样：把数量和跳过的原因照试运行的输出告诉用户（当前这段对话已经由转换脚本排除，不会出现在「仍在活动」里），用户确认后把 `--dry-run` 换成 `--yes` 正式导入。导入完，或者决定不导入，都要删掉 JSONL 和转换脚本；写到过几个位置就删几处，再用 `ls` 确认已经删掉。
+
+找不到会话保存在哪，或者改了两三次仍转换不对，就告诉用户「这次没能导入这个宿主的历史会话，OpenViking 会从现在起在你的会话中积累记忆」，然后进入步骤 4。
+
+用户问起脚本做了什么时，可以这样解释：它读取本机的会话文件（Claude Code 在 `~/.claude/projects/`，Codex 在 `~/.codex/sessions/`），或者你转换好的 JSONL，只保留用户和助手的文字，去掉工具调用及其输出，删除其中的 API key，跳过最近几小时内仍有活动的会话，并把会话归到插件使用的同一个项目下，之后就能被召回。试运行只从服务端读取信息，用来找出已经导入过的会话。
 
 **文件。** 如果用户点名了值得保存的文件或文件夹，例如设计文档或需求说明，逐个添加到他个人资源里这个项目的目录。`<user_id>` 换成 `ov health` 显示的用户名，`<项目名>` 用仓库名或用户对这个项目的叫法：
 
@@ -100,7 +131,7 @@ ov add-resource ./docs/design.md --parent-auto-create viking://user/<user_id>/re
 - 只动 `<!-- openviking:start -->` 和 `<!-- openviking:end -->` 之间的内容。文件里已有这对标记，就替换中间部分；没有，就追加到文件末尾；文件不存在，就新建。块外的内容保持原样。
 - 文件里已有和这段规则冲突的要求（例如每轮都必须检索，或者不许把资料存到外部），先告诉用户冲突在哪，按他的决定改。
 - 写完读回文件，确认标记块只有一份、块外内容没变。
-- 宿主的个人规则只能在应用设置里改、没有你能写的文件时，把规则展示给用户，请他粘贴到设置里。不确定是哪个文件时，问用户，不要猜。
+- 宿主的个人规则只能在应用设置里改、没有你能写的文件时，或者写入失败（例如宿主不允许写这个目录）时，告诉用户，把规则展示给他，请他自己粘贴进去。不确定是哪个文件时，问用户，不要猜。
 
 如果文件里已经有这个标记块，内容也相同，告诉用户之前已经写过，跳过这一步，不用再问。不要把规则写进任何项目文件。等用户回答之后再进入步骤 5，不要在问这个问题的同一条消息里提重启。
 
@@ -127,7 +158,7 @@ ov add-resource ./docs/design.md --parent-auto-create viking://user/<user_id>/re
 3. 在同一条回复里，答完问题后用最多三行收尾：
    - 接入了哪个工具，以及用户消息里写的历史导入结果（不要自己猜）；
    - 在这个宿主上哪里能看到 OpenViking 的作用（[附录 A](#附录-a-各宿主说明) 的「在哪里能看到」）；
-   - 只有本机存在 Claude Code 或 Codex 的历史时才说：以后想导入别的项目，可以说「把 <项目> 的会话导入 OpenViking」，届时重新执行步骤 3。
+   - 以后想导入别的项目，可以说「把 <项目> 的会话导入 OpenViking」，届时重新执行步骤 3。
 
 ## 附录 A：各宿主说明
 
@@ -135,14 +166,14 @@ ov add-resource ./docs/design.md --parent-auto-create viking://user/<user_id>/re
 |---|---|---|---|---|---|
 | Claude Code | `claude` | 退出后重新运行 `claude`；不要用 `/reload-plugins` 或 `claude --resume` | 用到 OpenViking 的回答下方有来源卡片（Claude Code 2.1.286 及以上）；`/openviking-memory:ov` 查看状态 | 支持 | `~/.claude/CLAUDE.md` |
 | Codex | `codex` | 退出后重新运行 `codex`；出现「Hooks need review」时选 **Trust all and continue**（之后也可在 `/hooks` 中处理） | 回答后有一行 OV-Usage，例如 `OpenViking · 3 sources · 1 past event · 2 team docs · 1 read` | 支持 | `~/.codex/AGENTS.md`；同目录有 `AGENTS.override.md` 时 Codex 读的是它 |
-| TraeCode CLI 2.0 | `trae-cli` | 退出后重新运行 `trae-cli`（或 `traecli`）；出现「Hooks need review」时选 **Trust all and continue**（之后也可在 `/hooks` 中处理） | 回答后有一行 OV-Usage，与 Codex 相同 | 仅 Claude Code / Codex 的历史 | 未确认 |
-| Cursor | `cursor` | 完全退出 Cursor 后重新打开，新建 Agent 会话（**+**）；不要在恢复出来的安装对话里继续 | Cursor 设置 → Hooks 里的 OpenViking hook；设置 → Tools & MCPs 里 `openviking` 显示已连接 | 仅 Claude Code / Codex 的历史 | Cursor 设置里的 User Rules，请用户粘贴 |
-| TRAE / TRAE CN | `trae` / `trae-cn` | 完全退出应用后重新打开，新建会话；无需批准 hook | MCP 设置里 `openviking` 显示已连接 | 仅 Claude Code / Codex 的历史 | 应用设置里的个人规则，请用户粘贴 |
-| ZCode | `zcode` | 重启 ZCode | 无文档说明 | 仅 Claude Code / Codex 的历史 | 应用设置里的个人规则，请用户粘贴 |
-| Kimi Code | `kimicode` | 退出 Kimi Code 后新建会话；不要用 `/reload`，也不要恢复当前会话 | 无文档说明 | 仅 Claude Code / Codex 的历史 | `~/.kimi-code/AGENTS.md`（设置了 `$KIMI_CODE_HOME` 时在该目录下） |
-| OpenCode | `opencode` | 重启 OpenCode | 无文档说明 | 仅 Claude Code / Codex 的历史 | `~/.config/opencode/AGENTS.md` |
-| pi | `pi` | 重启 pi | 底栏显示 `OV ✓`；`/viking` 查看状态 | 仅 Claude Code / Codex 的历史 | `~/.pi/agent/AGENTS.md` |
-| DeepSeek Harness | `dsh` | 用安装器输出中 `DeepSeek Harness profile：` 一行的 profile 新开会话：`dsh --profile <profile>` | 会话顶部显示「上下文注入 · openviking-memory」 | 仅 Claude Code / Codex 的历史 | 未确认 |
+| TraeCode CLI 2.0 | `trae-cli` | 退出后重新运行 `trae-cli`（或 `traecli`）；出现「Hooks need review」时选 **Trust all and continue**（之后也可在 `/hooks` 中处理） | 回答后有一行 OV-Usage，与 Codex 相同 | 转成 JSONL 导入；会话在 `~/.trae/cli/sessions/`，和 Codex 相同的 rollout 格式 | 未确认 |
+| Cursor | `cursor` | 完全退出 Cursor 后重新打开，新建 Agent 会话（**+**）；不要在恢复出来的安装对话里继续 | Cursor 设置 → Hooks 里的 OpenViking hook；设置 → Tools & MCPs 里 `openviking` 显示已连接 | 转成 JSONL 导入；会话位置未确认 | Cursor 设置里的 User Rules，请用户粘贴 |
+| TRAE / TRAE CN | `trae` / `trae-cn` | 完全退出应用后重新打开，新建会话；无需批准 hook | MCP 设置里 `openviking` 显示已连接 | 转成 JSONL 导入；会话位置未确认 | 应用设置里的个人规则，请用户粘贴 |
+| ZCode | `zcode` | 重启 ZCode | 无文档说明 | 转成 JSONL 导入；会话位置未确认 | 应用设置里的个人规则，请用户粘贴 |
+| Kimi Code | `kimicode` | 退出 Kimi Code 后新建会话；不要用 `/reload`，也不要恢复当前会话 | 无文档说明 | 转成 JSONL 导入；会话在 `~/.kimi-code/sessions/`（设置了 `$KIMI_CODE_HOME` 时在该目录下），每个会话的 `state.json` 带 cwd，消息在 `agents/main/wire.jsonl` | `~/.kimi-code/AGENTS.md`（设置了 `$KIMI_CODE_HOME` 时在该目录下） |
+| OpenCode | `opencode` | 重启 OpenCode | 无文档说明 | 转成 JSONL 导入；会话在 SQLite 库 `~/.local/share/opencode/opencode.db`，没有 `sqlite3` 时可用 Node 22 的 `node:sqlite` 只读打开；`synthetic` 的文本是注入内容，`parent_id` 非空的是子代理会话 | `~/.config/opencode/AGENTS.md` |
+| pi | `pi` | 重启 pi | 底栏显示 `OV ✓`；`/viking` 查看状态 | 转成 JSONL 导入；会话在 `~/.pi/agent/sessions/*/*.jsonl`，每个文件第一行 `{"type":"session"}` 带 id 和 cwd | `~/.pi/agent/AGENTS.md` |
+| DeepSeek Harness | `dsh` | 用安装器输出中 `DeepSeek Harness profile：` 一行的 profile 新开会话：`dsh --profile <profile>` | 会话顶部显示「上下文注入 · openviking-memory」 | 转成 JSONL 导入；会话在 `~/.dsh/sessions/` | 未确认 |
 
 - **Codex 的审批。** Codex 每次运行需要联网的命令前都会请求批准。安装器那一次选 **Yes, proceed**，不要选「以后以这个前缀开头的命令不再询问」，那条规则会把 key 存下来。OpenViking 的 `search` 工具第一次运行时，Codex 会请求允许，选 **Always allow** 即可。
 - **无文档说明。** 在这些宿主上，用户可以直接问你收到了哪些 OpenViking 上下文，也可以运行[故障排查](#故障排查)里的诊断。命令行宿主可以在启动前设置 `OPENVIKING_DEBUG=1`，hook 日志会写到 `~/.openviking/logs/`；从程序坞或启动器打开的桌面应用读不到 shell 里设置的环境变量。
@@ -164,7 +195,7 @@ ov add-resource ./docs/design.md --parent-auto-create viking://user/<user_id>/re
 | `ov` 提示需要先设置显示语言 | 运行 `ov language zh-CN`（或 `ov language en`）。 |
 | DeepSeek Harness：`dsh plugin add` 失败 | 安装 pnpm（`npm i -g pnpm`），再用 `--harness dsh` 重跑安装器。 |
 | `安装校验失败`（英文 `Installation validation failed`） | 重跑安装器，重跑是安全的。仍然失败，就把失败的检查项告诉用户。 |
-| 导入脚本提示 `not supported yet` | 这个 harness 的历史暂时不能导入，跳到步骤 4。 |
+| 导入脚本提示 `not supported yet` | 脚本不能直接读这个宿主的历史：按步骤 3 的「其他宿主：先把会话转成 JSONL」转换后用 `--input` 导入。 |
 | 重启后没有召回 | Codex 和 TraeCode CLI：hook 没有被信任，在 `/hooks` 中信任，并在 `/plugins` 中确认 `openviking-memory` 已启用。Cursor 和 TRAE：应用没有完全退出。其他情况运行诊断：Claude Code 用 `/openviking-memory:ov` 或 `ov-memory-doctor` skill；Codex 用 `$ov-memory-doctor` skill；Cursor、TRAE、TRAE CN、ZCode 运行 `node ~/.openviking/agent-integrations/<cursor\|trae\|trae-cn\|zcode>/scripts/ov-memory-doctor.mjs`；pi 用 `/viking`；DeepSeek Harness 运行 `dsh --profile <profile> --dump-config`（`<profile>` 是安装器输出的那个），输出里应包含 `openviking-memory`。 |
 
 各宿主的详细说明：https://docs.openviking.net/zh/agent-integrations/01-overview

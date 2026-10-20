@@ -44,9 +44,9 @@ Don't ask whether to turn this on; installing it was the user's request. Tell th
 
 ## Step 3: Decision 1, bring in recent work
 
-The import script reads Claude Code and Codex history. On Claude Code use `--harness claude`; on Codex use `--harness codex`.
+The import script reads Claude Code and Codex history directly: on Claude Code use `--harness claude`, on Codex `--harness codex`. It can't read other hosts' sessions; there, you convert them to JSONL first and hand that to the same script, as in "Other hosts: convert the sessions to JSONL" below.
 
-On any other host, check whether `~/.claude/projects` or `~/.codex/sessions` exists. If one does, the user may have worked on this project in Claude Code or Codex: offer to import that history, with the matching `--harness`, using the options below. If neither exists, tell the user that importing past sessions from this host isn't supported yet and that OpenViking learns from their sessions from now on, then go to Step 4.
+On any other host, if `~/.claude/projects` or `~/.codex/sessions` exists, the user may also have worked on this project in Claude Code or Codex: you can offer that history in the same question, with the matching `--harness`.
 
 Ask once, with these options:
 
@@ -68,7 +68,38 @@ node "${TMPDIR:-/tmp}/ov-import-history.mjs" --harness <claude|codex> --cwd "$PW
 
 Report how many sessions were imported and how many were skipped. Running it again is safe: sessions already imported are skipped.
 
-If the user asks what the script does: it reads the local session files (Claude Code: `~/.claude/projects/`, Codex: `~/.codex/sessions/`), keeps only the user and assistant text, drops tool calls and their output, removes API keys, skips sessions that were active in the last few hours, and files the sessions under the same project the plugin uses, so they can be recalled later. The dry run only reads from the server, to find sessions already imported.
+**Other hosts: convert the sessions to JSONL.**
+
+1. Run `echo "${TMPDIR:-/tmp}"` and note the directory; below it is `<tmp>`. Use that absolute path for every file you write and every command, not `${TMPDIR:-/tmp}`. Download the import script:
+
+   ```bash
+   curl -fsSL https://docs.openviking.ai/dl/memory-plugin-shared/import-history.mjs -o "<tmp>/ov-import-history.mjs"
+   ```
+
+2. Find where this host keeps its sessions on this machine. The "History import" column in [Appendix A](#appendix-a-hosts) is a hint; go by what is actually there. Read only; change nothing.
+3. Write a small converter under `<tmp>` that writes the sessions to `<tmp>/ov-sessions.jsonl`, one session per line:
+
+   ```json
+   {"id": "<the host's own session id>", "cwd": "<absolute path of the directory the session ran in>", "messages": [{"role": "user", "text": "...", "created_at": "2026-10-16T08:00:00Z"}, {"role": "assistant", "text": "...", "created_at": "2026-10-16T08:00:05Z"}]}
+   ```
+
+   - `id` is the native session id from the host's records; don't make one up. `cwd` is the directory the session actually ran in. Give every message its ISO 8601 time. Mark sub-agent sessions with `"subagent": true`.
+   - Include only what the user and the assistant said: no tool calls, tool output, system prompts or reasoning, and nothing the host or a plugin injected (such as `<openviking-context>`, reminders or notifications).
+   - Write every session in the store; don't filter by project, directory or time. The script decides which sessions belong to this project from `--cwd` (subdirectories included) and applies `--since`, and the dry run shows what it skipped. The one session to leave out is this conversation, because it contains the key from the install command; if you can't tell which one it is, leave out sessions updated in the last 2 hours.
+   - Don't remove keys yourself; the script does. Don't check the JSONL for keys either, and never put the key or any part of it in a command. The converter only reads local files and writes this one JSONL file, to the absolute `<tmp>` path written into it; it sends nothing.
+   - To check the result, look at a summary only, such as the line count and each line's id, cwd and message count. Don't print the whole JSONL into the conversation: it holds other projects' conversations.
+4. Dry run, with `<value>` from the `--harness` column of Appendix A:
+
+   ```bash
+   node "<tmp>/ov-import-history.mjs" --harness <value> --input "<tmp>/ov-sessions.jsonl" --cwd "$PWD" --since 14d --max-sessions 20 --dry-run
+   ```
+
+   If the script reports a malformed line, fix the converter, regenerate the file and dry-run again. If the counts are clearly off (no sessions, or far fewer messages than the real conversations), check the conversion before importing anything.
+5. From here it's the same as above: give the user the counts and the skip reasons as the dry run prints them (this conversation was left out by the converter, so it won't show up as active), and after they confirm, run it again with `--yes` instead of `--dry-run`. Whether you import or not, delete the JSONL file and the converter afterwards, from every place you wrote them, and check with `ls` that they are gone.
+
+If you can't find where the sessions are kept, or the conversion is still wrong after two or three tries, tell the user that their history from this host couldn't be imported this time and that OpenViking learns from their sessions from now on, then go to Step 4.
+
+If the user asks what the script does: it reads the local session files (Claude Code: `~/.claude/projects/`, Codex: `~/.codex/sessions/`) or the JSONL you converted, keeps only the user and assistant text, drops tool calls and their output, removes API keys, skips sessions that were active in the last few hours, and files the sessions under the same project the plugin uses, so they can be recalled later. The dry run only reads from the server, to find sessions already imported.
 
 **Files.** If the user names files or folders worth keeping, such as a design doc or a spec, add each one to this project's folder in their personal resources. Replace `<user_id>` with the user shown by `ov health`, and `<project>` with the repository name or the name the user calls the project:
 
@@ -100,7 +131,7 @@ If they agree, write it into this host's user-level rules file. The "User-level 
 - Touch only what is between `<!-- openviking:start -->` and `<!-- openviking:end -->`. If the file already has these markers, replace what is between them; if not, append the block to the end; if the file doesn't exist, create it. Leave everything outside the block as it is.
 - If the file already asks for something that conflicts with this rule (searching on every turn, say, or never storing material outside the machine), tell the user where the conflict is and do what they decide.
 - After writing, read the file back and check that there is exactly one block and that nothing outside it changed.
-- If the host keeps personal rules only in its settings, with no file you can write, show the rule and ask the user to paste it there. If you aren't sure which file it is, ask the user rather than guess.
+- If the host keeps personal rules only in its settings, with no file you can write, or the write fails (the host doesn't allow writing to that directory, say), tell the user, show them the rule and ask them to paste it in themselves. If you aren't sure which file it is, ask the user rather than guess.
 
 If the file already has this block with the same text, tell the user it was added before and skip the question. Never write the rule into a project file. Wait for the user's answer before you go on to Step 5; don't bring up the restart in the same message as this question.
 
@@ -127,7 +158,7 @@ You are in a new session, after the plugin was installed. Keep this part short: 
 3. In the same reply, after the answer, wrap up in at most three lines:
    - which tool is connected, and the history import result from the user's message (don't guess it);
    - where OpenViking shows up on this host ("Where you see it" in [Appendix A](#appendix-a-hosts));
-   - only if Claude Code or Codex history exists on this machine: they can later say "import my <project> sessions into OpenViking" to run Step 3 again.
+   - they can later say "import my <project> sessions into OpenViking" to run Step 3 again.
 
 ## Appendix A: hosts
 
@@ -135,14 +166,14 @@ You are in a new session, after the plugin was installed. Keep this part short: 
 |---|---|---|---|---|---|
 | Claude Code | `claude` | Quit, then start `claude` again. Not `/reload-plugins` or `claude --resume` | A source card under each answer that used OpenViking (Claude Code 2.1.286+); `/openviking-memory:ov` shows status | Yes | `~/.claude/CLAUDE.md` |
 | Codex | `codex` | Quit, then start `codex`. At "Hooks need review", choose **Trust all and continue** (later: `/hooks`) | An OV-Usage line after answers, such as `OpenViking · 3 sources · 1 past event · 2 team docs · 1 read` | Yes | `~/.codex/AGENTS.md`; if `AGENTS.override.md` exists next to it, Codex reads that one instead |
-| TraeCode CLI 2.0 | `trae-cli` | Quit, then start `trae-cli` (or `traecli`) again. At "Hooks need review", choose **Trust all and continue** (later: `/hooks`) | An OV-Usage line after answers, as in Codex | Claude Code / Codex history only | Not confirmed |
-| Cursor | `cursor` | Quit Cursor completely, reopen it, and start a new Agent chat (**+**). Don't type into the restored install chat | The OpenViking hooks under Cursor Settings → Hooks; `openviking` connected under Settings → Tools & MCPs | Claude Code / Codex history only | User Rules in Cursor Settings; ask the user to paste it |
-| TRAE / TRAE CN | `trae` / `trae-cn` | Quit the app completely, reopen it, start a new chat. No hook approval | `openviking` connected in the MCP settings | Claude Code / Codex history only | Personal rules in the app settings; ask the user to paste it |
-| ZCode | `zcode` | Restart ZCode | Nothing documented | Claude Code / Codex history only | Personal rules in the app settings; ask the user to paste it |
-| Kimi Code | `kimicode` | Quit Kimi Code, then start a new session. Not `/reload`, and don't resume this one | Nothing documented | Claude Code / Codex history only | `~/.kimi-code/AGENTS.md` (in `$KIMI_CODE_HOME` when set) |
-| OpenCode | `opencode` | Restart OpenCode | Nothing documented | Claude Code / Codex history only | `~/.config/opencode/AGENTS.md` |
-| pi | `pi` | Restart pi | `OV ✓` in the footer; `/viking` shows status | Claude Code / Codex history only | `~/.pi/agent/AGENTS.md` |
-| DeepSeek Harness | `dsh` | Start a new session in the profile from the installer's `DeepSeek Harness profile:` line: `dsh --profile <profile>` | "context injection · openviking-memory" at the top of the session | Claude Code / Codex history only | Not confirmed |
+| TraeCode CLI 2.0 | `trae-cli` | Quit, then start `trae-cli` (or `traecli`) again. At "Hooks need review", choose **Trust all and continue** (later: `/hooks`) | An OV-Usage line after answers, as in Codex | Convert to JSONL; sessions are in `~/.trae/cli/sessions/`, in the same rollout format as Codex | Not confirmed |
+| Cursor | `cursor` | Quit Cursor completely, reopen it, and start a new Agent chat (**+**). Don't type into the restored install chat | The OpenViking hooks under Cursor Settings → Hooks; `openviking` connected under Settings → Tools & MCPs | Convert to JSONL; where sessions are kept is not confirmed | User Rules in Cursor Settings; ask the user to paste it |
+| TRAE / TRAE CN | `trae` / `trae-cn` | Quit the app completely, reopen it, start a new chat. No hook approval | `openviking` connected in the MCP settings | Convert to JSONL; where sessions are kept is not confirmed | Personal rules in the app settings; ask the user to paste it |
+| ZCode | `zcode` | Restart ZCode | Nothing documented | Convert to JSONL; where sessions are kept is not confirmed | Personal rules in the app settings; ask the user to paste it |
+| Kimi Code | `kimicode` | Quit Kimi Code, then start a new session. Not `/reload`, and don't resume this one | Nothing documented | Convert to JSONL; sessions are in `~/.kimi-code/sessions/` (in `$KIMI_CODE_HOME` when set); each session's `state.json` has the cwd, and the messages are in `agents/main/wire.jsonl` | `~/.kimi-code/AGENTS.md` (in `$KIMI_CODE_HOME` when set) |
+| OpenCode | `opencode` | Restart OpenCode | Nothing documented | Convert to JSONL; sessions are in the SQLite database `~/.local/share/opencode/opencode.db` (without `sqlite3`, open it read-only with Node 22's `node:sqlite`); `synthetic` text parts are injected content, and sessions with a `parent_id` are sub-agents | `~/.config/opencode/AGENTS.md` |
+| pi | `pi` | Restart pi | `OV ✓` in the footer; `/viking` shows status | Convert to JSONL; sessions are in `~/.pi/agent/sessions/*/*.jsonl`, whose first line `{"type":"session"}` has the id and cwd | `~/.pi/agent/AGENTS.md` |
+| DeepSeek Harness | `dsh` | Start a new session in the profile from the installer's `DeepSeek Harness profile:` line: `dsh --profile <profile>` | "context injection · openviking-memory" at the top of the session | Convert to JSONL; sessions are in `~/.dsh/sessions/` | Not confirmed |
 
 - **Codex approvals.** Codex asks before each command that needs the network. For the installer, choose **Yes, proceed**, not the option that stops asking for commands starting with that prefix: that rule would save the key. The first time the OpenViking `search` tool runs, Codex asks to allow it; **Always allow** is fine.
 - **Nothing documented.** On these hosts the user can ask you what OpenViking context you received, or run the doctor from [Troubleshooting](#troubleshooting). On command-line hosts, setting `OPENVIKING_DEBUG=1` before starting the host writes a hook log under `~/.openviking/logs/`; desktop apps started from the Dock or a launcher don't see shell variables.
@@ -164,7 +195,7 @@ You are in a new session, after the plugin was installed. Keep this part short: 
 | `ov` says it needs a display language | Run `ov language en` (or `ov language zh-CN`). |
 | DeepSeek Harness: `dsh plugin add` failed | Install pnpm (`npm i -g pnpm`) and re-run the installer with `--harness dsh`. |
 | `Installation validation failed` | Re-run the installer; re-running is safe. If it fails again, show the user the failing check. |
-| Import script prints `not supported yet` | That harness's history can't be imported yet. Skip to Step 4. |
+| Import script prints `not supported yet` | The script can't read this host's history directly: convert it as in Step 3, "Other hosts: convert the sessions to JSONL", and import it with `--input`. |
 | No recall after the restart | Codex and TraeCode CLI: the hooks were not trusted; trust them in `/hooks` and confirm `openviking-memory` is enabled in `/plugins`. Cursor and TRAE: the app was not fully quit. Otherwise run the doctor: Claude Code `/openviking-memory:ov` or the `ov-memory-doctor` skill; Codex the `$ov-memory-doctor` skill; Cursor, TRAE, TRAE CN, ZCode `node ~/.openviking/agent-integrations/<cursor\|trae\|trae-cn\|zcode>/scripts/ov-memory-doctor.mjs`; pi `/viking`; DeepSeek Harness `dsh --profile <profile> --dump-config` should list `openviking-memory`, where `<profile>` is the one the installer printed. |
 
 More detail for each host: https://docs.openviking.ai/en/agent-integrations/01-overview
