@@ -6,8 +6,9 @@ import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { readRequestBody, withMockOpenViking, writeJson } from "../../memory-plugin-shared/testing/support.mjs";
+import { readRequestBody, withMockOpenViking, withPendingDir, writeJson } from "../../memory-plugin-shared/testing/support.mjs";
 import { extractCaptureTurns } from "./cc-transcript.mjs";
+import { enqueue, listPending } from "./lib/pending-queue.mjs";
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 
@@ -122,6 +123,62 @@ test("failed non-retryable capture keeps the cursor for a later retry", async ()
       await readFile(join(root, "openviking-cc-capture-state", `${sessionId}.json`), "utf-8"),
     );
     assert.equal(state.capturedTurnCount, 2);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Stop replays queued writes before sending the new turns", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ov-cc-capture-replay-"));
+  const transcriptPath = join(root, "transcript.jsonl");
+  const requests = [];
+
+  try {
+    await writeTranscript(transcriptPath);
+    await withPendingDir(async (pendingDir) => {
+      for (let i = 0; i < 20; i++) {
+        await enqueue("addMessage", "cc-old-session", {
+          role: "assistant",
+          parts: [{ type: "text", text: `old ${i}` }],
+        }, { createdAt: 1000 + i });
+      }
+
+      await withMockOpenViking(async (req, res) => {
+        const url = new URL(req.url, "http://127.0.0.1");
+        if (req.method === "GET" && url.pathname === "/health") {
+          writeJson(res, { status: "ok", result: { healthy: true } });
+          return;
+        }
+        if (req.method === "POST" && url.pathname.endsWith("/messages/batch")) {
+          const body = await readRequestBody(req);
+          requests.push({ path: url.pathname, count: body.messages.length });
+          writeJson(res, { status: "ok", result: { added: body.messages.length } });
+          return;
+        }
+        if (req.method === "POST" && url.pathname.endsWith("/messages")) {
+          const body = await readRequestBody(req);
+          requests.push({ path: url.pathname, text: body.parts[0].text });
+          writeJson(res, { status: "ok", result: {} });
+          return;
+        }
+        writeJson(res, { status: "ok", result: {} });
+      }, async (baseUrl) => {
+        await runAutoCapture(
+          { session_id: "capture-replay", transcript_path: transcriptPath, cwd: root },
+          { ...hookEnv(root, baseUrl), OPENVIKING_PENDING_DIR: pendingDir },
+        );
+      });
+
+      assert.deepEqual(await listPending(), []);
+    });
+
+    assert.deepEqual(requests, [
+      ...Array.from({ length: 20 }, (_, i) => ({
+        path: "/api/v1/sessions/cc-old-session/messages",
+        text: `old ${i}`,
+      })),
+      { path: "/api/v1/sessions/cc-capture-replay/messages/batch", count: 2 },
+    ]);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
