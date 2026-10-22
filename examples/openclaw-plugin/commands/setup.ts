@@ -73,6 +73,7 @@ const CONFIG_KEYS_TO_PRESERVE = [
   "autoCapture",
   "captureMode",
   "captureMaxLength",
+  "captureRedact",
   "autoRecall",
   "recallResources",
   "recallTargetTypes",

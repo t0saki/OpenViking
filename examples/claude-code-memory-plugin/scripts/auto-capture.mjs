@@ -176,6 +176,7 @@ async function pushTurnsToOv(ovSessionId, turns, peerId = "", cfg = {}) {
   }
   const res = await sendSessionMessages(fetchJSON, ovSessionId, payloads, {
     enqueueOnRetryable: true,
+    redactTier: cfg.captureRedact,
   });
   return {
     ok: res.sent,
@@ -195,7 +196,9 @@ async function enqueueTurnsToPending(ovSessionId, turns, peerId = "", cfg = {}) 
 
     const payload = { role: turn.role, parts };
     if (peerId) payload.peer_id = peerId;
-    const res = await enqueuePendingDirectly("addMessage", ovSessionId, payload);
+    const res = await enqueuePendingDirectly("addMessage", ovSessionId, payload, {
+      redactTier: cfg.captureRedact,
+    });
     if (res.ok) queued++;
     else failed++;
   }
@@ -321,7 +324,7 @@ async function main({ cfg, input, cwd }) {
     // SessionStart replays at most one capped batch, so drain more of the
     // queue here; older entries go out before this turn's messages.
     try {
-      await replayPending(fetchJSON, log, { consumeRetries: false });
+      await replayPending(fetchJSON, log, { consumeRetries: false, redactTier: cfg.captureRedact });
     } catch (err) {
       logError("pending-replay", err);
     }

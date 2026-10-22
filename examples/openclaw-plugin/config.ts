@@ -2,6 +2,7 @@ import { homedir } from "node:os";
 import { readFileSync } from "node:fs";
 
 import { getEnv } from "./runtime-utils.js";
+import { normalizeRedactTier } from "./shared/redact.mjs";
 
 /**
  * Subset of OpenClaw's standard `SecretRef` shape supported by the OpenViking
@@ -46,6 +47,12 @@ export type MemoryOpenVikingConfig = {
   autoCapture?: boolean;
   captureMode?: "semantic" | "keyword";
   captureMaxLength?: number;
+  /**
+   * Secret redaction applied to every session message before it is sent:
+   * "off", "standard" (default) or "strict". `false` means "off"; an unknown
+   * tier name means "standard". OPENVIKING_CAPTURE_REDACT outranks this.
+   */
+  captureRedact?: "off" | "standard" | "strict" | boolean;
   autoRecall?: boolean;
   /** Outer time budget for the whole server-assembled auto-recall flow. */
   autoRecallTimeoutMs?: number;
@@ -133,8 +140,10 @@ export type MemoryOpenVikingConfig = {
 
 /** Runtime config after memoryOpenVikingConfigSchema.parse() has applied defaults. */
 export type ParsedMemoryOpenVikingConfig = Required<
-  Omit<MemoryOpenVikingConfig, "agentExperience" | "recallTargetTypes" | "apiKey" | "peer_role">
+  Omit<MemoryOpenVikingConfig, "agentExperience" | "recallTargetTypes" | "apiKey" | "peer_role" | "captureRedact">
 > & {
+  /** Always a tier name after parse(). */
+  captureRedact: "off" | "standard" | "strict";
   /** parse() resolves SecretRef values, so the runtime shape is always a plain string. */
   apiKey: string;
   /** Runtime uses the canonical name; legacy `person` input normalizes to `sender`. */
@@ -536,6 +545,7 @@ export const memoryOpenVikingConfigSchema = {
         "autoCapture",
         "captureMode",
         "captureMaxLength",
+        "captureRedact",
         "autoRecall",
         "autoRecallTimeoutMs",
         "recallCompress",
@@ -667,6 +677,12 @@ export const memoryOpenVikingConfigSchema = {
         200,
         Math.min(200_000, Math.floor(toNumber(cfg.captureMaxLength, DEFAULT_CAPTURE_MAX_LENGTH))),
       ),
+      // The env var outranks the file, as for every other harness. Never
+      // throws: an unknown tier redacts at the default rather than failing the
+      // plugin's config load.
+      captureRedact: normalizeRedactTier(
+        getEnv("OPENVIKING_CAPTURE_REDACT")?.trim() || cfg.captureRedact,
+      ) as "off" | "standard" | "strict",
       autoRecall: cfg.autoRecall !== false,
       autoRecallTimeoutMs: Math.max(
         1000,
@@ -877,6 +893,12 @@ export const memoryOpenVikingConfigSchema = {
       placeholder: String(DEFAULT_CAPTURE_MAX_LENGTH),
       advanced: true,
       help: "Maximum sanitized user text length allowed for auto-capture.",
+    },
+    captureRedact: {
+      label: "Capture Secret Redaction",
+      placeholder: "standard",
+      advanced: true,
+      help: 'Replace secrets (API keys, tokens, private keys) in captured messages with {{ov_redacted:<rule>:<tag>}} before they are sent. "standard" (default), "strict" (adds the generic key=value rule) or "off". Env: OPENVIKING_CAPTURE_REDACT.',
     },
     autoRecall: {
       label: "Auto-Recall",

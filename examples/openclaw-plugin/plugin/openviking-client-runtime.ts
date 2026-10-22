@@ -16,6 +16,8 @@ type ClientRuntimeConfig = {
   userId?: string;
   headers?: Record<string, string>;
   logFindRequests: boolean;
+  /** Secret-redaction tier for session messages; the client defaults to "standard". */
+  captureRedact?: string;
 };
 
 export function createOpenVikingClientRuntime(options: {
@@ -65,6 +67,7 @@ export function createOpenVikingClientRuntime(options: {
       routingDebugLog,
       {
         transport: options.transport,
+        captureRedact: cfg.captureRedact,
         headers: resolveOpenVikingRequestHeaders({
           headers: cfg.headers,
         }),

@@ -57,6 +57,7 @@ export function createMemorySessionManager({ config, pluginRoot }) {
       await replayPending(
         (endpoint, init = {}, options = {}) => fetchJSON(config, endpoint, init, options),
         (stage, data) => log("DEBUG", "pending", stage, data),
+        { redactTier: config.captureRedact },
       )
     }).catch((error) => {
       log("WARN", "pending", "Pending replay failed during initialization", { error: error?.message })
@@ -203,6 +204,7 @@ export function createMemorySessionManager({ config, pluginRoot }) {
       await replayPending(
         (endpoint, init = {}, options = {}) => fetchJSON(config, endpoint, init, options),
         (stage, data) => log("DEBUG", "pending", stage, data),
+        { redactTier: config.captureRedact },
       )
     }
     log("INFO", "event", "OpenViking session derived", {
@@ -444,7 +446,9 @@ export function createMemorySessionManager({ config, pluginRoot }) {
     const health = await fetchJSON(config, "/health", {}, { timeoutMs: 5000 })
     if (!health.ok) {
       for (const item of toSend) {
-        const queued = await enqueue("addMessage", state.ovSessionId, item.body)
+        const queued = await enqueue("addMessage", state.ovSessionId, item.body, {
+          redactTier: config.captureRedact,
+        })
         if (!queued.ok) break
         item.message.captured = true
         added += 1
@@ -454,7 +458,7 @@ export function createMemorySessionManager({ config, pluginRoot }) {
         (endpoint, init = {}, options = {}) => fetchJSON(config, endpoint, init, { timeoutMs: 10000, ...options }),
         state.ovSessionId,
         toSend.map((item) => item.body),
-        { enqueueOnRetryable: true },
+        { enqueueOnRetryable: true, redactTier: config.captureRedact },
       )
       added = res.sent + res.queued
       for (const item of toSend.slice(0, added)) {

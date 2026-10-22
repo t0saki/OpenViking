@@ -102,6 +102,7 @@ export class SyncManager {
     await replayPending(
       (path: string, init?: any) => this.client.fetchJSON(path, init),
       (stage: string, data: unknown) => this.logger.log(stage, data),
+      { redactTier: this.config.captureRedact },
     );
   }
 
@@ -176,6 +177,7 @@ export class SyncManager {
         sid,
         claimed.map(({ entry }) => entry.payload),
         {
+          redactTier: this.config.captureRedact,
           onSent: async (count: number) => {
             for (let i = 0; i < count; i++) await dequeue(claimed[delivered++].filename);
           },
@@ -264,6 +266,7 @@ export class SyncManager {
     }
     const res = await sendSessionMessages(this.fetchJSON, this.ovSessionId, payloads, {
       enqueueOnRetryable: true,
+      redactTier: this.config.captureRedact,
     });
     if (res.failed > 0 || res.enqueueFailed > 0) {
       this.logger.log("send", {
