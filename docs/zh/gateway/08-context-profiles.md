@@ -8,7 +8,9 @@ description: 创建上下文配置，决定 OpenViking 网关为每个网关密�
 
 ## 什么是上下文配置 {#context-profiles}
 
-[上下文配置](../guides/15-gateway.md#key-terms)是一组有名字的记忆设置。每个[网关密钥](09-gateway-keys.md#gateway-keys)在签发时选定一份配置，一份配置可以供多个密钥使用。[直接使用 OpenViking API 密钥](09-gateway-keys.md#openviking-keys)的客户端使用 ID 为 `default` 的配置（快速模式创建的那份），没有时使用内置默认值；它们不计入使用这份配置的密钥。比如准备一份“Coding”配置，召回记忆、资源和技能；再准备一份“Chat”配置，只召回记忆，预算也小一些。
+[上下文配置](../guides/15-gateway.md#key-terms)是一组有名字的记忆设置。每个[网关密钥](09-gateway-keys.md#gateway-keys)在签发时选定一份配置，一份配置可以供多个密钥使用。[直接使用 OpenViking API 密钥](09-gateway-keys.md#openviking-keys)的客户端使用账号中 ID 为 `default` 的配置（快速模式创建的那份），没有时使用部署的 `default_profile`；它们不计入使用这份配置的密钥。比如准备一份“Coding”配置，召回记忆、资源和技能；再准备一份“Chat”配置，只召回记忆，预算也小一些。
+
+嵌入式 dev 模式在启动时将 `default_profile` 一次性写入 `default` 账号；之后修改 `ov.conf` 不会改变已保存的配置，请在 Studio 中修改。
 
 除了名称和[允许客户端覆盖设置](#client-overrides)开关，一份配置分为四个部分，下表中的默认值也就是推荐设置：
 

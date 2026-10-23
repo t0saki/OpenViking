@@ -29,26 +29,24 @@ def record_openviking_calls(app):
 
 
 @pytest.fixture
-def gateway(running_gateway):
-    app = running_gateway[0]
-    app.state.config.openviking_keys = True
-    return running_gateway
+def gateway_config(request):
+    return getattr(request, "param", {"openviking_keys": True})
 
 
+@pytest.mark.parametrize("gateway_config", [{"openviking_keys": False}], indirect=True)
 async def test_switch_off_rejects_openviking_keys_without_calling_openviking(running_gateway):
     app, client, _, _, _, _ = running_gateway
     calls = record_openviking_calls(app)
     for headers in (bearer(OV_KEY), {"x-api-key": OV_KEY}):
         assert (await client.get("/v1/models", headers=headers)).status_code == 401
-    app.state.config.openviking_keys = True
     # No credential at all is never an OpenViking key.
     assert (await client.get("/v1/models")).status_code == 401
     assert calls == []
     assert await app.state.management.credential(RECORD) is None
 
 
-async def test_first_request_creates_the_record_and_registers_the_user(gateway):
-    app, client, admin, _, _, _ = gateway
+async def test_first_request_creates_the_record_and_registers_the_user(running_gateway):
+    app, client, admin, _, _, _ = running_gateway
     management, store = app.state.management, app.state.store
     # Deleted gateway data blocks the user's scopes until a key is created again.
     assert (await client.delete("/admin/users/bob/data", headers=admin)).status_code == 200
@@ -64,7 +62,9 @@ async def test_first_request_creates_the_record_and_registers_the_user(gateway):
         "prefix": "bob-key",
     }
     assert not {"name", "policy_id", "upstream_ids", "models"} & set(record)
-    assert await management.get("tenant", "users", "bob") == {
+    user = await management.get("tenant", "users", "bob")
+    assert user.pop("expires_at") > record["created_at"]
+    assert user == {
         "user_id": "bob",
         "id": "bob",
         "revision": 1,
@@ -73,8 +73,8 @@ async def test_first_request_creates_the_record_and_registers_the_user(gateway):
         assert not c.execute("SELECT * FROM deleted_scopes").fetchall()
 
 
-async def test_request_during_user_data_deletion_does_not_block_the_key(gateway):
-    app, client, admin, _, _, _ = gateway
+async def test_request_during_user_data_deletion_does_not_block_the_key(running_gateway):
+    app, client, admin, _, _, _ = running_gateway
     management = app.state.management
     body = {"model": "model", "messages": [{"role": "user", "content": "hi"}]}
 
@@ -98,8 +98,8 @@ async def test_request_during_user_data_deletion_does_not_block_the_key(gateway)
     assert await management.credential(RECORD)
 
 
-async def test_capture_worker_delivers_with_the_stored_key(gateway):
-    app, client, _, _, _, writes = gateway
+async def test_capture_worker_delivers_with_the_stored_key(running_gateway):
+    app, client, _, _, _, writes = running_gateway
     calls = record_openviking_calls(app)
     headers = {**bearer(OV_KEY), "X-OpenViking-Session": "direct"}
     messages = [{"role": "user", "content": "Remember the blue cluster"}]
@@ -122,8 +122,8 @@ async def test_capture_worker_delivers_with_the_stored_key(gateway):
     assert session_keys == {OV_KEY}
 
 
-async def test_revoked_openviking_key_deletes_the_record(gateway):
-    app, client, _, _, _, _ = gateway
+async def test_revoked_openviking_key_deletes_the_record(running_gateway):
+    app, client, _, _, _, _ = running_gateway
     assert (await client.get("/v1/models", headers=bearer(OV_KEY))).status_code == 200
     app.state.test_backend["health_status"] = {OV_KEY: 401}
     app.state.viking.identities.clear()
@@ -138,8 +138,8 @@ async def test_revoked_openviking_key_deletes_the_record(gateway):
     assert await app.state.management.credential(RECORD) is None
 
 
-async def test_binding_is_every_enabled_upstream_of_the_account(gateway):
-    app, client, admin, key, _, _ = gateway
+async def test_binding_is_every_enabled_upstream_of_the_account(running_gateway):
+    app, client, admin, key, _, _ = running_gateway
     upstream = (await client.get("/admin/upstreams/chat", headers=admin)).json()
     for identifier, models, enabled in (
         ("extra", ["extra-model"], True),
@@ -176,16 +176,20 @@ async def test_binding_is_every_enabled_upstream_of_the_account(gateway):
     assert response.status_code == 404
 
 
-async def test_binding_falls_back_to_policy_defaults(gateway):
-    management = gateway[0].state.management
-    binding = await resolve_binding(management, {"source": "openviking", "account": "empty"})
+async def test_binding_falls_back_to_policy_defaults(running_gateway):
+    management, config = running_gateway[0].state.management, running_gateway[0].state.config
+    binding = await resolve_binding(
+        management, config, {"source": "openviking", "account": "empty"}
+    )
     assert binding == (Policy().model_dump(), [], [])
-    binding = await resolve_binding(management, {"source": "openviking", "account": "tenant"})
+    binding = await resolve_binding(
+        management, config, {"source": "openviking", "account": "tenant"}
+    )
     assert binding.policy["name"] == "Default" and not binding.policy["gateway_tools"]
 
 
-async def test_keys_listing_and_object_deletion_with_openviking_records(gateway):
-    app, client, admin, key, _, _ = gateway
+async def test_keys_listing_and_object_deletion_with_openviking_records(running_gateway):
+    app, client, admin, key, _, _ = running_gateway
     assert (await client.get("/v1/models", headers=bearer(OV_KEY))).status_code == 200
     listed = (await client.get("/admin/keys", headers=admin)).json()
     record = next(item for item in listed if item["id"] == RECORD)
@@ -216,8 +220,8 @@ async def test_keys_listing_and_object_deletion_with_openviking_records(gateway)
     assert (await client.get("/v1/models", headers=bearer(OV_KEY))).status_code == 200
 
 
-async def test_context_header_overrides_the_default_profile(gateway):
-    app, client, admin, _, _, _ = gateway
+async def test_context_header_overrides_the_default_profile(running_gateway):
+    app, client, admin, _, _, _ = running_gateway
     calls = record_openviking_calls(app)
     body = {"model": "model", "messages": [{"role": "user", "content": "Deploy?"}]}
 

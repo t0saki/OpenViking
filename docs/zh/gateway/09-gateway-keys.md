@@ -27,6 +27,12 @@ description: 签发把客户端接入 OpenViking 网关的网关密钥，并在�
 - **网关像保存签发的密钥一样保存它**，所以记忆保存和日志都照常工作。请开启[加密](../guides/22-gateway-operations.md#encryption)。**密钥**标签页把它列为 **OpenViking API 密钥**，配置和上游显示为**账号默认**。
 - **只有 OpenViking 能吊销它。** **密钥**标签页上没有它的**吊销**按钮。[删除用户的网关数据](#delete-a-users-gateway-data)会删掉网关保存的副本、日志和对话状态，但仍带着这把密钥的客户端照常可用，从头开始。要让它失效，请在 OpenViking 中重新生成密钥，或关闭 `openviking_keys`。密钥重新生成后，网关会在随后的请求中删除副本，与[网关密钥](#when-the-openviking-key-changes)相同。
 
+默认的 `tenancy: account` 下，同一 OpenViking 账号和用户的密钥共享对话状态。使用 `tenancy: key` 后，每把 OpenViking 密钥都有独立分区，即使两个库返回相同的账号和用户身份也互相隔离。对话、召回、写回、模型绑定和请求日志都使用该分区。此模式要求设置 `management_api: false`，并在启动前配置 `default_upstreams` 和 `default_profile`；Studio 和管理路由不可用。
+
+按密钥隔离时，轮换 OpenViking 密钥会进入新分区并开始新对话。排障时可以不输出密钥，直接计算分区名：`"k_" + hashlib.sha256(("openviking\0" + key).encode()).hexdigest()`。OpenViking 的真实账号身份单独保存，用于吊销检查。
+
+缓存的 OpenViking 密钥及其用户记录，从创建时起经过配置的 `session_ttl_days` 后过期，请求不会续期。下一个请求会向 OpenViking 重新确认密钥并重建记录，分区和对话 scope 保持不变。签发的网关密钥没有这项 TTL。待写回内容和清理行为见[保留期限](11-security-and-data.md#retention)。
+
 如果客户端需要自己的上下文配置、上游或允许的模型，或者需要单独吊销，请使用网关密钥。
 
 ## 签发密钥 {#issue-a-key}

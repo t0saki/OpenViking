@@ -20,7 +20,7 @@ from starlette.background import BackgroundTask
 
 from .capture import CapturePipeline
 from .models import KEY_PLACEHOLDER, Policy, validation_detail
-from .protocols import SSEDecoder, parse_body
+from .protocols import HEARTBEAT_SECONDS, SSEDecoder, heartbeat, parse_body
 from .storage import digest
 from .tool_executor import ToolExecutor
 from .tool_loop import HiddenToolLoop, ToolLoopError
@@ -192,14 +192,23 @@ class Binding(NamedTuple):
     models: list[str]
 
 
-async def resolve_binding(management, credential):
+async def default_policy(management, config, account):
+    """Use the account's default profile, or the deployment's when none is stored."""
+    policy = await management.get(account, "policies", "default")
+    return policy or config.default_profile.model_dump()
+
+
+async def resolve_binding(management, config, credential):
     """The context profile, upstreams and models a credential's requests use."""
     account = credential["account"]
     upstreams = await management.list(account, "upstreams")
     if credential.get("source") == "openviking":
         # An OpenViking key stores no binding: it uses the account's defaults.
-        policy = await management.get(account, "policies", "default")
-        return Binding(policy or Policy().model_dump(), upstreams, [])
+        return Binding(
+            await default_policy(management, config, account),
+            upstreams or [{**u.model_dump(), "id": i} for i, u in config.default_upstreams.items()],
+            [],
+        )
     return Binding(
         await management.get(account, "policies", credential["policy_id"]),
         [u for u in upstreams if u["id"] in credential["upstream_ids"]],
@@ -277,7 +286,7 @@ class ProxyRequest:
             except (ValueError, RecursionError):
                 pass
         self.model = routing.get("model", "") if isinstance(routing, dict) else ""
-        binding = await resolve_binding(self.management, self.credential)
+        binding = await resolve_binding(self.management, self.config, self.credential)
         # Calls on a stored response are pinned to its upstream and carry no model.
         if binding.models and self.raw and not self.path.startswith("/v1/responses/"):
             if self.request.headers.get("content-encoding", "identity").lower() != "identity":
@@ -293,6 +302,12 @@ class ProxyRequest:
         if header is not None and self.policy:
             self.policy, self.metrics["context_override"] = context_override(self.policy, header)
         self.upstreams = binding.upstreams
+        # A host in front of the gateway may pick the upstream, but only an allowed one.
+        url = self.request.headers.get("x-openviking-upstream-url")
+        if url is not None:
+            self.upstreams = [u for u in self.upstreams if u["base_url"] == url.rstrip("/")]
+            if not self.upstreams:
+                raise HTTPException(403, "Upstream URL is not allowed")
         # A stored response is pinned below; an exact responses endpoint may hold it.
         stored_response = self.path.startswith("/v1/responses/")
         candidates = sorted(
@@ -483,8 +498,12 @@ class ProxyRequest:
 
         async def stream():
             finished = False
+            chunks = heartbeat(loop.run(response, send), HEARTBEAT_SECONDS)
             try:
-                async for chunk in loop.run(response, send):
+                async for chunk in chunks:
+                    if chunk is None:
+                        yield b": keep-alive\n\n"
+                        continue
                     await self.relay()
                     yield chunk
                 finished = True
@@ -492,6 +511,7 @@ class ProxyRequest:
                 self.metrics["degradation"] = "hidden_tool_loop_failed"
                 yield loop.error(str(error))
             finally:
+                await chunks.aclose()
                 if not finished:
                     capture.complete = False
                 self.metrics.update(prepared.metrics)
@@ -530,13 +550,19 @@ class ProxyRequest:
         response, capture = self.response, self.capture
         headers = filtered_headers(response.headers)
         if "text/event-stream" in response.headers.get("content-type", ""):
+            headers = {k: v for k, v in headers.items() if k.lower() != "content-length"}
 
             async def stream():
                 decoder = SSEDecoder()
                 observe = not response.headers.get("content-encoding")
                 finished = False
+                chunks = heartbeat(response.content.iter_any(), HEARTBEAT_SECONDS)
                 try:
-                    async for chunk in response.content.iter_any():
+                    async for chunk in chunks:
+                        if chunk is None:
+                            if observe and not decoder.buffer:
+                                yield b": keep-alive\n\n"
+                            continue
                         if observe:
                             try:
                                 # A chunk inside one event completes none: no reply to reread.
@@ -550,6 +576,7 @@ class ProxyRequest:
                         yield chunk
                     finished = True
                 finally:
+                    await chunks.aclose()
                     response.close()
                     if not finished:
                         capture.complete = False

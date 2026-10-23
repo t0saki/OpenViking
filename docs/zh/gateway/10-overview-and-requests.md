@@ -10,7 +10,9 @@ description: 读懂 Studio 中 OpenViking 网关的“概览”和“请求日�
 
 两个标签页读的都是网关的请求日志：每个经过网关的模型请求对应一条记录。普通用户只看到自己的请求，账号管理员和 root 看到整个账号的请求。概览里的数字也是从这些记录算出来的，所以统计范围和请求日志一致。
 
-日志只记元数据，从不保存提示词、回复或记忆内容，详见[请求日志记什么](11-security-and-data.md#what-request-logs-record)。记录默认保留 30 天，见[保留期限](11-security-and-data.md#retention)。
+设置 `request_log_sink: "stdout"` 后，新记录只写到 stdout。全新部署的请求日志页和概览中的请求统计保持为空；之前已存储的记录仍可见，直到过期。新请求请通过 [stdout 观测流程](../guides/22-gateway-operations.md#monitoring)查看。
+
+日志只记元数据，从不保存提示词、回复或记忆内容，详见[请求日志记什么](11-security-and-data.md#what-request-logs-record)。存储中的记录默认保留 30 天；stdout 的保留期限由日志采集系统管理。见[保留期限](11-security-and-data.md#retention)。
 
 ## 概览 {#overview}
 
