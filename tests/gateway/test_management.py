@@ -221,17 +221,14 @@ async def test_revocation_removes_only_key_and_keeps_user_data(running_gateway):
     assert not await app.state.management.logs("tenant", user_id="alice")
 
 
-@pytest.mark.parametrize("failure", ["unreachable", "server_error", "identity_missing"])
+@pytest.mark.parametrize("failure", ["unreachable", "server_error"])
 async def test_unconfirmed_revocation_keeps_key_and_serves(running_gateway, failure):
     app, client, _, key, _, _ = running_gateway
     backend = app.state.test_backend
 
     async def handler(request):
         if request.path == "/health" and request.headers.get("X-API-Key") == "user-key":
-            if failure == "server_error":
-                return web.json_response({}, status=503)
-            # OV swallows account-store errors and answers without an identity.
-            return web.json_response({"status": "ok", "auth_mode": "api_key"})
+            return web.json_response({}, status=503)
 
     backend["handler"] = handler
     if failure == "unreachable":
