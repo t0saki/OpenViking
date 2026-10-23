@@ -133,7 +133,7 @@ class RedisManagementStore:
             keys=self.object_keys(account, kind, identifier), args=[identifier]
         )
         if kind == "keys":
-            await self.client.delete(self.credential_key(identifier))
+            await self.client.execute_command("DEL", self.credential_key(identifier))
 
     async def authenticate(self, key):
         return await self.credential(digest(key))

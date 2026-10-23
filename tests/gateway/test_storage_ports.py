@@ -504,7 +504,9 @@ async def test_redis_missing_credential_object_does_not_remove_index(
     if redis_backend is None:
         pytest.skip("Redis dangling reverse index")
     await management_store.save("account", "keys", "key", {"user_id": "one"})
-    await redis_backend.client.delete(management_store.object_key("account", "keys", "key"))
+    await redis_backend.client.execute_command(
+        "DEL", management_store.object_key("account", "keys", "key")
+    )
     assert await management_store.credential("key") is None
     assert await redis_backend.client.get(management_store.credential_key("key")) == b"account"
     await asyncio.gather(
@@ -654,3 +656,75 @@ async def test_redis_composition_uses_one_client_and_closes_it(
     assert calls[0]["retry"]._retries == 0
     await close()
     assert closed == [True]
+
+
+@pytest.mark.parametrize("operation", ["save", "log"])
+async def test_redis_does_not_repeat_a_write_after_losing_its_response(
+    management_store, redis_backend, monkeypatch, operation
+):
+    if redis_backend is None:
+        pytest.skip("Redis connection failure")
+    from redis.asyncio import Redis
+    from redis.asyncio.cluster import ClusterNode, RedisCluster
+    from redis.exceptions import ConnectionError
+
+    await management_store.save("account", "upstreams", "object", {"value": "before"})
+    target = ClusterNode if isinstance(redis_backend.client, RedisCluster) else Redis
+    parse_response = target.parse_response
+    attempts = []
+
+    async def lose_response(client, connection, command, **kwargs):
+        response = await parse_response(client, connection, command, **kwargs)
+        if command.upper() == "EVALSHA":
+            attempts.append(command)
+            if len(attempts) == 1:
+                await connection.disconnect()
+                raise ConnectionError("socket lost after Redis committed the write")
+        return response
+
+    monkeypatch.setattr(target, "parse_response", lose_response)
+    with pytest.raises(ConnectionError):
+        if operation == "save":
+            await management_store.save("account", "upstreams", "object", {"value": "after"})
+        else:
+            await management_store.log("account", {"message": "once"})
+    assert len(attempts) == 1
+    if operation == "save":
+        assert (await management_store.get("account", "upstreams", "object"))["revision"] == 2
+    else:
+        assert len(await management_store.logs("account")) == 1
+
+
+@pytest.mark.parametrize("mode", ["standalone", "cluster", "sentinel"])
+async def test_shared_redis_factory_preserves_server_defaults(mode):
+    from openviking.server.account_stores.redis_client import create_redis_client
+
+    params = {"mode": mode, "master_name": "gateway"}
+    handle = create_redis_client(params)
+    try:
+        if mode == "cluster":
+            assert handle.client.encoder.decode_responses is True
+            assert handle.client.retry._retries == 3
+        else:
+            assert handle.client.connection_pool.connection_kwargs["decode_responses"] is True
+    finally:
+        await handle.close()
+
+
+def test_missing_redis_dependency_names_existing_extra(monkeypatch, tmp_path):
+    import builtins
+
+    from openviking_gateway.app import open_stores
+    from openviking_gateway.config import GatewayConfig
+
+    config = GatewayConfig(storage_path=str(tmp_path), storage={"management": "redis"})
+    real_import = builtins.__import__
+
+    def missing_redis(name, *args, **kwargs):
+        if name.startswith("redis"):
+            raise ImportError("redis is unavailable")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", missing_redis)
+    with pytest.raises(RuntimeError, match=r"requires openviking\[expiry\]"):
+        open_stores(config, None)
