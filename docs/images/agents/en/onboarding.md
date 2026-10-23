@@ -131,7 +131,7 @@ First check whether the rules file the current host actually reads has an `<!-- 
 
 If they choose to add it, put into **one message**: a sentence or two on what the rule makes you do from now on and what it gives them (for example, picking the project up later means finding the decision and its reason right away), which file it goes into and that it applies to all projects, and the **full text** as adjusted to their choice. The text must match what you then write, word for word. Then ask them to confirm, adjust, or leave it for now. If they adjust it (for example, only final deliverables, or ask before saving), change the text and show it again.
 
-The default rule text:
+The default rule text (when writing it, `<user_id>` may be replaced with the actual user name; keep `<project>` as it is, since it is worked out in each project, and filling in the current project would send every project's notes to that one folder):
 
 ```markdown
 <!-- openviking:start -->
@@ -161,8 +161,8 @@ First say in two or three lines where things stand: which server is connected, w
 
 1. **How to restart the current host and trust the hooks**: the "Restart or trust" column of [Appendix A](#appendix-a-hosts). If the installer also set up other tools, add one line naming them: each needs its own restart before the plugin works there, as the installer's `Next:` lines (Chinese `下一步：`) say.
 2. **Where to come back to**, per the "After restart" column of Appendix A:
-   - Hosts marked "resume the original session": tell them to come back to **this conversation** with the command in the table and send "restarted".
-   - Hosts marked "new session": tell them to start a new session, not to resume this conversation or reload the plugin in it, and give them the line in item 3.
+   - Hosts marked "resume the original session": tell them to come back to **this conversation** with the command in the table and send "restarted". They don't need the line in item 3.
+   - Hosts marked "new session": tell them to start a new session, not to resume this conversation or reload the plugin in it, with the reason if the table gives one, and give them the line in item 3.
 3. **The first message for a new session**, as text they can copy. Use the URL you actually opened, and fill in the angle brackets with the real results:
 
 ```text
@@ -196,8 +196,8 @@ The plugin should now be running in this session. The point of this part is to l
 
 | Host | `--harness` | Restart or trust | After restart | Where to see it | History import | User-level rules file |
 |---|---|---|---|---|---|---|
-| Claude Code | `claude` | Quit and run `claude` again; don't use `/reload-plugins` | New session (don't use `claude --continue` / `--resume` to go back to the install conversation) | A source card under answers that used OpenViking (Claude Code 2.1.286 and later); `/openviking-memory:ov` for status | Supported | `~/.claude/CLAUDE.md` |
-| Codex | `codex` | Quit and run it again; when "Hooks need review" appears, choose **Trust all and continue** (later also in `/hooks`) | Resume the original session: `codex resume --last` | An OV-Usage line after each answer, for example `OpenViking · 3 sources · 1 past event · 2 team docs · 1 read` | Supported | `~/.codex/AGENTS.md`; if `AGENTS.override.md` exists in the same folder, Codex reads that instead |
+| Claude Code | `claude` | Quit and run `claude` again; don't use `/reload-plugins` | New session. Don't use `claude --continue` / `--resume` to go back to the install conversation: the plugin would save the whole install conversation, key included, to OpenViking | A source card under answers that used OpenViking (Claude Code 2.1.286 and later); `/openviking-memory:ov` for status | Supported | `~/.claude/CLAUDE.md` |
+| Codex | `codex` | Quit, then run `codex resume --last` to come back to this conversation; when "Hooks need review" appears, choose **Trust all and continue** (later also in `/hooks`) | Resume the original session (the command on the left) and send "restarted" | An OV-Usage line after each answer, for example `OpenViking · 3 sources · 1 past event · 2 team docs · 1 read` | Supported | `~/.codex/AGENTS.md`; if `AGENTS.override.md` exists in the same folder, Codex reads that instead |
 | TraeCode CLI 2.0 | `trae-cli` | Quit and run `trae-cli` (or `traecli`) again; when "Hooks need review" appears, choose **Trust all and continue** | New session | An OV-Usage line, as in Codex | Convert to JSONL; sessions are in `~/.trae/cli/sessions/`, the same rollout format as Codex | Not confirmed |
 | Cursor | `cursor` | Quit Cursor completely and reopen it | New Agent session (**+**); don't continue in the restored install conversation | The OpenViking hook under Settings → Hooks; `openviking` connected under Settings → Tools & MCPs | Convert to JSONL; session location not confirmed | User Rules in Cursor settings; ask the user to paste |
 | TRAE / TRAE CN | `trae` / `trae-cn` | Quit the app completely and reopen it; no hook approval needed | New session | `openviking` connected in the MCP settings | Convert to JSONL; session location not confirmed | Personal rules in the app settings; ask the user to paste |

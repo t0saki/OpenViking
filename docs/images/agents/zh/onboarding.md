@@ -131,7 +131,7 @@ ov add-resource ./docs/design.md --parent-auto-create viking://user/<user_id>/re
 
 他选了要写，就在**同一条消息**里给出：一两句这段规则会让你以后多做什么、对他有什么用（例如以后继续这个项目时能直接找到当时的决定和理由），写进哪个文件、对所有项目生效，以及按他的选择整理好的**完整原文**。原文要和随后写入的一字不差。然后请他确认写入、调整，或先不写。他要调整（例如只保存最终交付物、存之前先问他），就改原文再给他看一次。
 
-默认的规则原文：
+默认的规则原文（写入时 `<user_id>` 可以换成实际用户名；`<项目名>` 保持原样，它在每个项目里各自确定，换成当前项目名会让所有项目的笔记都存到这一个目录）：
 
 ```markdown
 <!-- openviking:start -->
@@ -161,8 +161,8 @@ ov add-resource ./docs/design.md --parent-auto-create viking://user/<user_id>/re
 
 1. **当前宿主怎么重启和信任 hook**，见[附录 A](#附录-a各宿主说明)的「重启或信任」一列。安装器还装进了其他工具时，加一行点出它们的名字：每个都要各自重启后才生效，具体看安装器输出里的 `下一步：`（英文 `Next:`）。
 2. **重启后回到哪里**，看附录 A 的「重启后」一列：
-   - 写着「回到原会话」的宿主：告诉他用表里的命令回到**这段对话**，然后发一句「已重启」。
-   - 写着「开新会话」的宿主：告诉他开一个新会话，不要恢复这段对话，也不要在这里重新加载插件，并给他第 3 条里的那句话。
+   - 写着「回到原会话」的宿主：告诉他用表里的命令回到**这段对话**，然后发一句「已重启」。不用给第 3 条的那句话。
+   - 写着「开新会话」的宿主：告诉他开一个新会话，不要恢复这段对话，也不要在这里重新加载插件，表里写了原因的一并说明，并给他第 3 条里的那句话。
 3. **开新会话时要发的第一句话**，直接给出可复制的文本。网址用你实际打开成功的那个，尖括号换成实际结果：
 
 ```text
@@ -196,8 +196,8 @@ ov add-resource ./docs/design.md --parent-auto-create viking://user/<user_id>/re
 
 | 宿主 | `--harness` | 重启或信任 | 重启后 | 在哪里能看到 | 历史导入 | 用户级规则文件 |
 |---|---|---|---|---|---|---|
-| Claude Code | `claude` | 退出后重新运行 `claude`；不要用 `/reload-plugins` | 开新会话（不要用 `claude --continue` / `--resume` 回到安装对话） | 用到 OpenViking 的回答下方有来源卡片（Claude Code 2.1.286 及以上）；`/openviking-memory:ov` 查看状态 | 支持 | `~/.claude/CLAUDE.md` |
-| Codex | `codex` | 退出后重新运行；出现「Hooks need review」时选 **Trust all and continue**（之后也可在 `/hooks` 中处理） | 回到原会话：`codex resume --last` | 回答后有一行 OV-Usage，例如 `OpenViking · 3 sources · 1 past event · 2 team docs · 1 read` | 支持 | `~/.codex/AGENTS.md`；同目录有 `AGENTS.override.md` 时 Codex 读的是它 |
+| Claude Code | `claude` | 退出后重新运行 `claude`；不要用 `/reload-plugins` | 开新会话。不要用 `claude --continue` / `--resume` 回到安装对话：插件会把整段安装对话连同里面的 key 补存到 OpenViking | 用到 OpenViking 的回答下方有来源卡片（Claude Code 2.1.286 及以上）；`/openviking-memory:ov` 查看状态 | 支持 | `~/.claude/CLAUDE.md` |
+| Codex | `codex` | 退出后运行 `codex resume --last` 回到这段对话；出现「Hooks need review」时选 **Trust all and continue**（之后也可在 `/hooks` 中处理） | 回到原会话（就是左边那条命令），发「已重启」 | 回答后有一行 OV-Usage，例如 `OpenViking · 3 sources · 1 past event · 2 team docs · 1 read` | 支持 | `~/.codex/AGENTS.md`；同目录有 `AGENTS.override.md` 时 Codex 读的是它 |
 | TraeCode CLI 2.0 | `trae-cli` | 退出后重新运行 `trae-cli`（或 `traecli`）；出现「Hooks need review」时选 **Trust all and continue** | 开新会话 | 回答后有一行 OV-Usage，与 Codex 相同 | 转成 JSONL；会话在 `~/.trae/cli/sessions/`，和 Codex 相同的 rollout 格式 | 未确认 |
 | Cursor | `cursor` | 完全退出 Cursor 后重新打开 | 开新会话（**+**），不要在恢复出来的安装对话里继续 | 设置 → Hooks 里的 OpenViking hook；设置 → Tools & MCPs 里 `openviking` 显示已连接 | 转成 JSONL；会话位置未确认 | Cursor 设置里的 User Rules，请用户粘贴 |
 | TRAE / TRAE CN | `trae` / `trae-cn` | 完全退出应用后重新打开；无需批准 hook | 开新会话 | MCP 设置里 `openviking` 显示已连接 | 转成 JSONL；会话位置未确认 | 应用设置里的个人规则，请用户粘贴 |
