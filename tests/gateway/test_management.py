@@ -1004,40 +1004,34 @@ async def test_keys_are_immutable_and_errors_explain_themselves(running_gateway)
 
 async def test_degraded_probe_backs_off_until_success(tmp_path, monkeypatch):
     import asyncio
-    import time
     from types import SimpleNamespace
 
     from openviking_gateway import app as module
     from openviking_gateway.client import VikingClient, VikingError
     from openviking_gateway.config import GatewayConfig
 
-    clock, probes, results = [0.0], [], [False, False, True, False, False, False, False]
-
-    def monotonic():
-        clock[0] += 0.125
-        return clock[0]
+    delays, results = [], [False, False, True, False, False, False, False]
 
     async def health(self, *args, **kwargs):
-        probes.append(clock[0])
         if results and not results.pop(0):
             raise VikingError("openviking_unavailable")
         return {"status": "ok"}
 
-    async def once():
+    async def sleep(delay):
+        if delay == 3600:
+            return await asyncio.sleep(delay)
+        delays.append(delay)
         await asyncio.sleep(0)
-        return True
 
     monkeypatch.setattr(VikingClient, "health", health)
-    monkeypatch.setattr(module, "time", SimpleNamespace(monotonic=monotonic, time=time.time))
+    monkeypatch.setattr(module, "asyncio", SimpleNamespace(**{**vars(asyncio), "sleep": sleep}))
     config = GatewayConfig(storage_path=str(tmp_path), health_interval_seconds=4)
     app = create_app(config, openviking_url="http://unused")
     async with app.router.lifespan_context(app):
-        app.state.worker.once = once
         while results:
             await asyncio.sleep(0)
-    gaps = [round(b - a) for a, b in zip(probes, probes[1:], strict=False)]
     # Every second until OV first answers; later outages back off 1, 2, 4 capped at the interval.
-    assert gaps[:6] == [1, 1, 4, 1, 2, 4]
+    assert delays[:6] == [1, 1, 4, 1, 2, 4]
 
 
 async def test_upstream_test_fills_url_key_and_reaches_exact_endpoints(running_gateway):

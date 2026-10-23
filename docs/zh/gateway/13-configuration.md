@@ -45,6 +45,7 @@ description: 查询 OpenViking 网关的配置字段、环境变量、上下文�
 | `max_body_bytes` | 两者 | `33554432`（32 MiB） | 1,024 及以上 | 请求和上传的大小上限，单位为字节 |
 | `upstream_timeout_seconds` | 两者 | `600` | 大于 0 | 服务商请求超时 |
 | `health_interval_seconds` | 两者 | `60` | 1 及以上 | 检查 OpenViking 状态的间隔秒数 |
+| `capture_concurrency` | 两者 | `1` | 1 及以上 | 每个进程并发投递的会话数；停机时停止新 claim，最多等待在途投递 100 秒 |
 | `client_rules` | 两者 | `{}`（只用内置规则） | 见[客户端规则](#client-rules) | 在网关内置的辅助请求和客户端插入消息识别规则上增删条目 |
 
 例如，独立网关的 `gateway.conf` 可以在尚未配置任何账号时路由 OpenViking 密钥：

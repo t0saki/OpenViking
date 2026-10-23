@@ -89,15 +89,27 @@ def create_app(config: GatewayConfig, *, openviking_url: str, vlm_source=None, e
                 app.state.viking = VikingClient(http, openviking_url, config.min_server_version)
                 app.state.kernel = MemoryKernel(store, app.state.viking)
                 app.state.worker = CaptureWorker(store, management, app.state.viking)
-                # The first probe runs in maintenance: an embedded server is not listening yet.
+                # The first probe runs in the background: an embedded server is not listening yet.
                 app.state.health = {"status": "starting"}
-                task = asyncio.create_task(maintenance(app))
+                stopped = asyncio.Event()
+                maintenance = [
+                    asyncio.create_task(health_loop(app)),
+                    asyncio.create_task(cleanup_loop()),
+                ]
+                captures = [
+                    asyncio.create_task(capture_loop(app, stopped))
+                    for _ in range(config.capture_concurrency)
+                ]
                 try:
                     yield
                 finally:
-                    task.cancel()
-                    with contextlib.suppress(asyncio.CancelledError):
-                        await task
+                    stopped.set()
+                    for task in maintenance:
+                        task.cancel()
+                    _, pending = await asyncio.wait(captures, timeout=100)
+                    for task in pending:
+                        task.cancel()
+                    await asyncio.gather(*maintenance, *captures, return_exceptions=True)
         finally:
             await close()
 
@@ -127,34 +139,46 @@ def create_app(config: GatewayConfig, *, openviking_url: str, vlm_source=None, e
             app.state.health = {"status": "degraded", "reason": error.reason}
             app.state.viking.unavailable_reason = error.reason
 
-    async def maintenance(app):
-        health_at = 0
-        cleanup_at = 0
+    async def health_loop(app):
         retry = 1
         reached = False
         while True:
             try:
-                if time.monotonic() >= health_at:
-                    await refresh_health(app)
-                    if app.state.health.get("status") == "degraded":
-                        health_at = time.monotonic() + retry
-                        # An embedded host starts OV after this loop: poll every second until then.
-                        if reached:
-                            retry = min(retry * 2, config.health_interval_seconds)
-                    else:
-                        health_at = time.monotonic() + config.health_interval_seconds
-                        retry, reached = 1, True
-                if time.monotonic() >= cleanup_at:
-                    await store.expire(time.time() - config.session_ttl_days * 86400)
-                    await management.expire_logs(time.time() - config.log_retention_days * 86400)
-                    cleanup_at = time.monotonic() + 3600
-                if not await app.state.worker.once():
-                    await asyncio.sleep(1)
-            except asyncio.CancelledError:
-                raise
+                await refresh_health(app)
+                if app.state.health.get("status") == "degraded":
+                    delay = retry
+                    # An embedded host starts OV after this loop: poll every second until then.
+                    if reached:
+                        retry = min(retry * 2, config.health_interval_seconds)
+                else:
+                    delay = config.health_interval_seconds
+                    retry, reached = 1, True
+                await asyncio.sleep(delay)
             except Exception:
-                logger.exception("OpenViking Gateway maintenance failed")
+                logger.exception("OpenViking Gateway health check failed")
                 await asyncio.sleep(1)
+
+    async def cleanup_loop():
+        while True:
+            try:
+                await store.expire(time.time() - config.session_ttl_days * 86400)
+                await management.expire_logs(time.time() - config.log_retention_days * 86400)
+                await asyncio.sleep(3600)
+            except Exception:
+                logger.exception("OpenViking Gateway cleanup failed")
+                await asyncio.sleep(1)
+
+    async def capture_loop(app, stopped):
+        while not stopped.is_set():
+            try:
+                if await app.state.worker.once():
+                    continue
+            except Exception:
+                logger.exception("OpenViking Gateway capture failed")
+            try:
+                await asyncio.wait_for(stopped.wait(), timeout=1)
+            except asyncio.TimeoutError:
+                pass
 
     @app.exception_handler(RequestValidationError)
     async def invalid_request(_request, error):

@@ -96,6 +96,7 @@ class GatewayConfig(BaseModel):
     max_body_bytes: int = Field(default=32 * 1024 * 1024, ge=1024)
     upstream_timeout_seconds: float = Field(default=600, gt=0)
     health_interval_seconds: float = Field(default=60, ge=1)
+    capture_concurrency: int = Field(default=1, ge=1)
     client_rules: ClientRules = Field(default_factory=ClientRules)
 
     @model_validator(mode="after")

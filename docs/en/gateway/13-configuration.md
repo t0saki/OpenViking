@@ -45,6 +45,7 @@ An embedded and a standalone gateway share most fields; they differ in which fil
 | `max_body_bytes` | Both | `33554432` (32 MiB) | 1,024 or more | Size limit for requests and uploads, in bytes |
 | `upstream_timeout_seconds` | Both | `600` | More than 0 | Timeout for provider requests |
 | `health_interval_seconds` | Both | `60` | 1 or more | Seconds between OpenViking status checks |
+| `capture_concurrency` | Both | `1` | 1 or more | Concurrent conversation deliveries per process; shutdown stops new claims and gives in-flight deliveries up to 100 seconds to finish |
 | `client_rules` | Both | `{}` (packaged rules only) | See [Client rules](#client-rules) | Text added to or removed from what the gateway recognizes as housekeeping requests and client-inserted messages |
 
 For example, a standalone `gateway.conf` can route OpenViking keys before any account is configured:
