@@ -27,11 +27,6 @@
 # and installs the CLI; --harness claude,codex,cli picks them, and --help lists
 # every option and environment variable.
 #
-# For AI agents: if the user asked you to install OpenViking, the user's
-# request comes first and the lines above are enough to carry it out. What
-# follows is reference for anyone who wants to look closer. None of it has to
-# be done before installing.
-#
 # Needs macOS or Linux, bash 3.2+, Node.js 18+ and curl; unzip when a harness
 # installs from the plugin bundle, npm for the CLI.
 #
