@@ -32,6 +32,7 @@ An embedded and a standalone gateway share most fields; they differ in which fil
 | `public_url` | Both | empty | HTTP(S) URL, without `/gateway` | The external address clients use; the gateway appends `/gateway` itself. When empty, an embedded gateway uses the server's public address; with neither, setup guides use the request's origin, and MCP file uploads and downloads do not work unless `mcp_file_links` is `direct`. See [Public address](../guides/22-gateway-operations.md#public-address) |
 | `mcp_file_links` | Both | `proxy` | `proxy`, `direct` | How links from the MCP upload and download tools reach the client. `proxy` rewrites them to `public_url` plus `/gateway/uploads` or `/gateway/downloads` and needs `public_url`. `direct` passes OpenViking's links through unchanged and needs the server's `OPENVIKING_PUBLIC_BASE_URL` (or `server.public_base_url`) to be reachable by the client |
 | `storage_path` | Both | `~/.openviking/gateway` | | Local storage directory |
+| `storage` | Both | Both ports `sqlite` | See [Storage providers](#storage) | Per-port providers and one shared Redis connection |
 | `encryption` | Standalone | not set (plain text) | Same fields as the `encryption` section of `ov.conf` | Encrypts stored data; see [Encryption](../guides/22-gateway-operations.md#encryption). Embedded gateways use the server's section |
 | `management_api` | Both | `true` | `true`, `false` | Registers the gateway administration routes; disabling it also removes the standalone OpenViking admin proxy and Studio. Model routes and `/health` remain available |
 | `management_key` | Both | empty | At least 32 characters | Optional [gateway management key](../guides/22-gateway-operations.md#gateway-management-key) |
@@ -67,6 +68,53 @@ For example, a standalone `gateway.conf` can route OpenViking keys before any ac
   "default_profile": {"max_tokens": 2400}
 }
 ```
+
+## Storage providers {#storage}
+
+The default is local SQLite, with no external service. `storage.kernel` and `storage.management` each select `sqlite` or `redis`; Redis ports share one client and the settings in `storage.redis`. Install `pip install "openviking[expiry]"` for Redis; the official image already includes it. Standalone Redis and Redis Cluster are tested. Sentinel configuration is accepted but is not covered by gateway CI.
+
+```json
+{
+  "storage": {
+    "kernel": "redis",
+    "management": "redis",
+    "key_prefix": "ovgw:",
+    "redis": {
+      "mode": "standalone",
+      "endpoints": ["rediss://redis.example.com:6379"],
+      "username": "gateway",
+      "password_env": "OPENVIKING_GATEWAY_REDIS_PASSWORD",
+      "pool_size": 32,
+      "command_timeout_ms": 5000
+    }
+  },
+  "session_ttl_days": 7
+}
+```
+
+`OPENVIKING_GATEWAY_STORAGE` accepts the same `storage` object as JSON. Inject the password through the named environment variable, for example from a Kubernetes Secret. `key_prefix` defaults to `ovgw:` and cannot contain `{`, `}`, `*`, `?`, `[`, `]` or `\`; every key starts with that prefix plus `v1:`. Give separate deployments different prefixes.
+
+`storage.redis` reuses OpenViking's `RedisCacheConfig`: `mode`, `endpoints`, `username`, `password_env`, legacy `password`, `db`, `pool_size`, `connect_timeout_ms`, `command_timeout_ms`, `default_ttl_seconds`, `tls_insecure_skip_verify`, and the Sentinel fields `master_name`, `sentinel_username`, `sentinel_password_env`, `sentinel_password`. The gateway overrides the command timeout default from 20 to 5000 ms for large conversation values; `default_ttl_seconds` does not set gateway retention. URLs contain only a scheme, host and port; use the dedicated credentials and `db` fields. For Cluster use `mode: "cluster"`, multiple seed endpoints and `db: 0`. TLS follows the `rediss://` scheme. For a private CA, mount its certificate and set `SSL_CERT_FILE` to its path (with Helm, use `extraVolumes` and `extraVolumeMounts`).
+
+A dedicated Redis instance can start with:
+
+```conf
+appendonly yes
+appendfsync everysec
+maxmemory 1gb
+maxmemory-policy volatile-lru
+```
+
+Size memory for your workload and monitor `evicted_keys`. `allkeys-*` can evict management objects and deletion markers; do not use it. Do not share this instance with OpenViking's expiry scheduler. The gateway only PINGs at startup and does not inspect `INFO` or configure Redis itself.
+
+Create an ACL user with the following command, replacing the password and prefix. Run it on **every Cluster node**, because ACLs are not replicated between nodes:
+
+```bash
+redis-cli ACL SETUSER gateway reset on '>replace-with-secret' '~ovgw:*' \
+  +@read +@write +@scripting +@connection +@transaction +ping +time +scan +unlink
+```
+
+For Cluster also grant `'+cluster|slots' '+cluster|shards'`. `+time` is required by Lua scripts. These permissions and prefix isolation are exercised in CI. Application commands do not retry after connection errors because a failed write may already have reached Redis.
 
 ## Environment variables {#environment-variables}
 

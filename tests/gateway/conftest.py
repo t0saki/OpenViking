@@ -473,11 +473,15 @@ async def redis_backend(storage_provider, storage_encryptor):
             "username": os.environ.get("OV_TEST_REDIS_USERNAME", ""),
             "password": os.environ.get("OV_TEST_REDIS_PASSWORD", ""),
             "command_timeout_ms": 5000,
+            "pool_size": 128,
         },
         decode_responses=False,
         retry=Retry(NoBackoff(), 0),
+        **({"cluster_error_retry_attempts": 0} if storage_provider == "redis-cluster" else {}),
     )
-    backend = RedisBackend(handle.client, f"ovgw:test:{uuid.uuid4().hex}:", AsyncCodec(storage_encryptor))
+    backend = RedisBackend(
+        handle.client, f"ovgw:test:{uuid.uuid4().hex}:", AsyncCodec(storage_encryptor)
+    )
     try:
         await handle.client.ping()
         yield backend

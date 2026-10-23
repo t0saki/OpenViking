@@ -32,6 +32,7 @@ description: 查询 OpenViking 网关的配置字段、环境变量、上下文�
 | `public_url` | 两者 | 空 | HTTP(S) URL，不带 `/gateway` | 客户端访问的对外地址，`/gateway` 由网关自己加。为空时，嵌入网关沿用 Server 的对外地址；两者都没有时，接入指南使用请求来源地址，MCP 文件上传和下载也不可用（`mcp_file_links` 为 `direct` 时除外）。见[对外地址](../guides/22-gateway-operations.md#public-address) |
 | `mcp_file_links` | 两者 | `proxy` | `proxy`、`direct` | MCP 上传和下载工具返回的链接如何交给客户端。`proxy` 改写为 `public_url` 加 `/gateway/uploads` 或 `/gateway/downloads`，需要设置 `public_url`。`direct` 原样透传 OpenViking 的链接，需要 Server 的 `OPENVIKING_PUBLIC_BASE_URL`（或 `server.public_base_url`）是客户端能访问的地址 |
 | `storage_path` | 两者 | `~/.openviking/gateway` | | 本地存储目录 |
+| `storage` | 两者 | 两个后端均为 `sqlite` | 见[存储后端](#storage) | 分别选择后端，共用 Redis 连接配置 |
 | `encryption` | 独立 | 不设置（明文） | 字段同 `ov.conf` 的 `encryption` 段 | 加密本地保存的数据，见[加密](../guides/22-gateway-operations.md#encryption)；嵌入网关沿用 Server 的设置 |
 | `management_api` | 两者 | `true` | `true`、`false` | 注册网关管理路由；关闭时也移除独立网关的 OpenViking 管理代理和 Studio，模型路由和 `/health` 继续可用 |
 | `management_key` | 两者 | 空 | 至少 32 个字符 | 可选的[网关管理密钥](../guides/22-gateway-operations.md#gateway-management-key) |
@@ -67,6 +68,53 @@ description: 查询 OpenViking 网关的配置字段、环境变量、上下文�
   "default_profile": {"max_tokens": 2400}
 }
 ```
+
+## 存储后端 {#storage}
+
+默认使用本地 SQLite，无需外部服务。`storage.kernel` 和 `storage.management` 分别选择 `sqlite` 或 `redis`；Redis 后端共用一个客户端及 `storage.redis` 连接配置。使用 Redis 时安装 `pip install "openviking[expiry]"`，官方镜像已经包含依赖。网关 CI 覆盖 Redis 单机和 Cluster；Sentinel 配置可以通过校验，但不在网关 CI 覆盖范围内。
+
+```json
+{
+  "storage": {
+    "kernel": "redis",
+    "management": "redis",
+    "key_prefix": "ovgw:",
+    "redis": {
+      "mode": "standalone",
+      "endpoints": ["rediss://redis.example.com:6379"],
+      "username": "gateway",
+      "password_env": "OPENVIKING_GATEWAY_REDIS_PASSWORD",
+      "pool_size": 32,
+      "command_timeout_ms": 5000
+    }
+  },
+  "session_ttl_days": 7
+}
+```
+
+`OPENVIKING_GATEWAY_STORAGE` 接受相同 `storage` 对象的 JSON。密码通过指定的环境变量注入，例如来自 Kubernetes Secret。`key_prefix` 默认为 `ovgw:`，不能包含 `{`、`}`、`*`、`?`、`[`、`]` 或 `\`；所有键都以该前缀加 `v1:` 开头。不同部署使用不同前缀。
+
+`storage.redis` 复用 OpenViking 的 `RedisCacheConfig`：`mode`、`endpoints`、`username`、`password_env`、旧式 `password`、`db`、`pool_size`、`connect_timeout_ms`、`command_timeout_ms`、`default_ttl_seconds`、`tls_insecure_skip_verify`，以及 Sentinel 字段 `master_name`、`sentinel_username`、`sentinel_password_env`、`sentinel_password`。为容纳较大的对话值，网关把命令超时默认值从 20 改为 5000 毫秒；`default_ttl_seconds` 不控制网关保留期限。URL 只包含协议、主机和端口，凭据和数据库使用专门字段。Cluster 使用 `mode: "cluster"`、多个种子地址和 `db: 0`。TLS 由 `rediss://` 协议决定；私有 CA 通过证书卷和指向证书的 `SSL_CERT_FILE` 配置（Helm 使用 `extraVolumes`、`extraVolumeMounts`）。
+
+专用 Redis 实例的最小配置示例：
+
+```conf
+appendonly yes
+appendfsync everysec
+maxmemory 1gb
+maxmemory-policy volatile-lru
+```
+
+按实际负载规划内存，并监控 `evicted_keys`。`allkeys-*` 会驱逐管理对象和删除墓碑，不要使用；也不要和 OpenViking 的过期调度器共用实例。网关启动只执行 PING，不读取 `INFO`，也不替你修改 Redis 配置。
+
+替换密码和前缀后，运行以下命令创建 ACL 用户。Cluster 必须在**每个节点**分别执行，因为 ACL 不在节点之间同步：
+
+```bash
+redis-cli ACL SETUSER gateway reset on '>replace-with-secret' '~ovgw:*' \
+  +@read +@write +@scripting +@connection +@transaction +ping +time +scan +unlink
+```
+
+Cluster 还需授予 `'+cluster|slots' '+cluster|shards'`。Lua 脚本需要 `+time`；CI 会验证这些权限及前缀隔离。应用命令遇到连接错误不会自动重试，因为失败的写入可能已经到达 Redis。
 
 ## 环境变量 {#environment-variables}
 

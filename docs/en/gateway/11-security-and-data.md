@@ -4,7 +4,7 @@ description: What OpenViking Gateway stores, who can reach it, what providers se
 
 # OpenViking Gateway security and data
 
-This page is for operators and security reviewers approving a gateway deployment, and for users who want to know what the gateway keeps about them. Sessions and memories always live in OpenViking under its own rules; the gateway keeps only its settings, the state it needs to continue conversations, and metadata-only request logs, in two SQLite files under `storage_path`. Each section below answers one review question and can be linked on its own.
+This page is for operators and security reviewers approving a gateway deployment, and for users who want to know what the gateway keeps about them. Sessions and memories always live in OpenViking under its own rules; the gateway keeps only its settings, the state it needs to continue conversations, and metadata-only request logs, in local SQLite by default or in configured Redis storage. Each section below answers one review question and can be linked on its own.
 
 ## Isolation by user {#isolation-by-user}
 
@@ -12,19 +12,19 @@ Each [gateway key](../guides/15-gateway.md#key-terms) is bound to one OpenViking
 
 ## What the gateway stores {#what-the-gateway-stores}
 
-Everything the gateway keeps is in two SQLite databases in `storage_path` (default `~/.openviking/gateway`):
+By default, data is in two SQLite databases in `storage_path` (default `~/.openviking/gateway`). Either storage port can use [Redis](13-configuration.md#storage) instead:
 
 | File | What it holds |
 | --- | --- |
-| `management.sqlite3` | Upstreams, context profiles, gateway keys, request logs, and which upstream created each Responses response |
-| `kernel.sqlite3` | The state of each conversation: the memory text added to messages, OpenViking tool rounds and their results, summaries, conversation text waiting to be saved, and the reasoning of model replies when **Restore reasoning the client drops** is on |
+| `management.sqlite3` (or Redis management) | Upstreams, context profiles, gateway keys, request logs, and which upstream created each Responses response |
+| `kernel.sqlite3` (or Redis kernel) | The state of each conversation: the memory text added to messages, OpenViking tool rounds and their results, summaries, conversation text waiting to be saved, and the reasoning of model replies when **Restore reasoning the client drops** is on |
 
 Some of this is sensitive:
 
 - `management.sqlite3` holds upstream API keys, header values and the OpenViking keys bound to gateway keys. Gateway keys themselves are stored only as a hash and a short prefix.
 - `kernel.sqlite3` holds memory text word for word, because the gateway needs it to [replay](01-how-it-works.md#replay) what it added in earlier turns.
 
-Only the system user that runs the gateway can read the files. With [encryption](../guides/22-gateway-operations.md#encryption) on, every stored value is encrypted as well; with it off, the credentials above are in plain text, protected only by file permissions.
+Only the system user that runs the gateway can read SQLite files. Redis access is controlled by its network and ACL configuration. With [encryption](../guides/22-gateway-operations.md#encryption) on, every stored value is encrypted as well; with it off, the credentials above are in plain text, protected by file permissions or Redis access controls. All replicas must mount the same encryption root key from a Secret; a missing entry on a read-only mount prevents startup. Redis keys contain hashes, but indexes can contain original account, object and session identifiers; use TLS as well as value encryption.
 
 ## What request logs record {#what-request-logs-record}
 
@@ -65,7 +65,7 @@ The full rules, including the management API, are in the [access matrix](../api/
 
 ## Retention {#retention}
 
-Gateway data expires on its own. A cleanup job runs every hour:
+Gateway data expires on its own. SQLite runs an hourly cleanup job; Redis uses key TTLs:
 
 | Data | Kept for | Setting |
 | --- | --- | --- |
@@ -78,6 +78,8 @@ Gateway data expires on its own. A cleanup job runs every hour:
 When an OpenViking key record expires, or is evicted by a Redis backend using `volatile-lru`, capture pauses with `gateway_key_revoked` because it cannot read the stored credential. The user's next request recreates the record and resumes capture in the same scope. If the user never returns, the last pending turn is not saved to OpenViking. This state is a cache and can be lost. The existing short process-local cache can delay visibility of expiry, like revocation.
 
 In account tenancy, issuing a gateway key for the same user can rewrite the user record without a TTL. SQLite retains that record's earlier expiry; account deletion still discovers the user's scopes through the key records.
+
+Redis management logs keep at most 10,000 entries per account. The list expires after `session_ttl_days` of inactivity, and reads omit entries older than that duration; `log_retention_days` and hourly log cleanup do not apply. Redis Responses routing objects expire by TTL and are not scanned during user deletion; revoked keys cannot access them.
 
 Minimums and where to set these are in [Gateway fields](13-configuration.md#gateway-fields).
 
@@ -99,7 +101,8 @@ None of this touches memories and sessions already stored in OpenViking. The rev
 
 Back up these, together:
 
-- The whole `storage_path` directory: both databases and their `-wal` and `-shm` files.
+- For Redis, enable AOF and back up Redis persistence together with the encryption root key. Without persistence, restarting Redis loses management settings and pending conversation data.
+- For SQLite, the whole `storage_path` directory: both databases and their `-wal` and `-shm` files.
 - With encryption on, OpenViking's encryption root key (not the root API key), as the [Encryption guide](../guides/08-encryption.md) describes.
 
 For a consistent copy, stop the gateway first, or use SQLite's online backup while it runs:
@@ -113,8 +116,9 @@ What losing each piece means:
 
 | Lost | What happens | What to do |
 | --- | --- | --- |
-| `kernel.sqlite3` | Memory added earlier cannot be replayed. Each ongoing conversation takes one provider cache miss, Claude conversations lose their earlier thinking once ([**Memory record missing**](12-troubleshooting.md#issues-on-degraded-requests)), and turns not yet saved are lost. | None; ongoing conversations recover after one miss |
-| `management.sqlite3` | Upstreams, context profiles, keys and request logs are gone. | Set them up again and issue new keys |
+| `kernel.sqlite3` (or Redis kernel) | Memory added earlier cannot be replayed. Each ongoing conversation takes one provider cache miss, Claude conversations lose their earlier thinking once ([**Memory record missing**](12-troubleshooting.md#issues-on-degraded-requests)), and turns not yet saved are lost. | None; ongoing conversations recover after one miss |
+| `management.sqlite3` (or Redis management) | Upstreams, context profiles, keys and request logs are gone. | Set them up again and issue new keys |
+| Redis data | Management settings and pending conversation data are lost; issued gateway keys stop working. | Restore a Redis backup, or reconfigure upstreams and profiles and issue replacement keys. OpenViking key records rebuild on later requests. |
 | Encryption root key (encryption on) | The encrypted values in both databases cannot be read. | Start again with an empty `storage_path` |
 
 ## Next steps {#next-steps}

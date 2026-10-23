@@ -32,6 +32,7 @@ from .management import (
 from .protocols import configure_rules
 from .proxy import ProxyRequest, filtered_headers, resolve_binding
 from .storage import (
+    AsyncCodec,
     CachedManagement,
     SQLiteKernelStore,
     SQLiteManagementStore,
@@ -53,12 +54,42 @@ VIKING_DETAILS = {
 
 def open_stores(config: GatewayConfig, encryptor):
     """Construct storage ports and collect their resource cleanup."""
-    store = SQLiteKernelStore(config.directory / "kernel.sqlite3", encryptor)
-    management = SQLiteManagementStore(config.directory / "management.sqlite3", encryptor)
     close = contextlib.AsyncExitStack()
+    settings = config.storage
+    backend = None
+    if "redis" in (settings.kernel, settings.management):
+        try:
+            from redis.asyncio.retry import Retry
+            from redis.backoff import NoBackoff
+
+            from openviking.server.account_stores.redis_client import create_redis_client
+
+            from .redis_store import RedisBackend, RedisManagementStore
+        except ImportError:
+            raise RuntimeError("storage provider 'redis' requires openviking[expiry]") from None
+        # None enables Cluster's default retries, including writes with unknown outcomes.
+        handle = create_redis_client(
+            settings.redis,
+            decode_responses=False,
+            retry=Retry(NoBackoff(), 0),
+            **({"cluster_error_retry_attempts": 0} if settings.redis["mode"] == "cluster" else {}),
+        )
+        close.push_async_callback(handle.close)
+        backend = RedisBackend(handle.client, settings.key_prefix, AsyncCodec(encryptor))
+    if settings.kernel == "redis":
+        from .redis_store import RedisKernelStore
+
+        store = RedisKernelStore(backend, ttl=config.session_ttl_days * 86400)
+    else:
+        store = SQLiteKernelStore(config.directory / "kernel.sqlite3", encryptor)
+    if settings.management == "redis":
+        management = RedisManagementStore(backend, log_ttl=config.session_ttl_days * 86400)
+    else:
+        management = SQLiteManagementStore(config.directory / "management.sqlite3", encryptor)
+        close.push_async_callback(asyncio.to_thread, management.close)
     # Storage threads may still wait on this loop for the encryptor.
-    close.push_async_callback(asyncio.to_thread, management.close)
-    close.push_async_callback(asyncio.to_thread, store.close)
+    if settings.kernel == "sqlite":
+        close.push_async_callback(asyncio.to_thread, store.close)
     return store, CachedManagement(management), close.aclose
 
 

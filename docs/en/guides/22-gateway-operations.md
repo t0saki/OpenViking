@@ -133,6 +133,8 @@ Without an OpenViking address from either source, the gateway exits and asks you
 
 ### Startup checks {#startup-checks}
 
+When a Redis port is selected, startup PING must succeed. Wrong addresses or credentials, or an unavailable Redis service, fail startup; Kubernetes restarts the container. Use `maxUnavailable: 0` when rolling out. Runtime Redis failures do not change `/gateway/health`; failures during authentication return a plain-text HTTP 500 and a traceback in stderr.
+
 Before it starts listening, a standalone gateway checks OpenViking's authentication mode:
 
 - If OpenViking uses trusted authentication, the gateway refuses to start.
@@ -303,6 +305,8 @@ The gateway exports no metrics such as Prometheus and writes no HTTP access log.
 - **Backups:** the storage directory and, with encryption on, the encryption root key; see [Backups and recovery](../gateway/11-security-and-data.md#backups).
 
 ## Upgrades {#upgrades}
+
+Switching from SQLite to Redis starts with empty state: reconfigure upstreams and profiles and issue new gateway keys. There is no automatic management-data migration. Redis keys include the layout version (`<key_prefix>v1:`); a future version change makes old keys invisible, requiring the same reconfiguration for issued-key deployments. OpenViking key records rebuild on later requests.
 
 - Read the release notes before you upgrade. If a new gateway version cannot read the old storage format, it stops at startup with `Unsupported gateway schema`; see [The gateway does not start](../gateway/12-troubleshooting.md#the-gateway-does-not-start).
 - A standalone gateway needs OpenViking Server `min_server_version` (0.4.16) or later. With an older server, no keys can be issued and saving retries fail with `openviking_version_mismatch`; memory search may also fail, shown as `openviking_http_<status>`. When you upgrade the two separately, upgrade OpenViking first, then the gateway. An embedded gateway ships with its server and skips this check.

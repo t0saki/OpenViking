@@ -133,6 +133,8 @@ NGINX annotations、创建 Secret 的命令和从 sidecar 版本升级的说明�
 
 ### 启动检查 {#startup-checks}
 
+选择 Redis 后端时，启动 PING 必须成功。地址、凭据错误或 Redis 不可达会使启动失败，Kubernetes 会重启容器；滚动发布使用 `maxUnavailable: 0`。运行时 Redis 故障不会改变 `/gateway/health`；鉴权阶段存储失败返回纯文本 HTTP 500，并在 stderr 输出异常栈。
+
 独立网关开始监听前会先检查 OpenViking 的认证模式：
 
 - OpenViking 使用 trusted 认证时，网关拒绝启动。
@@ -303,6 +305,8 @@ v0.5 网关用自己的密钥加密数据，这些数据会在首次启动时转
 - **备份：** 存储目录；开启加密时还有加密根密钥，见[备份与恢复](../gateway/11-security-and-data.md#backups)。
 
 ## 升级 {#upgrades}
+
+从 SQLite 切换到 Redis 会从空状态开始，需要重新配置上游、上下文配置并签发网关密钥，没有自动管理数据迁移。Redis 键名包含布局版本（`<key_prefix>v1:`）；将来版本变更后，旧键不可见，使用签发密钥的部署也需要重新配置。OpenViking 密钥记录会在后续请求中重建。
 
 - 升级前读发布说明。新版本的网关读不了旧的存储格式时，启动会报 `Unsupported gateway schema`，见[网关无法启动](../gateway/12-troubleshooting.md#the-gateway-does-not-start)。
 - 独立网关要求 OpenViking Server 不低于 `min_server_version`（0.4.16），否则无法签发密钥，保存重试也会以 `openviking_version_mismatch` 失败；记忆检索也可能失败，显示为 `openviking_http_<status>`。两者分开升级时，先升级 OpenViking，再升级网关。嵌入网关和 Server 同版本发布，不做这项检查。

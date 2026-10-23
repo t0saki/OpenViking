@@ -134,3 +134,26 @@ PYTHONPATH=. python scripts/gateway_benchmark.py --concurrency 300 --profile --o
 `--profile` relies on `scripts/gateway_profile.py` and slows the burst, so compare
 timings from runs without it. Compare results only between runs on the same machine and Python
 version.
+
+## Redis storage contracts
+
+`test_storage_ports.py` runs each storage contract against SQLite, Redis standalone and
+Redis Cluster, with encryption both enabled and disabled. Redis cases skip when their
+endpoint variable is absent; configured endpoints must be reachable. Install
+`pip install "redis>=5,<7"` and run:
+
+```bash
+export OV_TEST_REDIS=redis://127.0.0.1:6379
+export OV_TEST_REDIS_CLUSTER=redis://127.0.0.1:7000,redis://127.0.0.1:7001,redis://127.0.0.1:7002
+export OV_TEST_REDIS_USERNAME=gateway
+export OV_TEST_REDIS_PASSWORD=gateway-test-password
+PYTHONPATH=. pytest tests/gateway/test_storage_ports.py --confcutdir=tests/gateway -o addopts=''
+```
+
+The gateway workflow starts Redis 7.2 standalone and a three-node Cluster and creates
+the [documented ACL](../../docs/en/gateway/13-configuration.md#storage) on every node.
+Each fixture uses a random `ovgw:test:<uuid>:` prefix and removes only its own keys.
+Coverage includes NOSCRIPT recovery, scans of one Cluster primary, TTL/index cleanup,
+credential reconstruction, user deletion, bounded logs, 8 MiB values and shared-root-key
+codec compatibility. The suite also runs with redis-py 5.3.1; Cluster retries must be
+explicitly disabled on both redis-py 5 and 6.

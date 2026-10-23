@@ -113,12 +113,17 @@ class RedisManagementStore:
             value = {**value, "expires_at": time.time() + ttl}
         revision, remaining = await self.backend.script("obj_save")(
             keys=self.object_keys(account, kind, identifier),
-            args=[identifier, await self.codec.encode(value), h(value.get("user_id") or ""),
-                  "" if ttl is None else int(ttl * 1000)],
+            args=[
+                identifier,
+                await self.codec.encode(value),
+                h(value.get("user_id") or ""),
+                "" if ttl is None else int(ttl * 1000),
+            ],
         )
         if kind == "keys" and remaining != -2:
             await self.client.set(
-                self.credential_key(identifier), account,
+                self.credential_key(identifier),
+                account,
                 **({"px": max(1, remaining)} if remaining >= 0 else {}),
             )
         return None if remaining == -2 else {**value, "id": identifier, "revision": revision}
@@ -146,11 +151,14 @@ class RedisManagementStore:
     async def log(self, account, value, user_id=None):
         key = self.account_prefix(account) + "log"
         prefix = f"{int(time.time() * 1000)}\0{h(user_id) if user_id is not None else ''}\0"
-        async with self.client.pipeline(transaction=False) as pipeline:
-            pipeline.lpush(key, prefix.encode() + await self.codec.encode(value))
-            pipeline.ltrim(key, 0, LOG_LIMIT - 1)
-            pipeline.pexpire(key, int(self.log_ttl * 1000))
-            await pipeline.execute()
+        await self.backend.script("log_push")(
+            keys=[key],
+            args=[
+                prefix.encode() + await self.codec.encode(value),
+                LOG_LIMIT,
+                int(self.log_ttl * 1000),
+            ],
+        )
 
     async def logs(self, account, limit=200, user_id=None):
         key, values = self.account_prefix(account) + "log", []
@@ -160,6 +168,8 @@ class RedisManagementStore:
             rows = await self.client.lrange(key, start, start + 999)
             for row in rows:
                 timestamp, user, value = row.split(b"\0", 2)
+                if int(timestamp) / 1000 < time.time() - self.log_ttl:
+                    continue
                 if user_id is None or user.decode() == h(user_id):
                     values.append({"time": int(timestamp) / 1000, **await self.codec.decode(value)})
                     if len(values) >= limit:
@@ -190,7 +200,9 @@ class RedisManagementStore:
                 await self.backend.unlink(batch)
                 batch.clear()
         await self.backend.unlink(batch)
-        await self.backend.unlink([self.credential_key(identifier.decode()) for identifier in identifiers])
+        await self.backend.unlink(
+            [self.credential_key(identifier.decode()) for identifier in identifiers]
+        )
 
     async def expire_logs(self, before):
         pass

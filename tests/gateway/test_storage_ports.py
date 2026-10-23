@@ -429,7 +429,9 @@ async def test_management_order_filter_and_revision(management_store):
     await management_store.save("account", "upstreams", "other", {"user_id": "two"})
     rows = await management_store.list("account", "upstreams", user_id="one")
     assert [row["id"] for row in rows] == ["a", "z", "{foreign}:*", "é"]
-    assert (await management_store.save("account", "upstreams", "a", {"name": "new"}))["revision"] == 2
+    assert (await management_store.save("account", "upstreams", "a", {"name": "new"}))[
+        "revision"
+    ] == 2
     assert await management_store.list("elsewhere", "upstreams") == []
 
 
@@ -496,20 +498,24 @@ async def test_redis_ttl_removes_partition_and_reverse_index(management_store, r
     assert [key async for key in redis_backend.scan(redis_backend.prefix + "*")] == []
 
 
-async def test_redis_missing_credential_object_does_not_remove_index(management_store, redis_backend):
+async def test_redis_missing_credential_object_does_not_remove_index(
+    management_store, redis_backend
+):
     if redis_backend is None:
         pytest.skip("Redis dangling reverse index")
     await management_store.save("account", "keys", "key", {"user_id": "one"})
     await redis_backend.client.delete(management_store.object_key("account", "keys", "key"))
     assert await management_store.credential("key") is None
     assert await redis_backend.client.get(management_store.credential_key("key")) == b"account"
-    await asyncio.gather(*(
-        management_store.save("account", "keys", "key", {"user_id": "one"}) for _ in range(10)
-    ))
+    await asyncio.gather(
+        *(management_store.save("account", "keys", "key", {"user_id": "one"}) for _ in range(10))
+    )
     assert all(await asyncio.gather(*(management_store.credential("key") for _ in range(20))))
 
 
-async def test_redis_logs_are_bounded_and_user_deletion_preserves_ttl(management_store, redis_backend):
+async def test_redis_logs_are_bounded_and_user_deletion_preserves_ttl(
+    management_store, redis_backend
+):
     if redis_backend is None:
         pytest.skip("Redis log retention")
     key = management_store.account_prefix("account") + "log"
@@ -533,10 +539,118 @@ async def test_redis_script_reload_and_scoped_scan(management_store, redis_backe
     await management_store.save("account", "keys", "key", {"user_id": "one"})
     script = redis_backend.script("obj_save")
     script.sha = "0" * 40  # Force NOSCRIPT without flushing scripts used by other test workers.
-    assert (await management_store.save("account", "keys", "key", {"user_id": "one"}))["revision"] == 2
+    assert (await management_store.save("account", "keys", "key", {"user_id": "one"}))[
+        "revision"
+    ] == 2
     prefix = management_store.account_prefix("account")
     assert len([key async for key in redis_backend.scan(prefix + "*")]) == 2
     if isinstance(redis_backend.client, RedisCluster):
-        assert redis_backend.client.retry.get_retries() == 0
-    with pytest.raises(Exception, match="permissions|NOPERM"):
-        await redis_backend.client.set("outside-gateway-prefix", "forbidden")
+        assert redis_backend.client.retry._retries == 0
+    import os
+
+    from redis.exceptions import NoPermissionError
+
+    if os.environ.get("OV_TEST_REDIS_USERNAME"):
+        with pytest.raises(NoPermissionError):
+            await redis_backend.client.set("outside-gateway-prefix", "forbidden")
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [
+        {"redis": {"pool_sze": 10}},
+        {"key_prefix": "bad{tag}:"},
+        {"key_prefix": "bad*"},
+        {"key_prefix": "bad?"},
+        {"key_prefix": "bad["},
+        {"key_prefix": "bad\\"},
+        {"redis": {"mode": "invalid"}},
+        {"redis": {"endpoints": ["redis://user:password@localhost:6379"]}},
+        {"redis": {"pool_size": 0}},
+    ],
+)
+def test_storage_configuration_fails_while_loading(settings, tmp_path, monkeypatch):
+    import json
+
+    from pydantic import ValidationError
+
+    from openviking_gateway.cli import load_config
+
+    path = tmp_path / "gateway.conf"
+    path.write_text(json.dumps({"openviking_url": "http://ov", "storage": settings}))
+    monkeypatch.setenv("OPENVIKING_GATEWAY_CONFIG_FILE", str(path))
+    with pytest.raises(ValidationError):
+        load_config()
+
+
+def test_storage_environment_and_defaults(monkeypatch):
+    from openviking_gateway.config import GatewayConfig
+
+    assert GatewayConfig().storage.redis["command_timeout_ms"] == 5000
+    monkeypatch.setenv(
+        "OPENVIKING_GATEWAY_STORAGE", '{"management":"redis","redis":{"pool_size":9}}'
+    )
+    config = GatewayConfig()
+    assert config.storage.management == "redis"
+    assert config.storage.kernel == "sqlite"
+    assert config.storage.redis["pool_size"] == 9
+
+
+async def test_async_codec_reads_sqlite_ciphertext_and_plaintext(tmp_path):
+    from conftest import local_encryptor
+
+    from openviking_gateway.storage import AsyncCodec, SQLiteManagementStore
+
+    encryptor = local_encryptor(tmp_path / "root.key")
+    codec = AsyncCodec(encryptor)
+    other_replica = AsyncCodec(local_encryptor(tmp_path / "root.key"))
+    database = SQLiteManagementStore(tmp_path / "management.sqlite3", encryptor)
+    try:
+        value = {"secret": "memory"}
+        encrypted = await database.run(database.encode, value)
+        assert await codec.decode(encrypted) == value
+        assert await other_replica.decode(await codec.encode(value)) == value
+        assert await database.run(database.decode, await codec.encode(value)) == value
+        assert await codec.decode(b'{"plain":true}') == {"plain": True}
+        with pytest.raises(RuntimeError, match="Gateway data is encrypted"):
+            await AsyncCodec().decode(encrypted)
+    finally:
+        database.close()
+
+
+async def test_redis_composition_uses_one_client_and_closes_it(
+    tmp_path, monkeypatch, redis_backend
+):
+    if redis_backend is None:
+        pytest.skip("Redis composition")
+    from openviking.server.account_stores import redis_client
+    from openviking_gateway import app, redis_store
+    from openviking_gateway.config import GatewayConfig
+
+    calls, closed = [], []
+
+    class Handle:
+        client = redis_backend.client
+
+        async def close(self):
+            closed.append(True)
+
+    def create(*args, **kwargs):
+        calls.append(kwargs)
+        return Handle()
+
+    class Kernel:
+        def __init__(self, backend, ttl):
+            self.backend = backend
+
+    monkeypatch.setattr(redis_client, "create_redis_client", create)
+    monkeypatch.setattr(redis_store, "RedisKernelStore", Kernel, raising=False)
+    config = GatewayConfig(
+        storage_path=str(tmp_path), storage={"kernel": "redis", "management": "redis"}
+    )
+    kernel, management, close = app.open_stores(config, None)
+    assert kernel.backend is management.port.backend
+    assert len(calls) == 1 and calls[0]["decode_responses"] is False
+    assert calls[0]["retry"]._retries == 0
+    await close()
+    assert closed == [True]

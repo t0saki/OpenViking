@@ -211,6 +211,10 @@ A degraded request is one the gateway could not fully handle; the Requests and O
 | Reply not saved (`capture_parse_failure`) | A streamed reply could not be parsed, so it was not saved. The client was not affected. | Nothing to do; it is for information only. |
 | Key not verified (`revocation_check_unavailable`) | OpenViking could not confirm the gateway key, so the request was served without checking whether the key was revoked. | Check that OpenViking is reachable and healthy. |
 
+## Redis unavailable {#redis-unavailable}
+
+If startup fails at Redis PING, check `storage.redis.endpoints`, TLS trust, and the password environment variable. The gateway requires `openviking[expiry]` outside the official image. An HTTP 500 with plain text `Internal Server Error` during authentication can also mean Redis is unavailable; inspect stderr. `/gateway/health` stays healthy during a runtime Redis failure and is not a Redis connectivity check. See [Storage providers](13-configuration.md#storage) for the ACL, timeout and persistence settings.
+
 ## Next steps {#next-steps}
 
 - [Gateway overview and request log](10-overview-and-requests.md#requests): read every column, label and saving state in the request log.

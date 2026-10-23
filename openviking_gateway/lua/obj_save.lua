@@ -4,7 +4,7 @@ local ttl = redis.call('PTTL', KEYS[1])
 local rev = redis.call('HINCRBY', KEYS[1], 'rev', 1)
 redis.call('HSET', KEYS[1], 'v', ARGV[2], 'u', ARGV[3])
 if ARGV[4] ~= '' then
-    ttl = tonumber(ARGV[4])
+    ttl = math.max(0, tonumber(ARGV[4]))
     redis.call('PEXPIRE', KEYS[1], ttl)
 end
 if KEYS[2] then
