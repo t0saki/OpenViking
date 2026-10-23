@@ -99,7 +99,9 @@ def create_app(config: GatewayConfig, *, openviking_url: str, vlm_source=None, e
     app.state.vlm_source = vlm_source
     app.state.warnings = (
         ["public_openviking_without_management_key"]
-        if not config.management_key and normalize_url(openviking_url) in PUBLIC_OPENVIKING_URLS
+        if config.management_api
+        and not config.management_key
+        and normalize_url(openviking_url) in PUBLIC_OPENVIKING_URLS
         else []
     )
 
@@ -209,7 +211,8 @@ def create_app(config: GatewayConfig, *, openviking_url: str, vlm_source=None, e
             raise HTTPException(401, invalid)
         return credential, None
 
-    register_management(app)
+    if config.management_api:
+        register_management(app)
 
     @app.get("/api/compatible/v1/models")
     @app.get("/api/v3/models")

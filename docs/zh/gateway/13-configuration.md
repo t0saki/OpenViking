@@ -32,6 +32,7 @@ description: 查询 OpenViking 网关的配置字段、环境变量、上下文�
 | `mcp_file_links` | 两者 | `proxy` | `proxy`、`direct` | MCP 上传和下载工具返回的链接如何交给客户端。`proxy` 改写为 `public_url` 加 `/gateway/uploads` 或 `/gateway/downloads`，需要设置 `public_url`。`direct` 原样透传 OpenViking 的链接，需要 Server 的 `OPENVIKING_PUBLIC_BASE_URL`（或 `server.public_base_url`）是客户端能访问的地址 |
 | `storage_path` | 两者 | `~/.openviking/gateway` | | 本地存储目录 |
 | `encryption` | 独立 | 不设置（明文） | 字段同 `ov.conf` 的 `encryption` 段 | 加密本地保存的数据，见[加密](../guides/22-gateway-operations.md#encryption)；嵌入网关沿用 Server 的设置 |
+| `management_api` | 两者 | `true` | `true`、`false` | 注册网关管理路由；关闭时也移除独立网关的 OpenViking 管理代理和 Studio，模型路由和 `/health` 继续可用 |
 | `management_key` | 两者 | 空 | 至少 32 个字符 | 可选的[网关管理密钥](../guides/22-gateway-operations.md#gateway-management-key) |
 | `openviking_keys` | 两者 | `false` | `true`、`false` | 允许客户端用用户的 OpenViking API 密钥代替网关密钥，使用账号的默认上下文配置和全部已启用的上游，见[直接使用 OpenViking API 密钥](09-gateway-keys.md#openviking-keys) |
 | `default_upstreams` | 两者 | `{}` | 稳定 ID 到[上游设置](#upstream-settings)的对象映射 | 账号没有存储上游时供 OpenViking 密钥使用，见[部署默认上游](07-upstreams.md#deployment-default-upstreams) |

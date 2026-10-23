@@ -86,7 +86,7 @@ description: OpenViking 网关存储什么、谁能访问、服务商能看到�
 | root | 调用 `DELETE /gateway/admin/account/data?account_id=<account>` | 整个账号的网关数据 |
 | 嵌入部署，自动进行 | 在 OpenViking 中删除用户或账号 | 对应的网关数据 |
 
-独立部署没有自动删除这一步，数据会一直保留，直到被显式删除或[过期](#retention)。
+独立部署没有自动删除这一步，数据会一直保留，直到被显式删除或[过期](#retention)。设置 [`management_api: false`](13-configuration.md#gateway-fields) 后，删除 API 也不可用：在 OpenViking 中删除用户不会通知独立网关，对话状态只能等 `session_ttl_days` 到期后清理。请求日志和响应映射按各自的保留期限过期。嵌入部署仍保留 Server 的自动删除钩子。
 
 已存入 OpenViking 的记忆和会话不受这些操作影响。反过来，在 OpenViking 中删除一条记忆后，网关为进行中的对话保存的那份副本仍会被原样放回，直到对话过期；要立即清除，删除该用户的网关数据。
 

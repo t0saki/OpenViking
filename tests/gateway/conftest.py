@@ -385,35 +385,38 @@ async def running_gateway(tmp_path, gateway_backend, gateway_config):
             base_url="http://gateway/gateway",
         ) as client:
             admin = {"X-API-Key": "admin-key"}
-            for protocol in ("chat", "anthropic", "responses"):
-                response = await client.put(
-                    f"/admin/upstreams/{protocol}",
+            minted = None
+            if config.management_api:
+                for protocol in ("chat", "anthropic", "responses"):
+                    response = await client.put(
+                        f"/admin/upstreams/{protocol}",
+                        headers=admin,
+                        json={
+                            "name": protocol,
+                            "protocol": protocol,
+                            "base_url": base if protocol == "anthropic" else base + "/v1",
+                            "api_key": "model-secret",
+                            "models": ["model", "error"],
+                        },
+                    )
+                    assert response.status_code == 200, response.text
+                assert (
+                    await client.put(
+                        "/admin/policies/default",
+                        headers=admin,
+                        json={"name": "Default", "gateway_tools": False},
+                    )
+                ).status_code == 200
+                minted = await client.post(
+                    "/admin/keys",
                     headers=admin,
                     json={
-                        "name": protocol,
-                        "protocol": protocol,
-                        "base_url": base if protocol == "anthropic" else base + "/v1",
-                        "api_key": "model-secret",
-                        "models": ["model", "error"],
+                        "name": "test",
+                        "openviking_key": "user-key",
+                        "policy_id": "default",
+                        "upstream_ids": ["chat", "anthropic", "responses"],
                     },
                 )
-                assert response.status_code == 200, response.text
-            assert (
-                await client.put(
-                    "/admin/policies/default",
-                    headers=admin,
-                    json={"name": "Default", "gateway_tools": False},
-                )
-            ).status_code == 200
-            minted = await client.post(
-                "/admin/keys",
-                headers=admin,
-                json={
-                    "name": "test",
-                    "openviking_key": "user-key",
-                    "policy_id": "default",
-                    "upstream_ids": ["chat", "anthropic", "responses"],
-                },
-            )
-            assert minted.status_code == 200, minted.text
-            yield app, client, admin, minted.json(), captured, writes
+                assert minted.status_code == 200, minted.text
+                minted = minted.json()
+            yield app, client, admin, minted, captured, writes

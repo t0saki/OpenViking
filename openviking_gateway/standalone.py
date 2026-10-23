@@ -112,46 +112,48 @@ def create_standalone_app(config: StandaloneGatewayConfig, studio_dir=None):
             )
         return result
 
-    @app.get("/api/v1/admin/accounts")
-    @app.get("/api/v1/admin/accounts/{account_id}/users")
-    async def administration(request: Request, account_id: str | None = None):
-        credential = request_credential(request)
-        # Rejects trusted mode, where OV would authorize identity headers this route drops.
-        await state.viking.identify(credential)
-        path = "/api/v1/admin/accounts"
-        if account_id is not None:
-            path += "/" + quote(account_id, safe="") + "/users"
-        params = dict(request.query_params)
-        if account_id is not None:
-            params["include_credentials"] = "false"
-        if params:
-            path += "?" + urlencode(params)
-        result = await state.viking.request("GET", path, credential)
-        return {"status": "ok", "result": result}
+    if config.management_api:
 
-    directory = studio_dir or studio_directory()
-    root = Path(directory).resolve() if directory else None
+        @app.get("/api/v1/admin/accounts")
+        @app.get("/api/v1/admin/accounts/{account_id}/users")
+        async def administration(request: Request, account_id: str | None = None):
+            credential = request_credential(request)
+            # Rejects trusted mode, where OV would authorize identity headers this route drops.
+            await state.viking.identify(credential)
+            path = "/api/v1/admin/accounts"
+            if account_id is not None:
+                path += "/" + quote(account_id, safe="") + "/users"
+            params = dict(request.query_params)
+            if account_id is not None:
+                params["include_credentials"] = "false"
+            if params:
+                path += "?" + urlencode(params)
+            result = await state.viking.request("GET", path, credential)
+            return {"status": "ok", "result": result}
 
-    @app.get("/")
-    async def home():
-        return RedirectResponse("/studio/")
+        directory = studio_dir or studio_directory()
+        root = Path(directory).resolve() if directory else None
 
-    @app.get("/studio")
-    async def studio_redirect():
-        return RedirectResponse("/studio/")
+        @app.get("/")
+        async def home():
+            return RedirectResponse("/studio/")
 
-    @app.get("/studio/{path:path}")
-    async def studio(path: str):
-        if root is None or not (root / "index.html").is_file():
-            raise HTTPException(503, "OpenViking Studio bundle is unavailable")
-        candidate = (root / path).resolve()
-        if not candidate.is_relative_to(root):
-            raise HTTPException(404)
-        if candidate.is_file():
-            return FileResponse(candidate)
-        if path.startswith("assets/"):
-            raise HTTPException(404)
-        return FileResponse(root / "index.html")
+        @app.get("/studio")
+        async def studio_redirect():
+            return RedirectResponse("/studio/")
+
+        @app.get("/studio/{path:path}")
+        async def studio(path: str):
+            if root is None or not (root / "index.html").is_file():
+                raise HTTPException(503, "OpenViking Studio bundle is unavailable")
+            candidate = (root / path).resolve()
+            if not candidate.is_relative_to(root):
+                raise HTTPException(404)
+            if candidate.is_file():
+                return FileResponse(candidate)
+            if path.startswith("assets/"):
+                raise HTTPException(404)
+            return FileResponse(root / "index.html")
 
     app.mount(MOUNT_PATH, gateway)
     return app

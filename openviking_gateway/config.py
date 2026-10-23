@@ -81,6 +81,7 @@ class GatewayConfig(BaseModel):
     public_url: str = ""
     mcp_file_links: Literal["proxy", "direct"] = "proxy"
     storage_path: str = "~/.openviking/gateway"
+    management_api: bool = True
     management_key: str = Field(default="", repr=False)
     # Accept OpenViking API keys in place of gateway keys, with the account's defaults.
     openviking_keys: bool = False
