@@ -74,6 +74,8 @@ Studio 无法为你加载网关时，会用一张设置卡片代替网关标签�
 
 ## 客户端收到网关返回的错误 {#clients-get-an-error-from-the-gateway}
 
+OpenViking 对已记录密钥的身份检查返回 HTTP 402（`openviking_http_402`，服务未下单）或 403 时，网关原样返回该状态，不调用模型上游。请恢复服务订购或密钥权限。HTTP 429、服务端错误和网络故障仍允许降级转发；明确拒绝不会被当作服务不可用。
+
 网关在转发每个客户端请求之前，会先检查网关密钥、模型和是否有匹配的上游。下面这些拒绝都发生在请求到达服务商之前，所以不会出现在请求日志里。服务商自己返回的错误见[上游返回错误](#the-upstream-returned-an-error)。
 
 | 状态码和提示 | 原因和处理 |
@@ -133,6 +135,8 @@ OpenViking 异常期间，请求照常发给模型，只是不带记忆；保存
 检索失败的消息之后也不会补上记忆；下一条消息会重新检索。
 
 ## OpenViking 中看不到对话 {#conversations-do-not-appear-in-openviking}
+
+`gateway_key_revoked` 表示密钥记录因吊销、过期或驱逐而消失。保存时收到 OpenViking 401 也会删除该记录；下一次投递进入暂停，之后不再调用 OpenViking。使用有效密钥的新请求会在适用时重建记录，并恢复对话保存。
 
 [保存](08-context-profiles.md#save-conversations)会把每一轮完成的对话写进名为 `gateway-…` 的 OpenViking 会话，会话属于网关密钥背后的 OpenViking 用户。预期中的某一轮没有出现时，对照下表：
 

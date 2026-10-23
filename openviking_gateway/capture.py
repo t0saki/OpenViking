@@ -322,6 +322,10 @@ class CaptureWorker:
                 previous = old.value.get("error", {})
                 attempts = previous.get("attempts", 0) + 1
                 reason = getattr(error, "reason", "delivery_failed")
+                if reason == "openviking_http_401":
+                    await self.management.delete(
+                        old.value["account"], "keys", old.value["credential_id"]
+                    )
                 failure = {
                     "attempts": attempts,
                     "reason": reason,

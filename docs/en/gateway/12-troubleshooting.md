@@ -74,6 +74,8 @@ Before it issues a [gateway key](09-gateway-keys.md#issue-a-key), the gateway ch
 
 ## Clients get an error from the gateway {#clients-get-an-error-from-the-gateway}
 
+When OpenViking identifies an existing key and returns HTTP 402 (`openviking_http_402`, service not ordered) or 403, the gateway returns that status without calling the model upstream. Restore the service subscription or the key permission. HTTP 429 and server/network failures still permit degraded forwarding; a refusal is never treated as an outage.
+
 The gateway checks each client request before forwarding it: the gateway key, the model and a matching upstream. These rejections happen before the request reaches a provider, so they do not appear in the request log. For an error the provider itself returned, see [The upstream returned an error](#the-upstream-returned-an-error).
 
 | Status and message | Cause and fix |
@@ -133,6 +135,8 @@ While OpenViking is degraded, requests still reach the model without memory, and
 A message whose search failed never gets memory later; the next message searches again.
 
 ## Conversations do not appear in OpenViking {#conversations-do-not-appear-in-openviking}
+
+`gateway_key_revoked` means the key record was removed by revocation or expired/was evicted. An OpenViking 401 during saving also removes that record; the next delivery attempt pauses without further OpenViking calls. A new authenticated request with a valid key rebuilds the record when appropriate and resumes capture.
 
 [Saving](08-context-profiles.md#save-conversations) writes each finished turn to an OpenViking session named `gateway-…`, owned by the OpenViking user behind the gateway key. When a turn you expect is missing, match what you see:
 

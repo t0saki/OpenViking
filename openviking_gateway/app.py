@@ -47,6 +47,7 @@ VIKING_DETAILS = {
     "openviking_unavailable": "OpenViking is unreachable.",
     "openviking_unreachable": "OpenViking is unreachable.",
     "openviking_http_401": "OpenViking rejected the API key.",
+    "openviking_http_402": "OpenViking service is not ordered for this API key.",
     "openviking_identity_missing": "OpenViking returned no identity for the API key.",
     "trusted_mode_unsupported": "OpenViking Gateway does not support trusted authentication.",
     "root_key_not_allowed": "A root API key cannot back a gateway key; use a user's API key.",
@@ -282,9 +283,11 @@ def create_app(config: GatewayConfig, *, openviking_url: str, vlm_source=None, e
         try:
             identity = await app.state.viking.identify(credential["openviking_key"])
         except VikingError as error:
-            if error.reason != "openviking_http_401":
-                # Unconfirmed is not revoked: like recall, the request degrades instead.
+            if error.status >= 500 or error.reason == "openviking_http_429":
+                # Only unavailable checks leave revocation unconfirmed.
                 return credential, "revocation_check_unavailable"
+            if error.reason != "openviking_http_401":
+                raise
             identity = None
         # Dev identities are always default/default, so they say nothing about this key.
         if identity is None or (
