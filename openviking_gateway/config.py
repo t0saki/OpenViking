@@ -12,6 +12,8 @@ from urllib.parse import urlsplit, urlunsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from .models import Policy, Upstream
+
 logger = logging.getLogger(__name__)
 
 ENVIRONMENT_PREFIX = "OPENVIKING_GATEWAY_"
@@ -82,6 +84,9 @@ class GatewayConfig(BaseModel):
     management_key: str = Field(default="", repr=False)
     # Accept OpenViking API keys in place of gateway keys, with the account's defaults.
     openviking_keys: bool = False
+    # Used where an account stores none: OpenViking keys and the "default" profile.
+    default_upstreams: dict[str, Upstream] = Field(default_factory=dict, repr=False)
+    default_profile: Policy = Field(default_factory=Policy)
     min_server_version: str = "0.4.16"
     session_ttl_days: int = Field(default=30, ge=1)
     response_ttl_seconds: int = Field(default=30 * 86400, ge=60)
@@ -111,10 +116,10 @@ class GatewayConfig(BaseModel):
                 value[field] = override
         return value
 
-    @field_validator("client_rules", mode="before")
+    @field_validator("client_rules", "default_upstreams", "default_profile", mode="before")
     @classmethod
-    def parse_client_rules(cls, value):
-        # OPENVIKING_GATEWAY_CLIENT_RULES carries the section as JSON.
+    def parse_json(cls, value):
+        # OPENVIKING_GATEWAY_<FIELD> carries these sections as JSON.
         return json.loads(value) if isinstance(value, str) else value
 
     @field_validator("public_url")

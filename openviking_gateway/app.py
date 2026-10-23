@@ -29,7 +29,6 @@ from .management import (
     register_management,
     request_credential,
 )
-from .models import Policy
 from .protocols import configure_rules
 from .proxy import ProxyRequest, filtered_headers, resolve_binding
 from .storage import ManagementStore, SQLiteKernelStore, delete_account_data, delete_user_data
@@ -217,7 +216,7 @@ def create_app(config: GatewayConfig, *, openviking_url: str, vlm_source=None, e
     @app.get("/v1/models")
     async def models(request: Request):
         credential, _ = await authenticate(request)
-        binding = await resolve_binding(management, credential)
+        binding = await resolve_binding(management, config, credential)
         names = sorted(
             {
                 model
@@ -315,7 +314,9 @@ async def seed_defaults(app, account_id):
     if app.state.vlm_source and not await management.list(account_id, "upstreams"):
         await import_vlm_objects(app, account_id)
     if not await management.get(account_id, "policies", "default"):
-        await management.save(account_id, "policies", "default", Policy().model_dump())
+        await management.save(
+            account_id, "policies", "default", app.state.config.default_profile.model_dump()
+        )
 
 
 async def delete_data(app, account_id, user_id=None):

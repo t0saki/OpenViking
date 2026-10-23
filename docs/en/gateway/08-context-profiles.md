@@ -8,7 +8,9 @@ In Studio: **Profiles** tab. A context profile decides how OpenViking Gateway re
 
 ## What a context profile is {#context-profiles}
 
-A [context profile](../guides/15-gateway.md#key-terms) is a named set of memory settings. Each [gateway key](09-gateway-keys.md#gateway-keys) uses one profile, chosen when the key is issued, and one profile can serve many keys. Clients that use an [OpenViking API key directly](09-gateway-keys.md#openviking-keys) use the profile with the ID `default` (the one Quick mode creates), or the built-in defaults when there is none; they do not count as keys using it. For example, a "Coding" profile might recall memories, resources and skills, while a "Chat" profile recalls only memories, with a smaller budget.
+A [context profile](../guides/15-gateway.md#key-terms) is a named set of memory settings. Each [gateway key](09-gateway-keys.md#gateway-keys) uses one profile, chosen when the key is issued, and one profile can serve many keys. Clients that use an [OpenViking API key directly](09-gateway-keys.md#openviking-keys) use the account's stored `policies/default`, or the deployment's `default_profile` when none is stored; they do not count as keys using it. For example, a "Coding" profile might recall memories, resources and skills, while a "Chat" profile recalls only memories, with a smaller budget.
+
+In embedded dev mode, startup seeds `default_profile` into the `default` account once; later edits to `ov.conf` do not change that saved profile, so edit it in Studio.
 
 Besides its name and the [Let clients override settings](#client-overrides) switch, a profile has four sections. The defaults below are also the recommended settings:
 

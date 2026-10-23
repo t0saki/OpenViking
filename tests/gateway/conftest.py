@@ -197,7 +197,7 @@ async def make_due(store):
 
 
 @pytest_asyncio.fixture
-async def running_gateway(tmp_path):
+async def gateway_backend():
     captured = []
     writes = []
     override = {}
@@ -359,7 +359,21 @@ async def running_gateway(tmp_path):
     site = web.TCPSite(runner, "127.0.0.1", 0)
     await site.start()
     base = f"http://127.0.0.1:{site._server.sockets[0].getsockname()[1]}"
-    config = GatewayConfig(storage_path=str(tmp_path))
+    try:
+        yield base, captured, writes, override
+    finally:
+        await runner.cleanup()
+
+
+@pytest.fixture
+def gateway_config():
+    return {}
+
+
+@pytest_asyncio.fixture
+async def running_gateway(tmp_path, gateway_backend, gateway_config):
+    base, captured, writes, override = gateway_backend
+    config = GatewayConfig.model_validate({"storage_path": str(tmp_path), **gateway_config})
     app = create_app(
         config, openviking_url=base, encryptor=local_encryptor(tmp_path / "master.key")
     )
@@ -403,4 +417,3 @@ async def running_gateway(tmp_path):
             )
             assert minted.status_code == 200, minted.text
             yield app, client, admin, minted.json(), captured, writes
-    await runner.cleanup()

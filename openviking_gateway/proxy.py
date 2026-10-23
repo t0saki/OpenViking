@@ -192,14 +192,23 @@ class Binding(NamedTuple):
     models: list[str]
 
 
-async def resolve_binding(management, credential):
+async def default_policy(management, config, account):
+    """Use the account's default profile, or the deployment's when none is stored."""
+    policy = await management.get(account, "policies", "default")
+    return policy or config.default_profile.model_dump()
+
+
+async def resolve_binding(management, config, credential):
     """The context profile, upstreams and models a credential's requests use."""
     account = credential["account"]
     upstreams = await management.list(account, "upstreams")
     if credential.get("source") == "openviking":
         # An OpenViking key stores no binding: it uses the account's defaults.
-        policy = await management.get(account, "policies", "default")
-        return Binding(policy or Policy().model_dump(), upstreams, [])
+        return Binding(
+            await default_policy(management, config, account),
+            upstreams or [{**u.model_dump(), "id": i} for i, u in config.default_upstreams.items()],
+            [],
+        )
     return Binding(
         await management.get(account, "policies", credential["policy_id"]),
         [u for u in upstreams if u["id"] in credential["upstream_ids"]],
@@ -277,7 +286,7 @@ class ProxyRequest:
             except (ValueError, RecursionError):
                 pass
         self.model = routing.get("model", "") if isinstance(routing, dict) else ""
-        binding = await resolve_binding(self.management, self.credential)
+        binding = await resolve_binding(self.management, self.config, self.credential)
         # Calls on a stored response are pinned to its upstream and carry no model.
         if binding.models and self.raw and not self.path.startswith("/v1/responses/"):
             if self.request.headers.get("content-encoding", "identity").lower() != "identity":

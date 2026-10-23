@@ -34,6 +34,8 @@ description: 查询 OpenViking 网关的配置字段、环境变量、上下文�
 | `encryption` | 独立 | 不设置（明文） | 字段同 `ov.conf` 的 `encryption` 段 | 加密本地保存的数据，见[加密](../guides/22-gateway-operations.md#encryption)；嵌入网关沿用 Server 的设置 |
 | `management_key` | 两者 | 空 | 至少 32 个字符 | 可选的[网关管理密钥](../guides/22-gateway-operations.md#gateway-management-key) |
 | `openviking_keys` | 两者 | `false` | `true`、`false` | 允许客户端用用户的 OpenViking API 密钥代替网关密钥，使用账号的默认上下文配置和全部已启用的上游，见[直接使用 OpenViking API 密钥](09-gateway-keys.md#openviking-keys) |
+| `default_upstreams` | 两者 | `{}` | 稳定 ID 到[上游设置](#upstream-settings)的对象映射 | 账号没有存储上游时供 OpenViking 密钥使用，见[部署默认上游](07-upstreams.md#deployment-default-upstreams) |
+| `default_profile` | 两者 | 内置上下文配置默认值 | [上下文配置设置](#context-profile-settings) | 账号没有存储 `policies/default` 时使用，也是嵌入式 dev 模式初始化写入的配置 |
 | `min_server_version` | 两者 | `0.4.16` | 版本号 | 独立网关要求的 OpenViking Server 最低版本 |
 | `session_ttl_days` | 两者 | `30` | 1 及以上 | 对话闲置多少天后过期 |
 | `response_ttl_seconds` | 两者 | `2592000`（30 天） | 60 及以上 | Responses 响应与上游的对应关系保留多少秒 |
@@ -42,6 +44,25 @@ description: 查询 OpenViking 网关的配置字段、环境变量、上下文�
 | `upstream_timeout_seconds` | 两者 | `600` | 大于 0 | 服务商请求超时 |
 | `health_interval_seconds` | 两者 | `60` | 1 及以上 | 检查 OpenViking 状态的间隔秒数 |
 | `client_rules` | 两者 | `{}`（只用内置规则） | 见[客户端规则](#client-rules) | 在网关内置的辅助请求和客户端插入消息识别规则上增删条目 |
+
+例如，独立网关的 `gateway.conf` 可以在尚未配置任何账号时路由 OpenViking 密钥：
+
+```json
+{
+  "openviking_url": "http://openviking:1933",
+  "openviking_keys": true,
+  "default_upstreams": {
+    "ark-chat": {
+      "name": "Ark Chat",
+      "protocol": "chat",
+      "base_url": "https://ark.cn-beijing.volces.com/api/v3",
+      "api_key": "$ARK_API_KEY",
+      "models": ["your-model-id"]
+    }
+  },
+  "default_profile": {"max_tokens": 2400}
+}
+```
 
 ## 环境变量 {#environment-variables}
 
@@ -56,7 +77,7 @@ OPENVIKING_GATEWAY_MANAGEMENT_KEY='<management-key>'
 - 以 `tcp://` 或 `udp://` 开头的值会被忽略。这样，Kubernetes 为名为 `openviking-gateway` 的 Service 自动注入的变量（例如 `OPENVIKING_GATEWAY_PORT=tcp://…`）不会覆盖文件。
 - 文件中的值也可以写成 `"$VAR"`，从环境变量中取值。
 - `encryption` 块只能写在文件里。
-- `client_rules` 用 JSON 传整段配置：`OPENVIKING_GATEWAY_CLIENT_RULES='{"auxiliary_patterns":{"add":["You are the Acme title writer"]}}'`。
+- `client_rules`、`default_upstreams` 和 `default_profile` 用 JSON 传整段配置，例如 `OPENVIKING_GATEWAY_CLIENT_RULES='{"auxiliary_patterns":{"add":["You are the Acme title writer"]}}'` 或 `OPENVIKING_GATEWAY_DEFAULT_PROFILE='{"max_tokens":2400}'`。
 - 容器通常不需要配置文件，用环境变量设置需要的字段即可。
 
 ## 校验 {#validation}

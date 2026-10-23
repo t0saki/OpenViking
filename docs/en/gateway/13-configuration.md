@@ -34,6 +34,8 @@ An embedded and a standalone gateway share most fields; they differ in which fil
 | `encryption` | Standalone | not set (plain text) | Same fields as the `encryption` section of `ov.conf` | Encrypts stored data; see [Encryption](../guides/22-gateway-operations.md#encryption). Embedded gateways use the server's section |
 | `management_key` | Both | empty | At least 32 characters | Optional [gateway management key](../guides/22-gateway-operations.md#gateway-management-key) |
 | `openviking_keys` | Both | `false` | `true`, `false` | Lets clients use a user's OpenViking API key in place of a gateway key, with the account's default context profile and every enabled upstream; see [Use an OpenViking API key directly](09-gateway-keys.md#openviking-keys) |
+| `default_upstreams` | Both | `{}` | Object mapping stable IDs to [upstream settings](#upstream-settings) | Upstreams for OpenViking keys when the account stores none; see [Deployment default upstreams](07-upstreams.md#deployment-default-upstreams) |
+| `default_profile` | Both | Built-in profile defaults | [Context profile settings](#context-profile-settings) | Used when the account has no stored `policies/default`; also the initial profile seeded in embedded dev mode |
 | `min_server_version` | Both | `0.4.16` | Version string | Lowest OpenViking Server version a standalone gateway accepts |
 | `session_ttl_days` | Both | `30` | 1 or more | Days of inactivity before a conversation expires |
 | `response_ttl_seconds` | Both | `2592000` (30 days) | 60 or more | Seconds to remember which upstream created a Responses response |
@@ -42,6 +44,25 @@ An embedded and a standalone gateway share most fields; they differ in which fil
 | `upstream_timeout_seconds` | Both | `600` | More than 0 | Timeout for provider requests |
 | `health_interval_seconds` | Both | `60` | 1 or more | Seconds between OpenViking status checks |
 | `client_rules` | Both | `{}` (packaged rules only) | See [Client rules](#client-rules) | Text added to or removed from what the gateway recognizes as housekeeping requests and client-inserted messages |
+
+For example, a standalone `gateway.conf` can route OpenViking keys before any account is configured:
+
+```json
+{
+  "openviking_url": "http://openviking:1933",
+  "openviking_keys": true,
+  "default_upstreams": {
+    "ark-chat": {
+      "name": "Ark Chat",
+      "protocol": "chat",
+      "base_url": "https://ark.cn-beijing.volces.com/api/v3",
+      "api_key": "$ARK_API_KEY",
+      "models": ["your-model-id"]
+    }
+  },
+  "default_profile": {"max_tokens": 2400}
+}
+```
 
 ## Environment variables {#environment-variables}
 
@@ -56,7 +77,7 @@ OPENVIKING_GATEWAY_MANAGEMENT_KEY='<management-key>'
 - Values that start with `tcp://` or `udp://` are ignored, so the variables Kubernetes sets for a Service named `openviking-gateway` (such as `OPENVIKING_GATEWAY_PORT=tcp://…`) do not override the file.
 - A value in the file can also be a `"$VAR"` reference, resolved from the environment.
 - The `encryption` block can only be set in the file.
-- `client_rules` takes the whole section as JSON: `OPENVIKING_GATEWAY_CLIENT_RULES='{"auxiliary_patterns":{"add":["You are the Acme title writer"]}}'`.
+- `client_rules`, `default_upstreams` and `default_profile` take whole sections as JSON, for example `OPENVIKING_GATEWAY_CLIENT_RULES='{"auxiliary_patterns":{"add":["You are the Acme title writer"]}}'` or `OPENVIKING_GATEWAY_DEFAULT_PROFILE='{"max_tokens":2400}'`.
 - Containers usually need no file: set the fields they need as variables.
 
 ## Validation {#validation}

@@ -29,7 +29,7 @@ from .models import (
 )
 from .overview import overview_summary
 from .protocols import text_content
-from .proxy import fill_key, upstream_headers, upstream_key, upstream_url
+from .proxy import default_policy, fill_key, upstream_headers, upstream_key, upstream_url
 from .records import RecordKind as K
 from .storage import delete_account_data, delete_user_data, digest
 from .tool_catalog import select_tools
@@ -520,11 +520,11 @@ def register_management(app):
                 headers.setdefault("anthropic-version", "2023-06-01")
             tools = []
             if upstream.get("allow_gateway_tools", True):
-                policy = await management.get(who.account_id, "policies", "default")
+                policy = await default_policy(management, app.state.config, who.account_id)
                 try:
                     tools = select_tools(
                         await caller_tool_catalog(app, management, who),
-                        policy or Policy().model_dump(),
+                        policy,
                     )
                 except VikingError:
                     pass

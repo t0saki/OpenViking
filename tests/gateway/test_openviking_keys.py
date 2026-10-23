@@ -177,10 +177,14 @@ async def test_binding_is_every_enabled_upstream_of_the_account(gateway):
 
 
 async def test_binding_falls_back_to_policy_defaults(gateway):
-    management = gateway[0].state.management
-    binding = await resolve_binding(management, {"source": "openviking", "account": "empty"})
+    management, config = gateway[0].state.management, gateway[0].state.config
+    binding = await resolve_binding(
+        management, config, {"source": "openviking", "account": "empty"}
+    )
     assert binding == (Policy().model_dump(), [], [])
-    binding = await resolve_binding(management, {"source": "openviking", "account": "tenant"})
+    binding = await resolve_binding(
+        management, config, {"source": "openviking", "account": "tenant"}
+    )
     assert binding.policy["name"] == "Default" and not binding.policy["gateway_tools"]
 
 
