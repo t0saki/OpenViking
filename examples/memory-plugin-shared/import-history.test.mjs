@@ -458,7 +458,8 @@ test("--list shows each session's id, state and a preview, and only reads", asyn
   assert.equal(s2.lastPrompt, "Fix it");
   const s1 = list.sessions.find((s) => s.nativeId === "s-1");
   assert.match(s1.firstPrompt, /--api-key \[REDACTED\]/, "previews are redacted like the import");
-  assert.equal(s1.lastPrompt, undefined, "one request has no separate last preview");
+  assert.equal(s1.lastPrompt, null, "one request has no separate last preview");
+  assert.equal(s1.title, undefined, "the preview replaces the title in JSON");
   assert.ok(server.calls.every((c) => c.method === "GET"), "listing only reads");
 
   const text = await runMain(["--harness", "claude", "--cwd", repo, "--list"], env);
@@ -470,6 +471,20 @@ test("--list shows each session's id, state and a preview, and only reads", asyn
   assert.match(text.out, /captured by the plugin/);
   assert.match(text.out, /--session <id>/);
   assert.doesNotMatch(text.out, /the-real-key-123/);
+
+  // --list is not held to the import default of 20, and says how to widen it.
+  const capped = await runMain(["--harness", "claude", "--cwd", repo, "--list", "--max-sessions", "1"], env);
+  assert.match(capped.out, /Not shown: 2 more not listed: raise --max-sessions; 1 older: widen --since \(e\.g\. --since all\); 1 in other projects: add --all-projects\./);
+  const projects = join(home, ".claude", "projects");
+  for (let i = 0; i < 25; i += 1) {
+    const id = `bulk-${String(i).padStart(2, "0")}`;
+    writeJsonl(join(projects, repo.replace(/[^A-Za-z0-9]/g, "-"), `${id}.jsonl`), claudeTranscript(id, repo, NOW - 5 * DAY, [{ user: `bulk ${i}`, assistant: "ok" }]), NOW - 5 * DAY + 120_000);
+  }
+  const wide = JSON.parse((await runMain(["--harness", "claude", "--cwd", repo, "--list", "--json"], env)).out);
+  assert.equal(wide.sessions.length, 28);
+  assert.equal(wide.skipped.overLimit, 0);
+  const dry = JSON.parse((await runMain(["--harness", "claude", "--cwd", repo, "--json"], env)).out);
+  assert.equal(dry.sessions.length, 20, "the import itself keeps its default of 20");
 
   const refused = await runMain(["--harness", "claude", "--list", "--yes"], env);
   assert.equal(refused.code, 2);
@@ -494,6 +509,8 @@ test("--session imports just the picked sessions, whatever their age or project"
   const plan = JSON.parse(dry.out);
   assert.equal(plan.mode, "dry-run");
   assert.deepEqual(plan.picked, ["import__claude_code__s-old", "s-other", "abcdef12-0"]);
+  assert.equal(plan.scope, "picked");
+  assert.equal(plan.window.since, null, "picked sessions have no time window");
   assert.deepEqual(plan.sessions.map((s) => s.nativeId).sort(), ["abcdef12-0000-4000-8000-000000000000", "s-old", "s-other"]);
   assert.equal(plan.toImport.sessions, 3);
   assert.equal(plan.skipped.outsideWindow + plan.skipped.otherProject + plan.skipped.overLimit, 0);
@@ -516,6 +533,12 @@ test("--session imports just the picked sessions, whatever their age or project"
   assert.equal(short.code, 2, "a prefix shorter than 8 characters is not a match");
   assert.equal(server.calls.length, calls, "refused runs never reach the server");
 
+  // An empty session is not importable, and says so.
+  writeJsonl(join(projects, slug(other), "s-empty.jsonl"), [{ type: "queue-operation", operation: "enqueue", sessionId: "s-empty", timestamp: iso(NOW - DAY) }], NOW - DAY);
+  const empty = await runMain(["--harness", "claude", "--session", "s-empty"], env);
+  assert.equal(empty.code, 2);
+  assert.match(empty.err, /"s-empty" matches nothing importable/);
+
   // A picked session that is still active is skipped like any other.
   const active = JSON.parse((await runMain(["--harness", "claude", "--session", "s-active,s-1", "--json"], env)).out);
   assert.deepEqual(active.sessions.map((s) => s.nativeId), ["s-1"]);
@@ -525,6 +548,41 @@ test("--session imports just the picked sessions, whatever their age or project"
   assert.equal(imported.code, 0, imported.err);
   assert.deepEqual(JSON.parse(imported.out).results.map((r) => [r.id, r.ok]), [["import__claude_code__s-old", true]]);
   assert.deepEqual([...server.sessions.keys()].filter((k) => k.startsWith("import__")), ["import__claude_code__s-old"]);
+});
+
+test("--session: an exact id wins over a prefix of a longer one (input ids, Codex forks)", async (t) => {
+  const root = tempRoot(t);
+  const server = await fakeServer(t);
+  const home = join(root, "home");
+  const repo = join(home, "app");
+  gitRepo(repo, "git@github.com:acme/app.git");
+  mkdirSync(join(home, ".openviking"), { recursive: true });
+  writeFileSync(join(home, ".openviking", "ovcli.conf"), JSON.stringify({ url: server.url, api_key: "k-123456" }));
+  const env = { HOME: home };
+
+  const input = join(root, "sessions.jsonl");
+  const at = iso(NOW - 3 * DAY);
+  writeFileSync(input, ["session-1", "session-10"].map((id) => JSON.stringify({ id, cwd: repo, messages: [{ role: "user", text: `work in ${id}`, created_at: at }, { role: "assistant", text: "ok", created_at: at }] })).join("\n") + "\n");
+  const exact = JSON.parse((await runMain(["--harness", "opencode", "--input", input, "--session", "session-1", "--json"], env)).out);
+  assert.deepEqual(exact.sessions.map((s) => s.nativeId), ["session-1"]);
+  const byPrefix = await runMain(["--harness", "opencode", "--input", input, "--session", "session-", "--json"], env);
+  assert.equal(byPrefix.code, 2, "a prefix shared by both is still ambiguous");
+
+  // A fork's rollout carries the parent's uuid and its own: its native id is
+  // `<parent>_<fork>`, so the parent's full id is also a prefix of the fork's.
+  const parent = "019a0000-1111-7222-8333-444444444444";
+  const fork = "019a0000-5555-7666-8777-888888888888";
+  const start = NOW - 2 * DAY;
+  const dir = join(home, ".codex", "sessions", "2026", "10", "11");
+  writeJsonl(join(dir, `rollout-2026-10-11T12-00-00-${parent}.jsonl`), codexRollout(parent, repo, start, [{ user: "parent work", assistant: "ok" }]), start + 10 * 60_000);
+  writeJsonl(join(dir, `rollout-2026-10-11T13-00-00-${parent}-${fork}.jsonl`), codexRollout(parent, repo, start, [{ user: "fork work", assistant: "ok" }]), start + 20 * 60_000);
+  const listed = JSON.parse((await runMain(["--harness", "codex", "--cwd", repo, "--list", "--json"], env)).out);
+  assert.deepEqual(listed.sessions.map((s) => s.nativeId).sort(), [parent, `${parent}_${fork}`]);
+  const picked = await runMain(["--harness", "codex", "--session", parent, "--json"], env);
+  assert.equal(picked.code, 0, picked.err);
+  assert.deepEqual(JSON.parse(picked.out).sessions.map((s) => s.nativeId), [parent]);
+  const both = JSON.parse((await runMain(["--harness", "codex", "--session", `${parent},${parent}_${fork}`, "--json"], env)).out);
+  assert.equal(both.sessions.length, 2);
 });
 
 test("a run that stopped before its commit is finished, not repeated", async (t) => {

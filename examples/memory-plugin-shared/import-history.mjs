@@ -123,6 +123,7 @@ const PLUGIN_HARNESS = {
 };
 
 const DEFAULTS = { since: "14d", maxSessions: 20, skipActive: "2h", maxMessageChars: 20000 };
+const LIST_LIMIT = 200;
 
 const USAGE = `Usage: node import-history.mjs --harness claude|codex [options]
        node import-history.mjs --harness <name> --input <file.jsonl> [options]
@@ -145,11 +146,16 @@ Options:
   --history-dir <dir>     read sessions from here (default: ~/.claude/projects or ~/.codex/sessions)
   --max-message-chars <n> cut longer messages to this many characters (default: ${DEFAULTS.maxMessageChars})
   --list                  list the sessions in scope, with their ids and a preview of the
-                          first and last request, so some can be picked; never writes
-  --session <id>[,<id>]   import only these sessions (repeatable). An id is the one --list
-                          prints, the import id, or a unique prefix of 8 or more characters.
-                          Picked sessions ignore --cwd, --since and --max-sessions; sessions
-                          still active are skipped. An id that matches nothing refuses the run.
+                          first and last request, so some can be picked; never writes. It
+                          uses the same --cwd / --all-projects and --since scope, but lists
+                          up to ${LIST_LIMIT} sessions unless --max-sessions is given, and says
+                          how many it left out and which option widens the scope.
+  --session <id>[,<id>]   import only these sessions; comma-separated, and repeatable. An id
+                          is the one --list prints, the import id, or a prefix of 8 or more
+                          characters (an exact id always wins over a prefix). Picked sessions
+                          ignore --cwd, --since and --max-sessions; sessions still active are
+                          skipped. An id that matches nothing importable, or more than one
+                          session, refuses the run.
   --dry-run               report only; never write (the default without --yes)
   --yes                   import
   --wait                  after importing, wait up to 120s for memory extraction to finish
@@ -204,7 +210,7 @@ export function parseArgs(argv) {
       case "--cwd": opts.cwd = take(); break;
       case "--all-projects": opts.allProjects = true; break;
       case "--since": opts.since = take(); break;
-      case "--max-sessions": opts.maxSessions = positiveInt(take(), arg); break;
+      case "--max-sessions": opts.maxSessions = positiveInt(take(), arg); opts.maxSessionsGiven = true; break;
       case "--skip-active": opts.skipActive = take(); break;
       case "--peer": opts.peer = take(); break;
       case "--history-dir": opts.historyDir = take(); break;
@@ -1095,6 +1101,7 @@ export function planImport(opts, { env = process.env, now = Date.now(), connecti
   // however many there are; only the active-session guard still applies.
   const picked = opts.sessions?.length ? opts.sessions : null;
   const pickedBy = new Map(picked?.map((token) => [token, []]) || []);
+  const pickedSkips = [];
 
   const skipped = { outsideWindow: 0, otherProject: 0, active: 0, empty: 0, utility: 0, overLimit: 0 };
   // An input file is read whole (and refused whole) before anything else.
@@ -1112,23 +1119,34 @@ export function planImport(opts, { env = process.env, now = Date.now(), connecti
     }
     const parsed = file.parsed || (harness === "claude_code" ? parseClaudeSession(file.path) : parseCodexSession(file.path));
     const firstUser = parsed.messages.find((message) => message.role === "user");
-    if (parsed.utility || (firstUser && UTILITY_PROMPTS.some((re) => re.test(firstUser.text)))) {
-      skipped.utility += 1;
+    const utility = Boolean(parsed.utility || (firstUser && UTILITY_PROMPTS.some((re) => re.test(firstUser.text))));
+    if (picked) {
+      let hit = false;
+      for (const token of picked) {
+        const kind = matchesSession(token, harness, parsed.nativeId);
+        if (!kind) continue;
+        hit = true;
+        pickedBy.get(token).push({ id: parsed.nativeId, kind, importable: !utility && parsed.messages.length > 0 });
+      }
+      if (!hit) continue;
+    }
+    // A picked session's skip counts only once it is known to be wanted.
+    const skip = (reason) => {
+      if (picked) pickedSkips.push({ id: parsed.nativeId, reason });
+      else skipped[reason] += 1;
+    };
+    if (utility) {
+      skip("utility");
       continue;
     }
     if (!parsed.messages.length) {
-      skipped.empty += 1;
+      skip("empty");
       continue;
-    }
-    if (picked) {
-      const tokens = picked.filter((token) => matchesSession(token, harness, parsed.nativeId));
-      if (!tokens.length) continue;
-      for (const token of tokens) pickedBy.get(token).push(parsed.nativeId);
     }
     const last = lastActivity(parsed, file.mtimeMs || parsed.updatedAtMs);
     // No time to hold --since or --skip-active against.
     if (input && !last) {
-      skipped.undated += 1;
+      skip("undated");
       continue;
     }
     if (!picked && sinceMs && last < sinceMs) {
@@ -1148,25 +1166,45 @@ export function planImport(opts, { env = process.env, now = Date.now(), connecti
       }
     }
     if (activeMs && now - last < activeMs) {
-      skipped.active += 1;
+      skip("active");
       continue;
     }
     candidates.push({ ...parsed, path: file.path, lastActivityMs: last, peer });
   }
 
+  let pool = candidates;
   if (picked) {
-    const missing = [...pickedBy].filter(([, ids]) => ids.length === 0).map(([token]) => token);
-    const ambiguous = [...pickedBy].filter(([, ids]) => new Set(ids).size > 1).map(([token]) => token);
+    // Per id given: exact matches (native or import id) win; a prefix counts
+    // only when nothing matches exactly, so a full id that is also the start
+    // of another (session-1 / session-10, a Codex parent and its forks) is
+    // never ambiguous.
+    const wanted = new Set();
+    const missing = [];
+    const unimportable = [];
+    const ambiguous = [];
+    for (const [token, hits] of pickedBy) {
+      const exact = hits.filter((h) => h.kind === "exact");
+      const chosen = exact.length ? exact : hits;
+      const ids = new Set(chosen.map((h) => h.id));
+      if (!ids.size) missing.push(token);
+      else if (ids.size > 1) ambiguous.push(token);
+      else if (!chosen.some((h) => h.importable)) unimportable.push(token);
+      else wanted.add([...ids][0]);
+    }
     const problems = [];
     if (missing.length) problems.push(`no session matches ${missing.map((t) => JSON.stringify(t)).join(", ")}`);
+    if (unimportable.length) problems.push(`${unimportable.map((t) => JSON.stringify(t)).join(", ")} matches nothing importable (an empty or plugin-internal session)`);
     if (ambiguous.length) problems.push(`${ambiguous.map((t) => JSON.stringify(t)).join(", ")} matches more than one session; give more of the id`);
     if (problems.length) throw new UsageError(`--session: ${problems.join("; ")}. Nothing was imported; run --list to see the ids`);
+    for (const { id, reason } of pickedSkips) if (wanted.has(id)) skipped[reason] += 1;
+    pool = candidates.filter((c) => wanted.has(c.nativeId));
   }
 
-  candidates.sort((a, b) => b.lastActivityMs - a.lastActivityMs);
-  const limit = picked ? candidates.length : opts.maxSessions;
-  skipped.overLimit = Math.max(0, candidates.length - limit);
-  const sessions = candidates.slice(0, limit).map((candidate) => {
+  pool.sort((a, b) => b.lastActivityMs - a.lastActivityMs);
+  // --list is for choosing, so it is not held to the import default of 20.
+  const limit = picked ? pool.length : (opts.list && !opts.maxSessionsGiven ? LIST_LIMIT : opts.maxSessions);
+  skipped.overLimit = Math.max(0, pool.length - limit);
+  const sessions = pool.slice(0, limit).map((candidate) => {
     const turns = mergeTurns(candidate.messages).map((turn) => {
       let text = redactSecrets(turn.text, secrets);
       if (text.length > opts.maxMessageChars) {
@@ -1186,13 +1224,13 @@ export function planImport(opts, { env = process.env, now = Date.now(), connecti
       peerId: candidate.peer.peerId,
       lastActivity: new Date(candidate.lastActivityMs).toISOString(),
       title: (firstUser?.text || "").replace(/\s+/g, " ").slice(0, 80),
-      firstPrompt: preview(firstUser?.text),
-      lastPrompt: preview(lastUser?.text),
+      firstPrompt: preview(firstUser?.text) || null,
+      lastPrompt: preview(lastUser?.text) || null,
       chars: turns.reduce((sum, turn) => sum + turn.text.length, 0),
       turns,
     };
   });
-  return { harness, root, projectDir, projectPeer, sinceMs, activeMs, sessions, skipped, droppedMessages: input?.droppedMessages, picked };
+  return { harness, root, projectDir, projectPeer, sinceMs, activeMs, sessions, skipped, droppedMessages: input?.droppedMessages, picked, limit };
 }
 
 const PREVIEW_CHARS = 160;
@@ -1202,12 +1240,12 @@ function preview(text) {
   return flat.length > PREVIEW_CHARS ? `${flat.slice(0, PREVIEW_CHARS - 1)}…` : flat;
 }
 
-/** A --session token names a session by its native id, its import id, or a prefix of 8+ characters. */
+/** How a --session token names a session: "exact" (native or import id), "prefix" (8+ characters), or not at all. */
 function matchesSession(token, harness, nativeId) {
   const id = String(nativeId || "");
-  if (!id) return false;
-  if (token === id || token === sessionId(harness, id)) return true;
-  return token.length >= 8 && id.startsWith(token);
+  if (!id) return "";
+  if (token === id || token === sessionId(harness, id)) return "exact";
+  return token.length >= 8 && id.startsWith(token) ? "prefix" : "";
 }
 
 // ---------------------------------------------------------------------------
@@ -1370,10 +1408,11 @@ export function summarize(plan, { mode, connection, results = [], serverChecked 
     historyDir: plan.root,
     server: connection.baseUrl,
     credentials: connection.credentialPath ? shortHome(connection.credentialPath, env) : connection.apiKeySource,
+    scope: plan.picked ? "picked" : (plan.projectDir ? "project" : "all-projects"),
     project: plan.picked ? null : (plan.projectDir || null),
     picked: plan.picked || undefined,
     projectPeer: plan.projectPeer?.peerId || null,
-    window: { since: plan.sinceMs ? new Date(plan.sinceMs).toISOString() : null, skipActiveMs: plan.activeMs },
+    window: { since: plan.sinceMs && !plan.picked ? new Date(plan.sinceMs).toISOString() : null, skipActiveMs: plan.activeMs },
     peerNote: PLUGIN_HARNESS[plan.harness] ? undefined : `${HARNESSES[plan.harness].label} names its peers after the agent, not the directory; none is derived (use --peer)`,
     serverChecked,
     serverNote: serverNote || undefined,
@@ -1393,9 +1432,8 @@ export function summarize(plan, { mode, connection, results = [], serverChecked 
       chars: s.chars,
       peer: s.peerId || null,
       cwd: s.cwd || null,
-      title: s.title,
       firstPrompt: s.firstPrompt,
-      lastPrompt: s.lastPrompt || undefined,
+      lastPrompt: s.lastPrompt,
     })),
     results,
   };
@@ -1474,10 +1512,15 @@ function printText(summary, env) {
     lines.push("  sessions:");
     for (const x of listed) {
       const peer = x.peer ? ` peer ${x.peer}` : "";
-      lines.push(`    ${x.lastActivity.slice(0, 16).replace("T", " ")}Z  ${String(x.messages).padStart(4)} msgs${peer}  ${x.title ? JSON.stringify(x.title) : ""}`.trimEnd());
+      lines.push(`    ${x.lastActivity.slice(0, 16).replace("T", " ")}Z  ${String(x.messages).padStart(4)} msgs${peer}  ${x.firstPrompt ? JSON.stringify(x.firstPrompt.slice(0, 80)) : ""}`.trimEnd());
     }
   }
   if (summary.mode === "list") {
+    const scope = [];
+    if (summary.skipped.overLimit) scope.push(`${summary.skipped.overLimit} more not listed: raise --max-sessions`);
+    if (summary.skipped.outsideWindow) scope.push(`${summary.skipped.outsideWindow} older: widen --since (e.g. --since all)`);
+    if (summary.skipped.otherProject) scope.push(`${summary.skipped.otherProject} in other projects: add --all-projects`);
+    if (scope.length) lines.push(`Not shown: ${scope.join("; ")}.`);
     lines.push(summary.sessions.length
       ? "To import some of them: --session <id>[,<id>...], as a dry run first, then with --yes."
       : "No sessions in this scope.");
