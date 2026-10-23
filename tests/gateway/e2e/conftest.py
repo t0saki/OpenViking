@@ -26,6 +26,15 @@ def pytest_generate_tests(metafunc):
         metafunc.parametrize("harness", modes, indirect=True)
 
 
+def pytest_collection_modifyitems(config, items):
+    if os.getenv("OV_TEST_KIND_REDIS") != "cluster":
+        return
+    excluded = [item for item in items if item.get_closest_marker("standalone")]
+    if excluded:
+        config.hook.pytest_deselected(items=excluded)
+        items[:] = [item for item in items if item not in excluded]
+
+
 @pytest.fixture
 def harness(request, tmp_path):
     kubeconfig = os.getenv("OV_TEST_KIND_KUBECONFIG")

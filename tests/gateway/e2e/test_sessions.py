@@ -366,7 +366,7 @@ def test_15_management_updates_and_revocations_propagate(harness):
     upstream = {
         "name": "managed",
         "protocol": "chat",
-        "base_url": "http://mock-ark:8080",
+        "base_url": "http://mock-ark:8080/v1",
         "api_key": "managed-test-key",
         "models": ["mock"],
     }

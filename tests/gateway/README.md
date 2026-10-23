@@ -227,3 +227,16 @@ Cloud Redis failover, TLS, and real OV/model providers remain separate acceptanc
 checks. For a cgroup-v1 development host, use a local copy of `kind.yaml` with
 `KubeletConfiguration.cgroupDriver: cgroupfs` and containerd's
 `SystemdCgroup = false`; CI uses cgroup v2 without that host-specific patch.
+
+The rollout test separates two transport behaviors: before deletion it uses a
+raw HTTP connection to a healthy Pod and proves that the same socket survives a
+six-second idle; during rollout it uses aiohttp's persistent pool, records new
+connections and actual reuse, and requires all application requests to succeed.
+A raw socket to a terminated Pod necessarily closes. The suite retains no custom
+retry loop for chat or other POST requests.
+
+Redis 7.2 checks the disabled `default` user's ACL when replaying AOF transactions.
+The fixture therefore gives that disabled user internal replay permissions while
+keeping client login disabled and the gateway user's ACL restricted to `ovgw:*`.
+A Redis-only Lua/write/restart probe confirmed that `user default off` without
+those permissions loses transaction contents during AOF loading with `NOPERM`.

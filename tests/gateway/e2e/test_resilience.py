@@ -108,7 +108,7 @@ import asyncio, http.client, json, time
 import aiohttp
 base = "http://gateway:1935"
 headers = {"Authorization": "Bearer key-a"}
-results = {"short": 0, "chat": 0, "keepalive": 0, "errors": [], "done": False}
+results = {"short": 0, "chat": 0, "keepalive": 0, "keepalive_reuses": 0, "keepalive_connections": 0, "raw_keepalive_reused": False, "errors": [], "done": False}
 async def lane(name):
     async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(force_close=True)) as client:
         for i in range(120):
@@ -124,21 +124,25 @@ async def lane(name):
             except Exception as error:
                 results["errors"].append([name, type(error).__name__, str(error)])
             await asyncio.sleep(.5)
-def keepalive():
-    connection = http.client.HTTPConnection("gateway", 1935, timeout=15)
-    try:
+async def keepalive():
+    trace = aiohttp.TraceConfig()
+    async def reused(session, context, params):
+        results["keepalive_reuses"] += 1
+    async def created(session, context, params):
+        results["keepalive_connections"] += 1
+    trace.on_connection_reuseconn.append(reused)
+    trace.on_connection_create_end.append(created)
+    async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(keepalive_timeout=75),
+            timeout=aiohttp.ClientTimeout(total=15), trace_configs=[trace]) as client:
         for _ in range(10):
             try:
-                connection.request("GET", "/health")
-                response = connection.getresponse()
-                response.read()
-                assert response.status == 200
-                results["keepalive"] += 1
+                async with client.get(base + "/health") as response:
+                    await response.read()
+                    assert response.status == 200
+                    results["keepalive"] += 1
             except Exception as error:
                 results["errors"].append(["keepalive", type(error).__name__, str(error)])
-            time.sleep(6)
-    finally:
-        connection.close()
+            await asyncio.sleep(6)
 async def long_stream():
     async with aiohttp.ClientSession() as client:
         async with client.post(base + "/gateway/v1/chat/completions", headers=headers,
@@ -146,8 +150,26 @@ async def long_stream():
             assert r.status == 200
             body = await r.text()
             results["done"] = "data: [DONE]" in body
+def raw_idle_reuse():
+    connection = http.client.HTTPConnection("RAW_GATEWAY_HOST", 1935, timeout=15)
+    try:
+        connection.request("GET", "/health")
+        response = connection.getresponse()
+        response.read()
+        assert response.status == 200
+        original = connection.sock
+        assert original is not None
+        time.sleep(6)
+        connection.request("GET", "/health")
+        response = connection.getresponse()
+        response.read()
+        assert response.status == 200 and connection.sock is original
+        results["raw_keepalive_reused"] = True
+    finally:
+        connection.close()
 async def main():
-    await asyncio.gather(lane("short"), lane("chat"), asyncio.to_thread(keepalive), long_stream())
+    await asyncio.to_thread(raw_idle_reuse)
+    await asyncio.gather(lane("short"), lane("chat"), keepalive(), long_stream())
     print(json.dumps(results))
 asyncio.run(main())
 """
@@ -166,7 +188,9 @@ def test_04_rollout_preserves_three_traffic_lanes_and_long_stream(harness):
             "--",
             "python",
             "-",
-            input=ROLLOUT_CLIENT,
+            input=ROLLOUT_CLIENT.replace(
+                "RAW_GATEWAY_HOST", harness.pod_objects()[0]["status"]["podIP"]
+            ),
             timeout=110,
         )
         wait_for(
@@ -176,8 +200,13 @@ def test_04_rollout_preserves_three_traffic_lanes_and_long_stream(harness):
         )
         harness.kubectl("rollout", "restart", "deployment/gateway")
         result = json.loads(running.result(timeout=115))
+        (harness.directory / "rollout-traffic.json").write_text(json.dumps(result, indent=2))
     assert result["errors"] == [], result
     assert (result["short"], result["chat"], result["keepalive"]) == (120, 120, 10), result
+    # A real pool observes the FIN when a draining Pod closes an idle connection.
+    assert result["raw_keepalive_reused"], result
+    assert result["keepalive_reuses"] >= 7, result
+    assert 1 <= result["keepalive_connections"] <= 3, result
     assert result["done"], result
     harness.kubectl("rollout", "status", "deployment/gateway", "--timeout=120s")
 

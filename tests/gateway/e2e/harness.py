@@ -16,7 +16,8 @@ import httpx
 
 ROOT = Path(__file__).resolve().parents[3]
 HERE = Path(__file__).parent
-ACL = """user default off
+# Redis 7.2 checks the disabled default user's ACL while replaying AOF MULTI/EXEC.
+ACL = """user default off ~* &* +@all
 user admin on >e2e-admin ~* &* +@all
 user gateway on >e2e-gateway ~ovgw:* +@read +@write +@scripting +@connection +@transaction +ping +time +scan +unlink +cluster|slots +cluster|shards
 """
