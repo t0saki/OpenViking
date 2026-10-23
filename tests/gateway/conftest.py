@@ -459,6 +459,7 @@ async def redis_backend(storage_provider, storage_encryptor):
     if not (endpoints := os.environ.get(variable)):
         pytest.skip(f"{variable} is not set")
     pytest.importorskip("redis")
+    from redis import VERSION
     from redis.asyncio.retry import Retry
     from redis.backoff import NoBackoff
 
@@ -477,7 +478,11 @@ async def redis_backend(storage_provider, storage_encryptor):
         },
         decode_responses=False,
         retry=Retry(NoBackoff(), 0),
-        **({"cluster_error_retry_attempts": 0} if storage_provider == "redis-cluster" else {}),
+        **(
+            {"cluster_error_retry_attempts": 0}
+            if VERSION < (6,) and storage_provider == "redis-cluster"
+            else {}
+        ),
     )
     backend = RedisBackend(
         handle.client, f"ovgw:test:{uuid.uuid4().hex}:", AsyncCodec(storage_encryptor)

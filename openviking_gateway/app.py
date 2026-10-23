@@ -75,7 +75,11 @@ def open_stores(config: GatewayConfig, encryptor):
             settings.redis,
             decode_responses=False,
             retry=Retry(NoBackoff(), 0),
-            **({"cluster_error_retry_attempts": 0} if settings.redis["mode"] == "cluster" else {}),
+            **(
+                {"cluster_error_retry_attempts": 0}
+                if VERSION < (6,) and settings.redis["mode"] == "cluster"
+                else {}
+            ),
         )
         close.push_async_callback(handle.close)
         backend = RedisBackend(handle.client, settings.key_prefix, AsyncCodec(encryptor))
