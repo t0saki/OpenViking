@@ -73,6 +73,24 @@ class ClientRules(BaseModel):
         return value
 
 
+class StorageConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    kernel: Literal["sqlite", "redis"] = "sqlite"
+    management: Literal["sqlite", "redis"] = "sqlite"
+    # Keep hash tags and SCAN patterns independent of the configured namespace.
+    key_prefix: str = Field(default="ovgw:", pattern=r"^[^{}*?\[\]\\]*$")
+    redis: dict = Field(default_factory=dict, repr=False, validate_default=True)
+
+    @field_validator("redis")
+    @classmethod
+    def validate_redis(cls, value: dict) -> dict:
+        from openviking_cli.utils.config.agfs_config import RedisCacheConfig
+
+        if unknown := set(value) - set(RedisCacheConfig.model_fields):
+            raise ValueError(f"unknown redis settings: {', '.join(sorted(unknown))}")
+        return RedisCacheConfig.model_validate({"command_timeout_ms": 5000, **value}).model_dump()
+
+
 class GatewayConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     # Settings an upgraded configuration may still carry; rejecting them would stop the host.
@@ -82,6 +100,7 @@ class GatewayConfig(BaseModel):
     mcp_file_links: Literal["proxy", "direct"] = "proxy"
     storage_path: str = "~/.openviking/gateway"
     management_api: bool = True
+    storage: StorageConfig = Field(default_factory=StorageConfig)
     management_key: str = Field(default="", repr=False)
     # Accept OpenViking API keys in place of gateway keys, with the account's defaults.
     openviking_keys: bool = False
@@ -125,7 +144,7 @@ class GatewayConfig(BaseModel):
                 value[field] = override
         return value
 
-    @field_validator("client_rules", "default_upstreams", "default_profile", mode="before")
+    @field_validator("client_rules", "storage", "default_upstreams", "default_profile", mode="before")
     @classmethod
     def parse_json(cls, value):
         # OPENVIKING_GATEWAY_<FIELD> carries these sections as JSON.
