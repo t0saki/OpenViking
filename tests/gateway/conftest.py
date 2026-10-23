@@ -435,3 +435,71 @@ async def running_gateway(tmp_path, gateway_backend, gateway_config):
                 assert minted.status_code == 200, minted.text
                 minted = minted.json()
             yield app, client, admin, minted, captured, writes
+
+
+@pytest.fixture(params=["sqlite", "redis", "redis-cluster"])
+def storage_provider(request):
+    return request.param
+
+
+@pytest.fixture(params=[False, True], ids=["plaintext", "encrypted"])
+def storage_encryptor(request, tmp_path):
+    return local_encryptor(tmp_path / "storage-root.key") if request.param else None
+
+
+@pytest_asyncio.fixture
+async def redis_backend(storage_provider, storage_encryptor):
+    import os
+    import uuid
+
+    if storage_provider == "sqlite":
+        yield None
+        return
+    variable = "OV_TEST_REDIS_CLUSTER" if storage_provider == "redis-cluster" else "OV_TEST_REDIS"
+    if not (endpoints := os.environ.get(variable)):
+        pytest.skip(f"{variable} is not set")
+    pytest.importorskip("redis")
+    from redis.asyncio.retry import Retry
+    from redis.backoff import NoBackoff
+
+    from openviking.server.account_stores.redis_client import create_redis_client
+    from openviking_gateway.redis_store import RedisBackend
+    from openviking_gateway.storage import AsyncCodec
+
+    handle = create_redis_client(
+        {
+            "mode": "cluster" if storage_provider == "redis-cluster" else "standalone",
+            "endpoints": endpoints.split(","),
+            "username": os.environ.get("OV_TEST_REDIS_USERNAME", ""),
+            "password": os.environ.get("OV_TEST_REDIS_PASSWORD", ""),
+            "command_timeout_ms": 5000,
+        },
+        decode_responses=False,
+        retry=Retry(NoBackoff(), 0),
+    )
+    backend = RedisBackend(handle.client, f"ovgw:test:{uuid.uuid4().hex}:", AsyncCodec(storage_encryptor))
+    try:
+        await handle.client.ping()
+        yield backend
+    finally:
+        await backend.unlink([key async for key in backend.scan(backend.prefix + "*")])
+        await handle.close()
+
+
+@pytest_asyncio.fixture
+async def management_store(redis_backend, storage_encryptor, tmp_path):
+    from openviking_gateway.storage import SQLiteManagementStore
+
+    if redis_backend is None:
+        store = SQLiteManagementStore(tmp_path / "management.sqlite3", storage_encryptor)
+    else:
+        from openviking_gateway.redis_store import RedisManagementStore
+
+        store = RedisManagementStore(redis_backend)
+    await store.initialize()
+    try:
+        yield store
+    finally:
+        if redis_backend is None:
+            store.close()
+

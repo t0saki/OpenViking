@@ -140,6 +140,29 @@ class CachedManagement:
         await self.port.expire_logs(before)
 
 
+class AsyncCodec:
+    """Encode Redis values without blocking the app loop on large JSON payloads."""
+
+    def __init__(self, encryptor=None):
+        self.encryptor = encryptor
+
+    async def encode(self, value: Any) -> bytes:
+        data = await asyncio.to_thread(orjson.dumps, value)
+        if self.encryptor is not None:
+            data = await self.encryptor.encrypt(ENCRYPTION_ACCOUNT, data)
+        return data
+
+    async def decode(self, value: bytes) -> Any:
+        if value.startswith(MAGIC):
+            if self.encryptor is None:
+                raise RuntimeError(
+                    "Gateway data is encrypted; configure the encryption settings it was "
+                    "written with"
+                )
+            value = await self.encryptor.decrypt(ENCRYPTION_ACCOUNT, value)
+        return await asyncio.to_thread(orjson.loads, value)
+
+
 class Database:
     def __init__(self, path: Path, encryptor=None):
         path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)

@@ -421,3 +421,122 @@ async def test_app_closes_both_stores_when_initialization_fails(tmp_path, monkey
         async with gateway.router.lifespan_context(gateway):
             pytest.fail("initialization should fail before serving requests")
     assert closed == ["SQLiteKernelStore", "SQLiteManagementStore"]
+
+
+async def test_management_order_filter_and_revision(management_store):
+    for identifier in ("z", "é", "a", "{foreign}:*"):
+        await management_store.save("account", "upstreams", identifier, {"user_id": "one"})
+    await management_store.save("account", "upstreams", "other", {"user_id": "two"})
+    rows = await management_store.list("account", "upstreams", user_id="one")
+    assert [row["id"] for row in rows] == ["a", "z", "{foreign}:*", "é"]
+    assert (await management_store.save("account", "upstreams", "a", {"name": "new"}))["revision"] == 2
+    assert await management_store.list("elsewhere", "upstreams") == []
+
+
+async def test_management_expiration_and_recreation(management_store):
+    await management_store.save("account", "keys", "short", {"user_id": "one"}, ttl=0.08)
+    await management_store.save("account", "keys", "short", {"user_id": "one", "updated": True})
+    await asyncio.sleep(0.1)
+    assert await management_store.get("account", "keys", "short") is None
+    assert await management_store.credential("short") is None
+    await management_store.expire_logs(0)
+    assert await management_store.list("account", "keys") == []
+    await management_store.save("account", "keys", "short", {"user_id": "one"}, ttl=1)
+    await management_store.delete("account", "keys", "short")
+    await management_store.save("account", "keys", "short", {"user_id": "one"})
+    await asyncio.sleep(0.01)
+    assert await management_store.credential("short") is not None
+
+
+async def test_management_credential_and_cached_wrapper(management_store):
+    from openviking_gateway.storage import CachedManagement
+
+    cached = CachedManagement(management_store)
+    identifier = digest("secret")
+    await cached.save("other-account", "keys", identifier, {"user_id": "one"})
+    assert (await cached.authenticate("secret"))["account"] == "other-account"
+    await cached.delete("other-account", "keys", identifier)
+    assert await cached.authenticate("secret") is None
+    await cached.save("other-account", "keys", identifier, {"user_id": "one"})
+    assert (await cached.credential(identifier))["id"] == identifier
+
+
+async def test_management_delete_user_and_account(management_store):
+    for user in ("one", "two"):
+        await management_store.save("account", "keys", user, {"user_id": user})
+        await management_store.save("account", "users", user, {"user_id": user})
+        await management_store.log("account", {"message": user}, user_id=user)
+    await management_store.save("account", "policies", "default", {"name": "keep"})
+    await management_store.save("other", "keys", "separate", {"user_id": "one"})
+    assert (await management_store.logs("account", user_id="one"))[0]["message"] == "one"
+    await management_store.delete_user("account", "one")
+    assert await management_store.credential("one") is None
+    assert [row["id"] for row in await management_store.list("account", "users")] == ["two"]
+    assert [row["message"] for row in await management_store.logs("account")] == ["two"]
+    assert await management_store.get("account", "policies", "default")
+    await management_store.delete_account("account")
+    assert await management_store.credential("two") is None
+    assert await management_store.logs("account") == []
+    assert await management_store.list("account", "policies") == []
+    assert await management_store.credential("separate")
+
+
+async def test_management_large_value(management_store):
+    value = {"text": "v" * (8 * 1024 * 1024)}
+    await management_store.save("account", "responses", "large", value, ttl=5)
+    assert (await management_store.get("account", "responses", "large"))["text"] == value["text"]
+
+
+async def test_redis_ttl_removes_partition_and_reverse_index(management_store, redis_backend):
+    if redis_backend is None:
+        pytest.skip("Redis key lifecycle")
+    await management_store.save("expiring", "keys", "short", {"user_id": "one"}, ttl=0.08)
+    await management_store.save("expiring", "users", "one", {"user_id": "one"}, ttl=0.08)
+    await asyncio.sleep(0.12)
+    assert [key async for key in redis_backend.scan(redis_backend.prefix + "*")] == []
+
+
+async def test_redis_missing_credential_object_does_not_remove_index(management_store, redis_backend):
+    if redis_backend is None:
+        pytest.skip("Redis dangling reverse index")
+    await management_store.save("account", "keys", "key", {"user_id": "one"})
+    await redis_backend.client.delete(management_store.object_key("account", "keys", "key"))
+    assert await management_store.credential("key") is None
+    assert await redis_backend.client.get(management_store.credential_key("key")) == b"account"
+    await asyncio.gather(*(
+        management_store.save("account", "keys", "key", {"user_id": "one"}) for _ in range(10)
+    ))
+    assert all(await asyncio.gather(*(management_store.credential("key") for _ in range(20))))
+
+
+async def test_redis_logs_are_bounded_and_user_deletion_preserves_ttl(management_store, redis_backend):
+    if redis_backend is None:
+        pytest.skip("Redis log retention")
+    key = management_store.account_prefix("account") + "log"
+    # Seed old entries in one command; the next production write must enforce the cap.
+    await redis_backend.client.lpush(key, *([b"0\0\0{}"] * 10005))
+    await management_store.log("account", {"message": "keep"}, user_id="two")
+    await management_store.log("account", {"message": "remove"}, user_id="one")
+    assert await redis_backend.client.llen(key) == 10000
+    await redis_backend.client.pexpire(key, 2000)
+    await management_store.delete_user("account", "one")
+    assert 0 < await redis_backend.client.pttl(key) <= 2000
+    assert [r["message"] for r in await management_store.logs("account", user_id="two")] == ["keep"]
+    assert await management_store.logs("account", user_id="one") == []
+
+
+async def test_redis_script_reload_and_scoped_scan(management_store, redis_backend):
+    if redis_backend is None:
+        pytest.skip("Redis script loading and Cluster routing")
+    from redis.asyncio.cluster import RedisCluster
+
+    await management_store.save("account", "keys", "key", {"user_id": "one"})
+    script = redis_backend.script("obj_save")
+    script.sha = "0" * 40  # Force NOSCRIPT without flushing scripts used by other test workers.
+    assert (await management_store.save("account", "keys", "key", {"user_id": "one"}))["revision"] == 2
+    prefix = management_store.account_prefix("account")
+    assert len([key async for key in redis_backend.scan(prefix + "*")]) == 2
+    if isinstance(redis_backend.client, RedisCluster):
+        assert redis_backend.client.retry.get_retries() == 0
+    with pytest.raises(Exception, match="permissions|NOPERM"):
+        await redis_backend.client.set("outside-gateway-prefix", "forbidden")
