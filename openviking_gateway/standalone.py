@@ -29,13 +29,25 @@ WARNINGS = {
 
 
 async def check_openviking(config: StandaloneGatewayConfig) -> dict:
-    """Probe OV once before serving; refuse trusted auth and unconfirmed public binds."""
+    """Wait for transient OV failures before serving a confirmed public bind."""
     async with aiohttp.ClientSession(trust_env=False) as http:
         viking = VikingClient(http, config.openviking_url, config.min_server_version)
-        try:
-            health = await viking.health(require_identity=False)
-        except VikingError as error:
-            health = {"status": "degraded", "reason": error.reason}
+        delay = 1
+        while True:
+            try:
+                health = await viking.health(require_identity=False)
+            except VikingError as error:
+                if config.host not in LOOPBACK_HOSTS and error.status >= 500:
+                    logger.warning(
+                        "Waiting for OpenViking before binding publicly: %s; retrying in %ss",
+                        error.reason,
+                        delay,
+                    )
+                    await asyncio.sleep(delay)
+                    delay = min(delay * 2, 30)
+                    continue
+                health = {"status": "degraded", "reason": error.reason}
+            break
     if health.get("reason") == "trusted_mode_unsupported":
         raise ValueError("OpenViking Gateway does not support trusted authentication")
     if config.host not in LOOPBACK_HOSTS and health.get("auth_mode") != "api_key":

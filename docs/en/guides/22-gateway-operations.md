@@ -133,11 +133,16 @@ Without an OpenViking address from either source, the gateway exits and asks you
 
 ### Startup checks {#startup-checks}
 
-Before it starts, a standalone gateway contacts OpenViking once:
+Before it starts listening, a standalone gateway checks OpenViking's authentication mode:
 
 - If OpenViking uses trusted authentication, the gateway refuses to start.
-- When the gateway binds to a non-loopback address, it starts only after confirming that OpenViking uses `api_key` authentication. If OpenViking is unreachable or runs in local dev mode, the gateway exits. Start OpenViking first, or bind to `127.0.0.1`.
+- When the gateway binds to a non-loopback address, it starts only after confirming that OpenViking uses `api_key` authentication. Connection failures and HTTP 5xx responses produce a warning and retry after 1, 2, 4, 8, 16, then 30 seconds, with subsequent waits capped at 30 seconds. Dev mode, unknown authentication modes and other errors such as HTTP 404 still cause an immediate exit.
+- Loopback binds (`127.0.0.1`, `::1`, `localhost`) probe once and can start while OpenViking is unavailable; they still reject trusted authentication.
 - When OpenViking runs on another host, connect over TLS or a private network.
+
+The wait happens before the HTTP port opens. In Kubernetes, startup probes continue to fail during this wait: size the `startupProbe` budget (`periodSeconds × failureThreshold`) for the expected OpenViking outage. For example, `periodSeconds: 2` and `failureThreshold: 150` allow about 300 seconds before kubelet restarts the container. The gateway does not impose a separate startup deadline.
+
+Standalone HTTP keep-alive now defaults to 75 seconds, up from uvicorn's 5-second default. Set `keep_alive_seconds` above your load balancer's backend idle timeout to avoid reusing a connection the gateway has already closed; deployments with longer load balancer timeouts need a higher value. See the [configuration reference](../gateway/13-configuration.md#gateway-fields).
 
 ### Connecting to the public OpenViking service {#public-openviking-service}
 

@@ -168,6 +168,7 @@ class StandaloneGatewayConfig(GatewayConfig):
     host: str = "127.0.0.1"
     port: int = Field(default=1935, ge=1, le=65535)
     workers: int = Field(default=1, ge=1, le=64)
+    keep_alive_seconds: float = Field(default=75, gt=0)
     # Same schema as ov.conf's top-level "encryption"; absent or disabled stores plaintext.
     encryption: dict | None = Field(default=None, repr=False)
 

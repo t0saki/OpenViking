@@ -133,11 +133,16 @@ NGINX annotations、创建 Secret 的命令和从 sidecar 版本升级的说明�
 
 ### 启动检查 {#startup-checks}
 
-独立网关启动前会先访问一次 OpenViking：
+独立网关开始监听前会先检查 OpenViking 的认证模式：
 
 - OpenViking 使用 trusted 认证时，网关拒绝启动。
-- 绑定非回环地址时，必须确认 OpenViking 使用 `api_key` 认证才会启动；OpenViking 连不上或处于本地 dev 模式时，网关直接退出。请先启动 OpenViking，或者只绑定 `127.0.0.1`。
+- 绑定非回环地址时，必须确认 OpenViking 使用 `api_key` 认证才会启动。连接失败或 HTTP 5xx 响应会输出告警，并在 1、2、4、8、16、30 秒后依次重试，后续等待上限为 30 秒。dev 模式、未知认证模式以及 HTTP 404 等其他错误仍会立即退出。
+- 回环地址（`127.0.0.1`、`::1`、`localhost`）只探测一次，OpenViking 不可达时也能启动；仍然拒绝 trusted 认证。
 - 跨主机连接 OpenViking 时，请使用 TLS 或私有网络。
+
+等待期间 HTTP 端口尚未监听。Kubernetes 的启动探针此时仍会失败，应按预期的 OpenViking 中断时长设置 `startupProbe` 预算（`periodSeconds × failureThreshold`）。例如 `periodSeconds: 2`、`failureThreshold: 150` 允许等待约 300 秒，之后 kubelet 会重启容器。网关自身不另设启动等待期限。
+
+独立网关的 HTTP keep-alive 默认值从 uvicorn 的 5 秒提高到 75 秒。应把 `keep_alive_seconds` 设为大于负载均衡器的后端空闲超时，避免复用已经被网关关闭的连接；负载均衡器超时更长时，需要相应调高。见[配置参考](../gateway/13-configuration.md#gateway-fields)。
 
 ### 连接公共 OpenViking 服务 {#public-openviking-service}
 

@@ -764,13 +764,11 @@ async def test_connection_test_is_available_for_missing_key_and_blocked_plan(run
     assert not [path for path, _, _ in captured if path.endswith("/chat/completions")]
 
 
-@pytest.mark.parametrize("mode", ["unavailable", "trusted", "unknown"])
+@pytest.mark.parametrize("mode", ["trusted", "unknown"])
 async def test_public_standalone_requires_confirmed_api_key_auth(tmp_path, monkeypatch, mode):
     from openviking_gateway.client import VikingClient, VikingError
 
     async def health(self, *args, **kwargs):
-        if mode == "unavailable":
-            raise VikingError("openviking_unavailable")
         if mode == "trusted":
             raise VikingError("trusted_mode_unsupported", 403)
         return {"status": "ok"}
