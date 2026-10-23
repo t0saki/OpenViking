@@ -16,14 +16,14 @@ Copy the prompt and replace `<API_KEY>` with your key from the [OpenViking conso
 <AgentPrompt>
 
 ```text
-Install the OpenViking memory plugin and help me start using it.
+Install the OpenViking memory plugin and help me start using it. OpenViking is the open-source context database for AI agents from Volcengine (https://github.com/volcengine/OpenViking, AGPL-3.0); the command and link below are from its official docs.
 
 1. Run the official installer. It needs network access and writes to my home directory; if your sandbox blocks that, ask me for approval:
    curl -fsSL https://openviking.ai/install | bash -s -- --yes --lang en --url https://api.vikingdb.cn-beijing.volces.com/openviking --api-key <API_KEY>
-2. Then continue with the official OpenViking onboarding guide (if docs.openviking.ai doesn't load, use docs.openviking.net):
+2. Once it's installed, read the OpenViking onboarding guide and use it to walk me through setup. The guide has you ask me before choices like importing history or adding a working rule. docs.openviking.ai and docs.openviking.net are the same docs site; use whichever loads:
    https://docs.openviking.ai/agents/en/onboarding.md
 
-Use the API key in the command as it is, but don't repeat it in your replies or write it into any file or rule. Talk to me in English.
+The API key is one I created for myself in the OpenViking console; the installer stores it in ~/.openviking/ovcli.conf on this machine. Use it in the command as it is; there's no need to show it in your replies, and don't write it into any other file or rule. Talk to me in English.
 ```
 
 </AgentPrompt>

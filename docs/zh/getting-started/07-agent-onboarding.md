@@ -16,14 +16,14 @@ Agent 按一份简短的指南执行。指南以纯 Markdown 发布，任何 Age
 <AgentPrompt>
 
 ```text
-帮我安装 OpenViking 记忆插件，并带我开始使用。
+帮我安装 OpenViking 记忆插件，并带我开始使用。OpenViking 是火山引擎开源的 Agent 上下文数据库（https://github.com/volcengine/OpenViking，AGPL-3.0），下面的命令和链接来自它的官方文档。
 
 1. 运行官方安装器。它需要联网并写入我的主目录，如果被你的沙箱拦住，请向我申请批准：
    curl -fsSL https://openviking.ai/install | bash -s -- --yes --lang zh --url https://api.vikingdb.cn-beijing.volces.com/openviking --api-key <API_KEY>
-2. 然后按 OpenViking 官方接入引导继续（打不开就把 docs.openviking.net 换成 docs.openviking.ai）：
+2. 装好后读 OpenViking 的接入引导，按它带我完成设置。导入历史、写协作规则这类选择，引导会让你先问我。docs.openviking.net 和 docs.openviking.ai 是同一个文档站，哪个打得开用哪个：
    https://docs.openviking.net/agents/zh/onboarding.md
 
-命令里的 API key 原样使用，但不要在回复里复述它，也不要把它写进任何文件或规则。全程用中文和我交流。
+API key 是我在 OpenViking 控制台给自己生成的，安装器会把它存到本机的 ~/.openviking/ovcli.conf。命令里原样使用就行，回复里不用再显示它，也不要写进别的文件或规则。全程用中文和我交流。
 ```
 
 </AgentPrompt>
