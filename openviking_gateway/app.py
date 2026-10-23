@@ -203,7 +203,8 @@ def create_app(config: GatewayConfig, *, openviking_url: str, vlm_source=None, e
         if identity is None or (
             identity.get("auth_mode") != "dev"
             and (
-                identity["account_id"] != credential["account"]
+                identity["account_id"]
+                != credential.get("openviking_account", credential["account"])
                 or identity["user_id"] != credential["user_id"]
             )
         ):

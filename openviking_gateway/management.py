@@ -194,34 +194,34 @@ async def caller(request, *, require_identity=True, write=False):
     return Caller(account, credential, identity, manager, can_write)
 
 
-async def register_user(app, account_id, user_id):
+async def register_user(app, account_id, user_id, ttl=None):
     """Record a new key's user and lift an earlier deletion of their gateway data."""
     for protocol in ("anthropic", "chat", "responses"):
         await app.state.store.allow_scope(digest(account_id + "\0" + user_id + "\0" + protocol))
-    await app.state.management.save(account_id, "users", user_id, {"user_id": user_id})
+    await app.state.management.save(account_id, "users", user_id, {"user_id": user_id}, ttl=ttl)
 
 
 async def openviking_credential(app, key):
-    """The record an OpenViking API key used as a gateway key authenticates with.
-
-    The first request confirms the key with OpenViking and stores it like an issued key;
-    its binding is resolved per request (``resolve_binding``).
-    """
+    """Confirm and cache an OpenViking key with its deployment's tenant partition."""
     identifier = digest("openviking\0" + key)
     if credential := await app.state.management.credential(identifier):
         return credential
     identity = await app.state.viking.health(key)
     account, user_id = identity["account_id"], identity["user_id"]
+    if app.state.config.tenancy == "key":
+        account = "k_" + identifier
+    ttl = app.state.config.session_ttl_days * 86400
     stored = {
         "source": "openviking",
+        "openviking_account": identity["account_id"],
         "openviking_key": key,
         "user_id": user_id,
         # Current keys are "<account>.<user>.<secret>": only the secret tells them apart.
         "prefix": key.rsplit(".", 1)[-1][:8],
         "created_at": time.time(),
     }
-    await app.state.management.save(account, "keys", identifier, stored)
-    await register_user(app, account, user_id)
+    await app.state.management.save(account, "keys", identifier, stored, ttl=ttl)
+    await register_user(app, account, user_id, ttl=ttl)
     return await app.state.management.credential(identifier)
 
 

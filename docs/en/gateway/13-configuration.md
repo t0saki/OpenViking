@@ -35,10 +35,11 @@ An embedded and a standalone gateway share most fields; they differ in which fil
 | `management_api` | Both | `true` | `true`, `false` | Registers the gateway administration routes; disabling it also removes the standalone OpenViking admin proxy and Studio. Model routes and `/health` remain available |
 | `management_key` | Both | empty | At least 32 characters | Optional [gateway management key](../guides/22-gateway-operations.md#gateway-management-key) |
 | `openviking_keys` | Both | `false` | `true`, `false` | Lets clients use a user's OpenViking API key in place of a gateway key, with the account's default context profile and every enabled upstream; see [Use an OpenViking API key directly](09-gateway-keys.md#openviking-keys) |
+| `tenancy` | Both | `account` | `account`, `key` | Partitions OpenViking-key requests by account or by key; `key` requires `management_api: false` |
 | `default_upstreams` | Both | `{}` | Object mapping stable IDs to [upstream settings](#upstream-settings) | Upstreams for OpenViking keys when the account stores none; see [Deployment default upstreams](07-upstreams.md#deployment-default-upstreams) |
 | `default_profile` | Both | Built-in profile defaults | [Context profile settings](#context-profile-settings) | Used when the account has no stored `policies/default`; also the initial profile seeded in embedded dev mode |
 | `min_server_version` | Both | `0.4.16` | Version string | Lowest OpenViking Server version a standalone gateway accepts |
-| `session_ttl_days` | Both | `30` | 1 or more | Days of inactivity before a conversation expires |
+| `session_ttl_days` | Both | `30` | 1 or more | Days of inactivity before a conversation expires; also the fixed lifetime of cached OpenViking keys and their user records |
 | `response_ttl_seconds` | Both | `2592000` (30 days) | 60 or more | Seconds to remember which upstream created a Responses response |
 | `log_retention_days` | Both | `30` | 1 or more | Days to keep request logs |
 | `max_body_bytes` | Both | `33554432` (32 MiB) | 1,024 or more | Size limit for requests and uploads, in bytes |
@@ -88,6 +89,7 @@ OPENVIKING_GATEWAY_MANAGEMENT_KEY='<management-key>'
 | `openviking_url` and `public_url` | HTTP(S), with no credentials, query or fragment |
 | Upstream `base_url` | Its own rules; see [Endpoint](07-upstreams.md#endpoint) |
 | `management_key` | At least 32 characters once `$VAR` references are resolved; an unresolved `$VAR` fails |
+| `tenancy` | `key` requires `management_api: false`; it has no effect when `openviking_keys` is off |
 | `client_rules` | Every added pattern must be a valid Python regular expression; added tag names start with an ASCII letter and use only ASCII letters, digits, `_`, `.`, `:` and `-` |
 | Unknown fields | Fail validation |
 | Removed fields | Ignored, with a startup warning: `encryption_key_env`, and in `ov.conf` also the v0.5 fields listed in [Migration](../guides/22-gateway-operations.md#migration) |

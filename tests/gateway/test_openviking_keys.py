@@ -29,18 +29,21 @@ def record_openviking_calls(app):
 
 
 @pytest.fixture
+def gateway_config(request):
+    return getattr(request, "param", {"openviking_keys": True})
+
+
+@pytest.fixture
 def gateway(running_gateway):
-    app = running_gateway[0]
-    app.state.config.openviking_keys = True
     return running_gateway
 
 
+@pytest.mark.parametrize("gateway_config", [{"openviking_keys": False}], indirect=True)
 async def test_switch_off_rejects_openviking_keys_without_calling_openviking(running_gateway):
     app, client, _, _, _, _ = running_gateway
     calls = record_openviking_calls(app)
     for headers in (bearer(OV_KEY), {"x-api-key": OV_KEY}):
         assert (await client.get("/v1/models", headers=headers)).status_code == 401
-    app.state.config.openviking_keys = True
     # No credential at all is never an OpenViking key.
     assert (await client.get("/v1/models")).status_code == 401
     assert calls == []
@@ -64,7 +67,9 @@ async def test_first_request_creates_the_record_and_registers_the_user(gateway):
         "prefix": "bob-key",
     }
     assert not {"name", "policy_id", "upstream_ids", "models"} & set(record)
-    assert await management.get("tenant", "users", "bob") == {
+    user = await management.get("tenant", "users", "bob")
+    assert user.pop("expires_at") > record["created_at"]
+    assert user == {
         "user_id": "bob",
         "id": "bob",
         "revision": 1,

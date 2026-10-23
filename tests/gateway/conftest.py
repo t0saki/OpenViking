@@ -373,7 +373,22 @@ def gateway_config():
 @pytest_asyncio.fixture
 async def running_gateway(tmp_path, gateway_backend, gateway_config):
     base, captured, writes, override = gateway_backend
-    config = GatewayConfig.model_validate({"storage_path": str(tmp_path), **gateway_config})
+    settings = {"storage_path": str(tmp_path), **gateway_config}
+    if not settings.get("management_api", True):
+        settings.setdefault(
+            "default_upstreams",
+            {
+                protocol: {
+                    "name": protocol,
+                    "protocol": protocol,
+                    "base_url": base if protocol == "anthropic" else base + "/v1",
+                    "api_key": "model-secret",
+                    "models": ["model", "error"],
+                }
+                for protocol in ("chat", "anthropic", "responses")
+            },
+        )
+    config = GatewayConfig.model_validate(settings)
     app = create_app(
         config, openviking_url=base, encryptor=local_encryptor(tmp_path / "master.key")
     )

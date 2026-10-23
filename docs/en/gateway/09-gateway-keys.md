@@ -27,6 +27,12 @@ When the deployment sets [`openviking_keys`](13-configuration.md#gateway-fields)
 - **The gateway stores it like an issued key**, so capture and logs work the same way. Turn on [encryption](../guides/22-gateway-operations.md#encryption). The **Keys** tab lists it as **OpenViking API key**, with **Account default** as its profile and upstreams.
 - **Only OpenViking can revoke it.** The **Keys** tab has no **Revoke** for it. [Deleting the user's gateway data](#delete-a-users-gateway-data) deletes the stored copy, logs and conversation state, but a client that still sends the key keeps working and starts fresh. To stop it, regenerate the key in OpenViking or turn `openviking_keys` off. After a key is regenerated, the gateway deletes its copy on a later request, as for a [gateway key](#when-the-openviking-key-changes).
 
+With `tenancy: account` (the default), keys for the same OpenViking account and user share conversation state. With `tenancy: key`, each OpenViking key gets a separate partition, even when two libraries return the same account and user identity. Conversations, recall, capture, model bindings and request logs use that partition. Set `management_api: false` and configure `default_upstreams` and `default_profile` before starting this mode; Studio and the management routes are unavailable.
+
+Rotating an OpenViking key in key tenancy starts a new partition and new conversations. For troubleshooting, derive its partition without printing the key: `"k_" + hashlib.sha256(("openviking\0" + key).encode()).hexdigest()`. The OpenViking account identity is kept separately for revocation checks.
+
+The stored OpenViking key and its user record expire after the configured `session_ttl_days`, measured from creation. Requests do not renew them. The next request confirms the key with OpenViking and recreates the records with the same partition and conversation scope. Issued gateway keys have no such TTL. See [Retention](11-security-and-data.md#retention) for pending capture and cleanup behavior.
+
 Use gateway keys when clients need their own context profile, upstreams or allowed models, or must be revocable on their own.
 
 ## Issue a key {#issue-a-key}

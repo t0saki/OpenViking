@@ -35,10 +35,11 @@ description: 查询 OpenViking 网关的配置字段、环境变量、上下文�
 | `management_api` | 两者 | `true` | `true`、`false` | 注册网关管理路由；关闭时也移除独立网关的 OpenViking 管理代理和 Studio，模型路由和 `/health` 继续可用 |
 | `management_key` | 两者 | 空 | 至少 32 个字符 | 可选的[网关管理密钥](../guides/22-gateway-operations.md#gateway-management-key) |
 | `openviking_keys` | 两者 | `false` | `true`、`false` | 允许客户端用用户的 OpenViking API 密钥代替网关密钥，使用账号的默认上下文配置和全部已启用的上游，见[直接使用 OpenViking API 密钥](09-gateway-keys.md#openviking-keys) |
+| `tenancy` | 两者 | `account` | `account`、`key` | 按账号或按密钥隔离 OpenViking 密钥请求；`key` 要求 `management_api: false` |
 | `default_upstreams` | 两者 | `{}` | 稳定 ID 到[上游设置](#upstream-settings)的对象映射 | 账号没有存储上游时供 OpenViking 密钥使用，见[部署默认上游](07-upstreams.md#deployment-default-upstreams) |
 | `default_profile` | 两者 | 内置上下文配置默认值 | [上下文配置设置](#context-profile-settings) | 账号没有存储 `policies/default` 时使用，也是嵌入式 dev 模式初始化写入的配置 |
 | `min_server_version` | 两者 | `0.4.16` | 版本号 | 独立网关要求的 OpenViking Server 最低版本 |
-| `session_ttl_days` | 两者 | `30` | 1 及以上 | 对话闲置多少天后过期 |
+| `session_ttl_days` | 两者 | `30` | 1 及以上 | 对话闲置多少天后过期；也决定缓存的 OpenViking 密钥及其用户记录的固定寿命 |
 | `response_ttl_seconds` | 两者 | `2592000`（30 天） | 60 及以上 | Responses 响应与上游的对应关系保留多少秒 |
 | `log_retention_days` | 两者 | `30` | 1 及以上 | 请求日志保留天数 |
 | `max_body_bytes` | 两者 | `33554432`（32 MiB） | 1,024 及以上 | 请求和上传的大小上限，单位为字节 |
@@ -88,6 +89,7 @@ OPENVIKING_GATEWAY_MANAGEMENT_KEY='<management-key>'
 | `openviking_url` 和 `public_url` | 必须是 HTTP(S)，不能含凭证、查询参数或 fragment |
 | 上游的 `base_url` | 规则不同，见[接口](07-upstreams.md#endpoint) |
 | `management_key` | 解析 `$VAR` 引用后至少 32 个字符；`$VAR` 没能解析时校验失败 |
+| `tenancy` | `key` 要求 `management_api: false`；`openviking_keys` 关闭时此字段不生效 |
 | `client_rules` | 新增的模式必须是合法的 Python 正则表达式；新增的标签名以英文字母开头，只能包含英文字母、数字、`_`、`.`、`:` 和 `-` |
 | 未知字段 | 校验失败 |
 | 已删除的字段 | 忽略，启动时打印警告：`encryption_key_env`，以及 `ov.conf` 中[迁移](../guides/22-gateway-operations.md#migration)列出的 v0.5 字段 |

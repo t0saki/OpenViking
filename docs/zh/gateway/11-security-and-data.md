@@ -8,7 +8,7 @@ description: OpenViking 网关存储什么、谁能访问、服务商能看到�
 
 ## 按用户隔离 {#isolation-by-user}
 
-每把[网关密钥](../guides/15-gateway.md#key-terms)绑定一位 OpenViking 用户。网关用这位用户自己的 OpenViking 密钥检索记忆、保存对话和调用工具，所以能做的事不会超出用户本人的权限。各用户的对话状态互相隔离。
+每把[网关密钥](../guides/15-gateway.md#key-terms)绑定一位 OpenViking 用户。网关用这位用户自己的 OpenViking 密钥检索记忆、保存对话和调用工具，所以能做的事不会超出用户本人的权限。各用户的对话状态互相隔离。设置 `tenancy: key` 后，即使账号和用户身份相同，不同 OpenViking 密钥也有独立分区；轮换密钥会进入新分区。
 
 ## 网关存储什么 {#what-the-gateway-stores}
 
@@ -70,9 +70,14 @@ description: OpenViking 网关存储什么、谁能访问、服务商能看到�
 | 数据 | 保留时长 | 设置 |
 | --- | --- | --- |
 | 对话状态 | 最后一次使用后 30 天 | `session_ttl_days` |
+| 缓存的 OpenViking 密钥及其用户记录 | 从创建时起经过配置的 TTL，不续期 | `session_ttl_days` |
 | 请求日志 | 30 天 | `log_retention_days` |
 | Responses 响应与上游的对应关系 | 30 天 | `response_ttl_seconds` |
 | OpenViking 中的会话和记忆 | 遵循 OpenViking 自己的规则 | — |
+
+OpenViking 密钥记录过期，或被使用 `volatile-lru` 的 Redis 后端驱逐后，写回任务因读不到凭据而以 `gateway_key_revoked` 暂停。用户的下一个请求会重建记录，并在同一 scope 中恢复写回。如果用户不再请求，最后一轮待写回内容不会存入 OpenViking。这些状态属于缓存，允许丢失。与吊销一样，现有的短时进程内缓存可能延迟观察到过期。
+
+按账号隔离时，为同一用户签发网关密钥可能会以不带 TTL 的方式重写用户记录。SQLite 会保留这条记录原来的过期时间；删除账号仍会通过密钥记录找到该用户的 scope。
 
 这些设置的最小值和配置位置见[网关字段](13-configuration.md#gateway-fields)。
 
@@ -86,7 +91,7 @@ description: OpenViking 网关存储什么、谁能访问、服务商能看到�
 | root | 调用 `DELETE /gateway/admin/account/data?account_id=<account>` | 整个账号的网关数据 |
 | 嵌入部署，自动进行 | 在 OpenViking 中删除用户或账号 | 对应的网关数据 |
 
-独立部署没有自动删除这一步，数据会一直保留，直到被显式删除或[过期](#retention)。设置 [`management_api: false`](13-configuration.md#gateway-fields) 后，删除 API 也不可用：在 OpenViking 中删除用户不会通知独立网关，对话状态只能等 `session_ttl_days` 到期后清理。请求日志和响应映射按各自的保留期限过期。嵌入部署仍保留 Server 的自动删除钩子。
+独立部署没有自动删除这一步，数据会一直保留，直到被显式删除或[过期](#retention)。设置 [`management_api: false`](13-configuration.md#gateway-fields) 后，删除 API 也不可用：在 OpenViking 中删除用户不会通知独立网关，对话状态只能等 `session_ttl_days` 到期后清理。请求日志和响应映射按各自的保留期限过期。按账号隔离的嵌入部署仍保留 Server 的自动删除钩子。按密钥隔离时，钩子无法根据 OpenViking 的账号和用户 ID 找到 `k_` 分区，其缓存数据按上述保留期限清理。
 
 已存入 OpenViking 的记忆和会话不受这些操作影响。反过来，在 OpenViking 中删除一条记忆后，网关为进行中的对话保存的那份副本仍会被原样放回，直到对话过期；要立即清除，删除该用户的网关数据。
 

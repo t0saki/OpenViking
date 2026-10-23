@@ -85,6 +85,7 @@ class GatewayConfig(BaseModel):
     management_key: str = Field(default="", repr=False)
     # Accept OpenViking API keys in place of gateway keys, with the account's defaults.
     openviking_keys: bool = False
+    tenancy: Literal["account", "key"] = "account"
     # Used where an account stores none: OpenViking keys and the "default" profile.
     default_upstreams: dict[str, Upstream] = Field(default_factory=dict, repr=False)
     default_profile: Policy = Field(default_factory=Policy)
@@ -96,6 +97,12 @@ class GatewayConfig(BaseModel):
     upstream_timeout_seconds: float = Field(default=600, gt=0)
     health_interval_seconds: float = Field(default=60, ge=1)
     client_rules: ClientRules = Field(default_factory=ClientRules)
+
+    @model_validator(mode="after")
+    def validate_tenancy(self):
+        if self.tenancy == "key" and self.management_api:
+            raise ValueError("tenancy 'key' requires management_api: false")
+        return self
 
     @model_validator(mode="before")
     @classmethod

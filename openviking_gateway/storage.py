@@ -467,13 +467,17 @@ class ManagementStore(Database):
         def read():
             with self.connect() as c:
                 row = c.execute(
-                    "SELECT account,value FROM objects WHERE kind='keys' AND id=?", (identifier,)
+                    "SELECT o.account,o.value,e.expires FROM objects o LEFT JOIN object_expiry e "
+                    "ON (o.account,o.kind,o.id)=(e.account,e.kind,e.id) "
+                    "WHERE o.kind='keys' AND o.id=?",
+                    (identifier,),
                 ).fetchone()
-                return (
-                    {**self.decode(row["value"]), "account": row["account"], "id": identifier}
-                    if row
-                    else None
-                )
+                if not row or (row["expires"] is not None and row["expires"] <= time.time()):
+                    return None
+                value = self.decode(row["value"])
+                if value.get("expires_at", float("inf")) <= time.time():
+                    return None
+                return {**value, "account": row["account"], "id": identifier}
 
         return await self.cache.get(("auth", identifier), lambda: self.run(read))
 
