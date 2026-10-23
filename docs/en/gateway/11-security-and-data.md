@@ -16,7 +16,7 @@ By default, data is in two SQLite databases in `storage_path` (default `~/.openv
 
 | File | What it holds |
 | --- | --- |
-| `management.sqlite3` (or Redis management) | Upstreams, context profiles, gateway keys, request logs, and which upstream created each Responses response |
+| `management.sqlite3` (or Redis management) | Upstreams, context profiles, gateway keys, request logs when using the default `store` sink, and which upstream created each Responses response |
 | `kernel.sqlite3` (or Redis kernel) | The state of each conversation: the memory text added to messages, OpenViking tool rounds and their results, summaries, conversation text waiting to be saved, and the reasoning of model replies when **Restore reasoning the client drops** is on |
 
 Some of this is sensitive:
@@ -37,7 +37,7 @@ Request logs hold metadata only, never content:
 | Token counts, memory counts and timing | Tool arguments or results |
 | Saving status and issues | Any key |
 
-The gateway writes no HTTP access log, and its error messages never repeat submitted values. To read the logs in Studio, see [Requests](10-overview-and-requests.md#requests).
+The gateway writes no HTTP access log, and its error messages never repeat submitted values. The default `store` sink makes request logs available in Studio; see [Requests](10-overview-and-requests.md#requests). The `stdout` sink emits the same metadata with account and user identifiers as plain JSON; storage encryption does not apply to stdout. Log collection and access are managed by your deployment; see [Monitoring](../guides/22-gateway-operations.md#monitoring).
 
 ## What providers see {#what-providers-see}
 
@@ -71,7 +71,7 @@ Gateway data expires on its own. SQLite runs an hourly cleanup job; Redis uses k
 | --- | --- | --- |
 | Conversation state | 30 days after last use | `session_ttl_days` |
 | Cached OpenViking keys and their user records | Configured TTL from creation, without renewal | `session_ttl_days` |
-| Request logs | 30 days | `log_retention_days` |
+| Stored request logs | 30 days | `log_retention_days` |
 | Which upstream created each Responses response | 30 days | `response_ttl_seconds` |
 | Sessions and memories in OpenViking | OpenViking's own rules | — |
 
@@ -81,7 +81,7 @@ In account tenancy, issuing a gateway key for the same user can rewrite the user
 
 Redis management logs keep at most 10,000 entries per account. The list expires after `session_ttl_days` of inactivity, and reads omit entries older than that duration; `log_retention_days` and hourly log cleanup do not apply. Redis Responses routing objects expire by TTL and are not scanned during user deletion; revoked keys cannot access them.
 
-Minimums and where to set these are in [Gateway fields](13-configuration.md#gateway-fields).
+Minimums and where to set these are in [Gateway fields](13-configuration.md#gateway-fields). Retention and deletion of stdout logs are controlled by the log collector, independently of gateway cleanup.
 
 ## Redis conversation state {#redis-conversation-state}
 

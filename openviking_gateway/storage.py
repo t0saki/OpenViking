@@ -71,8 +71,9 @@ class ManagementStore(Protocol):
 class CachedManagement:
     """Share short-lived configuration and credential reads within one process."""
 
-    def __init__(self, port: ManagementStore):
+    def __init__(self, port: ManagementStore, log=None):
         self.port = port
+        self.log = port.log if log is None else log
         self.cache = TTLCache(ttl=2, capacity=2048)
 
     async def initialize(self):
@@ -121,9 +122,6 @@ class CachedManagement:
 
     async def credential(self, identifier):
         return await self.cache.get(("auth", identifier), lambda: self.port.credential(identifier))
-
-    async def log(self, account, value, user_id=None):
-        await self.port.log(account, value, user_id)
 
     async def logs(self, account, limit=200, user_id=None):
         return await self.port.logs(account, limit, user_id)

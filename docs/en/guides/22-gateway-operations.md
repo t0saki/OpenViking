@@ -304,13 +304,17 @@ Use AOF (`appendonly yes`, `appendfsync everysec`, `aof-use-rdb-preamble yes`) w
 
 ## Monitoring and routine checks {#monitoring}
 
-The gateway exports no metrics such as Prometheus and writes no HTTP access log. Check its state on Studio's [Overview and Requests](../gateway/10-overview-and-requests.md#overview) tabs, or through the management API's `/gateway/admin/overview` and `/gateway/admin/logs`.
+The gateway exports no metrics such as Prometheus. By default, request logs are stored and available on Studio's [Overview and Requests](../gateway/10-overview-and-requests.md#overview) tabs, or through the management API's `/gateway/admin/overview` and `/gateway/admin/logs`.
+
+Set `request_log_sink: "stdout"` in the gateway configuration, or `OPENVIKING_GATEWAY_REQUEST_LOG_SINK=stdout`, and restart to send new records only to stdout. Each finished model request and background saving status change produces one JSON line, flushed immediately even when stdout is a pipe. Each record includes `time` (Unix seconds when written), `account`, `user_id` (possibly `null` for older saving state), and the existing request metrics at the top level, such as `kind`, `status`, `input_tokens` and `cached_tokens`. Credentials, prompts and replies are not included. The collector controls retention and access to these records; `log_retention_days` applies only to stored logs.
+
+When `management_api: false` disables Studio and the management endpoints, configure the stdout sink and collect process or container logs for monitoring. The same workflow applies with the stdout sink when management is enabled: the Requests page and Overview's request figures have no new records. Previously stored records remain visible until they expire.
 
 ### Routine checks {#day-to-day-operations}
 
 - **Liveness:** `/health`, which is the server's health check in an embedded deployment and the gateway's own in a standalone one.
-- **Gateway health:** the **First-call cache hit rate** on the Overview tab ([what it means](../gateway/10-overview-and-requests.md#overview)). If it drops noticeably, see [The first-call cache hit rate dropped](../gateway/12-troubleshooting.md#the-first-call-cache-hit-rate-dropped).
-- **A single request:** expand its row on the Requests tab; see [Requests](../gateway/10-overview-and-requests.md#requests).
+- **Gateway health:** the **First-call cache hit rate** on the Overview tab ([what it means](../gateway/10-overview-and-requests.md#overview)), or calculate it from stdout metrics: within an account and time window, select `kind: "user"` records and divide the sum of `first_upstream_cached_tokens` by the sum of `first_upstream_input_tokens`. For each missing field, use that record's `cached_tokens` or `input_tokens` instead (missing usage counts as 0). A zero denominator means no reported input usage. These are top-level fields, not a nested `metrics` object. If the rate drops noticeably, see [The first-call cache hit rate dropped](../gateway/12-troubleshooting.md#the-first-call-cache-hit-rate-dropped).
+- **A single request:** expand its row on the Requests tab, or find its stdout record by `account`, `user_id` and `request_id`; see [Requests](../gateway/10-overview-and-requests.md#requests). Background saving events use `kind: "capture"` and identify the conversation with its hashed `session`.
 - **Public address:** `public_url` still matches the address clients use; see [Public address](#public-address).
 - **Backups:** the storage directory and, with encryption on, the encryption root key; see [Backups and recovery](../gateway/11-security-and-data.md#backups).
 

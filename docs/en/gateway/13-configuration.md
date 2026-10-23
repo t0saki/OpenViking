@@ -43,7 +43,8 @@ An embedded and a standalone gateway share most fields; they differ in which fil
 | `min_server_version` | Both | `0.4.16` | Version string | Lowest OpenViking Server version a standalone gateway accepts |
 | `session_ttl_days` | Both | `30` | 1 or more | Days of inactivity before a conversation expires; also the fixed lifetime of cached OpenViking keys and their user records |
 | `response_ttl_seconds` | Both | `2592000` (30 days) | 60 or more | Seconds to remember which upstream created a Responses response |
-| `log_retention_days` | Both | `30` | 1 or more | Days to keep request logs |
+| `request_log_sink` | Both | `store` | `store`, `stdout` | Write request and background saving logs to storage or one flushed JSON line per record on stdout; see [Monitoring](../guides/22-gateway-operations.md#monitoring) |
+| `log_retention_days` | Both | `30` | 1 or more | Days to keep request logs in storage; stdout retention is managed by the log collector |
 | `max_body_bytes` | Both | `33554432` (32 MiB) | 1,024 or more | Size limit for requests and uploads, in bytes |
 | `upstream_timeout_seconds` | Both | `600` | More than 0 | Timeout for provider requests |
 | `health_interval_seconds` | Both | `60` | 1 or more | Seconds between OpenViking status checks |

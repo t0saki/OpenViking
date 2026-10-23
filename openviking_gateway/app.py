@@ -10,10 +10,12 @@ their own routes and startup checks.
 import asyncio
 import contextlib
 import logging
+import sys
 import time
 from contextlib import asynccontextmanager
 
 import aiohttp
+import orjson
 from fastapi import FastAPI, HTTPException, Request, WebSocket
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
@@ -50,6 +52,14 @@ VIKING_DETAILS = {
     "root_key_not_allowed": "A root API key cannot back a gateway key; use a user's API key.",
     "openviking_version_mismatch": "OpenViking Server is older than this gateway requires.",
 }
+
+
+async def stdout_log(account, value, user_id=None):
+    """Write each request record as JSON and flush it to the process output."""
+    sys.stdout.buffer.write(
+        orjson.dumps({"time": time.time(), "account": account, "user_id": user_id, **value}) + b"\n"
+    )
+    sys.stdout.buffer.flush()
 
 
 def open_stores(config: GatewayConfig, encryptor):
@@ -97,7 +107,8 @@ def open_stores(config: GatewayConfig, encryptor):
     # Storage threads may still wait on this loop for the encryptor.
     if settings.kernel == "sqlite":
         close.push_async_callback(asyncio.to_thread, store.close)
-    return store, CachedManagement(management), close.aclose
+    log = stdout_log if config.request_log_sink == "stdout" else None
+    return store, CachedManagement(management, log=log), close.aclose
 
 
 def create_app(config: GatewayConfig, *, openviking_url: str, vlm_source=None, encryptor=None):

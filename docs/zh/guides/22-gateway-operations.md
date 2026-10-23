@@ -304,13 +304,17 @@ v0.5 网关用自己的密钥加密数据，这些数据会在首次启动时转
 
 ## 观测与例行检查 {#monitoring}
 
-网关不导出 Prometheus 之类的监控指标，也不写 HTTP 访问日志。运行状态通过 Studio 的[概览和请求日志](../gateway/10-overview-and-requests.md#overview)标签页查看，或者调用管理 API 的 `/gateway/admin/overview` 和 `/gateway/admin/logs`。
+网关不导出 Prometheus 之类的监控指标。请求日志默认写入存储，可通过 Studio 的[概览和请求日志](../gateway/10-overview-and-requests.md#overview)标签页查看，或者调用管理 API 的 `/gateway/admin/overview` 和 `/gateway/admin/logs`。
+
+在网关配置中设置 `request_log_sink: "stdout"`，或设置 `OPENVIKING_GATEWAY_REQUEST_LOG_SINK=stdout`，重启后新记录只写到 stdout。每个完成的模型请求和后台保存状态变更各产生一行 JSON，即使 stdout 接到管道也会立即刷新。每条记录包含 `time`（写入时的 Unix 秒数）、`account`、`user_id`（旧保存状态可能为 `null`），以及位于顶层的现有请求指标，如 `kind`、`status`、`input_tokens` 和 `cached_tokens`。不包含凭证、提示词或回复。采集系统负责这些记录的保留期限和访问权限；`log_retention_days` 只作用于存储中的日志。
+
+当 `management_api: false` 关闭 Studio 和管理接口时，配置 stdout sink 并采集进程或容器日志进行观测。管理面开启但选择 stdout sink 时也采用同样流程：请求日志页和概览中的请求统计不会收到新记录。之前已存储的记录仍可见，直到过期。
 
 ### 例行检查 {#day-to-day-operations}
 
 - **进程存活：** `/health`。嵌入部署用的是 Server 的健康检查，独立部署用的是网关自己的。
-- **网关健康：** **概览**标签页上的**首次调用缓存命中率**（[含义](../gateway/10-overview-and-requests.md#overview)）。明显下降时，见[首次调用缓存命中率下降](../gateway/12-troubleshooting.md#the-first-call-cache-hit-rate-dropped)。
-- **单个请求：** 在**请求日志**标签页展开对应的行，见[请求日志](../gateway/10-overview-and-requests.md#requests)。
+- **网关健康：** **概览**标签页上的**首次调用缓存命中率**（[含义](../gateway/10-overview-and-requests.md#overview)），或从 stdout 指标计算：在同一账号和时间窗口内，筛选 `kind: "user"` 的记录，将 `first_upstream_cached_tokens` 的总和除以 `first_upstream_input_tokens` 的总和。某个字段缺失时，用该条记录的 `cached_tokens` 或 `input_tokens` 代替（未报告的用量按 0 计）。分母为零表示没有报告输入用量。这些字段位于顶层，不在嵌套的 `metrics` 对象中。命中率明显下降时，见[首次调用缓存命中率下降](../gateway/12-troubleshooting.md#the-first-call-cache-hit-rate-dropped)。
+- **单个请求：** 在**请求日志**标签页展开对应的行，或按 `account`、`user_id` 和 `request_id` 查找 stdout 记录；见[请求日志](../gateway/10-overview-and-requests.md#requests)。后台保存事件的 `kind` 为 `capture`，通过哈希后的 `session` 标识对话。
 - **对外地址：** `public_url` 仍是客户端访问的地址，见[对外地址](#public-address)。
 - **备份：** 存储目录；开启加密时还有加密根密钥，见[备份与恢复](../gateway/11-security-and-data.md#backups)。
 

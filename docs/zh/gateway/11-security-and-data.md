@@ -37,7 +37,7 @@ SQLite 文件只有运行网关的系统用户能读取；Redis 由网络和 ACL
 | token 数、记忆条数和耗时 | 工具参数和结果 |
 | 保存状态和异常 | 任何密钥 |
 
-网关不写 HTTP 访问日志，错误信息也不回显提交的值。在 Studio 中查看日志，见[请求日志](10-overview-and-requests.md#requests)。
+网关不写 HTTP 访问日志，错误信息也不回显提交的值。默认的 `store` sink 使请求日志可在 Studio 中查看，见[请求日志](10-overview-and-requests.md#requests)。`stdout` sink 将相同元数据连同账号和用户标识输出为明文 JSON；存储加密不作用于 stdout。日志采集和访问由部署环境管理，见[观测](../guides/22-gateway-operations.md#monitoring)。
 
 ## 服务商能看到什么 {#what-providers-see}
 
@@ -71,7 +71,7 @@ SQLite 文件只有运行网关的系统用户能读取；Redis 由网络和 ACL
 | --- | --- | --- |
 | 对话状态 | 最后一次使用后 30 天 | `session_ttl_days` |
 | 缓存的 OpenViking 密钥及其用户记录 | 从创建时起经过配置的 TTL，不续期 | `session_ttl_days` |
-| 请求日志 | 30 天 | `log_retention_days` |
+| 存储的请求日志 | 30 天 | `log_retention_days` |
 | Responses 响应与上游的对应关系 | 30 天 | `response_ttl_seconds` |
 | OpenViking 中的会话和记忆 | 遵循 OpenViking 自己的规则 | — |
 
@@ -81,7 +81,7 @@ OpenViking 密钥记录过期，或被使用 `volatile-lru` 的 Redis 后端驱�
 
 Redis 管理日志每个账号最多保留 10,000 条，整个列表在 `session_ttl_days` 天无新日志后过期，读取也跳过早于该时长的条目；`log_retention_days` 和每小时日志清理不适用于 Redis。Redis Responses 路由记录按 TTL 过期，删除用户时不扫描它们；被吊销的密钥无法访问这些记录。
 
-这些设置的最小值和配置位置见[网关字段](13-configuration.md#gateway-fields)。
+这些设置的最小值和配置位置见[网关字段](13-configuration.md#gateway-fields)。 stdout 日志的保留和删除由日志采集器控制，与网关清理独立。
 
 ## Redis 对话状态 {#redis-conversation-state}
 

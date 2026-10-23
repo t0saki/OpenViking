@@ -43,7 +43,8 @@ description: 查询 OpenViking 网关的配置字段、环境变量、上下文�
 | `min_server_version` | 两者 | `0.4.16` | 版本号 | 独立网关要求的 OpenViking Server 最低版本 |
 | `session_ttl_days` | 两者 | `30` | 1 及以上 | 对话闲置多少天后过期；也决定缓存的 OpenViking 密钥及其用户记录的固定寿命 |
 | `response_ttl_seconds` | 两者 | `2592000`（30 天） | 60 及以上 | Responses 响应与上游的对应关系保留多少秒 |
-| `log_retention_days` | 两者 | `30` | 1 及以上 | 请求日志保留天数 |
+| `request_log_sink` | 两者 | `store` | `store`, `stdout` | 将请求和后台保存日志写入存储，或以每条一行 JSON 写到 stdout 并立即刷新；见[观测](../guides/22-gateway-operations.md#monitoring) |
+| `log_retention_days` | 两者 | `30` | 1 及以上 | 存储中的请求日志保留天数；stdout 的保留期限由日志采集系统管理 |
 | `max_body_bytes` | 两者 | `33554432`（32 MiB） | 1,024 及以上 | 请求和上传的大小上限，单位为字节 |
 | `upstream_timeout_seconds` | 两者 | `600` | 大于 0 | 服务商请求超时 |
 | `health_interval_seconds` | 两者 | `60` | 1 及以上 | 检查 OpenViking 状态的间隔秒数 |
