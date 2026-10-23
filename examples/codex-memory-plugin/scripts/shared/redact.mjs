@@ -37,6 +37,13 @@
  * placeholders and well-formed `{{ov_privacy:...}}` references are never
  * scanned or touched, so replaying a pending entry or redacting twice changes
  * nothing.
+ *
+ * Redaction is opt-in (DEFAULT_REDACT_TIER is "off"). The OpenViking server
+ * already extracts the credentials it finds in Session messages into the
+ * user's privacy config and stores `{{ov_privacy:...}}` references, which a
+ * raw read restores. A secret redacted here never reaches the server, so it
+ * is not saved there and cannot be restored: turn this on only when secrets
+ * must not leave the machine.
  */
 
 import { createHmac, randomBytes } from "node:crypto";
@@ -48,7 +55,10 @@ import { stateDir } from "./workspace-identity.mjs";
 
 /** Ordered, cumulative: each tier runs its own rules and every earlier tier's. */
 export const REDACT_TIERS = Object.freeze([...TIERS]);
-export const DEFAULT_REDACT_TIER = "standard";
+/** What an unset tier means: redaction is opt-in (see above). */
+export const DEFAULT_REDACT_TIER = "off";
+/** What "on" (`true`, `"yes"`) or a tier name this build does not know selects. */
+export const ENABLED_REDACT_TIER = "standard";
 
 /**
  * The most characters of one string that are scanned. It matches the
@@ -66,24 +76,23 @@ export const MAX_SCAN_CHARS = 1_000_000;
 export const MAX_SCAN_TOTAL_CHARS = 2_000_000;
 
 const OFF_WORDS = new Set(["off", "false", "0", "no"]);
-const ON_WORDS = new Set(["on", "true", "1", "yes"]);
 
 /**
  * Map a configured value onto a tier name. Anything that says "no" (`false`,
- * `0`, `"off"`, any case) is `off`; a value naming no tier this build knows (a
- * newer config, a typo) falls back to the default, so it can only redact more.
+ * `0`, `"off"`, any case) is `off`, and an unset value is `fallback`. Any
+ * other value asked for redaction: "on" and a tier name this build does not
+ * know (a newer config, a typo) select ENABLED_REDACT_TIER, never `off`.
  */
 export function normalizeRedactTier(value, fallback = DEFAULT_REDACT_TIER) {
   const safeFallback = REDACT_TIERS.includes(fallback) ? fallback : DEFAULT_REDACT_TIER;
   if (value === false || value === 0) return "off";
-  if (value === true || value === 1) return DEFAULT_REDACT_TIER;
+  if (value === true || value === 1) return ENABLED_REDACT_TIER;
   if (typeof value !== "string") return safeFallback;
   const word = value.trim().toLowerCase();
   if (!word) return safeFallback;
   if (OFF_WORDS.has(word)) return "off";
   if (REDACT_TIERS.includes(word)) return word;
-  if (ON_WORDS.has(word)) return DEFAULT_REDACT_TIER;
-  return safeFallback;
+  return ENABLED_REDACT_TIER;
 }
 
 // ---------------------------------------------------------------------------
@@ -178,7 +187,7 @@ export function compileRuleSet(rules = SECRET_RULES, globalAllowlists = GLOBAL_A
     globals: compileAllowlists(globalAllowlists),
     rules: rules.map((rule) => ({
       id: rule.id,
-      tierIndex: REDACT_TIERS.indexOf(rule.tier || DEFAULT_REDACT_TIER),
+      tierIndex: REDACT_TIERS.indexOf(rule.tier || ENABLED_REDACT_TIER),
       keywords: (rule.keywords || []).map((k) => String(k).toLowerCase()),
       entropy: Number(rule.entropy) || 0,
       secretGroup: Number(rule.secretGroup) || 0,

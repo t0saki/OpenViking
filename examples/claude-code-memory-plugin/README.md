@@ -203,7 +203,7 @@ Recall covers skills as well as memories: the server-assembled context block can
 | `OPENVIKING_COMMIT_TOKEN_THRESHOLD`    | `20000`      | Pending-token threshold for client-driven commit                         |
 | `OPENVIKING_RESUME_CONTEXT_BUDGET`     | `32000`      | Token budget when fetching archive overview on session resume            |
 | `OPENVIKING_CAPTURE_FILTERS`           | `""`         | CSV of regex rules applied to every captured turn — see [Input filters](#input-filters) |
-| `OPENVIKING_CAPTURE_REDACT`            | `standard`   | Secret redaction before a turn is sent or queued: `off`, `standard`, `strict` — see [Secret redaction](#secret-redaction) |
+| `OPENVIKING_CAPTURE_REDACT`            | `off`        | Secret redaction before a turn is sent or queued: `off`, `standard`, `strict` — see [Secret redaction](#secret-redaction) |
 
 #### Session-start injection
 
@@ -330,17 +330,19 @@ In `ovcli.conf` the rules are a JSON array, so backslashes are doubled:
 
 ### Secret redaction
 
-Before a captured turn is sent to OpenViking — or written to the local pending queue when the server is unreachable — the plugin replaces credentials in it: tokens a tool printed, a `cat .env`, a key pasted into the prompt. Detection is the [gitleaks](https://github.com/gitleaks/gitleaks) default rule set as gitleaks ships it, plus rules for OpenViking's own keys, run on this machine. Only the secret is replaced, so `API_KEY=sk-…` is stored as `API_KEY={{ov_redacted:<rule>:<tag>}}`; `<tag>` is 8 hex characters of an HMAC under a key kept in `~/.openviking/state/redact/` (or `OPENVIKING_STATE_DIR`), so the same secret gets the same tag but the tag cannot be checked against a guess elsewhere.
+When it is on, before a captured turn is sent to OpenViking — or written to the local pending queue when the server is unreachable — the plugin replaces credentials in it: tokens a tool printed, a `cat .env`, a key pasted into the prompt. Detection is the [gitleaks](https://github.com/gitleaks/gitleaks) default rule set as gitleaks ships it, plus rules for OpenViking's own keys, run on this machine. Only the secret is replaced, so `API_KEY=sk-…` is stored as `API_KEY={{ov_redacted:<rule>:<tag>}}`; `<tag>` is 8 hex characters of an HMAC under a key kept in `~/.openviking/state/redact/` (or `OPENVIKING_STATE_DIR`), so the same secret gets the same tag but the tag cannot be checked against a guess elsewhere.
+
+Redaction is off by default because it conflicts with the server's [Session privacy extraction](https://github.com/volcengine/OpenViking/blob/main/docs/en/concepts/13-privacy.md#session-privacy-extraction-and-restore). The server already moves the credentials it finds in Session messages into your privacy config and restores them on a `raw=true` read. A secret redacted here never reaches the server, so it is not saved there and cannot be restored. Turn it on only when secrets must not leave this machine, for example when the server is shared or hosted by someone else.
 
 `captureRedact` / `OPENVIKING_CAPTURE_REDACT` picks the tier:
 
 | Tier | What it redacts |
 |------|-----------------|
-| `standard` (default) | Every provider-specific gitleaks rule (GitHub, AWS, OpenAI, Anthropic, Slack, Stripe, private keys, JWTs, …), plus OpenViking's own keys (`ovgw_`, `ovgm_`, `ovat_`, `ovrt_`, `ovac_`). A few gitleaks rules too slow for JavaScript's regex engine are left out; `lib/secret-rules.mjs` lists them |
+| `standard` | Every provider-specific gitleaks rule (GitHub, AWS, OpenAI, Anthropic, Slack, Stripe, private keys, JWTs, …), plus OpenViking's own keys (`ovgw_`, `ovgm_`, `ovat_`, `ovrt_`, `ovac_`). A few gitleaks rules too slow for JavaScript's regex engine are left out; `lib/secret-rules.mjs` lists them |
 | `strict` | Also gitleaks' `generic-api-key`: any high-entropy value after a key-ish name such as `password=` or `API_TOKEN:`. A `.env` value with no provider format (`SECRET_KEY=…`, `DB_PASSWORD=…`) is only caught here |
-| `off` | Nothing (`false`, `0` and `no` also mean off) |
+| `off` (default) | Nothing (`false`, `0` and `no` also mean off) |
 
-It is a user-level setting: set it in `ovcli.conf`'s `plugin` section or the environment. A repository's `.openviking/config.json` cannot change it, and an unknown tier name falls back to `standard`. Redaction runs after `captureFilters`, on every text field of the message, including tool input and output. A string the scanner fails on is replaced whole with `{{ov_redacted:scan-failed:<tag>}}`, and text past a string's first 1,000,000 characters, or past 2,000,000 characters scanned in one send, with `{{ov_redacted:scan-oversize:<tag>}}`, rather than sent unscanned.
+It is a user-level setting: set it in `ovcli.conf`'s `plugin` section or the environment. A repository's `.openviking/config.json` cannot change it, and `true` or an unknown tier name means `standard`. Redaction runs after `captureFilters`, on every text field of the message, including tool input and output. A string the scanner fails on is replaced whole with `{{ov_redacted:scan-failed:<tag>}}`, and text past a string's first 1,000,000 characters, or past 2,000,000 characters scanned in one send, with `{{ov_redacted:scan-oversize:<tag>}}`, rather than sent unscanned.
 
 ### Plugin settings in `ovcli.conf`
 

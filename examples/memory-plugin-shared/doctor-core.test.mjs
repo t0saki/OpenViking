@@ -215,7 +215,7 @@ test("report render lists problems in the summary and sets the exit code", () =>
   assert.match(text, /⚠ meh → do this/);
 });
 
-test("reportToggles shows the capture redaction tier and warns when it is off", () => {
+test("reportToggles shows the capture redaction tier; off is the default, not a warning", () => {
   const base = { autoRecall: true, autoCapture: true, noAutoInject: false };
   const on = createReport();
   reportToggles(on, { ...base, captureRedact: "standard" }, { harness: "claude-code" }, ["auto-capture on"]);
@@ -224,11 +224,8 @@ test("reportToggles shows the capture redaction tier and warns when it is off", 
 
   const off = createReport();
   reportToggles(off, { ...base, captureRedact: "off" }, { harness: "claude-code" }, ["auto-capture on"]);
-  assert.match(off.sections[0].findings[0].title, /capture redaction OFF$/);
-  const warn = off.sections[0].findings.find((f) => f.level === "warn");
-  assert.match(warn.title, /capture redaction is off/);
-  assert.match(warn.fix, /OPENVIKING_CAPTURE_REDACT/);
-  assert.match(warn.fix, /plugin\.captureRedact/);
+  assert.equal(off.sections[0].findings[0].title, "toggles  auto-capture on, capture redaction off");
+  assert.equal(off.sections[0].findings.length, 1);
 });
 
 test("lintServerConf flags the plugin-only ov.conf keys a server refuses to start on", () => {

@@ -219,7 +219,7 @@ async function notePendingWrite(type, sessionId, payload, result, enqueueOptions
 
 /**
  * Add one message. The payload is secret-redacted under `redactTier` (the
- * caller's resolved `captureRedact`, default "standard") before the POST, and
+ * caller's resolved `captureRedact`, default "off") before the POST, and
  * the same redacted copy is what a retryable failure parks in the queue.
  */
 export async function addAgentMessage(fetchJSON, sessionId, payload, { redactTier } = {}) {

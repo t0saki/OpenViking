@@ -90,7 +90,7 @@ const RETRYABLE = () => ({ ok: false, status: 503, error: { code: "UNAVAILABLE" 
 test("captureRedact is a user-level capture knob whose tiers are the engine's", () => {
   const knob = KNOB_BY_NAME.get("captureRedact");
   assert.ok(knob, "declared in KNOBS");
-  assert.equal(knob.default, "standard");
+  assert.equal(knob.default, "off", "opt-in: the server keeps Session credentials restorable");
   assert.equal(knob.env, "OPENVIKING_CAPTURE_REDACT");
   assert.equal(knob.capability, "capture");
   assert.deepEqual(knob.values, [...REDACT_TIERS], "the enum and the engine agree on the tiers");
@@ -99,13 +99,13 @@ test("captureRedact is a user-level capture knob whose tiers are the engine's", 
   assert.ok(pluginConfigKeys().has("captureRedact"), "the doctor knows the key");
 });
 
-test("captureRedact parses false-ish values as off and unknown tiers as the default", () => {
+test("captureRedact is off unless set, parses false-ish values as off and unknown tiers as standard", () => {
   const resolve = (env, data = null) => resolveKnobs({
     env,
     layers: data ? [{ name: "file", data }] : [],
   }).settings.captureRedact;
 
-  assert.equal(resolve({}), "standard");
+  assert.equal(resolve({}), "off");
   for (const value of ["off", "OFF", "false", "False", "0", "no", " no "]) {
     assert.equal(resolve({ OPENVIKING_CAPTURE_REDACT: value }), "off", `env ${JSON.stringify(value)}`);
   }
@@ -116,7 +116,7 @@ test("captureRedact parses false-ish values as off and unknown tiers as the defa
   assert.equal(resolve({ OPENVIKING_CAPTURE_REDACT: "Strict" }), "strict");
   assert.equal(resolve({}, { captureRedact: true }), "standard");
   assert.equal(resolve({}, { captureRedact: "yes" }), "standard");
-  // A tier this build does not know redacts at the default rather than keeping
+  // A tier this build does not know still asks for redaction: standard, never
   // a weaker value from a lower layer.
   assert.equal(resolve({ OPENVIKING_CAPTURE_REDACT: "paranoid" }, { captureRedact: "off" }), "standard");
   assert.equal(resolve({}, { captureRedact: "paranoid" }), "standard");
@@ -168,7 +168,7 @@ const BATCH_SENDERS = {
 };
 
 for (const [name, send] of Object.entries(BATCH_SENDERS)) {
-  test(`${name} posts redacted copies at the caller's tier (standard by default)`, withScratch(async () => {
+  test(`${name} posts redacted copies at the caller's tier (off by default)`, withScratch(async () => {
     const generic = { role: "user", content: `API_TOKEN=${GENERIC}` };
     const wire = async (redactTier) => {
       const { bodies, fetchJSON } = recorder();
@@ -180,7 +180,7 @@ for (const [name, send] of Object.entries(BATCH_SENDERS)) {
       return bodies.map(({ body }) => body).join("\n");
     };
 
-    const standard = await wire();
+    const standard = await wire("standard");
     assert.ok(!standard.includes(GITHUB_PAT), "no plaintext on the wire");
     assert.match(standard, /export GITHUB_TOKEN=\{\{ov_redacted:github-pat:[0-9a-f]{8}\}\}"/);
     assert.ok(standard.includes('"tool_id":"call_1"') && standard.includes('"tool_name":"bash"'), "metadata is kept");
@@ -190,8 +190,9 @@ for (const [name, send] of Object.entries(BATCH_SENDERS)) {
     assert.ok(!strict.includes(GITHUB_PAT) && !strict.includes(GENERIC));
     assert.match(strict, /API_TOKEN=\{\{ov_redacted:generic-api-key:/);
 
-    const off = await wire("off");
-    assert.ok(off.includes(GITHUB_PAT) && off.includes(GENERIC), "off sends the payloads as they are");
+    for (const off of [await wire("off"), await wire()]) {
+      assert.ok(off.includes(GITHUB_PAT) && off.includes(GENERIC), "off sends the payloads as they are");
+    }
   }));
 }
 
@@ -199,6 +200,7 @@ test("sendSessionMessages queues the redacted copy after a retryable failure", w
   const { bodies, fetchJSON } = recorder(RETRYABLE);
   const res = await sendSessionMessages(fetchJSON, "s-1", [toolPayload(), toolPayload()], {
     enqueueOnRetryable: true,
+    redactTier: "standard",
   });
   assert.equal(res.queued, 2);
   assert.ok(bodies.every(({ body }) => !body.includes(GITHUB_PAT)));
@@ -212,7 +214,7 @@ test("sendSessionMessages queues the redacted copy after a retryable failure", w
 
 test("addAgentMessage redacts the POST and the entry it parks", withScratch(async (dir) => {
   const { bodies, fetchJSON } = recorder(RETRYABLE);
-  const result = await addAgentMessage(fetchJSON, "s-1", toolPayload());
+  const result = await addAgentMessage(fetchJSON, "s-1", toolPayload(), { redactTier: "standard" });
   assert.equal(result.pendingQueued, true);
   assert.ok(!bodies[0].body.includes(GITHUB_PAT));
   const files = queuedFiles(dir);
@@ -220,23 +222,23 @@ test("addAgentMessage redacts the POST and the entry it parks", withScratch(asyn
   assert.ok(!files[0].includes(GITHUB_PAT));
 
   const off = recorder();
-  await addAgentMessage(off.fetchJSON, "s-1", toolPayload(), { redactTier: "off" });
-  assert.ok(off.bodies[0].body.includes(GITHUB_PAT));
+  await addAgentMessage(off.fetchJSON, "s-1", toolPayload());
+  assert.ok(off.bodies[0].body.includes(GITHUB_PAT), "off by default");
 }));
 
 // ── pending queue ───────────────────────────────────────────────────────────
 
 test("enqueue redacts an addMessage payload unless the caller already did", withScratch(async (dir) => {
-  assert.equal((await enqueue("addMessage", "s-1", toolPayload())).ok, true);
-  assert.ok(!queuedFiles(dir)[0].includes(GITHUB_PAT), "default tier is standard");
+  assert.equal((await enqueue("addMessage", "s-1", toolPayload(), { redactTier: "standard" })).ok, true);
+  assert.ok(!queuedFiles(dir)[0].includes(GITHUB_PAT));
 
   rmSync(join(dir, "pending"), { recursive: true, force: true });
   await enqueue("addMessage", "s-1", { role: "user", content: `API_TOKEN=${GENERIC}` }, { redactTier: "strict" });
   assert.ok(!queuedFiles(dir)[0].includes(GENERIC));
 
   rmSync(join(dir, "pending"), { recursive: true, force: true });
-  await enqueue("addMessage", "s-1", toolPayload(), { redactTier: "off" });
-  assert.ok(queuedFiles(dir)[0].includes(GITHUB_PAT), "off writes it as it is");
+  await enqueue("addMessage", "s-1", toolPayload());
+  assert.ok(queuedFiles(dir)[0].includes(GITHUB_PAT), "off (the default) writes it as it is");
 }));
 
 test("replayPending sends a plaintext entry from an older plugin redacted", withScratch(async () => {
@@ -246,7 +248,7 @@ test("replayPending sends a plaintext entry from an older plugin redacted", with
   assert.equal((await listPending()).length, 1);
 
   const { bodies, fetchJSON } = recorder();
-  const result = await replayPending(fetchJSON, () => {});
+  const result = await replayPending(fetchJSON, () => {}, { redactTier: "standard" });
   assert.equal(result.replayed, 1);
   assert.ok(!bodies[0].body.includes(GITHUB_PAT));
   assert.match(bodies[0].body, REDACTED_RE);
@@ -259,10 +261,10 @@ test("replayPending sends a plaintext entry from an older plugin redacted", with
 
 test("a redacted entry replays byte-for-byte: redaction is idempotent", withScratch(async (dir) => {
   const first = recorder(RETRYABLE);
-  await sendSessionMessages(first.fetchJSON, "s-1", [toolPayload()], { enqueueOnRetryable: true });
+  await sendSessionMessages(first.fetchJSON, "s-1", [toolPayload()], { enqueueOnRetryable: true, redactTier: "standard" });
   const queued = JSON.parse(queuedFiles(dir)[0]).payload;
 
   const replay = recorder();
-  await replayPending(replay.fetchJSON, () => {});
+  await replayPending(replay.fetchJSON, () => {}, { redactTier: "standard" });
   assert.deepEqual(JSON.parse(replay.bodies[0].body), queued);
 }));

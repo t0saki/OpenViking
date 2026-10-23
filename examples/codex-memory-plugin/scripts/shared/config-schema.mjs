@@ -26,8 +26,7 @@
  *   values      the enum's members; anything else falls back to the default
  *   boolValues  enum only: the member a boolean-ish value (`true`/`yes`/`on`,
  *               `false`/`no`/`off`/`0`) stands for, so `false` can mean "off"
- *   unknownToDefault
- *               enum only: a value naming no member resolves to the default
+ *   unknownTo   enum only: the member a value naming no member resolves to,
  *               instead of leaving the lower layer's value standing
  *   env         OPENVIKING_* variable, the highest-priority layer
  *   aliases     older spellings, honoured forever; the doctor names them
@@ -160,16 +159,18 @@ export const KNOBS = [
   // (lib/redact.mjs); the tiers are REDACT_TIERS there, in the same order.
   // User-level only — deliberately no `workspace` key, so a repository's
   // `.openviking/config.json` cannot switch redaction off for whoever opens it.
-  // `false` means off rather than "unparseable"; a tier this build does not
-  // know (a newer config read by an older plugin) means the default, never a
-  // weaker value left over from a lower layer.
+  // Off by default: the server already moves credentials it finds in Session
+  // messages into the user's privacy config, and a secret redacted here never
+  // reaches it, so it cannot be restored later. `false` means off rather than
+  // "unparseable"; a tier this build does not know (a newer config read by an
+  // older plugin) means "standard", never a weaker value from a lower layer.
   {
     name: "captureRedact",
     type: "enum",
     values: ["off", "standard", "strict"],
-    default: "standard",
+    default: "off",
     boolValues: { true: "standard", false: "off" },
-    unknownToDefault: true,
+    unknownTo: "standard",
     env: "OPENVIKING_CAPTURE_REDACT",
     capability: "capture",
   },
@@ -348,7 +349,7 @@ export function coerceKnobValue(knob, raw, fallback) {
         if (raw === true || TRUE_WORDS.includes(lower)) return knob.boolValues.true;
         if (raw === false || FALSE_WORDS.includes(lower)) return knob.boolValues.false;
       }
-      return knob.unknownToDefault && word ? knobDefault(knob) : fallback;
+      return knob.unknownTo && word ? knob.unknownTo : fallback;
     }
     // A peer template may be one string or an ordered list of fallbacks, and
     // `String([a, b])` would quietly turn the list into one bogus template.

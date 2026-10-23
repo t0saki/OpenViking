@@ -155,6 +155,7 @@ Session.add_messages_async
    - Sensitive values belonging to the current Session use the same placeholder format, with the Session ID or its hash value: <code>&#123;&#123;ov_privacy:session:&#123;session_id&#125;:&#123;field_name&#125;&#125;&#125;</code>.
    - If a sensitive span matches registered personal credentials (`credential`), prefer the uniquely matching field's placeholder, for example <code>&#123;&#123;ov_privacy:alice:viking://~/privacy/credential/github#/values/pat&#125;&#125;</code>.
 4. **Persisted content**: matched spans are saved as placeholders; unmatched content remains unchanged. Newly extracted privacy values are saved in the current Session's config.
+5. **Client-side redaction**: a memory plugin with `captureRedact` turned on (it is off by default; see [Plugin Settings](../configuration/02-client.md#plugin-settings)) replaces secrets with <code>&#123;&#123;ov_redacted:...&#125;&#125;</code> before sending. Those values never reach the server, so they are neither extracted nor restorable.
 
 ---
 

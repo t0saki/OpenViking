@@ -171,7 +171,7 @@ claude
 | `OPENVIKING_COMMIT_TOKEN_THRESHOLD`    | `20000`       | client-driven commit 的 pending-token 阈值                         |
 | `OPENVIKING_RESUME_CONTEXT_BUDGET`     | `32000`       | resume 时拉取 archive overview 的 token 预算                       |
 | `OPENVIKING_CAPTURE_FILTERS`           | `""`          | 逗号分隔的正则规则，作用于每个被捕获的回合 —— 见[输入过滤器](#输入过滤器) |
-| `OPENVIKING_CAPTURE_REDACT`            | `standard`    | 回合发送或写入待重放队列前的密钥脱敏：`off`、`standard`、`strict` —— 见[密钥脱敏](#密钥脱敏) |
+| `OPENVIKING_CAPTURE_REDACT`            | `off`         | 回合发送或写入待重放队列前的密钥脱敏：`off`、`standard`、`strict` —— 见[密钥脱敏](#密钥脱敏) |
 
 #### 会话启动注入
 
@@ -298,17 +298,19 @@ bypass 命中时所有 hook 直接放行，不联系 OpenViking。
 
 ### 密钥脱敏
 
-被捕获的回合在发往 OpenViking 之前（服务器不可达时，在写入本地待重放队列之前），插件会先把其中的凭据替换掉：工具打印出来的 token、一次 `cat .env`、贴进提示词里的 key。检测规则是 [gitleaks](https://github.com/gitleaks/gitleaks) 原样发布的默认规则集，外加识别 OpenViking 自己 key 的规则，在本机运行。只替换密钥本身，所以 `API_KEY=sk-…` 存下来是 `API_KEY={{ov_redacted:<rule>:<tag>}}`；`<tag>` 是 HMAC 的前 8 位十六进制，密钥保存在 `~/.openviking/state/redact/`（或 `OPENVIKING_STATE_DIR`）下，因此同一个密钥得到同一个 tag，但离开本机无法用猜测值去核对 tag。
+开启后，被捕获的回合在发往 OpenViking 之前（服务器不可达时，在写入本地待重放队列之前），插件会先把其中的凭据替换掉：工具打印出来的 token、一次 `cat .env`、贴进提示词里的 key。检测规则是 [gitleaks](https://github.com/gitleaks/gitleaks) 原样发布的默认规则集，外加识别 OpenViking 自己 key 的规则，在本机运行。只替换密钥本身，所以 `API_KEY=sk-…` 存下来是 `API_KEY={{ov_redacted:<rule>:<tag>}}`；`<tag>` 是 HMAC 的前 8 位十六进制，密钥保存在 `~/.openviking/state/redact/`（或 `OPENVIKING_STATE_DIR`）下，因此同一个密钥得到同一个 tag，但离开本机无法用猜测值去核对 tag。
+
+脱敏默认关闭，因为它与服务端的[会话隐私提取](https://github.com/volcengine/OpenViking/blob/main/docs/zh/concepts/13-privacy.md#会话的隐私提取与读取还原)冲突。服务端已经会把会话消息中识别出的凭据存入你的隐私配置，并在 `raw=true` 读取时还原。在这里被脱敏的密钥根本不会到达服务端，因此服务端存不下，也无法还原。只有在密钥不能离开本机时才开启它，例如服务端是共享的或由他人托管。
 
 `captureRedact` / `OPENVIKING_CAPTURE_REDACT` 选择档位：
 
 | 档位 | 脱敏范围 |
 |------|----------|
-| `standard`（默认） | gitleaks 所有针对具体服务的规则（GitHub、AWS、OpenAI、Anthropic、Slack、Stripe、私钥、JWT 等），外加 OpenViking 自己签发的 key（`ovgw_`、`ovgm_`、`ovat_`、`ovrt_`、`ovac_`）。少数在 JavaScript 正则引擎下过慢的 gitleaks 规则未启用，`lib/secret-rules.mjs` 里列出了它们 |
+| `standard` | gitleaks 所有针对具体服务的规则（GitHub、AWS、OpenAI、Anthropic、Slack、Stripe、私钥、JWT 等），外加 OpenViking 自己签发的 key（`ovgw_`、`ovgm_`、`ovat_`、`ovrt_`、`ovac_`）。少数在 JavaScript 正则引擎下过慢的 gitleaks 规则未启用，`lib/secret-rules.mjs` 里列出了它们 |
 | `strict` | 另加 gitleaks 的 `generic-api-key`：任何跟在 `password=`、`API_TOKEN:` 这类键名后面的高熵值。没有服务特征格式的 `.env` 值（`SECRET_KEY=…`、`DB_PASSWORD=…`）只有这一档能识别 |
-| `off` | 不脱敏（`false`、`0`、`no` 也表示关闭） |
+| `off`（默认） | 不脱敏（`false`、`0`、`no` 也表示关闭） |
 
-这是用户级配置：写在 `ovcli.conf` 的 `plugin` 段或环境变量里。仓库里的 `.openviking/config.json` 改不了它；不认识的档位名按 `standard` 处理。脱敏在 `captureFilters` 之后进行，覆盖消息里的每个文本字段，包括工具的输入和输出。扫描出错的字符串会整体替换成 `{{ov_redacted:scan-failed:<tag>}}`，单个字符串超过 1,000,000 个字符的部分、以及一次发送中累计扫描超过 2,000,000 个字符之后的内容，都替换成 `{{ov_redacted:scan-oversize:<tag>}}`，而不是不经扫描就发出去。
+这是用户级配置：写在 `ovcli.conf` 的 `plugin` 段或环境变量里。仓库里的 `.openviking/config.json` 改不了它；`true` 和不认识的档位名都按 `standard` 处理。脱敏在 `captureFilters` 之后进行，覆盖消息里的每个文本字段，包括工具的输入和输出。扫描出错的字符串会整体替换成 `{{ov_redacted:scan-failed:<tag>}}`，单个字符串超过 1,000,000 个字符的部分、以及一次发送中累计扫描超过 2,000,000 个字符之后的内容，都替换成 `{{ov_redacted:scan-oversize:<tag>}}`，而不是不经扫描就发出去。
 
 ### 插件配置放在 `ovcli.conf`
 

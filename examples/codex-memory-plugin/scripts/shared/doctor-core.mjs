@@ -1330,15 +1330,11 @@ export function reportToggles(report, cfg, { harness = "" } = {}, toggles = []) 
   // (already resolved to a tier name by the config knob) is reported here
   // rather than by each doctor.
   const redact = typeof cfg.captureRedact === "string" ? cfg.captureRedact : "";
-  const all = redact ? [...toggles, `capture redaction ${redact === "off" ? "OFF" : redact}`] : toggles;
+  const all = redact ? [...toggles, `capture redaction ${redact}`] : toggles;
   report.info(`toggles  ${all.join(", ")}`);
   if (!cfg.autoRecall || !cfg.autoCapture || cfg.noAutoInject) {
     report.warn("one or more injection paths are switched off", toggles.join(", "),
       `check OPENVIKING_AUTO_RECALL / OPENVIKING_AUTO_CAPTURE / OPENVIKING_NO_AUTO_INJECT and ovcli.conf plugin.${harnessKey(harness)}`);
-  }
-  if (redact === "off" && cfg.autoCapture) {
-    report.warn("capture redaction is off — secrets in captured turns are sent to OpenViking as they are", "",
-      "unset OPENVIKING_CAPTURE_REDACT, or set plugin.captureRedact in ovcli.conf to \"standard\" (the default) or \"strict\"");
   }
 }
 

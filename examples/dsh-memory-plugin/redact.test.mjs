@@ -90,22 +90,24 @@ test("the client redacts before it posts, at its configured tier or an explicit 
   const bodies = recordFetch();
   const payload = { role: "user", content: `token ${GITHUB_PAT}` };
   const line = { role: "user", content: `API_TOKEN=${GENERIC}` };
-  await new OpenVikingClient(clientConfig()).addMessage("dsh-1", payload);
-  await new OpenVikingClient(clientConfig()).addMessage("dsh-1", line);
+  await new OpenVikingClient(clientConfig({ captureRedact: "standard" })).addMessage("dsh-1", payload);
+  await new OpenVikingClient(clientConfig({ captureRedact: "standard" })).addMessage("dsh-1", line);
   await new OpenVikingClient(clientConfig({ captureRedact: "strict" })).addMessage("dsh-1", line);
   await new OpenVikingClient(clientConfig({ captureRedact: "strict" })).addMessage("dsh-1", line, "", { redactTier: "off" });
   await new OpenVikingClient(clientConfig({ captureRedact: "off" })).addMessage("dsh-1", payload);
+  await new OpenVikingClient(clientConfig()).addMessage("dsh-1", payload);
   assert.equal(payload.content, `token ${GITHUB_PAT}`, "the caller's payload is not mutated");
   assert.match(JSON.parse(bodies[0]).content, /^token \{\{ov_redacted:github-pat:[0-9a-f]{8}\}\}$/);
   assert.ok(bodies[1].includes(GENERIC), "standard leaves a generic key=value alone");
   assert.ok(!bodies[2].includes(GENERIC), "strict redacts it");
   assert.ok(bodies[3].includes(GENERIC), "an explicit tier wins over the client's");
   assert.ok(bodies[4].includes(GITHUB_PAT), "off sends the payload as it is");
+  assert.ok(bodies[5].includes(GITHUB_PAT), "an unset tier is off");
 });
 
 test("resolveConfig reads captureRedact from the host input and the environment", () => {
   const env = { OPENVIKING_CLI_CONFIG_FILE: join(dir, "none.conf"), OPENVIKING_CONFIG_FILE: join(dir, "none.json"), OPENVIKING_HOME: join(dir, "home") };
-  assert.equal(resolveConfig({}, env, dir).captureRedact, "standard");
+  assert.equal(resolveConfig({}, env, dir).captureRedact, "off");
   assert.equal(resolveConfig({ captureRedact: "strict" }, env, dir).captureRedact, "strict");
   assert.equal(resolveConfig({ captureRedact: false }, env, dir).captureRedact, "off");
   assert.equal(resolveConfig({ captureRedact: "strict" }, { ...env, OPENVIKING_CAPTURE_REDACT: "0" }, dir).captureRedact, "off");
@@ -118,7 +120,7 @@ test("a captured turn is redacted on the direct POST and in the pending queue", 
       posted.push({ payload, options });
       return { ok: false, status: 503, error: { code: "UNAVAILABLE" } };
     },
-  }, runtimeConfig(), { debug() {} });
+  }, runtimeConfig({ captureRedact: "standard" }), { debug() {} });
   const session = { id: "redact-capture", header: { cwd: dir } };
   runtime.stateFor(session).ready = true;
 
@@ -159,7 +161,7 @@ test("the runtime's replay redacts an entry queued before redaction existed", as
       if (init?.body) bodies.push(String(init.body));
       return { ok: true, status: 200, result: {} };
     },
-  }, runtimeConfig(), { debug() {} });
+  }, runtimeConfig({ captureRedact: "standard" }), { debug() {} });
   await runtime.replayPendingQueue();
   assert.equal(bodies.length, 1);
   assert.ok(!bodies[0].includes(GITHUB_PAT));

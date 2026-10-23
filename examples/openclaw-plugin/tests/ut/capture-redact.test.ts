@@ -46,8 +46,9 @@ describe("captureRedact", () => {
     rmSync(stateDir, { recursive: true, force: true });
   });
 
-  it("parses to standard by default, false to off, and unknown tiers to standard", () => {
-    expect(memoryOpenVikingConfigSchema.parse({}).captureRedact).toBe("standard");
+  it("parses to off by default, false to off, and true or unknown tiers to standard", () => {
+    expect(memoryOpenVikingConfigSchema.parse({}).captureRedact).toBe("off");
+    expect(memoryOpenVikingConfigSchema.parse({ captureRedact: true }).captureRedact).toBe("standard");
     expect(memoryOpenVikingConfigSchema.parse({ captureRedact: "strict" }).captureRedact).toBe("strict");
     expect(memoryOpenVikingConfigSchema.parse({ captureRedact: false }).captureRedact).toBe("off");
     expect(memoryOpenVikingConfigSchema.parse({ captureRedact: "off" }).captureRedact).toBe("off");
@@ -58,7 +59,7 @@ describe("captureRedact", () => {
     const manifest = JSON.parse(readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "../../openclaw.plugin.json"), "utf8"));
     const schema = manifest.configSchema.properties.captureRedact;
     expect(schema.oneOf).toEqual([{ type: "string" }, { type: "boolean" }]);
-    expect(schema.default).toBe("standard");
+    expect(schema.default).toBe("off");
   });
 
   it("lets OPENVIKING_CAPTURE_REDACT outrank the plugin config", () => {
@@ -71,7 +72,7 @@ describe("captureRedact", () => {
   });
 
   it("redacts a session message before it is posted, without touching the caller's parts", async () => {
-    const { client, bodies } = makeClient();
+    const { client, bodies } = makeClient("standard");
     const parts = [
       { type: "text" as const, text: `export GITHUB_TOKEN=${GITHUB_PAT}` },
       {
@@ -105,14 +106,16 @@ describe("captureRedact", () => {
     await strict.client.addSessionMessage("s-1", "user", line);
     expect(strict.bodies()[0]).not.toContain(GENERIC);
 
-    const off = makeClient("off");
-    await off.client.addSessionMessage("s-1", "user", [{ type: "text", text: GITHUB_PAT }]);
-    expect(off.bodies()[0]).toContain(GITHUB_PAT);
+    for (const tier of ["off", undefined]) {
+      const off = makeClient(tier);
+      await off.client.addSessionMessage("s-1", "user", [{ type: "text", text: GITHUB_PAT }]);
+      expect(off.bodies()[0]).toContain(GITHUB_PAT);
+    }
   });
 
   it("is plumbed from the parsed config into the runtime's client", async () => {
     const transport = vi.fn<HttpTransport>().mockImplementation(async () => okResponse());
-    const cfg = memoryOpenVikingConfigSchema.parse({ captureRedact: "off" });
+    const cfg = memoryOpenVikingConfigSchema.parse({ captureRedact: "standard" });
     const runtime = createOpenVikingClientRuntime({
       cfg,
       rawPeerPrefix: undefined,
@@ -121,6 +124,6 @@ describe("captureRedact", () => {
     });
     const client = await runtime.getClient();
     await client.addSessionMessage("s-1", "user", [{ type: "text", text: GITHUB_PAT }]);
-    expect(String(transport.mock.calls[0]![1].body)).toContain(GITHUB_PAT);
+    expect(String(transport.mock.calls[0]![1].body)).not.toContain(GITHUB_PAT);
   });
 });

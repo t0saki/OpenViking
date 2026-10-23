@@ -192,7 +192,7 @@ async function recoverStaleProcessing(dir) {
  * @param {object} options
  * @param {number} options.createdAt - optional queue timestamp override
  * @param {string} [options.redactTier] - the captureRedact tier an addMessage
- *   payload is redacted under before it is written (default "standard")
+ *   payload is redacted under before it is written (default "off")
  * @param {boolean} [options.redacted] - the caller already redacted `payload`
  *   under its configured tier, so it is written as it is
  */
@@ -398,7 +398,7 @@ export async function cleanStale() {
  *   a background drainer can keep retrying a transient failure without
  *   burning the session-start retry budget. Exhausted and non-retryable
  *   entries are deleted exactly as in the default mode.
- * @param {string} [options.redactTier="standard"] - the captureRedact tier
+ * @param {string} [options.redactTier="off"] - the captureRedact tier
  *   every replayed addMessage payload is redacted under before it is sent
  * @returns {{ replayed: number, failed: number, skipped: number, deferred: number }}
  */

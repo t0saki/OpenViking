@@ -88,7 +88,7 @@ async function sendSerial(fetchJSON, sessionId, payloads, startIndex, opts, resu
  * @param {object} opts
  * @param {boolean} opts.enqueueOnRetryable - enqueue unsent payloads after a retryable failure
  * @param {Function} opts.onSent - called with the number of messages durably sent after each success
- * @param {string} [opts.redactTier="standard"] - the caller's resolved `captureRedact`
+ * @param {string} [opts.redactTier="off"] - the caller's resolved `captureRedact`
  * @returns {Promise<{sent:number,queued:number,enqueueFailed:number,failed:number,retryable:boolean,usedBatch:boolean,lastError:any}>}
  */
 export async function sendSessionMessages(fetchJSON, sessionId, payloads, opts = {}) {

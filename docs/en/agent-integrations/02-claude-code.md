@@ -90,7 +90,7 @@ Configuration priority: Environment variables > `ovcli.conf` > `ov.conf` > Built
 | `OPENVIKING_BYPASS_SESSION_PATTERNS` | `""` | CSV glob patterns to auto-bypass |
 | `OPENVIKING_RECALL_QUERY_FILTERS` | `""` | CSV of sed-style regex rules applied to the prompt before it becomes a query ([grammar and examples](https://github.com/volcengine/OpenViking/blob/main/examples/claude-code-memory-plugin/README.md#input-filters)) |
 | `OPENVIKING_CAPTURE_FILTERS` | `""` | CSV of sed-style regex rules applied to every captured turn (same grammar) |
-| `OPENVIKING_CAPTURE_REDACT` | `standard` | Secret redaction before a turn is sent or queued: `standard`, `strict` (adds the generic `key=value` rule) or `off`; user-level only ([details](https://github.com/volcengine/OpenViking/blob/main/examples/claude-code-memory-plugin/README.md#secret-redaction)) |
+| `OPENVIKING_CAPTURE_REDACT` | `off` | Secret redaction before a turn is sent or queued: `off`, `standard` or `strict` (adds the generic `key=value` rule). A redacted secret never reaches the server, so its Session privacy extraction cannot save or restore it; user-level only ([details](https://github.com/volcengine/OpenViking/blob/main/examples/claude-code-memory-plugin/README.md#secret-redaction)) |
 | `OPENVIKING_MEMORY_ENABLED` | (auto) | Force on/off |
 | `OPENVIKING_DEBUG` | `false` | Write logs to `~/.openviking/logs/cc-hooks.log` |
 

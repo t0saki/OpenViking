@@ -69,7 +69,7 @@ function userSessionUri(sessionId: string): string {
 
 export type OpenVikingClientOptions = {
   transport?: HttpTransport;
-  /** Secret-redaction tier for session messages (`captureRedact`); default "standard". */
+  /** Secret-redaction tier for session messages (`captureRedact`); default "off". */
   captureRedact?: string;
   headers?: Record<string, string>;
   resourcePackager?: ResourcePackager;

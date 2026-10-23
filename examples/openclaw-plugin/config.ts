@@ -49,8 +49,10 @@ export type MemoryOpenVikingConfig = {
   captureMaxLength?: number;
   /**
    * Secret redaction applied to every session message before it is sent:
-   * "off", "standard" (default) or "strict". `false` means "off"; an unknown
-   * tier name means "standard". OPENVIKING_CAPTURE_REDACT outranks this.
+   * "off" (default), "standard" or "strict". `false` means "off"; `true` or an
+   * unknown tier name means "standard". OPENVIKING_CAPTURE_REDACT outranks
+   * this. A redacted secret never reaches the server, so the server's Session
+   * privacy extraction cannot save or restore it.
    */
   captureRedact?: "off" | "standard" | "strict" | boolean;
   autoRecall?: boolean;
@@ -678,7 +680,7 @@ export const memoryOpenVikingConfigSchema = {
         Math.min(200_000, Math.floor(toNumber(cfg.captureMaxLength, DEFAULT_CAPTURE_MAX_LENGTH))),
       ),
       // The env var outranks the file, as for every other harness. Never
-      // throws: an unknown tier redacts at the default rather than failing the
+      // throws: an unknown tier redacts at "standard" rather than failing the
       // plugin's config load.
       captureRedact: normalizeRedactTier(
         getEnv("OPENVIKING_CAPTURE_REDACT")?.trim() || cfg.captureRedact,
@@ -896,9 +898,9 @@ export const memoryOpenVikingConfigSchema = {
     },
     captureRedact: {
       label: "Capture Secret Redaction",
-      placeholder: "standard",
+      placeholder: "off",
       advanced: true,
-      help: 'Replace secrets (API keys, tokens, private keys) in captured messages with {{ov_redacted:<rule>:<tag>}} before they are sent. "standard" (default), "strict" (adds the generic key=value rule) or "off". Env: OPENVIKING_CAPTURE_REDACT.',
+      help: 'Replace secrets (API keys, tokens, private keys) in captured messages with {{ov_redacted:<rule>:<tag>}} before they are sent. "off" (default), "standard" or "strict" (adds the generic key=value rule). A redacted secret never reaches the server, so its Session privacy extraction cannot save or restore it. Env: OPENVIKING_CAPTURE_REDACT.',
     },
     autoRecall: {
       label: "Auto-Recall",

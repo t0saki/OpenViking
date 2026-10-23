@@ -155,6 +155,7 @@ Session.add_messages_async
    - 当前 Session 的敏感值统一使用以下占位符，以 Session ID 或其哈希映射值标识会话：<code>&#123;&#123;ov_privacy:session:&#123;session_id&#125;:&#123;field_name&#125;&#125;&#125;</code>。
    - 若敏感片段与已登记的个人密钥（credential）匹配，则优先使用唯一匹配字段的占位符，例如 <code>&#123;&#123;ov_privacy:alice:viking://~/privacy/credential/github#/values/pat&#125;&#125;</code>。
 4. **写盘结果**：匹配成功的片段以占位符保存，未匹配内容保持原样。新提取的隐私值保存在当前 Session 的配置中。
+5. **客户端脱敏**：记忆插件开启 `captureRedact` 后（默认关闭，见[插件配置](../configuration/02-client.md#插件配置)），会在发送前把密钥替换为 <code>&#123;&#123;ov_redacted:...&#125;&#125;</code>。这些值不会到达服务端，因此既不会被提取，也无法还原。
 
 ---
 

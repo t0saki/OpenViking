@@ -16,7 +16,7 @@ type ClientRuntimeConfig = {
   userId?: string;
   headers?: Record<string, string>;
   logFindRequests: boolean;
-  /** Secret-redaction tier for session messages; the client defaults to "standard". */
+  /** Secret-redaction tier for session messages; the client defaults to "off". */
   captureRedact?: string;
 };
 

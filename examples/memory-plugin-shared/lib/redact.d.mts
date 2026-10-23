@@ -1,7 +1,7 @@
 export type RedactTier = "off" | "standard" | "strict";
 
 export interface RedactOptions {
-  /** One of REDACT_TIERS; anything else is normalised (unknown names mean "standard"). */
+  /** One of REDACT_TIERS (default "off"); anything else is normalised (unknown names mean "standard"). */
   tier?: string;
   /** Override the per-install HMAC key (tests). */
   key?: string | Uint8Array;
@@ -14,7 +14,8 @@ export interface RedactOptions {
 }
 
 export const REDACT_TIERS: readonly string[];
-export const DEFAULT_REDACT_TIER: "standard";
+export const DEFAULT_REDACT_TIER: "off";
+export const ENABLED_REDACT_TIER: "standard";
 export const MAX_SCAN_CHARS: number;
 
 export function normalizeRedactTier(value: unknown, fallback?: string): string;

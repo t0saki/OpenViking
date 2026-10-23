@@ -7,7 +7,7 @@ export interface Knob {
   max?: number;
   values?: string[];
   boolValues?: { true: string; false: string };
-  unknownToDefault?: boolean;
+  unknownTo?: string;
   env?: string;
   aliases?: string[];
   workspace?: string;

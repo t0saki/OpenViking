@@ -7,6 +7,7 @@ import test from "node:test";
 
 import {
   DEFAULT_REDACT_TIER,
+  ENABLED_REDACT_TIER,
   REDACT_TIERS,
   compileRuleSet,
   loadInstallKey,
@@ -21,7 +22,7 @@ import SECRET_RULES, { GLOBAL_ALLOWLISTS } from "./lib/secret-rules.mjs";
 // Every fake credential is assembled at runtime so this file holds no
 // contiguous token for a secret scanner (or a push-protection hook) to trip on.
 const KEY = Buffer.alloc(32, 7);
-const opts = (extra = {}) => ({ key: KEY, ...extra });
+const opts = (extra = {}) => ({ key: KEY, tier: "standard", ...extra });
 
 function randomish(length, alphabet, seed = 1) {
   let x = seed >>> 0;
@@ -134,7 +135,9 @@ test("hashes, ids and documented example keys are left alone", () => {
 
 test("tiers: standard leaves KEY=value alone, strict adds generic-api-key, off does nothing", () => {
   assert.deepEqual(REDACT_TIERS, ["off", "standard", "strict"]);
-  assert.equal(DEFAULT_REDACT_TIER, "standard");
+  assert.equal(DEFAULT_REDACT_TIER, "off");
+  assert.equal(ENABLED_REDACT_TIER, "standard");
+  assert.equal(redactText(`t ${S.githubPat}`, { key: KEY }), `t ${S.githubPat}`, "no tier means off");
   const env = `DATABASE_PASSWORD=${randomish(24, ALNUM, 40)}\nPORT=5432\n`;
   assert.equal(redactText(env, opts()), env);
   assert.match(redactText(env, opts({ tier: "strict" })), /^DATABASE_PASSWORD=\{\{ov_redacted:generic-api-key:[0-9a-f]{8}\}\}\nPORT=5432\n$/);
@@ -145,13 +148,14 @@ test("tiers: standard leaves KEY=value alone, strict adds generic-api-key, off d
   for (const [, , secret] of POSITIVES) assert.ok(!strict.includes(secret));
 });
 
-test("normalizeRedactTier maps off-ish values to off and unknown names to the default", () => {
-  for (const v of [false, 0, "false", "0", "no", "off", " Off "]) assert.equal(normalizeRedactTier(v), "off", String(v));
-  for (const v of ["standard", " STRICT "]) assert.equal(normalizeRedactTier(v), v.trim().toLowerCase());
-  for (const v of [true, 1, "yes", "on", undefined, null, "", "paranoid", {}]) {
-    assert.equal(normalizeRedactTier(v), "standard", String(v));
+test("normalizeRedactTier: off-ish and unset values are off; on and unknown names are standard", () => {
+  for (const v of [false, 0, "false", "0", "no", "off", " Off ", undefined, null, "", {}]) {
+    assert.equal(normalizeRedactTier(v), "off", String(v));
   }
-  assert.equal(normalizeRedactTier("bogus", "strict"), "strict");
+  for (const v of ["standard", " STRICT "]) assert.equal(normalizeRedactTier(v), v.trim().toLowerCase());
+  for (const v of [true, 1, "yes", "on", "paranoid"]) assert.equal(normalizeRedactTier(v), "standard", String(v));
+  assert.equal(normalizeRedactTier(undefined, "strict"), "strict");
+  assert.equal(normalizeRedactTier("bogus", "strict"), "standard");
 });
 
 test("redaction is idempotent and the tag is stable per secret and key", () => {
@@ -163,7 +167,7 @@ test("redaction is idempotent and the tag is stable per secret and key", () => {
   }
   const a = redactText(`one ${S.githubPat}`, opts());
   assert.deepEqual(tags(redactText(`two\n${S.githubPat}\n`, opts())), tags(a));
-  assert.notDeepEqual(tags(redactText(`one ${S.githubPat}`, { key: Buffer.alloc(32, 9) })), tags(a));
+  assert.notDeepEqual(tags(redactText(`one ${S.githubPat}`, { key: Buffer.alloc(32, 9), tier: "standard" })), tags(a));
   assert.notDeepEqual(tags(redactText(`one ${S.githubPat.slice(0, -1)}Q`, opts())), tags(a));
 });
 
@@ -290,7 +294,7 @@ test("the install key is created once, private, and reused; failures still redac
       assert.equal((await stat(file)).mode & 0o777, 0o600);
       assert.equal((await stat(join(dir, "redact"))).mode & 0o777, 0o700);
     }
-    assert.equal(redactText(`t ${S.githubPat}`, { env }), redactText(`t ${S.githubPat}`, { key }));
+    assert.equal(redactText(`t ${S.githubPat}`, { env, tier: "standard" }), redactText(`t ${S.githubPat}`, opts({ key })));
 
     const other = join(dir, "other");
     await mkdir(join(other, "redact"), { recursive: true });
@@ -301,7 +305,7 @@ test("the install key is created once, private, and reused; failures still redac
     await writeFile(join(dir, "blocker"), "");
     const blocked = { OPENVIKING_STATE_DIR: join(dir, "blocker", "state") };
     assert.equal(loadInstallKey({ env: blocked }).length, 32);
-    assert.deepEqual(placeholders(redactText(`t ${S.githubPat}`, { env: blocked })), ["github-pat"]);
+    assert.deepEqual(placeholders(redactText(`t ${S.githubPat}`, { env: blocked, tier: "standard" })), ["github-pat"]);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
