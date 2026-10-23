@@ -140,7 +140,7 @@ version.
 `test_storage_ports.py` runs each storage contract against SQLite, Redis standalone and
 Redis Cluster, with encryption both enabled and disabled. Redis cases skip when their
 endpoint variable is absent; configured endpoints must be reachable. Install
-`pip install "redis>=5,<7"` and run:
+`pip install "redis>=5.3.1,<7"` and run:
 
 ```bash
 export OV_TEST_REDIS=redis://127.0.0.1:6379

@@ -71,7 +71,7 @@ For example, a standalone `gateway.conf` can route OpenViking keys before any ac
 
 ## Storage providers {#storage}
 
-The default is local SQLite, with no external service. `storage.kernel` and `storage.management` each select `sqlite` or `redis`; Redis ports share one client and the settings in `storage.redis`. Install `pip install "openviking[expiry]"` for Redis; the official image already includes it. Standalone Redis and Redis Cluster are tested. Sentinel configuration is accepted but is not covered by gateway CI.
+The default is local SQLite, with no external service. `storage.kernel` and `storage.management` each select `sqlite` or `redis`; Redis ports share one client and the settings in `storage.redis`. Install `pip install -U "openviking[expiry]"` for Redis; the official image already includes it. Gateway Redis storage requires redis-py 5.3.1 or later (below 7); older clients issue `INFO` during Cluster discovery, which the minimal ACL does not permit. Standalone Redis and Redis Cluster are tested. Sentinel configuration is accepted but is not covered by gateway CI.
 
 ```json
 {

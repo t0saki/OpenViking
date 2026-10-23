@@ -59,6 +59,7 @@ def open_stores(config: GatewayConfig, encryptor):
     backend = None
     if "redis" in (settings.kernel, settings.management):
         try:
+            from redis import VERSION
             from redis.asyncio.retry import Retry
             from redis.backoff import NoBackoff
 
@@ -67,6 +68,8 @@ def open_stores(config: GatewayConfig, encryptor):
             from .redis_store import RedisBackend, RedisManagementStore
         except ImportError:
             raise RuntimeError("storage provider 'redis' requires openviking[expiry]") from None
+        if not (5, 3, 1) <= VERSION < (7,):
+            raise RuntimeError("Redis storage requires redis>=5.3.1,<7; upgrade openviking[expiry]")
         # None enables Cluster's default retries, including writes with unknown outcomes.
         handle = create_redis_client(
             settings.redis,

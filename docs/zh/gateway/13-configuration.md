@@ -71,7 +71,7 @@ description: 查询 OpenViking 网关的配置字段、环境变量、上下文�
 
 ## 存储后端 {#storage}
 
-默认使用本地 SQLite，无需外部服务。`storage.kernel` 和 `storage.management` 分别选择 `sqlite` 或 `redis`；Redis 后端共用一个客户端及 `storage.redis` 连接配置。使用 Redis 时安装 `pip install "openviking[expiry]"`，官方镜像已经包含依赖。网关 CI 覆盖 Redis 单机和 Cluster；Sentinel 配置可以通过校验，但不在网关 CI 覆盖范围内。
+默认使用本地 SQLite，无需外部服务。`storage.kernel` 和 `storage.management` 分别选择 `sqlite` 或 `redis`；Redis 后端共用一个客户端及 `storage.redis` 连接配置。使用 Redis 时安装 `pip install -U "openviking[expiry]"`，官方镜像已经包含依赖。网关 Redis 后端要求 redis-py 5.3.1 或更高版本（低于 7）；旧客户端在 Cluster 发现时会读取 `INFO`，最小 ACL 不授予此权限。网关 CI 覆盖 Redis 单机和 Cluster；Sentinel 配置可以通过校验，但不在网关 CI 覆盖范围内。
 
 ```json
 {

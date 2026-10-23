@@ -144,7 +144,9 @@ class GatewayConfig(BaseModel):
                 value[field] = override
         return value
 
-    @field_validator("client_rules", "storage", "default_upstreams", "default_profile", mode="before")
+    @field_validator(
+        "client_rules", "storage", "default_upstreams", "default_profile", mode="before"
+    )
     @classmethod
     def parse_json(cls, value):
         # OPENVIKING_GATEWAY_<FIELD> carries these sections as JSON.

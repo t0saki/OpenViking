@@ -728,3 +728,15 @@ def test_missing_redis_dependency_names_existing_extra(monkeypatch, tmp_path):
     monkeypatch.setattr(builtins, "__import__", missing_redis)
     with pytest.raises(RuntimeError, match=r"requires openviking\[expiry\]"):
         open_stores(config, None)
+
+
+def test_redis_client_version_explains_minimal_acl_requirement(monkeypatch, tmp_path):
+    import redis
+
+    from openviking_gateway.app import open_stores
+    from openviking_gateway.config import GatewayConfig
+
+    config = GatewayConfig(storage_path=str(tmp_path), storage={"management": "redis"})
+    monkeypatch.setattr(redis, "VERSION", (5, 0, 0))
+    with pytest.raises(RuntimeError, match="requires redis>=5.3.1"):
+        open_stores(config, None)
