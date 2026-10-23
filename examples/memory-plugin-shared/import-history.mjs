@@ -9,6 +9,8 @@
 //
 //   node import-history.mjs --harness claude            # dry run: what would be imported
 //   node import-history.mjs --harness claude --yes      # import it
+//   node import-history.mjs --harness claude --list     # list sessions with a preview, to pick some
+//   node import-history.mjs --harness claude --session <id>,<id> --yes   # import just those
 //
 // Nothing is sent without --yes. Run `--help` for every option.
 //
@@ -51,7 +53,7 @@ import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, parse, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 
-export const VERSION = "1.0.0";
+export const VERSION = "1.1.0";
 const USER_AGENT = `openviking-import-history/${VERSION}`;
 const BATCH_LIMIT = 100;
 
@@ -142,6 +144,12 @@ Options:
   --peer <id|none>        write under this peer instead of the derived one
   --history-dir <dir>     read sessions from here (default: ~/.claude/projects or ~/.codex/sessions)
   --max-message-chars <n> cut longer messages to this many characters (default: ${DEFAULTS.maxMessageChars})
+  --list                  list the sessions in scope, with their ids and a preview of the
+                          first and last request, so some can be picked; never writes
+  --session <id>[,<id>]   import only these sessions (repeatable). An id is the one --list
+                          prints, the import id, or a unique prefix of 8 or more characters.
+                          Picked sessions ignore --cwd, --since and --max-sessions; sessions
+                          still active are skipped. An id that matches nothing refuses the run.
   --dry-run               report only; never write (the default without --yes)
   --yes                   import
   --wait                  after importing, wait up to 120s for memory extraction to finish
@@ -171,7 +179,7 @@ export function parseArgs(argv) {
   const opts = {
     harness: "", cwd: "", allProjects: false, since: DEFAULTS.since, maxSessions: DEFAULTS.maxSessions,
     skipActive: DEFAULTS.skipActive, peer: "", historyDir: "", input: "", maxMessageChars: DEFAULTS.maxMessageChars,
-    dryRun: false, yes: false, wait: false, json: false, help: false,
+    dryRun: false, yes: false, wait: false, json: false, help: false, list: false, sessions: [],
   };
   const valueOf = (i, name) => {
     const value = argv[i + 1];
@@ -202,6 +210,13 @@ export function parseArgs(argv) {
       case "--history-dir": opts.historyDir = take(); break;
       case "--input": opts.input = take(); break;
       case "--max-message-chars": opts.maxMessageChars = positiveInt(take(), arg); break;
+      case "--list": opts.list = true; break;
+      case "--session": case "--sessions": {
+        const ids = take().split(",").map((id) => id.trim()).filter(Boolean);
+        if (!ids.length) throw new UsageError(`${arg} needs at least one session id`);
+        opts.sessions.push(...ids);
+        break;
+      }
       case "--dry-run": opts.dryRun = true; break;
       case "--yes": case "-y": opts.yes = true; break;
       case "--wait": opts.wait = true; break;
@@ -210,6 +225,7 @@ export function parseArgs(argv) {
       default: throw new UsageError(`unknown option ${argv[i]}`);
     }
   }
+  if (opts.list && opts.yes) throw new UsageError("--list only lists; drop --yes, or import the picked sessions with --session");
   return opts;
 }
 
@@ -1075,6 +1091,10 @@ export function planImport(opts, { env = process.env, now = Date.now(), connecti
   };
   const projectPeer = projectDir ? peerFor(projectDir) : null;
   const secrets = [connection?.apiKey].filter(Boolean);
+  // Sessions picked by id are wanted whatever their age or project, and
+  // however many there are; only the active-session guard still applies.
+  const picked = opts.sessions?.length ? opts.sessions : null;
+  const pickedBy = new Map(picked?.map((token) => [token, []]) || []);
 
   const skipped = { outsideWindow: 0, otherProject: 0, active: 0, empty: 0, utility: 0, overLimit: 0 };
   // An input file is read whole (and refused whole) before anything else.
@@ -1086,7 +1106,7 @@ export function planImport(opts, { env = process.env, now = Date.now(), connecti
   const candidates = [];
   for (const file of sources) {
     // A file last written before the window holds nothing newer.
-    if (sinceMs && file.mtimeMs && file.mtimeMs < sinceMs) {
+    if (!picked && sinceMs && file.mtimeMs && file.mtimeMs < sinceMs) {
       skipped.outsideWindow += 1;
       continue;
     }
@@ -1100,19 +1120,24 @@ export function planImport(opts, { env = process.env, now = Date.now(), connecti
       skipped.empty += 1;
       continue;
     }
+    if (picked) {
+      const tokens = picked.filter((token) => matchesSession(token, harness, parsed.nativeId));
+      if (!tokens.length) continue;
+      for (const token of tokens) pickedBy.get(token).push(parsed.nativeId);
+    }
     const last = lastActivity(parsed, file.mtimeMs || parsed.updatedAtMs);
     // No time to hold --since or --skip-active against.
     if (input && !last) {
       skipped.undated += 1;
       continue;
     }
-    if (sinceMs && last < sinceMs) {
+    if (!picked && sinceMs && last < sinceMs) {
       skipped.outsideWindow += 1;
       continue;
     }
     const cwd = parsed.cwd ? canonical(parsed.cwd) : "";
     const peer = peerFor(parsed.cwd || "");
-    if (projectDir) {
+    if (projectDir && !picked) {
       // One repository is one project wherever it is checked out; a peer
       // somebody named is the same everywhere and says nothing about that.
       const derived = projectPeer?.peerId && String(projectPeer.origin).includes("{");
@@ -1129,9 +1154,19 @@ export function planImport(opts, { env = process.env, now = Date.now(), connecti
     candidates.push({ ...parsed, path: file.path, lastActivityMs: last, peer });
   }
 
+  if (picked) {
+    const missing = [...pickedBy].filter(([, ids]) => ids.length === 0).map(([token]) => token);
+    const ambiguous = [...pickedBy].filter(([, ids]) => new Set(ids).size > 1).map(([token]) => token);
+    const problems = [];
+    if (missing.length) problems.push(`no session matches ${missing.map((t) => JSON.stringify(t)).join(", ")}`);
+    if (ambiguous.length) problems.push(`${ambiguous.map((t) => JSON.stringify(t)).join(", ")} matches more than one session; give more of the id`);
+    if (problems.length) throw new UsageError(`--session: ${problems.join("; ")}. Nothing was imported; run --list to see the ids`);
+  }
+
   candidates.sort((a, b) => b.lastActivityMs - a.lastActivityMs);
-  skipped.overLimit = Math.max(0, candidates.length - opts.maxSessions);
-  const sessions = candidates.slice(0, opts.maxSessions).map((candidate) => {
+  const limit = picked ? candidates.length : opts.maxSessions;
+  skipped.overLimit = Math.max(0, candidates.length - limit);
+  const sessions = candidates.slice(0, limit).map((candidate) => {
     const turns = mergeTurns(candidate.messages).map((turn) => {
       let text = redactSecrets(turn.text, secrets);
       if (text.length > opts.maxMessageChars) {
@@ -1139,7 +1174,9 @@ export function planImport(opts, { env = process.env, now = Date.now(), connecti
       }
       return { role: turn.role, text, createdAt: turn.createdAt };
     });
-    const firstUser = turns.find((turn) => turn.role === "user");
+    const userTurns = turns.filter((turn) => turn.role === "user");
+    const firstUser = userTurns[0];
+    const lastUser = userTurns.length > 1 ? userTurns[userTurns.length - 1] : null;
     return {
       id: sessionId(harness, candidate.nativeId),
       liveId: liveSessionId(harness, candidate.liveId),
@@ -1149,11 +1186,28 @@ export function planImport(opts, { env = process.env, now = Date.now(), connecti
       peerId: candidate.peer.peerId,
       lastActivity: new Date(candidate.lastActivityMs).toISOString(),
       title: (firstUser?.text || "").replace(/\s+/g, " ").slice(0, 80),
+      firstPrompt: preview(firstUser?.text),
+      lastPrompt: preview(lastUser?.text),
       chars: turns.reduce((sum, turn) => sum + turn.text.length, 0),
       turns,
     };
   });
-  return { harness, root, projectDir, projectPeer, sinceMs, activeMs, sessions, skipped, droppedMessages: input?.droppedMessages };
+  return { harness, root, projectDir, projectPeer, sinceMs, activeMs, sessions, skipped, droppedMessages: input?.droppedMessages, picked };
+}
+
+const PREVIEW_CHARS = 160;
+
+function preview(text) {
+  const flat = String(text || "").replace(/\s+/g, " ").trim();
+  return flat.length > PREVIEW_CHARS ? `${flat.slice(0, PREVIEW_CHARS - 1)}…` : flat;
+}
+
+/** A --session token names a session by its native id, its import id, or a prefix of 8+ characters. */
+function matchesSession(token, harness, nativeId) {
+  const id = String(nativeId || "");
+  if (!id) return false;
+  if (token === id || token === sessionId(harness, id)) return true;
+  return token.length >= 8 && id.startsWith(token);
 }
 
 // ---------------------------------------------------------------------------
@@ -1316,7 +1370,8 @@ export function summarize(plan, { mode, connection, results = [], serverChecked 
     historyDir: plan.root,
     server: connection.baseUrl,
     credentials: connection.credentialPath ? shortHome(connection.credentialPath, env) : connection.apiKeySource,
-    project: plan.projectDir || null,
+    project: plan.picked ? null : (plan.projectDir || null),
+    picked: plan.picked || undefined,
     projectPeer: plan.projectPeer?.peerId || null,
     window: { since: plan.sinceMs ? new Date(plan.sinceMs).toISOString() : null, skipActiveMs: plan.activeMs },
     peerNote: PLUGIN_HARNESS[plan.harness] ? undefined : `${HARNESSES[plan.harness].label} names its peers after the agent, not the directory; none is derived (use --peer)`,
@@ -1331,6 +1386,7 @@ export function summarize(plan, { mode, connection, results = [], serverChecked 
     },
     sessions: plan.sessions.map((s) => ({
       id: s.id,
+      nativeId: s.nativeId,
       state: s.state || "unchecked",
       lastActivity: s.lastActivity,
       messages: s.turns.length,
@@ -1338,6 +1394,8 @@ export function summarize(plan, { mode, connection, results = [], serverChecked 
       peer: s.peerId || null,
       cwd: s.cwd || null,
       title: s.title,
+      firstPrompt: s.firstPrompt,
+      lastPrompt: s.lastPrompt || undefined,
     })),
     results,
   };
@@ -1348,25 +1406,31 @@ function printText(summary, env) {
   const label = HARNESSES[summary.harness].label;
   const header = {
     "dry-run": "OpenViking history import: dry run, no conversation content was sent",
+    list: "OpenViking history import: session list, no conversation content was sent",
     import: "OpenViking history import",
   }[summary.mode];
   lines.push(header);
   lines.push(`  harness:    ${label} (${shortHome(summary.historyDir, env)})`);
   lines.push(`  server:     ${summary.server} (credentials: ${summary.credentials || "none"})`);
-  if (summary.project) {
+  if (summary.picked) {
+    lines.push(`  picked:     ${plural(summary.picked.length, "session id")} (${summary.picked.join(", ")})`);
+  } else if (summary.project) {
     const none = summary.peerNote ? "none" : "none: not a repository";
     lines.push(`  project:    ${shortHome(summary.project, env)} (peer ${summary.projectPeer || none})`);
   } else {
     lines.push("  project:    all projects");
   }
-  const since = summary.window.since ? `since ${summary.window.since.slice(0, 10)}` : "any age";
+  const since = summary.window.since && !summary.picked ? `since ${summary.window.since.slice(0, 10)}` : "any age";
   const active = summary.window.skipActiveMs ? `, skipping sessions active in the last ${duration(summary.window.skipActiveMs)}` : "";
   lines.push(`  window:     ${since}${active}`);
   if (summary.peerNote && !summary.projectPeer) lines.push(`  peer:       ${summary.peerNote}`);
   if (!summary.serverChecked) lines.push(`  note:       ${summary.serverNote}; sessions already on the server are counted as new`);
   const t = summary.toImport;
   const verb = summary.mode === "import" ? "imported" : "to import";
-  if (summary.mode === "import") {
+  if (summary.mode === "list") {
+    const open = summary.sessions.filter((x) => x.state === "new" || x.state === "partial" || x.state === "unchecked").length;
+    lines.push(`  listed:     ${plural(summary.sessions.length, "session")}, ${open} not yet in OpenViking`);
+  } else if (summary.mode === "import") {
     const sent = summary.results.filter((r) => r.ok);
     const messages = sent.reduce((n, r) => n + r.sent, 0);
     lines.push(`  ${verb}:   ${plural(sent.length, "session")}, ${plural(messages, "message")}`);
@@ -1396,7 +1460,16 @@ function printText(summary, env) {
   if (summary.droppedMessages) {
     lines.push(`  dropped:    ${plural(summary.droppedMessages, "message")} in the input with a role other than user or assistant`);
   }
-  const listed = summary.sessions.filter((x) => x.state !== "imported" && x.state !== "live");
+  if (summary.mode === "list") {
+    if (summary.sessions.length) lines.push("  sessions (newest first; id, last active, messages, state, directory):");
+    for (const x of summary.sessions) {
+      const state = { new: "new", partial: "partly imported", imported: "already imported", live: "captured by the plugin", unchecked: "not checked" }[x.state] || x.state;
+      lines.push(`    ${x.nativeId}  ${x.lastActivity.slice(0, 16).replace("T", " ")}Z  ${x.messages} msgs  ${state}  ${shortHome(x.cwd || "-", env)}`);
+      if (x.firstPrompt) lines.push(`      first: ${JSON.stringify(x.firstPrompt)}`);
+      if (x.lastPrompt) lines.push(`      last:  ${JSON.stringify(x.lastPrompt)}`);
+    }
+  }
+  const listed = summary.mode === "list" ? [] : summary.sessions.filter((x) => x.state !== "imported" && x.state !== "live");
   if (listed.length) {
     lines.push("  sessions:");
     for (const x of listed) {
@@ -1404,7 +1477,11 @@ function printText(summary, env) {
       lines.push(`    ${x.lastActivity.slice(0, 16).replace("T", " ")}Z  ${String(x.messages).padStart(4)} msgs${peer}  ${x.title ? JSON.stringify(x.title) : ""}`.trimEnd());
     }
   }
-  if (summary.mode === "dry-run") {
+  if (summary.mode === "list") {
+    lines.push(summary.sessions.length
+      ? "To import some of them: --session <id>[,<id>...], as a dry run first, then with --yes."
+      : "No sessions in this scope.");
+  } else if (summary.mode === "dry-run") {
     lines.push(t.sessions
       ? "Run again with --yes to import. Each session is committed once, which starts memory extraction on the server."
       : "Nothing to import.");
@@ -1518,7 +1595,8 @@ export async function main(argv = process.argv.slice(2), { env = process.env, st
     }
   }
 
-  const summary = summarize(plan, { mode: write ? "import" : "dry-run", connection, results, serverChecked, serverNote, env });
+  const mode = opts.list ? "list" : (write ? "import" : "dry-run");
+  const summary = summarize(plan, { mode, connection, results, serverChecked, serverNote, env });
   stdout.write(opts.json ? `${JSON.stringify(summary, null, 2)}\n` : printText(summary, env));
   return results.some((r) => !r.ok) ? 1 : 0;
 }

@@ -441,6 +441,92 @@ test("dry run reports the plan and writes nothing; --yes imports; a re-run is a 
   assert.ok(server.calls.slice(writes).every((c) => c.method === "GET"), "a re-run writes nothing");
 });
 
+test("--list shows each session's id, state and a preview, and only reads", async (t) => {
+  const root = tempRoot(t);
+  const server = await fakeServer(t);
+  const { home, repo } = fixtureHome(root, server.url);
+  server.sessions.set("cc-s-live", { messages: [{}], commits: 1 });
+  const env = { HOME: home };
+
+  const listed = await runMain(["--harness", "claude", "--cwd", repo, "--list", "--json"], env);
+  assert.equal(listed.code, 0, listed.err);
+  const list = JSON.parse(listed.out);
+  assert.equal(list.mode, "list");
+  assert.deepEqual(list.sessions.map((s) => [s.nativeId, s.state]), [["s-live", "live"], ["s-2", "new"], ["s-1", "new"]]);
+  const s2 = list.sessions.find((s) => s.nativeId === "s-2");
+  assert.equal(s2.firstPrompt, "Why is CI red?");
+  assert.equal(s2.lastPrompt, "Fix it");
+  const s1 = list.sessions.find((s) => s.nativeId === "s-1");
+  assert.match(s1.firstPrompt, /--api-key \[REDACTED\]/, "previews are redacted like the import");
+  assert.equal(s1.lastPrompt, undefined, "one request has no separate last preview");
+  assert.ok(server.calls.every((c) => c.method === "GET"), "listing only reads");
+
+  const text = await runMain(["--harness", "claude", "--cwd", repo, "--list"], env);
+  assert.match(text.out, /session list, no conversation content was sent/);
+  assert.match(text.out, /listed:\s+3 sessions, 2 not yet in OpenViking/);
+  assert.match(text.out, /^ {4}s-2 {2}\S+ \S+Z {2}4 msgs {2}new {2}~\/src\/app\/src$/m);
+  assert.match(text.out, /first: "Why is CI red\?"/);
+  assert.match(text.out, /last: {2}"Fix it"/);
+  assert.match(text.out, /captured by the plugin/);
+  assert.match(text.out, /--session <id>/);
+  assert.doesNotMatch(text.out, /the-real-key-123/);
+
+  const refused = await runMain(["--harness", "claude", "--list", "--yes"], env);
+  assert.equal(refused.code, 2);
+  assert.match(refused.err, /--list only lists/);
+});
+
+test("--session imports just the picked sessions, whatever their age or project", async (t) => {
+  const root = tempRoot(t);
+  const server = await fakeServer(t);
+  const { home, repo, other } = fixtureHome(root, server.url);
+  const env = { HOME: home };
+  const projects = join(home, ".claude", "projects");
+  const slug = (dir) => dir.replace(/[^A-Za-z0-9]/g, "-");
+  for (const [id, words] of [["abcdef12-0000-4000-8000-000000000000", "first uuid"], ["abcdef12-1111-4000-8000-000000000000", "second uuid"]]) {
+    writeJsonl(join(projects, slug(other), `${id}.jsonl`), claudeTranscript(id, other, NOW - 5 * DAY, [{ user: words, assistant: "ok" }]), NOW - 5 * DAY + 120_000);
+  }
+
+  // From the repo, with the default 14-day window: s-old is 30 days old and
+  // s-other is another project, yet both are picked; the import id works too.
+  const dry = await runMain(["--harness", "claude", "--cwd", repo, "--session", "import__claude_code__s-old,s-other", "--session", "abcdef12-0", "--json"], env);
+  assert.equal(dry.code, 0, dry.err);
+  const plan = JSON.parse(dry.out);
+  assert.equal(plan.mode, "dry-run");
+  assert.deepEqual(plan.picked, ["import__claude_code__s-old", "s-other", "abcdef12-0"]);
+  assert.deepEqual(plan.sessions.map((s) => s.nativeId).sort(), ["abcdef12-0000-4000-8000-000000000000", "s-old", "s-other"]);
+  assert.equal(plan.toImport.sessions, 3);
+  assert.equal(plan.skipped.outsideWindow + plan.skipped.otherProject + plan.skipped.overLimit, 0);
+  assert.equal(plan.sessions.find((s) => s.nativeId === "s-other").peer, "github.com-acme-other", "each keeps its own project's peer");
+  assert.ok(server.calls.every((c) => c.method === "GET"));
+
+  const text = await runMain(["--harness", "claude", "--session", "s-other"], env);
+  assert.match(text.out, /picked:\s+1 session id \(s-other\)/);
+  assert.match(text.out, /window:\s+any age/);
+
+  // A pick that matches nothing, or more than one, refuses the run before anything is sent.
+  const calls = server.calls.length;
+  const missing = await runMain(["--harness", "claude", "--session", "s-1,nope", "--yes"], env);
+  assert.equal(missing.code, 2);
+  assert.match(missing.err, /no session matches "nope".*Nothing was imported; run --list/);
+  const ambiguous = await runMain(["--harness", "claude", "--session", "abcdef12", "--yes"], env);
+  assert.equal(ambiguous.code, 2);
+  assert.match(ambiguous.err, /"abcdef12" matches more than one session/);
+  const short = await runMain(["--harness", "claude", "--session", "s-", "--yes"], env);
+  assert.equal(short.code, 2, "a prefix shorter than 8 characters is not a match");
+  assert.equal(server.calls.length, calls, "refused runs never reach the server");
+
+  // A picked session that is still active is skipped like any other.
+  const active = JSON.parse((await runMain(["--harness", "claude", "--session", "s-active,s-1", "--json"], env)).out);
+  assert.deepEqual(active.sessions.map((s) => s.nativeId), ["s-1"]);
+  assert.equal(active.skipped.active, 1);
+
+  const imported = await runMain(["--harness", "claude", "--cwd", repo, "--session", "s-old", "--yes", "--json"], env);
+  assert.equal(imported.code, 0, imported.err);
+  assert.deepEqual(JSON.parse(imported.out).results.map((r) => [r.id, r.ok]), [["import__claude_code__s-old", true]]);
+  assert.deepEqual([...server.sessions.keys()].filter((k) => k.startsWith("import__")), ["import__claude_code__s-old"]);
+});
+
 test("a run that stopped before its commit is finished, not repeated", async (t) => {
   const root = tempRoot(t);
   const server = await fakeServer(t);
