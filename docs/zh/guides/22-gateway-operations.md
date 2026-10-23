@@ -292,6 +292,14 @@ v0.5 网关用自己的密钥加密数据，这些数据会在首次启动时转
 
 一个存储目录只供一台主机上的一套部署使用，嵌入网关和独立网关不能共用同一目录。嵌入网关跟随 Server 的 worker 设置；独立网关用 `workers` 设置，取值 1–64。需要在服务商之间负载均衡、故障转移或限流时，把 LiteLLM 这类服务添加为上游。
 
+## Redis 内存策略 {#redis-memory-policy}
+
+网关 Redis 实例使用 `maxmemory-policy volatile-lru`。它可以驱逐带过期时间的对话记录，同时保留永久删除墓碑、capture 就绪队列和不带 TTL 的管理对象。禁止使用 `allkeys-*`：墓碑被驱逐后，已删除的状态可以重新创建；就绪队列被驱逐后，待投递 capture 无法继续调度。不要与 OpenViking 的 `expiry_redis_host` 定时器存储共用实例。`noeviction` 也能运行，但内存满后写入失败，请求无法获得记忆增强。
+
+通过 Redis 运维系统监测 `evicted_keys` 的增速，正常容量下应避免驱逐。网关启动时不读取 Redis `INFO`，也不校验驱逐策略。`ZCARD <key_prefix>v1:k:{cap}:ready` 可估算已调度或已认领的 capture 数量，其中包含文档过期后由 worker 惰性清理的成员。所有 capture 文档都在 `{cap}` slot，应为 OpenViking 故障期间的积压预留该分片容量。Lease 使用 Redis `TIME`；调度时间戳要求各网关宿主通过 NTP 保持时钟同步。
+
+需要待投递 capture 和删除状态在重启后保留时，启用 AOF（`appendonly yes`、`appendfsync everysec`、`aof-use-rdb-preamble yes`）。未启用持久化时，Redis 重启会丢失尚未保存的对话尾部及所有墓碑。AOF 重写或快照期间需为写时复制预留内存；异步主从切换仍可能丢失最近的写入。
+
 ## 观测与例行检查 {#monitoring}
 
 网关不导出 Prometheus 之类的监控指标，也不写 HTTP 访问日志。运行状态通过 Studio 的[概览和请求日志](../gateway/10-overview-and-requests.md#overview)标签页查看，或者调用管理 API 的 `/gateway/admin/overview` 和 `/gateway/admin/logs`。

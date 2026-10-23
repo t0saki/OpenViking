@@ -512,3 +512,18 @@ async def management_store(redis_backend, storage_encryptor, tmp_path):
         if redis_backend is None:
             store.close()
 
+
+@pytest_asyncio.fixture
+async def kernel_store(tmp_path, storage_provider, storage_encryptor, redis_backend):
+    if storage_provider == "sqlite":
+        store = SQLiteKernelStore(tmp_path / "kernel-contract.sqlite3", storage_encryptor)
+    else:
+        from openviking_gateway.redis_store import RedisKernelStore
+
+        store = RedisKernelStore(redis_backend)
+    await store.initialize()
+    try:
+        yield store
+    finally:
+        if storage_provider == "sqlite":
+            store.close()

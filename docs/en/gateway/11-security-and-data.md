@@ -83,6 +83,23 @@ Redis management logs keep at most 10,000 entries per account. The list expires 
 
 Minimums and where to set these are in [Gateway fields](13-configuration.md#gateway-fields).
 
+## Redis conversation state {#redis-conversation-state}
+
+With `storage.kernel: redis`, conversation state is a cache with a TTL of `session_ttl_days`. Writes renew the affected replay or state record; replay and capture documents also renew each other, at most once every 60 seconds per gateway process. Reading a record alone does not renew it. Scope deletion writes permanent tombstones in both storage slots before removing records, so concurrent writes cannot recreate deleted state. Granting that scope access again removes both tombstones.
+
+Eviction has observable effects:
+
+| Lost state | Effect |
+| --- | --- |
+| Replay, recalled memory or restored reasoning | Earlier decisions cannot be replayed; the next request takes a cache miss. Lost compaction summaries can require another summary or leave the request over the model's context limit. |
+| Pending capture document | Unsaved turns can be lost. Rebuilding from client history can save previously delivered messages again; a worker whose document disappeared stops using its old lease. |
+| Observation or thinking state | Recall bookkeeping resets, and earlier reasoning may no longer be recognized. |
+| Tool receipt while another request waits | The result is reported as timed out or unknown. The gateway does not retry that operation; inspect its state before retrying a write. |
+
+CAS versions restart at 1 after eviction. If a recreated document reaches an old reader's version, that reader can overwrite its newer contents; this is an accepted limit of cache storage. Asynchronous Redis failover can also lose recent writes or leases, causing occasional duplicate capture. Persist Redis to preserve pending work and deletion tombstones; restoring a snapshot taken before deletion can make deleted data visible again.
+
+Encryption covers stored replay, state and capture values. Redis key names contain hashed scope/session/state identifiers, but reply-index members and capture-queue members contain the original session IDs. Record kinds, anchors, versions, scheduling times, lease owners and tombstones remain plaintext metadata. Protect Redis access and backups accordingly.
+
 ## Deleting data {#deleting-data}
 
 Revoking a gateway key, or the bound OpenViking key becoming invalid, does not delete user data. There are three ways to delete it:

@@ -292,6 +292,14 @@ Data written by the v0.5 gateway, which used its own key, is converted on the fi
 
 One storage directory serves one deployment on one host, and an embedded and a standalone gateway must not share a directory. An embedded gateway follows the server's worker setting; a standalone gateway takes `workers`, from 1 to 64. For load balancing, failover or rate limiting across providers, add a service such as LiteLLM as an upstream.
 
+## Redis memory policy {#redis-memory-policy}
+
+Use `maxmemory-policy volatile-lru` for the gateway Redis instance. It can evict expiring conversation records while preserving permanent deletion tombstones, the capture-ready queue and management objects without a TTL. Do not use `allkeys-*`: evicting a tombstone allows deleted state to be recreated, and evicting the ready queue strands pending capture. Do not share this instance with OpenViking's `expiry_redis_host` timer store. `noeviction` also works, but full memory causes writes to fail and requests to lose memory enhancement.
+
+Monitor the rate of `evicted_keys` through your Redis operations system; normal capacity should avoid eviction. The gateway does not read Redis `INFO` or validate this policy at startup. `ZCARD <key_prefix>v1:k:{cap}:ready` estimates scheduled or leased capture work, including stale members that workers remove lazily after document expiry. All capture documents use the `{cap}` slot, so size that shard for pending work during OpenViking outages. Redis `TIME` controls leases; keep gateway hosts synchronized with NTP for scheduling timestamps.
+
+Use AOF (`appendonly yes`, `appendfsync everysec`, `aof-use-rdb-preamble yes`) when pending capture and deletion state must survive restarts. Without persistence, Redis restarts lose the unsaved conversation tail and all tombstones. Allow additional memory for copy-on-write during AOF rewrites or snapshots; asynchronous failover can still lose the latest writes.
+
 ## Monitoring and routine checks {#monitoring}
 
 The gateway exports no metrics such as Prometheus and writes no HTTP access log. Check its state on Studio's [Overview and Requests](../gateway/10-overview-and-requests.md#overview) tabs, or through the management API's `/gateway/admin/overview` and `/gateway/admin/logs`.
