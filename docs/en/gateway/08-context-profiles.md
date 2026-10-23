@@ -8,7 +8,7 @@ In Studio: **Profiles** tab. A context profile decides how OpenViking Gateway re
 
 ## What a context profile is {#context-profiles}
 
-A [context profile](../guides/15-gateway.md#key-terms) is a named set of memory settings. Each [gateway key](09-gateway-keys.md#gateway-keys) uses one profile, chosen when the key is issued, and one profile can serve many keys. For example, a "Coding" profile might recall memories, resources and skills, while a "Chat" profile recalls only memories, with a smaller budget.
+A [context profile](../guides/15-gateway.md#key-terms) is a named set of memory settings. Each [gateway key](09-gateway-keys.md#gateway-keys) uses one profile, chosen when the key is issued, and one profile can serve many keys. Clients that use an [OpenViking API key directly](09-gateway-keys.md#openviking-keys) use the profile with the ID `default` (the one Quick mode creates), or the built-in defaults when there is none; they do not count as keys using it. For example, a "Coding" profile might recall memories, resources and skills, while a "Chat" profile recalls only memories, with a smaller budget.
 
 Besides its name and the [Let clients override settings](#client-overrides) switch, a profile has four sections. The defaults below are also the recommended settings:
 
@@ -117,7 +117,7 @@ X-OpenViking-Context: {"recall":false,"max_tokens":800,"context_types":["memory"
   - holds a value out of range.
 - **In the request log.** [Request details](10-overview-and-requests.md#request-details) list the names of the fields the client sent in the header, never their values.
 
-The switch defaults on, so anyone holding a key that uses the profile can change any field, including budgets and write tools; turn it off on profiles that must stay locked. How each client sends the header is in [Override profile settings](03-connect-clients.md#override-profile-settings).
+The switch defaults on, so anyone holding a key that uses the profile can change any field, including budgets and write tools. On the `default` profile, that includes every client using an [OpenViking API key directly](09-gateway-keys.md#openviking-keys). Turn it off on profiles that must stay locked. How each client sends the header is in [Override profile settings](03-connect-clients.md#override-profile-settings).
 
 ## Next steps {#next-steps}
 

@@ -8,7 +8,7 @@ description: 创建上下文配置，决定 OpenViking 网关为每个网关密�
 
 ## 什么是上下文配置 {#context-profiles}
 
-[上下文配置](../guides/15-gateway.md#key-terms)是一组有名字的记忆设置。每个[网关密钥](09-gateway-keys.md#gateway-keys)在签发时选定一份配置，一份配置可以供多个密钥使用。比如准备一份“Coding”配置，召回记忆、资源和技能；再准备一份“Chat”配置，只召回记忆，预算也小一些。
+[上下文配置](../guides/15-gateway.md#key-terms)是一组有名字的记忆设置。每个[网关密钥](09-gateway-keys.md#gateway-keys)在签发时选定一份配置，一份配置可以供多个密钥使用。[直接使用 OpenViking API 密钥](09-gateway-keys.md#openviking-keys)的客户端使用 ID 为 `default` 的配置（快速模式创建的那份），没有时使用内置默认值；它们不计入使用这份配置的密钥。比如准备一份“Coding”配置，召回记忆、资源和技能；再准备一份“Chat”配置，只召回记忆，预算也小一些。
 
 除了名称和[允许客户端覆盖设置](#client-overrides)开关，一份配置分为四个部分，下表中的默认值也就是推荐设置：
 
@@ -117,7 +117,7 @@ X-OpenViking-Context: {"recall":false,"max_tokens":800,"context_types":["memory"
   - 取值越界。
 - **请求日志。** [请求详情](10-overview-and-requests.md#request-details)中列出客户端在请求头里传入了哪些字段，只记名称，不记取值。
 
-这个开关默认开启，所以持有使用这份配置的密钥的人可以修改任意字段，包括预算和会修改数据的工具；需要锁定的配置请关闭它。各客户端如何发送这个请求头，见[覆盖上下文配置](03-connect-clients.md#override-profile-settings)。
+这个开关默认开启，所以持有使用这份配置的密钥的人可以修改任意字段，包括预算和会修改数据的工具。对 `default` 配置来说，这也包括所有[直接使用 OpenViking API 密钥](09-gateway-keys.md#openviking-keys)的客户端。需要锁定的配置请关闭它。各客户端如何发送这个请求头，见[覆盖上下文配置](03-connect-clients.md#override-profile-settings)。
 
 ## 下一步 {#next-steps}
 

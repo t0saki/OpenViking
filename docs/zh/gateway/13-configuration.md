@@ -33,6 +33,7 @@ description: 查询 OpenViking 网关的配置字段、环境变量、上下文�
 | `storage_path` | 两者 | `~/.openviking/gateway` | | 本地存储目录 |
 | `encryption` | 独立 | 不设置（明文） | 字段同 `ov.conf` 的 `encryption` 段 | 加密本地保存的数据，见[加密](../guides/22-gateway-operations.md#encryption)；嵌入网关沿用 Server 的设置 |
 | `management_key` | 两者 | 空 | 至少 32 个字符 | 可选的[网关管理密钥](../guides/22-gateway-operations.md#gateway-management-key) |
+| `openviking_keys` | 两者 | `false` | `true`、`false` | 允许客户端用用户的 OpenViking API 密钥代替网关密钥，使用账号的默认上下文配置和全部已启用的上游，见[直接使用 OpenViking API 密钥](09-gateway-keys.md#openviking-keys) |
 | `min_server_version` | 两者 | `0.4.16` | 版本号 | 独立网关要求的 OpenViking Server 最低版本 |
 | `session_ttl_days` | 两者 | `30` | 1 及以上 | 对话闲置多少天后过期 |
 | `response_ttl_seconds` | 两者 | `2592000`（30 天） | 60 及以上 | Responses 响应与上游的对应关系保留多少秒 |

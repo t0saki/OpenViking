@@ -4,7 +4,7 @@ description: Point Claude Code, Codex, chat apps, SDKs and other clients at Open
 
 # Connect clients to OpenViking Gateway
 
-This page gives the exact settings for each client and a way to check that they work. Every client needs three things: the gateway address, a gateway key, and an enabled upstream bound to that key that speaks the client's protocol and serves the model it requests. No gateway key yet? Start with [Get started](02-quickstart.md).
+This page gives the exact settings for each client and a way to check that they work. Every client needs three things: the gateway address, a gateway key (or, when the deployment turns on `openviking_keys`, the user's OpenViking API key; see [Use an OpenViking API key directly](09-gateway-keys.md#openviking-keys)), and an enabled upstream bound to that key that speaks the client's protocol and serves the model it requests. No gateway key yet? Start with [Get started](02-quickstart.md).
 
 Two limits apply to every client:
 

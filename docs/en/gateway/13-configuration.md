@@ -33,6 +33,7 @@ An embedded and a standalone gateway share most fields; they differ in which fil
 | `storage_path` | Both | `~/.openviking/gateway` | | Local storage directory |
 | `encryption` | Standalone | not set (plain text) | Same fields as the `encryption` section of `ov.conf` | Encrypts stored data; see [Encryption](../guides/22-gateway-operations.md#encryption). Embedded gateways use the server's section |
 | `management_key` | Both | empty | At least 32 characters | Optional [gateway management key](../guides/22-gateway-operations.md#gateway-management-key) |
+| `openviking_keys` | Both | `false` | `true`, `false` | Lets clients use a user's OpenViking API key in place of a gateway key, with the account's default context profile and every enabled upstream; see [Use an OpenViking API key directly](09-gateway-keys.md#openviking-keys) |
 | `min_server_version` | Both | `0.4.16` | Version string | Lowest OpenViking Server version a standalone gateway accepts |
 | `session_ttl_days` | Both | `30` | 1 or more | Days of inactivity before a conversation expires |
 | `response_ttl_seconds` | Both | `2592000` (30 days) | 60 or more | Seconds to remember which upstream created a Responses response |

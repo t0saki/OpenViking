@@ -145,11 +145,17 @@ export type GatewayKey = {
   id: string
   revision: number
   name: string
+  /**
+   * An OpenViking API key used directly. It stores no binding, so name,
+   * policy_id, upstream_ids and models are empty; the gateway applies the
+   * account's defaults to each request.
+   */
+  source?: 'openviking'
   policy_id: string
   upstream_ids: string[]
   models: string[]
   user_id: string
-  /** First 12 characters of the secret, e.g. `ovgw_Ab3dE9x`. */
+  /** First characters of the secret: 12 of a gateway key (`ovgw_Ab3dE9x`), 8 of an OpenViking API key. */
   prefix: string
   /** Epoch seconds. */
   created_at: number

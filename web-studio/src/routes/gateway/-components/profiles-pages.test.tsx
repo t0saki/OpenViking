@@ -322,6 +322,24 @@ describe('profile list', () => {
     )
   })
 
+  it('does not count OpenViking API keys as users of the default profile', async () => {
+    api.listProfiles.mockResolvedValue([{ ...coding, id: 'default' }])
+    // As the server lists them: no binding of their own.
+    api.listKeys.mockResolvedValue([
+      { ...key('k3', ''), source: 'openviking', upstream_ids: [] },
+    ])
+    renderAt('/gateway/profiles')
+    await screen.findByRole('link', { name: 'Coding' })
+
+    const codingCard = within(card('Coding'))
+    expect(codingCard.getByText('profiles.unused')).toBeTruthy()
+    expect(
+      codingCard.getByRole<HTMLButtonElement>('button', {
+        name: 'actions.delete',
+      }).disabled,
+    ).toBe(false)
+  })
+
   it('creates a profile with the recommended settings in one click', async () => {
     api.listProfiles.mockResolvedValue([])
     renderAt('/gateway/profiles')
