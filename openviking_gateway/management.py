@@ -29,7 +29,7 @@ from .models import (
 )
 from .overview import overview_summary
 from .protocols import text_content
-from .proxy import fill_key, upstream_headers, upstream_key, upstream_url
+from .proxy import default_policy, fill_key, upstream_headers, upstream_key, upstream_url
 from .records import RecordKind as K
 from .storage import delete_account_data, delete_user_data, digest
 from .tool_catalog import select_tools
@@ -194,34 +194,38 @@ async def caller(request, *, require_identity=True, write=False):
     return Caller(account, credential, identity, manager, can_write)
 
 
-async def register_user(app, account_id, user_id):
+async def register_user(app, account_id, user_id, ttl=None):
     """Record a new key's user and lift an earlier deletion of their gateway data."""
     for protocol in ("anthropic", "chat", "responses"):
         await app.state.store.allow_scope(digest(account_id + "\0" + user_id + "\0" + protocol))
-    await app.state.management.save(account_id, "users", user_id, {"user_id": user_id})
+    await app.state.management.save(account_id, "users", user_id, {"user_id": user_id}, ttl=ttl)
 
 
 async def openviking_credential(app, key):
-    """The record an OpenViking API key used as a gateway key authenticates with.
-
-    The first request confirms the key with OpenViking and stores it like an issued key;
-    its binding is resolved per request (``resolve_binding``).
-    """
+    """Confirm and cache an OpenViking key with its deployment's tenant partition."""
     identifier = digest("openviking\0" + key)
+    partitioned = app.state.config.tenancy == "key"
     if credential := await app.state.management.credential(identifier):
-        return credential
+        # A tenancy change moves the key to another partition: confirm it again.
+        if (credential["account"] == "k_" + identifier) == partitioned:
+            return credential
+        await app.state.management.delete(credential["account"], "keys", identifier)
     identity = await app.state.viking.health(key)
     account, user_id = identity["account_id"], identity["user_id"]
+    if partitioned:
+        account = "k_" + identifier
+    ttl = app.state.config.session_ttl_days * 86400
     stored = {
         "source": "openviking",
+        "openviking_account": identity["account_id"],
         "openviking_key": key,
         "user_id": user_id,
         # Current keys are "<account>.<user>.<secret>": only the secret tells them apart.
         "prefix": key.rsplit(".", 1)[-1][:8],
         "created_at": time.time(),
     }
-    await app.state.management.save(account, "keys", identifier, stored)
-    await register_user(app, account, user_id)
+    await app.state.management.save(account, "keys", identifier, stored, ttl=ttl)
+    await register_user(app, account, user_id, ttl=ttl)
     return await app.state.management.credential(identifier)
 
 
@@ -520,11 +524,11 @@ def register_management(app):
                 headers.setdefault("anthropic-version", "2023-06-01")
             tools = []
             if upstream.get("allow_gateway_tools", True):
-                policy = await management.get(who.account_id, "policies", "default")
+                policy = await default_policy(management, app.state.config, who.account_id)
                 try:
                     tools = select_tools(
                         await caller_tool_catalog(app, management, who),
-                        policy or Policy().model_dump(),
+                        policy,
                     )
                 except VikingError:
                     pass
