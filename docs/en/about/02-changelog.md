@@ -7,6 +7,8 @@ This changelog is automatically generated from [GitHub Releases](https://github.
 
 ## Unreleased
 
+- **Gateway deployment and behavior**: The new standalone Helm chart supports one SQLite replica with a PVC or multiple replicas sharing Redis. The chart targets unreleased code and requires an explicit compatible image tag until a published `appVersion` is selected; see the [operations guide](../guides/22-gateway-operations.md#helm). SQLite remains the default without configuration changes. Standalone keep-alive increases from 5 to 75 seconds; public-bind startup waits and warns on temporary OpenViking connection failures or 5xx while preserving the API-key authentication check. After response headers, idle SSE streams emit comment heartbeats at complete event boundaries every 15 seconds. OpenViking identify responses of 402/403 now reject requests even with cached key records, and capture receiving 401 deletes the key record and pauses with `gateway_key_revoked`.
+
 - **LangChain import migration (breaking change)**: The server no longer ships
   `openviking.integrations.langchain` or its forwarding modules. Old imports fail
   immediately; there is no deprecation period or compatibility stub. Install

@@ -1,0 +1,11 @@
+image:
+  tag: ci
+replicaCount: 2
+existingSecret: gateway-credentials
+config:
+  storage:
+    kernel: redis
+    management: redis
+  encryption:
+    enabled: true
+    provider: local

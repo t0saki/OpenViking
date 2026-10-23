@@ -217,7 +217,7 @@ A degraded request is one the gateway could not fully handle; the Requests and O
 
 ## Redis unavailable {#redis-unavailable}
 
-If startup fails at Redis PING, check `storage.redis.endpoints`, TLS trust, and the password environment variable. The gateway requires `openviking[expiry]` outside the official image. An HTTP 500 with plain text `Internal Server Error` during authentication can also mean Redis is unavailable; inspect stderr. `/gateway/health` stays healthy during a runtime Redis failure and is not a Redis connectivity check. See [Storage providers](13-configuration.md#storage) for the ACL, timeout and persistence settings.
+If startup fails at Redis PING, check `storage.redis.endpoints`, TLS trust, and the password environment variable. The gateway requires `openviking[expiry]` outside the official image. An HTTP 500 with plain text `Internal Server Error` during authentication can also mean Redis is unavailable; inspect stderr. `/health` stays healthy during a runtime Redis failure and is not a Redis connectivity check. See [Storage providers](13-configuration.md#storage) for the ACL, timeout and persistence settings.
 
 ## Next steps {#next-steps}
 

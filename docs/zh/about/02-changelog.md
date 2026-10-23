@@ -7,6 +7,8 @@ OpenViking 的所有重要变更都将记录在此文件中。
 
 ## 未发布
 
+- **网关部署与行为**：新增独立 Helm chart，支持带 PVC 的单副本 SQLite，或共享 Redis 的多副本部署。chart 面向尚未发布的代码，在选定已发布 `appVersion` 前必须显式指定兼容镜像 tag，见[运维指南](../guides/22-gateway-operations.md#helm)。不改配置时仍默认使用 SQLite。独立网关 keep-alive 从 5 秒增加到 75 秒；公网绑定启动时遇到 OpenViking 临时连接失败或 5xx 会告警并等待，仍保留 API key 认证检查。响应头发出后，空闲 SSE 流每 15 秒在完整事件边界发送注释心跳。OpenViking identify 返回 402/403 时，即使已有 key 缓存也会拒绝请求；capture 遇到 401 会删除 key 记录并以 `gateway_key_revoked` 暂停。
+
 - **LangChain 导入迁移（不兼容变更）**：服务端不再提供
   `openviking.integrations.langchain` 及其转发模块，旧导入会立即失败，
   不提供弃用过渡期或兼容占位模块。请安装 `langchain-openviking`

@@ -217,7 +217,7 @@ OpenViking 异常期间，请求照常发给模型，只是不带记忆；保存
 
 ## Redis 不可用 {#redis-unavailable}
 
-启动在 Redis PING 处失败时，检查 `storage.redis.endpoints`、TLS 信任链和密码环境变量；官方镜像之外需要安装 `openviking[expiry]`。鉴权时返回纯文本 `Internal Server Error` 的 HTTP 500 也可能是 Redis 不可用，请查看 stderr。运行时 Redis 故障期间 `/gateway/health` 仍返回健康，不代表 Redis 连接正常。ACL、超时和持久化配置见[存储后端](13-configuration.md#storage)。
+启动在 Redis PING 处失败时，检查 `storage.redis.endpoints`、TLS 信任链和密码环境变量；官方镜像之外需要安装 `openviking[expiry]`。鉴权时返回纯文本 `Internal Server Error` 的 HTTP 500 也可能是 Redis 不可用，请查看 stderr。运行时 Redis 故障期间 `/health` 仍返回健康，不代表 Redis 连接正常。ACL、超时和持久化配置见[存储后端](13-configuration.md#storage)。
 
 ## 下一步 {#next-steps}
 
