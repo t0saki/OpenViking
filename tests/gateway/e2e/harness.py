@@ -83,6 +83,7 @@ class Harness:
                 "tenancy": "key",
                 "management_api": False,
                 "capture_concurrency": 4,
+                "session_ttl_days": 7,
                 "request_log_sink": "stdout",
                 "health_interval_seconds": 1,
                 "default_profile": {
