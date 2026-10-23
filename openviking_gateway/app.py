@@ -31,7 +31,13 @@ from .management import (
 )
 from .protocols import configure_rules
 from .proxy import ProxyRequest, filtered_headers, resolve_binding
-from .storage import ManagementStore, SQLiteKernelStore, delete_account_data, delete_user_data
+from .storage import (
+    CachedManagement,
+    SQLiteKernelStore,
+    SQLiteManagementStore,
+    delete_account_data,
+    delete_user_data,
+)
 
 logger = logging.getLogger(__name__)
 VIKING_DETAILS = {
@@ -45,6 +51,17 @@ VIKING_DETAILS = {
 }
 
 
+def open_stores(config: GatewayConfig, encryptor):
+    """Construct storage ports and collect their resource cleanup."""
+    store = SQLiteKernelStore(config.directory / "kernel.sqlite3", encryptor)
+    management = SQLiteManagementStore(config.directory / "management.sqlite3", encryptor)
+    close = contextlib.AsyncExitStack()
+    # Storage threads may still wait on this loop for the encryptor.
+    close.push_async_callback(asyncio.to_thread, management.close)
+    close.push_async_callback(asyncio.to_thread, store.close)
+    return store, CachedManagement(management), close.aclose
+
+
 def create_app(config: GatewayConfig, *, openviking_url: str, vlm_source=None, encryptor=None):
     """Build the gateway; ``vlm_source(account_id)`` returns ``{upstreams, skipped}`` dicts.
 
@@ -56,8 +73,7 @@ def create_app(config: GatewayConfig, *, openviking_url: str, vlm_source=None, e
             "gateway.client_rules removes entries the packaged rules do not have: %s",
             "; ".join(unknown),
         )
-    store = SQLiteKernelStore(config.directory / "kernel.sqlite3", encryptor)
-    management = ManagementStore(config.directory / "management.sqlite3", encryptor)
+    store, management, close = open_stores(config, encryptor)
 
     @asynccontextmanager
     async def lifespan(app):
@@ -83,9 +99,7 @@ def create_app(config: GatewayConfig, *, openviking_url: str, vlm_source=None, e
                     with contextlib.suppress(asyncio.CancelledError):
                         await task
         finally:
-            # Storage threads may still wait on this loop for the encryptor.
-            await asyncio.to_thread(store.close)
-            await asyncio.to_thread(management.close)
+            await close()
 
     app = FastAPI(
         title="OpenViking Gateway",

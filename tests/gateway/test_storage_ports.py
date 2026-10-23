@@ -4,6 +4,7 @@ import asyncio
 import copy
 import time
 import uuid
+from unittest.mock import AsyncMock
 
 import pytest
 from conftest import FakeViking
@@ -14,7 +15,7 @@ from openviking_gateway.kernel import MemoryKernel
 from openviking_gateway.models import Policy
 from openviking_gateway.records import RecordKind as K
 from openviking_gateway.replay_store import INHERITED
-from openviking_gateway.storage import ManagementStore, digest
+from openviking_gateway.storage import CachedManagement, SQLiteManagementStore, digest
 from openviking_gateway.tool_protocols import ResponseCapture
 
 
@@ -298,8 +299,8 @@ async def test_corrupt_record_does_not_fail_other_reads_in_batch(setup_kernel):
 
 async def test_new_session_does_not_freeze_other_process_stale_policy(setup_kernel, credential):
     kernel, store, _, encryption = setup_kernel
-    writer = ManagementStore(store.path.parent / "management.sqlite3", encryption)
-    reader = ManagementStore(writer.path, encryption)
+    writer = SQLiteManagementStore(store.path.parent / "management.sqlite3", encryption)
+    reader = CachedManagement(SQLiteManagementStore(writer.path, encryption))
     await writer.initialize()
     await reader.initialize()
     try:
@@ -320,12 +321,13 @@ async def test_new_session_does_not_freeze_other_process_stale_policy(setup_kern
         assert not (await store.capture.get(request.scope, request.session)).value
     finally:
         writer.close()
-        reader.close()
+        reader.port.close()
 
 
 async def test_response_bookkeeping_preserves_configuration_cache(setup_kernel, monkeypatch):
     _, store, _, encryption = setup_kernel
-    management = ManagementStore(store.path.parent / "management.sqlite3", encryption)
+    port = SQLiteManagementStore(store.path.parent / "management.sqlite3", encryption)
+    management = CachedManagement(port)
     await management.initialize()
     try:
         await management.save("tenant", "keys", digest("downstream"), {"name": "key"})
@@ -334,19 +336,88 @@ async def test_response_bookkeeping_preserves_configuration_cache(setup_kernel, 
         await management.list("tenant", "upstreams")
         await management.save("tenant", "responses", "response", {"upstream_id": "model"}, ttl=1)
         await management.expire_logs(0)
-        read = management.run
-        reads = []
-
-        async def counted(fn, *args, **kwargs):
-            if not kwargs.get("write"):
-                reads.append(fn)
-            return await read(fn, *args, **kwargs)
-
-        monkeypatch.setattr(management, "run", counted)
+        credential = AsyncMock(wraps=port.credential)
+        upstreams = AsyncMock(wraps=port.list)
+        monkeypatch.setattr(port, "credential", credential)
+        monkeypatch.setattr(port, "list", upstreams)
         assert (await management.authenticate("downstream"))["name"] == "key"
         assert (await management.list("tenant", "upstreams"))[0]["name"] == "model"
-        assert not reads
+        credential.assert_not_awaited()
+        upstreams.assert_not_awaited()
         await management.delete("tenant", "keys", digest("downstream"))
         assert await management.authenticate("downstream") is None
     finally:
-        management.close()
+        port.close()
+
+
+@pytest.mark.parametrize("kind", ["keys", "upstreams"])
+async def test_cached_lists_filter_users_and_reload_after_another_process_writes(
+    tmp_path, monkeypatch, kind
+):
+    port = SQLiteManagementStore(tmp_path / "management.sqlite3")
+    management = CachedManagement(port)
+    await management.initialize()
+    try:
+        for user in ("alice", "bob"):
+            await management.save("tenant", kind, user, {"user_id": user})
+        assert [v["id"] for v in await management.list("tenant", kind, "alice")] == ["alice"]
+        assert [v["id"] for v in await management.list("tenant", kind, "bob")] == ["bob"]
+        await port.delete("tenant", kind, "bob")
+        assert len(await management.list("tenant", kind)) == 2
+        monotonic = time.monotonic
+        monkeypatch.setattr(time, "monotonic", lambda: monotonic() + 3)
+        assert [v["id"] for v in await management.list("tenant", kind)] == ["alice"]
+    finally:
+        port.close()
+
+
+@pytest.mark.parametrize("operation", ["save", "delete", "delete_user", "delete_account"])
+async def test_management_writes_invalidate_cached_credentials(tmp_path, operation):
+    port = SQLiteManagementStore(tmp_path / "management.sqlite3")
+    management = CachedManagement(port)
+    await management.initialize()
+    try:
+        identifier = digest("key")
+        await management.save("tenant", "keys", identifier, {"user_id": "alice"})
+        assert (await management.authenticate("key"))["user_id"] == "alice"
+        if operation == "save":
+            await management.save("tenant", "keys", identifier, {"user_id": "bob"})
+            assert (await management.authenticate("key"))["user_id"] == "bob"
+        else:
+            args = {
+                "delete": ("tenant", "keys", identifier),
+                "delete_user": ("tenant", "alice"),
+                "delete_account": ("tenant",),
+            }
+            await getattr(management, operation)(*args[operation])
+            assert await management.authenticate("key") is None
+    finally:
+        port.close()
+
+
+@pytest.mark.parametrize("failing", ["SQLiteKernelStore", "SQLiteManagementStore"])
+async def test_app_closes_both_stores_when_initialization_fails(tmp_path, monkeypatch, failing):
+    import threading
+
+    from openviking_gateway import app, storage
+    from openviking_gateway.config import GatewayConfig
+
+    closed = []
+    loop_thread = threading.get_ident()
+    close_database = storage.Database.close
+
+    def close(self):
+        assert threading.get_ident() != loop_thread
+        closed.append(type(self).__name__)
+        close_database(self)
+
+    async def fail(self):
+        raise RuntimeError("initialization failed")
+
+    monkeypatch.setattr(storage.Database, "close", close)
+    monkeypatch.setattr(getattr(storage, failing), "initialize", fail)
+    gateway = app.create_app(GatewayConfig(storage_path=str(tmp_path)), openviking_url="http://ov")
+    with pytest.raises(RuntimeError, match="initialization failed"):
+        async with gateway.router.lifespan_context(gateway):
+            pytest.fail("initialization should fail before serving requests")
+    assert closed == ["SQLiteKernelStore", "SQLiteManagementStore"]

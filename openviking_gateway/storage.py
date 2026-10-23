@@ -1,6 +1,6 @@
 # Copyright (c) 2026 Beijing Volcano Engine Technology Co., Ltd.
 # SPDX-License-Identifier: AGPL-3.0
-"""SQLite adapters with optionally encrypted values. Writes have a dedicated executor."""
+"""Storage ports and the SQLite adapters, with optionally encrypted values."""
 
 import asyncio
 import hashlib
@@ -44,8 +44,100 @@ class KernelStore(Protocol):
     capture: CaptureQueue
     state: StateStore
 
+    async def initialize(self) -> None: ...
     async def load(self, scope, session, anchors, ancestors=()) -> tuple: ...
     async def keep(self, scope, sessions, keys) -> None: ...
+    async def expire(self, before, scope=None) -> None: ...
+    async def allow_scope(self, scope) -> None: ...
+
+
+class ManagementStore(Protocol):
+    """Management objects, credentials, and request logs."""
+
+    async def initialize(self) -> None: ...
+    async def list(self, account, kind, user_id=None) -> list[dict]: ...
+    async def get(self, account, kind, identifier) -> dict | None: ...
+    async def save(self, account, kind, identifier, value, ttl=None) -> dict: ...
+    async def delete(self, account, kind, identifier) -> None: ...
+    async def authenticate(self, key) -> dict | None: ...
+    async def credential(self, identifier) -> dict | None: ...
+    async def log(self, account, value, user_id=None) -> None: ...
+    async def logs(self, account, limit=200, user_id=None) -> "list[dict]": ...
+    async def delete_user(self, account, user_id) -> None: ...
+    async def delete_account(self, account) -> None: ...
+    async def expire_logs(self, before) -> None: ...
+
+
+class CachedManagement:
+    """Share short-lived configuration and credential reads within one process."""
+
+    def __init__(self, port: ManagementStore):
+        self.port = port
+        self.cache = TTLCache(ttl=2, capacity=2048)
+
+    async def initialize(self):
+        await self.port.initialize()
+
+    async def list(self, account, kind, user_id=None):
+        if kind not in {"keys", "upstreams"}:
+            return await self.port.list(account, kind, user_id)
+        values = await self.cache.get(
+            ("list", account, kind), lambda: self.port.list(account, kind)
+        )
+        return (
+            [value for value in values if value.get("user_id") == user_id]
+            if user_id is not None
+            else values
+        )
+
+    async def get(self, account, kind, identifier):
+        # Policies become immutable session snapshots: never freeze a TTL-stale value.
+        if kind == "keys":
+            return await self.cache.get(
+                ("get", account, kind, identifier),
+                lambda: self.port.get(account, kind, identifier),
+            )
+        return await self.port.get(account, kind, identifier)
+
+    async def save(self, account, kind, identifier, value, ttl=None):
+        saved = await self.port.save(account, kind, identifier, value, ttl)
+        if kind in {"keys", "upstreams"}:
+            self.cache.clear()
+        if kind == "keys":
+
+            async def read():
+                return saved
+
+            return await self.cache.get(("get", account, kind, identifier), read)
+        return saved
+
+    async def delete(self, account, kind, identifier):
+        await self.port.delete(account, kind, identifier)
+        if kind in {"keys", "upstreams"}:
+            self.cache.clear()
+
+    async def authenticate(self, key):
+        return await self.credential(digest(key))
+
+    async def credential(self, identifier):
+        return await self.cache.get(("auth", identifier), lambda: self.port.credential(identifier))
+
+    async def log(self, account, value, user_id=None):
+        await self.port.log(account, value, user_id)
+
+    async def logs(self, account, limit=200, user_id=None):
+        return await self.port.logs(account, limit, user_id)
+
+    async def delete_user(self, account, user_id):
+        await self.port.delete_user(account, user_id)
+        self.cache.clear()
+
+    async def delete_account(self, account):
+        await self.port.delete_account(account)
+        self.cache.clear()
+
+    async def expire_logs(self, before):
+        await self.port.expire_logs(before)
 
 
 class Database:
@@ -319,11 +411,7 @@ class SQLiteKernelStore(Database):
         await self.run(allow, write=True)
 
 
-class ManagementStore(Database):
-    def __init__(self, path, encryptor=None):
-        super().__init__(path, encryptor)
-        self.cache = TTLCache(ttl=2, capacity=2048)
-
+class SQLiteManagementStore(Database):
     async def initialize(self):
         def initialize():
             with self.connect() as c:
@@ -391,10 +479,7 @@ class ManagementStore(Database):
                     )
                 ]
 
-        if kind in {"keys", "upstreams"}:
-            values = await self.cache.get(("list", account, kind), lambda: self.run(read))
-        else:
-            values = await self.run(read)
+        values = await self.run(read)
         return (
             [value for value in values if value.get("user_id") == user_id]
             if user_id is not None
@@ -417,9 +502,6 @@ class ManagementStore(Database):
                     return None
                 return {**value, "id": identifier, "revision": row["revision"]}
 
-        # Policies become immutable session snapshots: never freeze a TTL-stale value.
-        if kind == "keys":
-            return await self.cache.get(("get", account, kind, identifier), lambda: self.run(read))
         return await self.run(read)
 
     async def save(self, account, kind, identifier, value, ttl=None):
@@ -442,8 +524,6 @@ class ManagementStore(Database):
                 c.commit()
 
         await self.run(save, write=True)
-        if kind in {"keys", "upstreams"}:
-            self.cache.clear()
         return await self.get(account, kind, identifier)
 
     async def delete(self, account, kind, identifier):
@@ -455,8 +535,6 @@ class ManagementStore(Database):
                 )
 
         await self.run(delete, write=True)
-        if kind in {"keys", "upstreams"}:
-            self.cache.clear()
 
     async def authenticate(self, key):
         return await self.credential(digest(key))
@@ -479,7 +557,7 @@ class ManagementStore(Database):
                     return None
                 return {**value, "account": row["account"], "id": identifier}
 
-        return await self.cache.get(("auth", identifier), lambda: self.run(read))
+        return await self.run(read)
 
     async def log(self, account, value, user_id=None):
         def log():
@@ -530,7 +608,6 @@ class ManagementStore(Database):
                 c.commit()
 
         await self.run(delete, write=True)
-        self.cache.clear()
 
     async def expire_logs(self, before):
         def expire():
@@ -557,7 +634,6 @@ class ManagementStore(Database):
                 c.commit()
 
         await self.run(delete, write=True)
-        self.cache.clear()
 
 
 async def delete_user_data(management, store, account, user_id):

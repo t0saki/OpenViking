@@ -12,7 +12,7 @@ from conftest import make_due
 from openviking_gateway import storage
 from openviking_gateway.cli import load_config
 from openviking_gateway.config import GatewayConfig
-from openviking_gateway.storage import ManagementStore, digest
+from openviking_gateway.storage import SQLiteManagementStore, digest
 
 KEYS = ("library-a", "library-b")
 
@@ -224,7 +224,7 @@ async def test_fixed_key_and_user_ttl_rebuilds_the_same_scope(running_gateway, m
 async def test_sqlite_credentials_respect_expiry_after_reload(tmp_path, monkeypatch, resave):
     now = time.time()
     monkeypatch.setattr(storage, "time", SimpleNamespace(time=lambda: now))
-    store = ManagementStore(tmp_path / "management.sqlite3")
+    store = SQLiteManagementStore(tmp_path / "management.sqlite3")
     await store.initialize()
     try:
         await store.save("tenant", "keys", "id", {"user_id": "alice"}, ttl=0.08)
@@ -232,7 +232,6 @@ async def test_sqlite_credentials_respect_expiry_after_reload(tmp_path, monkeypa
             await store.save("tenant", "keys", "id", {"user_id": "alice"})
         assert await store.credential("id")
         now += 0.08
-        store.cache.clear()
         assert await store.get("tenant", "keys", "id") is None
         assert await store.credential("id") is None
     finally:
@@ -240,7 +239,7 @@ async def test_sqlite_credentials_respect_expiry_after_reload(tmp_path, monkeypa
 
 
 async def test_legacy_payload_expiry_is_respected_without_expiry_row(tmp_path):
-    store = ManagementStore(tmp_path / "management.sqlite3")
+    store = SQLiteManagementStore(tmp_path / "management.sqlite3")
     await store.initialize()
     try:
         await store.save("tenant", "keys", "id", {"expires_at": time.time() - 1})
