@@ -213,6 +213,8 @@ Whatever proxy you use, it needs these settings:
 | Read timeout | At least 600 seconds | The gateway waits up to 600 seconds for a provider by default |
 | Logging of `/gateway/uploads` and `/gateway/downloads` | Leave out the query strings | They carry one-time tokens |
 
+Once response headers have been sent, idle event streams emit an SSE comment (`: keep-alive`) every 15 seconds, including while OpenViking tools run. SSE clients ignore these comments; they do not change model events or captured replies. Set the proxy's idle timeout above 15 seconds and keep response buffering off. Heartbeats wait for a complete event boundary and are disabled for compressed upstream streams, so retain the longer read timeout above for partial events and the wait before response headers arrive. The heartbeat interval is fixed and does not extend the provider timeout or the tools' total time limit.
+
 Set up authentication and the [public address](#public-address) before you expose the service; see [Public access](12-public-access.md).
 
 ## Keys and credentials {#keys-and-credentials}

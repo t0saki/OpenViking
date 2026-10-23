@@ -20,7 +20,7 @@ from starlette.background import BackgroundTask
 
 from .capture import CapturePipeline
 from .models import KEY_PLACEHOLDER, Policy, validation_detail
-from .protocols import SSEDecoder, parse_body
+from .protocols import HEARTBEAT_SECONDS, SSEDecoder, heartbeat, parse_body
 from .storage import digest
 from .tool_executor import ToolExecutor
 from .tool_loop import HiddenToolLoop, ToolLoopError
@@ -492,8 +492,12 @@ class ProxyRequest:
 
         async def stream():
             finished = False
+            chunks = heartbeat(loop.run(response, send), HEARTBEAT_SECONDS)
             try:
-                async for chunk in loop.run(response, send):
+                async for chunk in chunks:
+                    if chunk is None:
+                        yield b": keep-alive\n\n"
+                        continue
                     await self.relay()
                     yield chunk
                 finished = True
@@ -501,6 +505,7 @@ class ProxyRequest:
                 self.metrics["degradation"] = "hidden_tool_loop_failed"
                 yield loop.error(str(error))
             finally:
+                await chunks.aclose()
                 if not finished:
                     capture.complete = False
                 self.metrics.update(prepared.metrics)
@@ -539,13 +544,19 @@ class ProxyRequest:
         response, capture = self.response, self.capture
         headers = filtered_headers(response.headers)
         if "text/event-stream" in response.headers.get("content-type", ""):
+            headers = {k: v for k, v in headers.items() if k.lower() != "content-length"}
 
             async def stream():
                 decoder = SSEDecoder()
                 observe = not response.headers.get("content-encoding")
                 finished = False
+                chunks = heartbeat(response.content.iter_any(), HEARTBEAT_SECONDS)
                 try:
-                    async for chunk in response.content.iter_any():
+                    async for chunk in chunks:
+                        if chunk is None:
+                            if observe and not decoder.buffer:
+                                yield b": keep-alive\n\n"
+                            continue
                         if observe:
                             try:
                                 # A chunk inside one event completes none: no reply to reread.
@@ -559,6 +570,7 @@ class ProxyRequest:
                         yield chunk
                     finished = True
                 finally:
+                    await chunks.aclose()
                     response.close()
                     if not finished:
                         capture.complete = False
