@@ -54,16 +54,6 @@ For MCP proxy diagnostics, set `OPENVIKING_DEBUG=1` and `OPENVIKING_DEBUG_LOG=/t
 
 The bundle also runs inside the DeepSeek Harness Desktop app on macOS and Windows; Desktop is not released for Linux. Desktop keeps its plugins in its own `desktop` profile at `~/.dsh/profiles/desktop`, separate from the CLI's `web` profile, so a bundle installed for `dsh web` does not show up in Desktop or the other way round. Both read the same `~/.openviking/ovcli.conf`.
 
-### Install from the Plugins page {#desktop-plugins-page}
-
-This works on both platforms and is the way to install on Windows:
-
-1. In Desktop, open **Plugins** and click **Add plugin** (or the arrow next to it, then **Install a third-party plugin**).
-2. Enter `@openviking/dsh-memory-plugin` and install it.
-3. Click **Enable now**. A plugin added from this page stays off until it is enabled.
-
-Then write `~/.openviking/ovcli.conf` (`%USERPROFILE%\.openviking\ovcli.conf` on Windows) as described in [Deployment Guide → CLI](../guides/03-deployment.md#cli), and open a new conversation.
-
 ### Install with the installer (macOS) {#desktop-installer}
 
 On macOS the installer detects Desktop and offers it as a harness of its own, **DeepSeek Harness Desktop** (`dsh-desktop`), selected by default and installable alongside the `dsh` CLI. Desktop's profile should only be changed while the app is not running:
@@ -74,14 +64,32 @@ On macOS the installer detects Desktop and offers it as a harness of its own, **
 
 If Desktop is running, the installer asks you to quit it (with `--yes` it warns and continues). If it cannot find Desktop's `dsh` command, the profile does not exist yet, or Desktop is still running after the prompt, it prints the Plugins page steps instead of failing. The installer itself needs Node.js 18 or later, which Desktop does not provide; on a Mac without Node.js it prints the same steps and stops.
 
-The installer uses Desktop's own `dsh` command, not the one from npm, which refuses the `desktop` profile. It looks for, in order: `OPENVIKING_DSH_DESKTOP_CLI`; `/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh`; the same path under `~/Applications`; and a `dsh` on PATH that resolves inside `DeepSeek Harness.app`, which is what the app menu's **Manage dsh Command…** installs. To install by hand, quit Desktop and run:
+The installer uses Desktop's own `dsh` command, not the one from npm, which refuses the `desktop` profile. It looks for, in order: `OPENVIKING_DSH_DESKTOP_CLI`; `/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh`; the same path under `~/Applications`; and a `dsh` on PATH that resolves inside `DeepSeek Harness.app`, which is what the app menu's **Manage dsh Command…** installs.
 
-```bash
-DSH="/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh"
-"$DSH" plugin --profile desktop add @openviking/dsh-memory-plugin
-```
+### Manual setup {#desktop-plugins-page}
 
-On Windows the same command is `resources\runtime\cli\bin\dsh.cmd` in Desktop's install directory.
+Use this on Windows, where the installer does not run, or on macOS if you would rather not run the installer. The Plugins page and Desktop's `dsh` command only add the bundle; neither asks for your OpenViking credentials, so set those up first.
+
+1. **Configure the connection.** Write `~/.openviking/ovcli.conf` (`%USERPROFILE%\.openviking\ovcli.conf` on Windows):
+
+   ```json
+   { "url": "https://<your-openviking-server>", "api_key": "<your-api-key>" }
+   ```
+
+   Add `account` and `user` for a trusted-mode server, or skip this step for a local server at `http://127.0.0.1:1933` without authentication. See [Deployment Guide → CLI](../guides/03-deployment.md#cli).
+
+2. **Add the bundle**, either way:
+   - **Plugins page** (macOS and Windows): in Desktop, open **Plugins** → **Add plugin**, enter `@openviking/dsh-memory-plugin`, and click **Install**. The **Install source** menu picks the npm registry; a mirror may take a while to pick up a new release. If the plugin's switch is off afterwards, turn it on.
+   - **Desktop's `dsh` command** (macOS): quit Desktop with ⌘Q, then run:
+
+     ```bash
+     DSH="/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh"
+     "$DSH" plugin --profile desktop add @openviking/dsh-memory-plugin
+     ```
+
+     On Windows the same command is `resources\runtime\cli\bin\dsh.cmd` in Desktop's install directory.
+
+3. Open a new conversation. After the `dsh` command, reopen Desktop first.
 
 ### Verify in Desktop {#verify-in-desktop}
 
@@ -157,7 +165,7 @@ Credentials given in the patch win over the environment. Behavior knobs resolve 
 | 401 / 403 from OpenViking | Verify `OPENVIKING_API_KEY`; for trusted-mode deployments also verify `OPENVIKING_ACCOUNT` and `OPENVIKING_USER` |
 | Memories from other projects leak in | Set `OPENVIKING_RECALL_PEER_SCOPE=actor` to limit peer memories to the active peer; user-level memories remain shared |
 | Nothing committed after a crash | Commit runs on a token threshold, at compaction start, and at teardown; queued writes replay at the next session start |
-| `profile "desktop" is managed exclusively by the Electron application` | The `desktop` profile cannot be started or dumped, and only Desktop's own `dsh` can change its plugins. Use the [Desktop launcher](#desktop-installer) and [verify without `--dump-config`](#verify-in-desktop) |
+| `profile "desktop" is managed exclusively by the Electron application` | The `desktop` profile cannot be started or dumped, and only Desktop's own `dsh` can change its plugins. Use [Desktop's `dsh` command](#desktop-plugins-page) and [verify without `--dump-config`](#verify-in-desktop) |
 | `Open DeepSeek Harness Desktop once to initialize its profile…` | Desktop has not created its profile yet. Open it once, quit it with ⌘Q, then re-run the installer |
 | Installed for Desktop but nothing appears | Quit Desktop with ⌘Q (closing the window only hides it) and reopen it; in **Plugins**, check that the bundle is enabled |
 | Gone from Desktop after its recovery dialog | Recovery disables third-party plugins and backs up `cordis.patch.yml`; enable the bundle again in **Plugins**, and move settings you need from the `.bak-<timestamp>` file into `ovcli.conf` |

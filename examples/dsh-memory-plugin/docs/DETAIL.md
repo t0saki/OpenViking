@@ -15,8 +15,6 @@ Prefer `ovcli.conf` to environment variables in Desktop. On macOS, Desktop reads
 
 ## 2. Install
 
-**From the Plugins page (Desktop and `dsh web`):** Plugins → Add plugin → Install a third-party plugin → enter `@openviking/dsh-memory-plugin` → Enable now.
-
 **With the installer (macOS):**
 
 ```bash
@@ -24,6 +22,8 @@ curl -fsSL https://openviking.ai/install | bash
 ```
 
 It needs Node.js 18 or later. It finds Desktop and installs into it as the `dsh-desktop` harness. Open Desktop once beforehand so its profile exists, and quit it with ⌘Q while the installer runs: closing the window only hides it.
+
+**From the Plugins page (manual; macOS, Windows and `dsh web`):** Plugins → Add plugin → enter `@openviking/dsh-memory-plugin` → Install, then turn it on if its switch is off. This only adds the plugin: it does not ask for your OpenViking credentials, so do step 1 first.
 
 **With Desktop's own `dsh` command (macOS):** open Desktop once, quit it with ⌘Q, then run:
 

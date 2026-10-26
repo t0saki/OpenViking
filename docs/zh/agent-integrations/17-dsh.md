@@ -54,16 +54,6 @@ curl -fsSL https://openviking.ai/install | bash
 
 插件同样可以在 DeepSeek Harness Desktop 桌面应用中运行，支持 macOS 和 Windows；Desktop 没有 Linux 版本。Desktop 的插件装在它专属的 `desktop` profile（`~/.dsh/profiles/desktop`）里，与 CLI 的 `web` profile 互不相通：给 `dsh web` 装的插件不会出现在 Desktop 里，反之亦然。两者读取同一份 `~/.openviking/ovcli.conf`。
 
-### 在插件页安装 {#desktop-plugins-page}
-
-两个平台都适用，Windows 上就用这种方式：
-
-1. 在 Desktop 中打开 **插件**，点击 **添加插件**（或点旁边的箭头，再选 **安装第三方插件**）。
-2. 输入 `@openviking/dsh-memory-plugin` 并安装。
-3. 点击 **立即启用**。在这里添加的插件启用前处于关闭状态。
-
-然后按[部署指南 → CLI](../guides/03-deployment.md#cli) 写好 `~/.openviking/ovcli.conf`（Windows 上是 `%USERPROFILE%\.openviking\ovcli.conf`），再新开一个会话。
-
 ### 用安装器安装（macOS） {#desktop-installer}
 
 在 macOS 上，安装器会检测到 Desktop，并把它作为单独的 harness **DeepSeek Harness Desktop**（`dsh-desktop`）列出，默认选中，可以和 `dsh` CLI 一起安装。修改 Desktop 的 profile 时，应用不应处于运行状态：
@@ -74,14 +64,32 @@ curl -fsSL https://openviking.ai/install | bash
 
 如果 Desktop 正在运行，安装器会提示你先退出（加 `--yes` 时只警告并继续）。如果找不到 Desktop 自带的 `dsh` 命令、profile 还没创建，或者提示后 Desktop 仍在运行，安装器不会报错退出，而是打印插件页的安装步骤。安装器本身需要 Node.js 18 或更高版本，Desktop 并不提供；在没有 Node.js 的 Mac 上，它会打印同样的步骤后退出。
 
-安装器用的是 Desktop 自带的 `dsh` 命令，而不是 npm 装的那个——后者会拒绝 `desktop` profile。它按以下顺序查找：`OPENVIKING_DSH_DESKTOP_CLI`；`/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh`；`~/Applications` 下的同一路径；PATH 上实际指向 `DeepSeek Harness.app` 内部的 `dsh`（即应用菜单 **Manage dsh Command…** 安装的那个）。手动安装时，先退出 Desktop，再运行：
+安装器用的是 Desktop 自带的 `dsh` 命令，而不是 npm 装的那个——后者会拒绝 `desktop` profile。它按以下顺序查找：`OPENVIKING_DSH_DESKTOP_CLI`；`/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh`；`~/Applications` 下的同一路径；PATH 上实际指向 `DeepSeek Harness.app` 内部的 `dsh`（即应用菜单 **Manage dsh Command…** 安装的那个）。
 
-```bash
-DSH="/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh"
-"$DSH" plugin --profile desktop add @openviking/dsh-memory-plugin
-```
+### 手动安装 {#desktop-plugins-page}
 
-Windows 上对应的命令是 Desktop 安装目录下的 `resources\runtime\cli\bin\dsh.cmd`。
+Windows 上安装器不可用，只能用这种方式；macOS 上不想跑安装器时也可以用。插件页和 Desktop 自带的 `dsh` 命令只负责添加插件，都不会询问 OpenViking 凭据，所以要先配好鉴权。
+
+1. **配置连接。** 写好 `~/.openviking/ovcli.conf`（Windows 上是 `%USERPROFILE%\.openviking\ovcli.conf`）：
+
+   ```json
+   { "url": "https://<你的 OpenViking 服务地址>", "api_key": "<你的 API Key>" }
+   ```
+
+   trusted 模式的服务端还要填 `account` 和 `user`；如果用的是 `http://127.0.0.1:1933` 上无鉴权的本地服务端，这步可以跳过。参见[部署指南 → CLI](../guides/03-deployment.md#cli)。
+
+2. **添加插件**，两种方式任选：
+   - **插件页**（macOS 和 Windows）：在 Desktop 中打开 **插件** → **添加插件**，输入 `@openviking/dsh-memory-plugin`，点击 **安装**。**安装源** 菜单决定从哪个 npm 源下载；镜像源同步新版本可能有延迟。装好后如果插件开关是关闭的，把它打开。
+   - **Desktop 自带的 `dsh` 命令**（macOS）：先用 ⌘Q 退出 Desktop，再运行：
+
+     ```bash
+     DSH="/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh"
+     "$DSH" plugin --profile desktop add @openviking/dsh-memory-plugin
+     ```
+
+     Windows 上对应的命令是 Desktop 安装目录下的 `resources\runtime\cli\bin\dsh.cmd`。
+
+3. 新开一个会话。用 `dsh` 命令安装的，要先重新打开 Desktop。
 
 ### 在 Desktop 中验证 {#verify-in-desktop}
 
@@ -157,7 +165,7 @@ patch 中写的凭证优先于环境变量。行为配置按优先级从高到�
 | OpenViking 返回 401 / 403 | 检查 `OPENVIKING_API_KEY`；可信模式部署还要检查 `OPENVIKING_ACCOUNT` 与 `OPENVIKING_USER` |
 | 串入了其他项目的记忆 | 设置 `OPENVIKING_RECALL_PEER_SCOPE=actor`，将 peer 记忆限定为当前 peer；用户级记忆仍会共享 |
 | 崩溃后没有 commit | commit 由 token 阈值、压缩开始和 teardown 触发；排队的写入会在下次会话开始时重放 |
-| `profile "desktop" is managed exclusively by the Electron application` | `desktop` profile 不能启动，也不能 dump 配置，只有 Desktop 自带的 `dsh` 能修改它的插件。改用 [Desktop 的 dsh 命令](#desktop-installer)，并[不借助 `--dump-config` 验证](#verify-in-desktop) |
+| `profile "desktop" is managed exclusively by the Electron application` | `desktop` profile 不能启动，也不能 dump 配置，只有 Desktop 自带的 `dsh` 能修改它的插件。改用 [Desktop 自带的 `dsh` 命令](#desktop-plugins-page)，并[不借助 `--dump-config` 验证](#verify-in-desktop) |
 | `Open DeepSeek Harness Desktop once to initialize its profile…` | Desktop 还没创建 profile。先打开一次 Desktop，用 ⌘Q 退出，再重新运行安装器 |
 | 给 Desktop 装好了，但什么都没出现 | 用 ⌘Q 退出 Desktop（关闭窗口只会隐藏）后重新打开；在 **插件** 页确认插件已启用 |
 | Desktop 弹出恢复对话框后插件消失了 | 恢复操作会禁用第三方插件并备份 `cordis.patch.yml`；到 **插件** 页重新启用，需要的设置从 `.bak-<时间戳>` 文件挪到 `ovcli.conf` |

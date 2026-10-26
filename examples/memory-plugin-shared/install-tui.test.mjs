@@ -777,7 +777,7 @@ test("an uninitialized Desktop profile gets the Plugins-page steps instead of a 
   assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
   assert.equal(log(), "");
   assert.match(result.stdout, /has not set up its profile yet: open it once, quit it with ⌘Q and re-run this installer/);
-  assert.match(result.stdout, /Plugins → Add plugin → Install a third-party plugin → @openviking\/dsh-memory-plugin → Enable now/);
+  assert.match(result.stdout, /Plugins → Add plugin → enter @openviking\/dsh-memory-plugin → Install, then turn it on if its switch is off/);
   assert.match(result.stdout, /DeepSeek Harness Desktop: nothing; the steps for its Plugins page are printed/);
 });
 
@@ -821,7 +821,7 @@ test("a failed Desktop add shows the launcher's own error", { skip: realDesktop 
   assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
   assert.match(result.stdout, /dsh plugin add failed for DeepSeek Harness Desktop:\n {6}ERR_PNPM_FETCH_404/);
   assert.ok(result.stdout.includes(`run it manually: "${launcher}" plugin --profile desktop add @openviking/dsh-memory-plugin@latest`), result.stdout);
-  assert.match(result.stdout, /Plugins → Add plugin → Install a third-party plugin/);
+  assert.match(result.stdout, /Plugins → Add plugin → enter @openviking\/dsh-memory-plugin → Install/);
 });
 
 test("without Node.js, a Mac with Desktop is told how to install from its Plugins page", { skip: realDesktop }, (t) => {
@@ -831,7 +831,7 @@ test("without Node.js, a Mac with Desktop is told how to install from its Plugin
 
   assert.equal(result.status, 1, `${result.stdout}\n${result.stderr}`);
   assert.match(result.stderr, /node not found/);
-  assert.match(result.stdout, /Plugins → Add plugin → Install a third-party plugin → @openviking\/dsh-memory-plugin → Enable now/);
+  assert.match(result.stdout, /Plugins → Add plugin → enter @openviking\/dsh-memory-plugin → Install, then turn it on if its switch is off/);
   assert.match(result.stdout, /ovcli\.conf: \{"url": "<server-url>", "api_key": "<api-key>"\}/);
   assert.equal(log(), "");
 });

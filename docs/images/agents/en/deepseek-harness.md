@@ -10,7 +10,7 @@ curl -fsSL https://openviking.ai/install | bash
 The installer asks for the harness and OpenViking credentials:
 
 1. Select **DeepSeek Harness**. The plugin goes into the `web` profile; for another profile, run the command with `bash -s -- --dsh-profile <name>` in place of `bash`.
-   On macOS with the DeepSeek Harness Desktop app, also select **DeepSeek Harness Desktop** (selected by default when Desktop is found). Open Desktop once and quit it with ⌘Q before running the installer, and reopen it afterwards. On Windows, install from Desktop's **Plugins** page instead: **Add plugin** → `@openviking/dsh-memory-plugin` → **Enable now**, then put the server URL and API key in `%USERPROFILE%\.openviking\ovcli.conf` (see the full guide's [Plugins page steps](https://docs.openviking.net/en/agent-integrations/17-dsh#desktop-plugins-page)).
+   On macOS with the DeepSeek Harness Desktop app, also select **DeepSeek Harness Desktop** (selected by default when Desktop is found). Open Desktop once and quit it with ⌘Q before running the installer, and reopen it afterwards. On Windows, set it up by hand: put the server URL and API key in `%USERPROFILE%\.openviking\ovcli.conf`, then in Desktop's **Plugins** page click **Add plugin**, enter `@openviking/dsh-memory-plugin` and **Install** (see the full guide's [manual setup](https://docs.openviking.net/en/agent-integrations/17-dsh#desktop-plugins-page)).
 2. Select **Volcengine OpenViking Cloud** and enter the API key:
 
 {{OPENVIKING_API_KEY_BLOCK}}

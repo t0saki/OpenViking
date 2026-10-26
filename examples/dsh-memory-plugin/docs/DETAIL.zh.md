@@ -15,8 +15,6 @@
 
 ## 2. 安装
 
-**通过插件页面（Desktop 和 `dsh web`）**：插件 → 添加插件 → 安装第三方插件 → 输入 `@openviking/dsh-memory-plugin` → 立即启用。
-
 **通过安装器（macOS）**：
 
 ```bash
@@ -24,6 +22,8 @@ curl -fsSL https://openviking.ai/install | bash
 ```
 
 安装器需要 Node.js 18 或更高版本。它会找到 Desktop，作为 `dsh-desktop` harness 安装进去。运行前先打开一次 Desktop 让它创建 profile，安装期间用 ⌘Q 退出 Desktop：关闭窗口只是把它隐藏起来。
+
+**通过插件页面（手动；macOS、Windows 和 `dsh web`）**：插件 → 添加插件 → 输入 `@openviking/dsh-memory-plugin` → 安装，开关未打开时再打开。这一步只添加插件，不会询问 OpenViking 凭据，所以要先完成第 1 步。
 
 **通过 Desktop 自带的 `dsh` 命令（macOS）**：先打开一次 Desktop，用 ⌘Q 退出，再运行：
 

@@ -42,9 +42,10 @@ Desktop keeps its plugins in a reserved `desktop` profile under
 `${DSH_HOME:-$HOME/.dsh}/profiles/desktop`, separate from the CLI's profiles.
 The bundle runs there unchanged; only the way it gets installed differs.
 
-- **Plugins page** (macOS and Windows): Plugins → Add plugin → Install a
-  third-party plugin → `@openviking/dsh-memory-plugin` → Enable now. Uninstall
-  from the same page. The page shows [`docs/DETAIL.md`](docs/DETAIL.md)
+- **Plugins page** (macOS and Windows, manual): Plugins → Add plugin → enter
+  `@openviking/dsh-memory-plugin` → Install, then turn it on if its switch is
+  off. The page does not ask for OpenViking credentials, so write
+  `~/.openviking/ovcli.conf` yourself first. Uninstall from the same page. The page shows [`docs/DETAIL.md`](docs/DETAIL.md)
   ([`DETAIL.zh.md`](docs/DETAIL.zh.md) in Chinese) as the plugin's detail
   document, through `meta.detail` in `locale/*.json`.
 - **Installer** (macOS, needs Node.js): with Desktop present the installer

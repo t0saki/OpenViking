@@ -1355,7 +1355,7 @@ dsh_desktop_quit_first() {
 }
 
 dsh_desktop_plugins_page_steps() {
-  info "$(t 'Install it from DeepSeek Harness Desktop instead: Plugins → Add plugin → Install a third-party plugin →' '也可以在 DeepSeek Harness Desktop 中安装：插件 → 添加插件 → 安装第三方插件 →') $DSH_PACKAGE → $(t 'Enable now' '立即启用')"
+  info "$(t 'Install it from DeepSeek Harness Desktop instead: Plugins → Add plugin → enter' '也可以在 DeepSeek Harness Desktop 中安装：插件 → 添加插件 → 输入') $DSH_PACKAGE → $(t 'Install, then turn it on if its switch is off' '安装，开关未打开时再打开')"
 }
 
 install_dsh_desktop() {
@@ -3738,7 +3738,7 @@ EOF
       "$(t "with Desktop quit, \"$DSH_DESKTOP_CLI\" plugin --profile desktop rm $DSH_PACKAGE; or Plugins page → $DSH_PACKAGE → Uninstall" "退出 Desktop 后运行 \"$DSH_DESKTOP_CLI\" plugin --profile desktop rm $DSH_PACKAGE；或在“插件”页 → $DSH_PACKAGE → 卸载")"
   elif contains_harness dsh-desktop; then
     next_steps "DeepSeek Harness Desktop" \
-      "$(t "open DeepSeek Harness Desktop: Plugins → Add plugin → Install a third-party plugin → $DSH_PACKAGE → Enable now" "打开 DeepSeek Harness Desktop：插件 → 添加插件 → 安装第三方插件 → $DSH_PACKAGE → 立即启用")" \
+      "$(t "open DeepSeek Harness Desktop: Plugins → Add plugin → enter $DSH_PACKAGE → Install, then turn it on if its switch is off" "打开 DeepSeek Harness Desktop：插件 → 添加插件 → 输入 $DSH_PACKAGE → 安装，开关未打开时再打开")" \
       "$(t 'on the Plugins page' '在“插件”页')" "" \
       "$(t "Plugins page → $DSH_PACKAGE → Uninstall" "“插件”页 → $DSH_PACKAGE → 卸载")"
   fi
