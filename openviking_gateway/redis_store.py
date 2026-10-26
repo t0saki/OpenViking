@@ -57,7 +57,7 @@ def h(value):
 
 def connect(settings):
     """Open the gateway's client handle from ``storage.redis`` settings."""
-    return create_redis_client(
+    handle = create_redis_client(
         settings,
         decode_responses=False,
         # None enables Cluster's default retries, including writes with unknown outcomes.
@@ -69,6 +69,15 @@ def connect(settings):
             else {}
         ),
     )
+    # redis-py pools raise once ``pool_size`` connections are busy; queue commands instead.
+    gate, execute = asyncio.Semaphore(settings["pool_size"]), handle.client.execute_command
+
+    async def execute_command(*args, **kwargs):
+        async with gate:
+            return await execute(*args, **kwargs)
+
+    handle.client.execute_command = execute_command
+    return handle
 
 
 class RedisBackend:

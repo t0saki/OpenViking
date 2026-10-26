@@ -268,11 +268,12 @@ def create_app(config: GatewayConfig, *, openviking_url: str, vlm_source=None, e
         try:
             identity = await app.state.viking.identify(credential["openviking_key"])
         except VikingError as error:
-            if error.status >= 500 or error.reason == "openviking_http_429":
-                # Only unavailable checks leave revocation unconfirmed.
-                return credential, "revocation_check_unavailable"
-            if error.reason != "openviking_http_401":
+            if error.reason in ("openviking_http_402", "openviking_http_403"):
                 raise
+            if error.reason != "openviking_http_401":
+                # Anything short of a refusal leaves revocation unconfirmed, including the
+                # missing identity OV reports when its account store fails.
+                return credential, "revocation_check_unavailable"
             identity = None
         # Dev identities are always default/default, so they say nothing about this key.
         if identity is None or (

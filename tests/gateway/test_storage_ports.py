@@ -436,6 +436,17 @@ def test_storage_redis_defaults():
     assert GatewayConfig().storage.redis["command_timeout_ms"] == 5000
 
 
+@pytest.mark.parametrize("provider", ["redis", "redis-cluster"])
+async def test_redis_commands_beyond_pool_size_wait_for_a_connection(provider):
+    from openviking_gateway.redis_store import connect
+
+    handle = connect({**redis_settings(provider), "command_timeout_ms": 5000, "pool_size": 2})
+    try:
+        assert await asyncio.gather(*(handle.client.ping() for _ in range(20))) == [True] * 20
+    finally:
+        await handle.close()
+
+
 async def test_async_codec_reads_sqlite_ciphertext_and_plaintext(tmp_path):
     from conftest import local_encryptor
 

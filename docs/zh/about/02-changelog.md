@@ -19,7 +19,12 @@ OpenViking 的所有重要变更都将记录在此文件中。
   - 无需修改配置的行为变化：独立网关 keep-alive 从 5 秒提高到 75 秒；
     绑定公网地址的网关在启动时遇到 OpenViking 不可达或返回 5xx 会等待并重试；
     空闲 SSE 流每 15 秒发送一条注释心跳；OpenViking 以 402 或 403 拒绝密钥的请求会被拒绝，
-    不再转发；保存时收到 OpenViking 401 会以 `gateway_key_revoked` 暂停保存。
+    不再转发；保存时收到 OpenViking 401、且 `/health` 也返回 401 时，会以 `gateway_key_revoked`
+    暂停保存。
+- **火山引擎 KMS `key_file`（升级需操作）**：`encryption.volcengine_kms.key_file` 现在对服务端和网关
+  都会生效；此前版本忽略该字段，根密钥始终位于 `~/.openviking/openviking-volcengine-root-key.enc`。
+  如果配置了 `key_file`，升级前把该文件移到配置的路径。配置的文件不存在而默认文件存在时，
+  启动会失败，不会生成新的根密钥。
 - **LangChain 导入迁移（不兼容变更）**：服务端不再提供
   `openviking.integrations.langchain` 及其转发模块，旧导入会立即失败，
   不提供弃用过渡期或兼容占位模块。请安装 `langchain-openviking`

@@ -20,7 +20,13 @@ This changelog is automatically generated from [GitHub Releases](https://github.
     seconds; a gateway bound to a public address waits and retries at startup while
     OpenViking is unreachable or returns 5xx; idle SSE streams carry a comment heartbeat every
     15 seconds; a request whose key OpenViking refuses with 402 or 403 is rejected instead of
-    forwarded; and an OpenViking 401 while saving pauses saving with `gateway_key_revoked`.
+    forwarded; and an OpenViking 401 while saving, once `/health` also returns 401, pauses
+    saving with `gateway_key_revoked`.
+- **Volcengine KMS `key_file` (upgrade action)**: `encryption.volcengine_kms.key_file` now takes
+  effect for the server and the gateway; earlier releases ignored it and kept the root key at
+  `~/.openviking/openviking-volcengine-root-key.enc`. If you set `key_file`, move that file to
+  the configured path before upgrading. While the configured file is missing and the default
+  one exists, startup fails instead of creating a new root key.
 - **LangChain import migration (breaking change)**: The server no longer ships
   `openviking.integrations.langchain` or its forwarding modules. Old imports fail
   immediately; there is no deprecation period or compatibility stub. Install
