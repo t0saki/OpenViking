@@ -34,11 +34,11 @@ The import script reads Claude Code and Codex history directly. On other hosts, 
 4. Dry run: add `--input "<tmp>/ov-sessions.jsonl"` to the onboarding guide's command, with `--harness` from the table, for example:
 
    ```bash
-   node "<tmp>/ov-import-history.mjs" --harness <value> --input "<tmp>/ov-sessions.jsonl" --cwd "$PWD" --since 14d --max-sessions 20 --dry-run
+   node "<tmp>/ov-import-history.mjs" --harness <value> --input "<tmp>/ov-sessions.jsonl" --cwd "$PWD" --since 14d --max-sessions 20 --dry-run --json
    ```
 
-   If the script reports a malformed line, fix the converter, regenerate the file and dry-run again. If the counts are clearly off (no sessions, or far fewer messages than the real conversations), check the conversion before importing anything.
+   If the script reports a malformed line, fix the converter, regenerate the file and dry-run again. If the counts are clearly off (no sessions at all in scope, or far fewer messages than the real conversations), check the conversion before importing anything. If 0 sessions are to be uploaded but some have the state `imported` or `live`, the content is already in OpenViking and the conversion is not at fault; go straight to the read-back, as in 3b of the onboarding guide.
 
-5. From here it's the same as in the onboarding guide: give the user the counts and the skip reasons (this conversation was left out by the converter, so it won't show up as active), and after they confirm, replace `--dry-run` with `--yes --wait --json`. Whether you import or not, delete the JSONL file and the converter afterwards, from every place you wrote them, and check with `ls` that they are gone.
+5. From here it's the same as in the onboarding guide: ask the user to confirm as in 3b (this conversation was left out by the converter, so it won't show up as still active), and after they confirm, replace `--dry-run` with `--yes --wait` to import, then read back as in 3c. Whether you import or not, delete the JSONL file and the converter afterwards, from every place you wrote them, and check with `ls` that they are gone.
 
 If you can't find where the sessions are kept, or the conversion is still wrong after two or three tries, tell the user that their history from this host couldn't be imported this time and that OpenViking builds up from their conversations once the plugin is active, then go back to Step 4 of the onboarding guide.
