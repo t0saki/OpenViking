@@ -10,7 +10,9 @@ Two more pages are there when needed: [Troubleshooting](https://docs.openviking.
 
 ## Ground rules
 
-- **Explain the benefit and the effect of each decision, then wait for the user's choice before acting.** Tie it to their current work: what they get, what gets sent or stored, which options there are. Reuse goals and choices they have already given instead of asking again, and put questions that fit in one message into one message.
+- **Explain the benefit and the effect of each decision, then wait for the user's choice before acting.** Tie it to their current work: what they get, what gets sent or stored, which options there are. Reuse goals and choices they have already given instead of asking again.
+- **Ask one decision at a time.** Decisions such as importing history and the collaboration rule each get their own turn: first say what this step does for them, then give the options, and wait for the answer before moving on. Don't fold several steps' questions into one message.
+- **Use the host's native choice tool when it has one.** If the host has a tool that lets the user pick an answer (see "Choice tool" under [Appendix A](#appendix-a-hosts)), ask with it, including the import scope, the go-ahead to import, and the collaboration rule: one decision per question, two or three short options, the recommended one first and marked "(Recommended)"; if the user wants something else, they type it in the tool's own custom input. Send what they need to read first, such as the benefit, the dry-run results or the rule text, as a normal message before calling the tool, and put only the question and options in the tool. If there is no such tool, it isn't available in the current mode, or the call fails, list the same options in text, say they can also describe their own, and don't retry.
 - **Never print or repeat the API key.** The installer stores it in `~/.openviking/ovcli.conf` on this machine (backing up the old file when it changes it); the connection needs that. Apart from that, the key must not appear in rules, project files, the restart message or a permanent command approval. Don't open, print or search `ovcli.conf`. To tell the user the server and identity, run `ov health` or call the OpenViking `health` tool, and state only the fields it returns.
 - **Make only the changes this guide describes.** The installer installs into every supported agent it detects on this machine, which is expected: the user can then switch agents and keep the same context. Don't edit other agents' configs or files in the user's projects yourself unless the user asks.
 - **Use the commands in this guide.** For reading, searching and writing, use the OpenViking tools that are actually registered. Don't go to GitHub to work out another way to install or configure OpenViking; when unsure of an option, check the command's `--help`.
@@ -23,7 +25,7 @@ Two more pages are there when needed: [Troubleshooting](https://docs.openviking.
 - **You ran the installer in this conversation**: start at Step 1.
 - **The user says "restarted", and this conversation already went through the steps of this guide**: the user quit and resumed the original session. Go straight to [After the restart](#after-the-restart); the earlier choices are in this conversation, so don't ask them again.
 - **In a new session, the user sends a "continue from 'After the restart'" message**: go to [After the restart](#after-the-restart) and take the results the message states.
-- **The user only says "restarted", but this conversation has no earlier onboarding steps** (for example `codex resume --last` opened another session, or they started a new one): also go to [After the restart](#after-the-restart), and in its item 2 ask in one message how far the import and the collaboration rule got, then do what is missing.
+- **The user only says "restarted", but this conversation has no earlier onboarding steps** (for example `codex resume --last` opened another session, or they started a new one): also go to [After the restart](#after-the-restart), and in its item 2 first ask how far the import and the collaboration rule got, then do what is missing one at a time.
 - **OpenViking was installed before this conversation started** (you see an `<openviking-context>` block, or you have OpenViking tools such as `health`): check the connection with `ov health` or the `health` tool, tell the user which server and identity you found, and ask whether to keep it or switch.
   - Keep it: do Steps 2 to 4, then go straight to [After the restart](#after-the-restart). No restart is needed.
   - Switch: the plugin is saving this conversation, so don't have the user send a new key here. Ask them to run the install command from the console (or the one below) in their own terminal, then send the console's one-click prompt to an agent in a new session. The old config is backed up and nothing on the server is cleared.
@@ -65,16 +67,17 @@ Start with what this is for: with past discussions brought in, "where did we lea
 
 The import script reads Claude Code and Codex history directly (`--harness claude` or `--harness codex`). On other hosts: if `~/.claude/projects` or `~/.codex/sessions` exists, the user may have worked on this project in Claude Code or Codex too, so offer that history in the same question; the host's own sessions first need converting to JSONL, see [Other hosts: convert sessions to JSONL](https://docs.openviking.ai/agents/en/onboarding-other-hosts.md).
 
-Offer these choices; the user may also describe what they want in their own words:
+Offer these choices and recommend the first (recent work is the most likely to continue, and it is small):
 
-1. Sessions of this project from the last 14 days (default).
+1. Sessions of this project from the last 14 days (recommended).
 2. One kind of work, for example "the discussions about the payment refactor": you list the candidate sessions, pick the relevant ones by their content, and show them for confirmation.
-3. Another project or time range.
-4. Nothing for now; start building up from here.
+3. Nothing for now; start building up from here.
+
+They can also set their own scope, for example another project or time range.
 
 Don't download the script or run anything before they choose.
 
-**Choice 1 or 3: dry run.** Download the script and do a dry run (nothing is uploaded). Replace `<claude|codex>` with the actual value; for choice 3, set `--cwd` to that project's directory, use `--all-projects` instead of `--cwd` for all projects, and change `--since` (for example `30d`, `2026-09-01`, `all`).
+**Choice 1 or their own scope: dry run.** Download the script and do a dry run (nothing is uploaded). Replace `<claude|codex>` with the actual value; for their own scope, set `--cwd` to that project's directory, use `--all-projects` instead of `--cwd` for all projects, and change `--since` (for example `30d`, `2026-09-01`, `all`).
 
 ```bash
 curl -fsSL https://docs.openviking.ai/dl/memory-plugin-shared/import-history.mjs -o "${TMPDIR:-/tmp}/ov-import-history.mjs" && node "${TMPDIR:-/tmp}/ov-import-history.mjs" --harness <claude|codex> --cwd "$PWD" --since 14d --max-sessions 20 --dry-run
@@ -92,7 +95,7 @@ Pick the sessions whose previews match what they described, and list the ones yo
 node "${TMPDIR:-/tmp}/ov-import-history.mjs" --harness <claude|codex> --session <id>,<id> --dry-run
 ```
 
-**Import after confirmation.** Tell the user what the dry run found: sessions, messages, size, and what was skipped and why. Say that what gets uploaded is the filtered user and assistant text, without tool calls, tool output or file originals, that known secret formats are replaced with `[REDACTED]`, and that the server extracts memories from it. The sessions skipped as "active" include this conversation. For choice 2, the picks and the dry-run numbers can go into one message for one confirmation.
+**Import after confirmation.** Tell the user what the dry run found: sessions, messages, size, and what was skipped and why. Say that what gets uploaded is the filtered user and assistant text, without tool calls, tool output or file originals, that known secret formats are replaced with `[REDACTED]`, and that the server extracts memories from it. The sessions skipped as "active" include this conversation. For choice 2, give the picks and the dry-run numbers together and confirm once. Then ask whether to import: import this scope (recommended) or not for now; they can say how to change the scope instead.
 
 Once they confirm, import with **exactly the same scope options**, replacing `--dry-run` with `--yes --wait --json`:
 
@@ -127,10 +130,10 @@ Explain the difference by its effect: the plugin builds up and recalls backgroun
 First check whether the rules file the current host actually reads has an `<!-- openviking:start -->` block.
 
 - **It does, with the same content as below**: tell them it was added before and skip this step.
-- **It does, with different content**: summarize what it does now and ask whether to keep it or switch to this version.
-- **It doesn't**: offer three choices: save important decisions and deliverables on purpose (recommended), adjust it to their wishes, or rely on automatic memory only. With automatic memory only, they can still ask you to save or read material at any time.
+- **It does, with different content**: summarize what it does now, present the new version as below, and ask whether to switch to it or keep the current one.
+- **It doesn't**: present the rule as below right away and let them choose; don't first ask whether they want to see it.
 
-If they choose to add it, put into **one message**: a sentence or two on what the rule makes you do from now on and what it gives them (for example, picking the project up later means finding the decision and its reason right away), which file it goes into and that it applies to all projects, and the **full text** as adjusted to their choice. The text must match what you then write, word for word. Then ask them to confirm, adjust, or leave it for now. If they adjust it (for example, only final deliverables, or ask before saving), change the text and show it again.
+To present the rule, first put into **one message**: a sentence or two on what the rule makes you do from now on and what it gives them (for example, picking the project up later means finding the decision and its reason right away), which file it goes into and that it applies to all projects, and the **full text**. The text must match what you then write, word for word. Then ask: add it as shown (recommended), or rely on automatic memory only; they can write in an adjustment instead (for example, only final deliverables, or ask before saving), and you change the text, show it again and confirm. With automatic memory only, they can still ask you to save or read material at any time.
 
 The default rule text (when writing it, `<user_id>` may be replaced with the actual user name; keep `<project>` as it is, since it is worked out in each project, and filling in the current project would send every project's notes to that one folder):
 
@@ -209,6 +212,7 @@ The plugin should now be running in this session. The point of this part is to l
 | DeepSeek Harness | `dsh` | Start a new session with the profile from the installer's `DeepSeek Harness profile:` line: `dsh --profile <profile>` | New session | "Context injection · openviking-memory" at the top of the session | Convert to JSONL; sessions are in `~/.dsh/sessions/` | Not confirmed |
 
 - **Codex approvals.** Codex asks before running commands that need the network. For the install command, which carries the key, choose **Yes, proceed**, not "don't ask again for commands that start with …": that rule would store the key. The first time the OpenViking `search` tool runs, Codex asks for permission; choose **Always allow**. Trusting hooks and approving commands are separate things.
+- **Choice tool.** Claude Code: `AskUserQuestion`. Codex: `request_user_input`, which works only in Plan mode; in Default mode a call returns `request_user_input is unavailable in Default mode`, so ask in text there. Both add an "Other" entry for the user's own answer, so don't add one to the options. On other hosts, use a similar tool if there is one; otherwise ask in text.
 - **Not documented.** On these hosts, the user can ask you directly what OpenViking context you received, or run the diagnostics in Troubleshooting.
 
 Details for each host: https://docs.openviking.ai/en/agent-integrations/01-overview
