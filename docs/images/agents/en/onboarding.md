@@ -264,7 +264,7 @@ The default rule text:
 
 **Tell the user**
 
-This turn shows them the **effect** of the rule, not its text. The text is long and they may not read it; give it to them when they want to see it.
+This turn lets them both understand the effect of the rule and check the exact text to be written: the summary first, then the text, both in the body of your last reply of this turn (not only in progress messages). Show the text by default; don't wait for them to ask for it.
 
 The message (following the Step 3 read-back):
 
@@ -274,6 +274,7 @@ The message (following the Step 3 read-back):
    - before starting work, bring back the relevant background from OpenViking;
    - when the work produces important decisions (with the reasons), progress and next steps, or output such as designs, research and deliverables, store them in OpenViking on its own, as a working basis that can keep being updated and referred to later;
    - whenever useful information from OpenViking was used, say so briefly at the end of the reply.
+4. **The text to be written**: right after the summary, say "Here is the text that will go into <full path of the rules file>:", then give the full text in a code block (with `<user_id>` replaced by their user name).
 
 **Question (choice tool)**: The question text must make sense on its own, with the gist of the summary and the file path, for example "Work this way from now on? Bring back background before starting work; store important decisions, progress, and output such as designs and research in OpenViking on my own; tell you briefly when I used it. Goes into <rules file path>, for all projects." Options:
 
@@ -281,14 +282,13 @@ The message (following the Step 3 read-back):
 - Adjust for my role, with the description "Tell me your role, for example marketing, product or engineering, and I'll suggest what to save"
 - Automatic memory only
 
-In the question or a description, mention that if they want to see the full text to be written, or change something directly, they can say so in the free-text input.
+In the question or a description, mention that if they want to change anything in the text, they can say so directly in the free-text input.
 
 Then:
 
 - **Work this way**: write it.
-- **Adjust for my role**: ask their role (one sentence in text is enough). Using the reference above, give the adjusted effect in three or four points, marking which ones are new, then ask with the choice tool: Write this (recommended) / Adjust again / Automatic memory only.
-- **They want the full text**: put the text to be written in the body of your last reply of this turn (not only in progress messages), then ask again with the choice tool.
-- **They said directly what to change**: change the text as they want, show the effect after the change, and ask again.
+- **Adjust for my role**: ask their role (one sentence in text is enough). Using the reference above, give the adjusted effect in three or four points, marking which ones are new, together with the adjusted text, then ask with the choice tool: Write this (recommended) / Adjust again / Automatic memory only.
+- **They said directly what to change**: change the text as they want, show the effect and the changed text, and ask again.
 - **Automatic memory only**: write nothing. Tell them they can still ask you to save or read material at any time.
 
 The summary must truthfully match the text to be written: anything in the text that the summary doesn't mention may only be implementation detail of behavior the summary describes (such as where things go).
