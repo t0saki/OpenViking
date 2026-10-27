@@ -19,8 +19,8 @@
  *                                  (default: 7)
  *   OPENVIKING_PENDING_REPLAY_LIMIT max items replayed per session-start
  *                                  (default: 50)
- *   OPENVIKING_PENDING_MAX_ENTRIES max queued items; the oldest are evicted
- *                                  past it (default: 5000)
+ *   OPENVIKING_PENDING_MAX_ENTRIES max queued items; the least recently
+ *                                  touched are evicted past it (default: 5000)
  */
 
 import { mkdir, readdir, readFile, rename, writeFile, unlink, stat, chmod, utimes } from "node:fs/promises";
@@ -185,13 +185,15 @@ async function recoverStaleProcessing(dir) {
 }
 
 /**
- * Keep the queue within OPENVIKING_PENDING_MAX_ENTRIES by deleting the oldest
- * `.json` entries, never `keep` (the entry just written). Age is the file
- * mtime: filenames carry no timestamp, and reading createdAt would parse every
- * entry, which is the cost this bound exists to cap. Overflow trims to 90% of
- * the cap so the stat pass runs once per batch of enqueues, not on every one.
+ * Keep the queue within OPENVIKING_PENDING_MAX_ENTRIES by deleting the least
+ * recently touched `.json` entries (by mtime), never `keep` (the entry just
+ * written, if any). mtime only approximates enqueue time, since claiming and
+ * retrying an entry refresh it, but filenames carry no timestamp and reading
+ * createdAt would parse every entry, which is the cost this bound exists to
+ * cap. Overflow trims to 90% of the cap so the stat pass runs once per batch
+ * of enqueues, not on every one; under the cap this is a single readdir.
  */
-async function evictOverflow(dir, keep) {
+async function evictOverflow(dir, keep = null) {
   const maxEntries = getMaxEntries();
   let files;
   try {
@@ -199,7 +201,8 @@ async function evictOverflow(dir, keep) {
   } catch {
     return 0;
   }
-  if (files.length < maxEntries) return 0;
+  const reserved = keep ? 1 : 0;
+  if (files.length + reserved <= maxEntries) return 0;
 
   const aged = [];
   for (const f of files) {
@@ -210,12 +213,21 @@ async function evictOverflow(dir, keep) {
     }
   }
   aged.sort((a, b) => a.mtimeMs - b.mtimeMs);
-  const keepOthers = Math.max(0, Math.floor(maxEntries * 0.9) - 1);
+  const keepOthers = Math.max(0, Math.floor(maxEntries * 0.9) - reserved);
   let evicted = 0;
   for (const { f } of aged.slice(0, Math.max(0, aged.length - keepOthers))) {
     if (await dequeue(f)) evicted++;
   }
   return evicted;
+}
+
+/**
+ * Trim a backlog that is already over the cap, e.g. one left from before the
+ * cap existed, without waiting for the next enqueue. Returns the number of
+ * entries evicted.
+ */
+export async function trimPending() {
+  return evictOverflow(getPendingDir());
 }
 
 /**
@@ -424,6 +436,7 @@ export async function cleanStale() {
  */
 export async function replayPending(fetchJSON, log, options = {}) {
   const consumeRetries = options.consumeRetries !== false;
+  await trimPending();
   const pending = await listPending();
 
   if (pending.length === 0) {

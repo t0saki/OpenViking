@@ -6,6 +6,7 @@ import {
   enqueue,
   listPending,
   replayPending,
+  trimPending,
 } from "./shared/pending-queue.mjs";
 import { isRetryableFailure } from "./shared/retryable.mjs";
 import { resolveEffectivePeerId } from "./shared/workspace-peer.mjs";
@@ -277,7 +278,7 @@ export class OpenVikingRuntime {
       // Dropping captured history is data loss, so it goes to warn, not debug.
       if (result.evicted > 0) {
         this.logger?.warn?.(`[openviking:dsh] pending_evicted ${JSON.stringify({
-          sessionId: state.ovSessionId,
+          triggerSessionId: state.ovSessionId,
           evicted: result.evicted,
         })}`);
       }
@@ -357,6 +358,13 @@ export class OpenVikingRuntime {
     if (this.drainRunning) return;
     this.drainRunning = true;
     try {
+      // A backlog left over the cap (e.g. from before the cap existed) is
+      // trimmed here rather than on the next enqueue, which may never come
+      // while the server is up.
+      const evicted = await trimPending();
+      if (evicted > 0) {
+        this.logger?.warn?.(`[openviking:dsh] pending_evicted ${JSON.stringify({ evicted })}`);
+      }
       const pending = await listPending();
       if (pending.length > 0) {
         const health = await this.client.healthResult();

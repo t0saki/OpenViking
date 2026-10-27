@@ -263,7 +263,7 @@ test("a capture that overflows the pending queue warns about the evicted entries
 
     assert.equal((await listPending()).length, 1);
     assert.equal(warnings.length, 1);
-    assert.match(warnings[0], /pending_evicted .*"evicted":2/);
+    assert.match(warnings[0], /pending_evicted \{"triggerSessionId":"[^"]+","evicted":2\}/);
   } finally {
     if (originalMax === undefined) delete process.env.OPENVIKING_PENDING_MAX_ENTRIES;
     else process.env.OPENVIKING_PENDING_MAX_ENTRIES = originalMax;
