@@ -162,34 +162,36 @@ node "${TMPDIR:-/tmp}/ov-import-history.mjs" --harness <claude|codex> --cwd "$PW
 
 看 JSON 里每个会话的 `extraction`，不要只看退出码。
 
-然后**读回**。只要有会话进了 OpenViking（这次导入的、之前就导入过的、插件已经保存的），都要读回。插件要重启后才在这段对话里加载，所以这里用 `ov` 命令：
+然后**读回**。只要有会话进了 OpenViking（这次导入的、之前就导入过的、插件已经保存的），都要读回。`--wait` 返回时，`extraction` 为 `completed` 的会话已经提取成记忆，所以读回读的是记忆，不是会话本身。插件要重启后才在这段对话里加载，所以这里用 `ov` 命令：
 
-1. 先查和他的工作相关的背景，查询词用他描述的工作或项目名：
-
-   ```bash
-   ov search "<他描述的工作或项目名>" --mode context
-   ```
-
-2. 结果不够，或者记忆还在提取，就直接读一两个最相关会话的内容。会话 id：状态为 `new`、`partial`、`imported` 的用 JSON 里的 `id`；状态为 `live` 的是插件保存时用的 id，Claude Code 为 `cc-<nativeId>`，Codex 为 `cx-<nativeId>`；其他宿主的 `live` 会话只用第 1 步的 `ov search` 读回。
+1. 在这个项目的记忆里检索，查询词用他描述的工作或项目名。导入的记忆按项目归在 `viking://user/<user_id>/peers/<项目>/memories/` 下，`<项目>` 取导入 JSON 里的 `projectPeer`（按 id 挑选时取各会话的 `peer`）；两者都为空时，范围用 `viking://user/<user_id>/memories/`：
 
    ```bash
-   ov session get-session-context <会话 id> --token-budget 4000
+   ov find "<他描述的工作或项目名>" -u viking://user/<user_id>/peers/<项目>/memories -n 8
    ```
 
-   返回里既没有摘要也没有消息时（服务还没给归档生成摘要，导入的会话常这样）：导入的会话改读导入时存下的原对话（导入只提交一次，归档就是 `archive_001`）；`live` 会话只用第 1 步的结果。
+   只想看这次导入新提取的记忆时，加上 `--after`，取导入开始前的时间，例如 `--after 30m`。
+
+2. 挑一两条最相关的事件记忆（`.../memories/events/` 下的文件）用 `ov read` 读全文。事件记忆里有摘要，也带着当时的对话原文：
+
+   ```bash
+   ov read <记忆的 URI>
+   ```
+
+3. 只有两种情况读导入的原对话：他想看当时的原话，或者没有提取出记忆（`extraction` 不是 `completed`，或者第 1 步什么都没查到）。会话 id 用导入 JSON 里的 `id`；导入只提交一次，归档就是 `archive_001`。插件保存的 `live` 会话不用读原对话，以第 1 步的结果为准：
 
    ```bash
    ov session get-session-archive <会话 id> archive_001
    ```
 
-3. 从读到的内容里整理四件事：这项工作要做成什么、上次做到哪、定过的一个判断和理由、还没解决的事。找不到的项就不写，不要补。另外记下一个**缺口**：讨论里提到、但原文不在 OpenViking 里的成品，例如方案文档、脚本、报告。步骤 4 会用到它。
+4. 从读到的内容里整理四件事：这项工作要做成什么、上次做到哪、定过的一个判断和理由、还没解决的事。找不到的项就不写，不要补。另外记下一个**缺口**：讨论里提到、但原文不在 OpenViking 里的成品，例如方案文档、脚本、报告。步骤 4 会用到它。
 
 | 导入结果 | 第一句怎么说 | 读回 |
 |---|---|---|
-| 有写入，`extraction` 为 `completed` | 导入了哪几项工作，记忆已经整理好 | 读，以 `ov search` 为主 |
-| 有写入，提取还在进行（`pending`、`running`）或没有结果 | 讨论已经存进去了，记忆还在后台整理，几分钟后就能被自动取回 | 读，用 `get-session-context` 读原对话，并说明「这是从原对话里读到的」 |
+| 有写入，`extraction` 为 `completed` | 导入了哪几项工作，记忆已经整理好 | 读记忆：`ov find`，再 `ov read` 一两条 |
+| 有写入，提取还在进行（`pending`、`running`）或没有结果 | 讨论已经存进去了，记忆还在后台整理，几分钟后就能被自动取回 | 读原对话（`get-session-archive`），并说明「这是从原对话里读到的」 |
 | `failed` | 讨论已保存，但记忆整理失败了，之后可以重试 | 读原对话 |
-| 零新增：都已导入过或插件已保存 | 这些讨论之前就已经在他的 OpenViking 里，这次不用重复上传 | 读 |
+| 零新增：都已导入过或插件已保存 | 这些讨论之前就已经在他的 OpenViking 里，这次不用重复上传 | 读记忆（不加 `--after`） |
 | 部分失败 | 哪些成功、哪些失败，失败的之后可以重试，不要全部重传 | 读成功的部分 |
 | 没有匹配，或用户选了不导入 | 以后从他的真实工作开始积累 | 不读，直接进入步骤 4 |
 
@@ -363,7 +365,7 @@ ov add-resource ./docs/design.md --parent-auto-create viking://user/<user_id>/re
 | pi | `pi` | 重启 pi | 开新会话 | 底栏显示 `OV ✓`；`/viking` 查看状态 | 转成 JSONL；会话在 `~/.pi/agent/sessions/*/*.jsonl` | `~/.pi/agent/AGENTS.md` |
 | DeepSeek Harness | `dsh` | 用安装器输出中 `DeepSeek Harness profile：` 那一行的 profile 新开会话：`dsh --profile <profile>` | 开新会话 | 会话顶部显示「上下文注入 · openviking-memory」 | 转成 JSONL；会话在 `~/.dsh/sessions/` | 未确认 |
 
-- **Codex 的审批。** Codex 运行需要联网的命令前会请求批准，包括这里的 `ov search` 和 `ov session`。运行带 key 的安装命令时选 **Yes, proceed**，不要选「以后以这个前缀开头的命令不再询问」，那条规则会把 key 存下来。OpenViking 的 `search` 工具第一次运行时，Codex 会请求允许，选 **Always allow** 即可。Hooks 信任和命令批准是两件事。
+- **Codex 的审批。** Codex 运行需要联网的命令前会请求批准，包括这里读回用的 `ov find`、`ov read` 和 `ov session`。运行带 key 的安装命令时选 **Yes, proceed**，不要选「以后以这个前缀开头的命令不再询问」，那条规则会把 key 存下来。OpenViking 的 `search` 工具第一次运行时，Codex 会请求允许，选 **Always allow** 即可。Hooks 信任和命令批准是两件事。
 - **选项工具。**
   - Claude Code：`AskUserQuestion`。
   - Codex：有两个，工具列表里有哪个用哪个，优先 `request_user_input_async`。

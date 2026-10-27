@@ -162,34 +162,36 @@ node "${TMPDIR:-/tmp}/ov-import-history.mjs" --harness <claude|codex> --cwd "$PW
 
 Check each session's `extraction` in the JSON, not just the exit code.
 
-Then **read back**. Whenever any session is in OpenViking (imported this time, imported before, or already saved by the plugin), read it back. The plugin loads into this conversation only after the restart, so use the `ov` command here:
+Then **read back**. Whenever any session is in OpenViking (imported this time, imported before, or already saved by the plugin), read it back. When `--wait` returns, the sessions whose `extraction` is `completed` have already been turned into memories, so the read-back reads memories, not the sessions themselves. The plugin loads into this conversation only after the restart, so use the `ov` command here:
 
-1. First search for background related to their work, using the work or project name they described as the query:
-
-   ```bash
-   ov search "<the work or project name they described>" --mode context
-   ```
-
-2. If the results aren't enough, or memories are still being extracted, read the content of the one or two most relevant sessions directly. Session id: for the states `new`, `partial` and `imported`, use the `id` from the JSON; a `live` session uses the id the plugin saved it under, `cc-<nativeId>` for Claude Code and `cx-<nativeId>` for Codex; on other hosts, read back `live` sessions only with the `ov search` in item 1.
+1. Search this project's memories, with the work or project name they described as the query. Imported memories are filed per project under `viking://user/<user_id>/peers/<project>/memories/`; `<project>` is `projectPeer` in the import JSON (for sessions picked by id, each session's `peer`). If both are empty, use `viking://user/<user_id>/memories/` as the scope:
 
    ```bash
-   ov session get-session-context <session id> --token-budget 4000
+   ov find "<the work or project name they described>" -u viking://user/<user_id>/peers/<project>/memories -n 8
    ```
 
-   If it returns neither an overview nor messages (the server hasn't summarized the archive yet, which is common for imported sessions), read the conversation as it was imported instead; an import commits once, so the archive is `archive_001`. For a `live` session, use only what item 1 returned:
+   To see only the memories this import produced, add `--after` with a time from before the import started, for example `--after 30m`.
+
+2. Read the one or two most relevant event memories (files under `.../memories/events/`) in full with `ov read`. An event memory has a summary and also carries the conversation as it was said:
+
+   ```bash
+   ov read <memory URI>
+   ```
+
+3. Read the imported conversation itself only in two cases: they want the original wording, or no memories were extracted (`extraction` isn't `completed`, or item 1 found nothing). Use the session `id` from the import JSON; an import commits once, so the archive is `archive_001`. Sessions the plugin saved (`live`) aren't read this way; go by what item 1 returned:
 
    ```bash
    ov session get-session-archive <session id> archive_001
    ```
 
-3. From what you read, put together four things: what this work is meant to achieve, where it left off, one judgment that was settled and its reason, and what is still open. Leave out anything you can't find; don't fill it in. Also note one **gap**: finished work that the discussion mentions but whose original isn't in OpenViking, such as a design doc, a script or a report. Step 4 uses it.
+4. From what you read, put together four things: what this work is meant to achieve, where it left off, one judgment that was settled and its reason, and what is still open. Leave out anything you can't find; don't fill it in. Also note one **gap**: finished work that the discussion mentions but whose original isn't in OpenViking, such as a design doc, a script or a report. Step 4 uses it.
 
 | Import result | What the first sentence says | Read back |
 |---|---|---|
-| Written, `extraction` is `completed` | Which work was imported, and that the memories are ready | Yes, mainly with `ov search` |
-| Written, extraction still in progress (`pending`, `running`) or no result | The discussions are saved; the memories are still being processed in the background and can be recalled automatically in a few minutes | Yes: read the original conversations with `get-session-context`, and say "this is read from the original conversation" |
+| Written, `extraction` is `completed` | Which work was imported, and that the memories are ready | Read memories: `ov find`, then `ov read` one or two |
+| Written, extraction still in progress (`pending`, `running`) or no result | The discussions are saved; the memories are still being processed in the background and can be recalled automatically in a few minutes | Read the original conversation (`get-session-archive`), and say "this is read from the original conversation" |
 | `failed` | The discussions are saved, but processing them into memories failed; it can be retried later | Read the original conversations |
-| Nothing new: all imported before or saved by the plugin | These discussions were already in their OpenViking, so there was no need to upload them again | Yes |
+| Nothing new: all imported before or saved by the plugin | These discussions were already in their OpenViking, so there was no need to upload them again | Read memories (without `--after`) |
 | Some failed | Which ones made it and which didn't; the failed ones can be retried later without re-sending everything | Read the ones that made it |
 | No match, or the user chose not to import | It builds up from their real work from now on | No; go straight to Step 4 |
 
@@ -363,7 +365,7 @@ After the summary and directions, wait for them to choose; don't start changing 
 | pi | `pi` | Restart pi | New session | `OV ✓` in the footer; `/viking` for status | Convert to JSONL; sessions are in `~/.pi/agent/sessions/*/*.jsonl` | `~/.pi/agent/AGENTS.md` |
 | DeepSeek Harness | `dsh` | Start a new session with the profile from the installer's `DeepSeek Harness profile:` line: `dsh --profile <profile>` | New session | "Context injection · openviking-memory" at the top of the session | Convert to JSONL; sessions are in `~/.dsh/sessions/` | Not confirmed |
 
-- **Codex approvals.** Codex asks before running commands that need the network, including `ov search` and `ov session` here. For the install command, which carries the key, choose **Yes, proceed**, not "don't ask again for commands that start with …": that rule would store the key. The first time the OpenViking `search` tool runs, Codex asks for permission; choose **Always allow**. Trusting hooks and approving commands are separate things.
+- **Codex approvals.** Codex asks before running commands that need the network, including the `ov find`, `ov read` and `ov session` used for the read-back here. For the install command, which carries the key, choose **Yes, proceed**, not "don't ask again for commands that start with …": that rule would store the key. The first time the OpenViking `search` tool runs, Codex asks for permission; choose **Always allow**. Trusting hooks and approving commands are separate things.
 - **Choice tool.**
   - Claude Code: `AskUserQuestion`.
   - Codex: there are two; use whichever is in your tool list, preferring `request_user_input_async`.
