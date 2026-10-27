@@ -33,7 +33,7 @@ Take these when you explain the value, and put them in terms of the user's own w
 - **Use their own content as examples.** If you can say "the demo storyline you settled on in the Gateway project", don't say "your earlier decisions".
 - **Ask one decision at a time.** The import scope, the go-ahead to import and the collaboration rule each get their own turn; wait for the answer before moving on.
 - **Ask all three decisions with the choice tool.** For the import scope (3a), the go-ahead to import (3b) and the collaboration rule (Step 4), whenever the host has a tool that lets the user pick an answer (see "Choice tool" under [Appendix A](#appendix-a-hosts)), always ask with it; don't write the options as a text list. The places marked "**Question (choice tool)**" in the steps are where to call it. Put one question and two or three options in the tool; keep option labels short, put extra explanation in the option descriptions, and put the recommended one first, marked "(recommended)". The tool has its own free-text input, so don't add an "Other" option. Only if there is no such tool in your tool list, or the call fails, list the same options in text, and don't retry.
-- **Put what they need to see where they are sure to see it.** The question text must make sense on its own: put the points needed for the decision (what the dry run found, the rule summary and the file path) into the question, not just "as above". Some hosts (the Codex desktop app, for example) collapse the progress messages around a tool call once the turn ends, leaving only the last reply and the question card. So the read-back, the rule summary and anything else they need to read must be in the last reply of the turn: with a tool that doesn't wait for the answer, such as `request_user_input_async`, call the tool first, then write the last reply.
+- **Put what they need to see where they are sure to see it.** The question text must make sense on its own: put the points needed for the decision (what the dry run found, the rule summary and the file path) into the question, not just "as above". Some hosts (the Codex desktop app, for example) collapse the progress messages around a tool call once the turn ends, leaving only the last reply and the question card. So the read-back, the rule summary and anything else they need to read go in the body of the last reply of the turn; the question on the choice card carries only a one- or two-sentence summary and the decision, never the whole read-back. With a tool that doesn't wait for the answer, such as `request_user_input_async`, call the tool first, then write the last reply.
 - Don't mention the step numbers of this guide or steps that don't apply to the current host, and don't relay the guide point by point.
 
 ## Ground rules
@@ -164,15 +164,15 @@ Check each session's `extraction` in the JSON, not just the exit code.
 
 Then **read back**. Whenever any session is in OpenViking (imported this time, imported before, or already saved by the plugin), read it back. When `--wait` returns, the sessions whose `extraction` is `completed` have already been turned into memories, so the read-back reads memories, not the sessions themselves. The plugin loads into this conversation only after the restart, so use the `ov` command here:
 
-1. Search this project's memories, with the work or project name they described as the query. Imported memories are filed per project under `viking://user/<user_id>/peers/<project>/memories/`; `<project>` is `projectPeer` in the import JSON (for sessions picked by id, each session's `peer`). If both are empty, use `viking://user/<user_id>/memories/` as the scope:
+1. Search the memories across the user's whole directory, with the work or project name they described as the query. Memories extracted from the import end up in two places: `viking://user/<user_id>/memories/` (entities, events and preferences that span projects) and `viking://user/<user_id>/peers/<project>/memories/` (this project's entities, events and preferences; `<project>` is `projectPeer` in the import JSON). One search scoped to the user directory covers both:
 
    ```bash
-   ov find "<the work or project name they described>" -u viking://user/<user_id>/peers/<project>/memories -n 8
+   ov find "<the work or project name they described>" -u viking://user/<user_id> --context-type memory -n 10
    ```
 
    To see only the memories this import produced, add `--after` with a time from before the import started, for example `--after 30m`.
 
-2. Read the one or two most relevant event memories (files under `.../memories/events/`) in full with `ov read`. An event memory has a summary and also carries the conversation as it was said:
+2. From the results, pick the two or three most relevant, focusing on the entity (`entities/`) and event (`events/`) memories under the two `memories/` folders above, and read them in full with `ov read`. An entity memory says what this work or thing is and where it stands; an event memory has a summary and also carries the conversation as it was said:
 
    ```bash
    ov read <memory URI>
@@ -200,7 +200,7 @@ If the user asks what the script does: it only reads the session files on this m
 **Tell the user**
 
 1. First sentence: "What the first sentence says" in the table above. Don't give message counts, sizes, or state names such as `extraction`.
-2. The read-back, two to four items, in their own words and names: what they are working on, where it left off, what was decided (with the reason), what is still missing. If there are several pieces of work, one line each, no detail.
+2. The read-back, two to four items, in their own words and names: what they are working on, where it left off, what was decided (with the reason), what is still missing. If there are several pieces of work, one line each, no detail. The read-back goes in the body of this message; the choice card for the next step mentions it in one sentence at most.
 3. One sentence of value (V2 + V3): "From now on, in any connected agent, ask where <work> stands and it picks up from here."
 
 This message doesn't ask whether to start on this work, and doesn't list states. In the same message, go on to the Step 4 bridge.
