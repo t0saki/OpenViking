@@ -274,6 +274,13 @@ export class OpenVikingRuntime {
         this.log("pending_latched", { sessionId: state.ovSessionId, type });
       }
       state.hasPendingWrites = true;
+      // Dropping captured history is data loss, so it goes to warn, not debug.
+      if (result.evicted > 0) {
+        this.logger?.warn?.(`[openviking:dsh] pending_evicted ${JSON.stringify({
+          sessionId: state.ovSessionId,
+          evicted: result.evicted,
+        })}`);
+      }
     }
     if (!result.ok) {
       this.log("pending_enqueue_error", {

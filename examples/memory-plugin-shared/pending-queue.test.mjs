@@ -63,6 +63,26 @@ test("replayPending honors the per-run replay limit", async () => {
   });
 });
 
+test("enqueue evicts the oldest entries once the queue reaches its cap", async () => {
+  await withPendingDir(async (dir) => {
+    process.env.OPENVIKING_PENDING_MAX_ENTRIES = "10";
+    const base = Date.now() - 60_000;
+    for (let i = 0; i < 10; i++) {
+      const queued = await enqueue("addMessage", "queue-cap", { role: "user", content: `m${i}` });
+      assert.equal(queued.evicted, 0);
+      const at = new Date(base + i * 1000);
+      await utimes(join(dir, queued.path), at, at);
+    }
+
+    const overflow = await enqueue("addMessage", "queue-cap", { role: "user", content: "m10" });
+
+    assert.equal(overflow.ok, true);
+    assert.equal(overflow.evicted, 2);
+    const contents = (await listPending()).map(({ entry }) => entry.payload.content);
+    assert.deepEqual(contents.sort(), ["m10", "m2", "m3", "m4", "m5", "m6", "m7", "m8", "m9"]);
+  });
+});
+
 test("claimForReplay atomically claims a file only once", async () => {
   await withPendingDir(async (dir) => {
     await enqueue("commitSession", "queue-claim", {});
