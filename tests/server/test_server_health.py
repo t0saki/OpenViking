@@ -104,7 +104,7 @@ async def test_health_endpoint_without_api_key():
 
 
 @pytest.mark.parametrize(
-    "credentials", ["anonymous", "partial", "trusted", "keyed", "malformed", "asserted-root"]
+    "credentials", ["anonymous", "partial", "trusted", "keyed", "malformed", "asserted-root", "root-only", "invalid-root-only"]
 )
 async def test_health_trusted_identity_contract(credentials, caplog, service):
     app = create_app(
@@ -113,12 +113,14 @@ async def test_health_trusted_identity_contract(credentials, caplog, service):
     )
     await _initialize_auth_plugin(app, service, app.state.config)
     headers = {}
-    if credentials != "anonymous":
+    if credentials not in ("anonymous", "root-only", "invalid-root-only"):
         headers["X-OpenViking-Account"] = "account-a"
     if credentials in ("trusted", "keyed", "malformed", "asserted-root"):
         headers["X-OpenViking-User"] = "alice"
-    if credentials in ("keyed", "asserted-root"):
+    if credentials in ("keyed", "asserted-root", "root-only"):
         headers["X-API-Key"] = "test-root-key"
+    if credentials == "invalid-root-only":
+        headers["X-API-Key"] = "invalid-key"
     if credentials == "malformed":
         headers["X-OpenViking-User"] = "alice/../root"
     if credentials == "asserted-root":
@@ -128,13 +130,15 @@ async def test_health_trusted_identity_contract(credentials, caplog, service):
     ) as client:
         response = await client.get("/health", headers=headers)
     body = response.json()
-    expected_status = 401 if credentials in ("trusted", "malformed") else 200
+    expected_status = 401 if credentials in ("trusted", "malformed", "invalid-root-only") else 200
     assert response.status_code == expected_status
     if expected_status == 401:
         assert body["error"]["code"] == "UNAUTHENTICATED"
         return
     if credentials == "keyed":
         assert (body["account_id"], body["user_id"], body["role"]) == ("account-a", "alice", "user")
+    elif credentials == "root-only":
+        assert body["role"] == "root"
     else:
         assert "role" not in body
     assert body["root_api_key_required"] is True
@@ -150,82 +154,24 @@ async def test_system_status(client: httpx.AsyncClient):
     assert body["result"]["initialized"] is True
 
 
-async def test_backend_sync_status_endpoint(client: httpx.AsyncClient, service):
-    calls: list[str] = []
-
-    async def _fake_system_sync_status(uri: str, ctx):
-        calls.append(uri)
-        assert ctx is not None
-        return {"path": uri, "entry_count": 1}
-
-    service.fs.system_sync_status = _fake_system_sync_status
-
-    resp = await client.post(
-        "/api/v1/system/backend/sync-status",
-        json={"uri": "viking://resources"},
-    )
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["status"] == "ok"
-    assert body["result"] == {"path": "viking://resources", "entry_count": 1}
-    assert calls == ["viking://resources"]
-
-
-async def test_backend_sync_retry_endpoint(client: httpx.AsyncClient, service):
-    calls: list[str] = []
-
-    async def _fake_system_sync_retry(uri: str, ctx):
-        calls.append(uri)
-        assert ctx is not None
-        return {"path": uri, "retried": 2, "failed": 0}
-
-    service.fs.system_sync_retry = _fake_system_sync_retry
-
-    resp = await client.post(
-        "/api/v1/system/backend/sync-retry",
-        json={"uri": "viking://resources"},
-    )
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["status"] == "ok"
-    assert body["result"] == {"path": "viking://resources", "retried": 2, "failed": 0}
-    assert calls == ["viking://resources"]
-
-
-async def test_admin_sync_status_route(client: httpx.AsyncClient, service):
-    calls: list[str] = []
-
-    async def _fake_system_sync_status(uri: str, ctx):
-        calls.append(uri)
-        assert ctx is not None
-        return {"path": uri, "entry_count": 3}
-
-    service.fs.system_sync_status = _fake_system_sync_status
-
-    resp = await client.get("/api/v1/system/sync/viking://resources")
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["status"] == "ok"
-    assert body["result"] == {"path": "viking://resources", "entry_count": 3}
-    assert calls == ["viking://resources"]
-
-
-async def test_admin_sync_retry_route(client: httpx.AsyncClient, service):
-    calls: list[str] = []
-
-    async def _fake_system_sync_retry(uri: str, ctx):
-        calls.append(uri)
-        assert ctx is not None
-        return {"path": uri, "retried": 4, "failed": 1}
-
-    service.fs.system_sync_retry = _fake_system_sync_retry
-
-    resp = await client.post("/api/v1/system/sync/viking://resources/retry")
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["status"] == "ok"
-    assert body["result"] == {"path": "viking://resources", "retried": 4, "failed": 1}
-    assert calls == ["viking://resources"]
+@pytest.mark.parametrize(
+    ("method", "path", "json"),
+    [
+        ("POST", "/api/v1/system/backend/sync-status", {"uri": "viking://resources"}),
+        ("POST", "/api/v1/system/backend/sync-retry", {"uri": "viking://resources"}),
+        ("GET", "/api/v1/system/sync/viking://resources", None),
+        ("POST", "/api/v1/system/sync/viking://resources/retry", None),
+    ],
+)
+async def test_removed_sync_routes_return_404(
+    client: httpx.AsyncClient,
+    method: str,
+    path: str,
+    json: dict | None,
+):
+    """Removed V1 sync routes must stay unregistered."""
+    resp = await client.request(method, path, json=json)
+    assert resp.status_code == 404
 
 
 async def test_process_time_header(client: httpx.AsyncClient):
@@ -253,14 +199,15 @@ async def test_404_for_unknown_route(client: httpx.AsyncClient):
 
 async def test_lifespan_shutdown_ignores_cancelled_service_close(monkeypatch):
     class _Service:
+        def __init__(self):
+            self.viking_fs = object()
+            self._queue_manager = None
+
         async def initialize(self):
             pass
 
         async def apply_agent_evolution_config(self):
             pass
-
-        viking_fs = None
-        _queue_manager = None
 
         async def close(self):
             raise asyncio.CancelledError("shutdown")
@@ -323,9 +270,6 @@ async def test_ready_returns_200_after_initialized(monkeypatch):
         async def ls(self, path, ctx=None):
             return []
 
-        async def system_sync_status(self, uri, ctx=None):
-            return {"path": uri, "entry_count": 0}
-
         def _get_vector_store(self):
             class MockVectorStore:
                 async def health_check(self):
@@ -344,6 +288,10 @@ async def test_ready_returns_200_after_initialized(monkeypatch):
         "openviking_cli.utils.ollama.detect_ollama_in_config",
         lambda config: (False, None, None),
     )
+    monkeypatch.setattr(
+        "openviking_cli.utils.config.open_viking_config.OpenVikingConfigSingleton.get_instance",
+        lambda: SimpleNamespace(embedding=SimpleNamespace(get_embedder=lambda: None)),
+    )
 
     app = create_app(config=ServerConfig(), service=service)
     transport = httpx.ASGITransport(app=app)
@@ -354,7 +302,7 @@ async def test_ready_returns_200_after_initialized(monkeypatch):
         assert body["status"] == "ready"
         assert body["checks"]["agfs"]["status"] == "ok"
         assert body["checks"]["agfs"]["checks"]["filesystem"] == "ok"
-        assert body["checks"]["agfs"]["checks"]["multiwrite_sync"] == "ok"
+        assert body["checks"]["agfs"]["checks"] == {"filesystem": "ok"}
 
 
 async def test_slow_init_does_not_block_health(monkeypatch):
@@ -380,25 +328,39 @@ async def test_slow_init_does_not_block_health(monkeypatch):
 
 
 async def test_initialize_runtime_state_loads_api_key_manager(monkeypatch):
-    """The auth plugin must publish its manager before deletion setup."""
+    """System assets reconcile after auth loading and before deletion setup."""
+
+    events = []
 
     class MockService:
         def __init__(self):
             self._initialized = False
             self.viking_fs = object()
+            self._queue_manager = None
 
         async def initialize(self):
             self._initialized = True
+            events.append("service")
 
         async def apply_agent_evolution_config(self):
-            pass
+            events.append("agent-evolution")
+
+        async def reconcile_system_assets(self, account_lister):
+            assert account_lister is manager
+            events.append("system-assets")
+            return 1
 
     manager = object()
-    setup = AsyncMock(return_value=None)
+
+    async def setup(**kwargs):
+        assert kwargs["manager"] is manager
+        events.append("deletion")
+
     monkeypatch.setattr("openviking.service.deletion.setup_deletion", setup)
 
     async def initialize_plugin(app, service, config):
         app.state.api_key_manager = manager
+        events.append("auth")
 
     monkeypatch.setattr("openviking.server.app._initialize_auth_plugin", initialize_plugin)
 
@@ -410,4 +372,31 @@ async def test_initialize_runtime_state_loads_api_key_manager(monkeypatch):
 
     assert service._initialized is True
     assert app.state.api_key_manager is manager
-    assert setup.await_args.kwargs["manager"] is manager
+    assert events == [
+        "service",
+        "agent-evolution",
+        "auth",
+        "system-assets",
+        "deletion",
+    ]
+
+
+async def test_initialize_runtime_state_skips_reconcile_without_account_manager(monkeypatch):
+    service = SimpleNamespace(
+        initialize=AsyncMock(),
+        apply_agent_evolution_config=AsyncMock(),
+        reconcile_system_assets=AsyncMock(),
+    )
+    setup = AsyncMock(return_value=None)
+    monkeypatch.setattr("openviking.service.deletion.setup_deletion", setup)
+
+    async def initialize_plugin(app, service, config):
+        app.state.api_key_manager = None
+
+    monkeypatch.setattr("openviking.server.app._initialize_auth_plugin", initialize_plugin)
+
+    app = SimpleNamespace(state=SimpleNamespace(api_key_manager=None))
+    await _initialize_runtime_state(app, service, ServerConfig())
+
+    service.reconcile_system_assets.assert_not_awaited()
+    assert setup.await_args.kwargs["manager"] is None
