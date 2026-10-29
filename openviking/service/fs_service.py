@@ -576,6 +576,7 @@ class FSService:
     ) -> Optional[Dict[str, Any]]:
         """Remove resource."""
         viking_fs = self._ensure_initialized()
+        await viking_fs._ensure_access(uri, ctx, action=AclAction.MANAGE)
         namespace_policy = namespace_policy_for_uri(uri)
         if namespace_policy.processing_mode is NamespaceProcessingMode.FILE_ONLY:
             result = await viking_fs.rm(uri, recursive=recursive, ctx=ctx, no_vector=True)
@@ -1071,6 +1072,7 @@ class FSService:
     ) -> None:
         """Commit move/watch state and enqueue all affected parent refreshes."""
         viking_fs = self._ensure_initialized()
+        await viking_fs._ensure_access(from_uri, ctx, action=AclAction.MANAGE)
         watch_manager = self._get_watch_manager()
         use_watch_transaction = (
             watch_manager is not None

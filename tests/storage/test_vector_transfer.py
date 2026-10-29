@@ -683,61 +683,79 @@ async def test_l2_diff_scan_reads_every_page_under_target_directory():
 @pytest.mark.asyncio
 async def test_incremental_inventory_reads_all_semantic_levels_under_target():
     root = "viking://resources/docs"
+    files = [_record(f"file-{i}", f"{root}/{i}.md", md5=f"md5-{i}") for i in range(5998)]
     backend = _RealAclMemoryTransferBackend(
         [
-            _record("root-l0", root, level=0, abstract="root abstract"),
-            _record("root-l1", root, level=1, abstract="root overview"),
-            _record("file-l2", f"{root}/a.py", level=2, md5="ma"),
-            _record("outside", "viking://resources/other.py", level=2),
-            _record(
-                "other-account",
-                f"{root}/private.py",
-                level=2,
-                account_id="other",
-            ),
+            _record("root-l0", root, level=0),
+            _record("root-l1", root, level=1),
+            *files,
+            _record("outside", "viking://resources/other.py"),
+            _record("other-account", f"{root}/private.py", account_id="other"),
         ]
     )
+    original_page = backend._strict_transfer_page
+    original_filter = backend.filter
 
-    records = await backend.get_incremental_inventory_under_uri(root, ctx=_ctx(), batch_size=2)
+    async def bounded_filter(*args, limit=10, **kwargs):
+        assert limit <= 5000, "VikingDB rejects oversized queries"
+        return await original_filter(*args, limit=limit, **kwargs)
 
-    assert records == {
-        "root-l0": {"id": "root-l0", "uri": root, "level": 0, "md5": ""},
-        "root-l1": {"id": "root-l1", "uri": root, "level": 1, "md5": ""},
-        "file-l2": {
-            "id": "file-l2",
-            "uri": f"{root}/a.py",
-            "level": 2,
-            "md5": "ma",
-        },
-    }
-    assert len(backend.scroll_filters) == 2
+    async def bounded_page(ctx, filter, *, limit, cursor, output_fields):
+        assert limit <= 5000, "VikingDB rejects oversized pages"
+        return await original_page(
+            ctx, filter, limit=limit, cursor=cursor, output_fields=output_fields
+        )
+
+    backend.filter = bounded_filter
+    backend._strict_transfer_page = bounded_page
+    incremental = await backend.get_incremental_inventory_under_uri(root, ctx=_ctx())
+    reindex = await backend.get_reindex_inventory_under_uri(root, ctx=_ctx())
+
+    assert reindex == incremental
+    assert len(reindex) == 6000
+    assert reindex["root-l0"]["level"] == 0
+    assert reindex["root-l1"]["level"] == 1
+    assert reindex["file-5997"]["md5"] == "md5-5997"
+    assert "outside" not in reindex and "other-account" not in reindex
+    backend._strict_transfer_count = AsyncMock(return_value=6001)
+    with pytest.raises(RuntimeError, match="ended after 6000 of 6001"):
+        await backend.get_reindex_inventory_under_uri(root, ctx=_ctx())
 
 
 @pytest.mark.asyncio
 async def test_incremental_inventory_projects_request_scalar_fields():
-    root = "viking://resources/docs"
+    uri = "viking://user/alice/memories/events/a.md"
     backend = _RealAclMemoryTransferBackend(
         [
-            _record(
-                "file-l2",
-                f"{root}/a.py",
-                level=2,
-                md5="ma",
-                search_tags=["env=test"],
-            )
+            _record("base", uri, md5="ma", search_tags=["env=test"]),
+            _record("chunk", uri + "#chunk_0000", search_tags=["env=test"]),
+            _record("sibling", uri + "-other.md"),
+            _record("literal", uri + "#chunk_notes"),
         ]
     )
-
-    records = await backend.get_incremental_inventory_under_uri(
-        root,
+    incremental = await backend.get_incremental_inventory_under_uri(
+        uri,
         ctx=_ctx(),
-        output_fields=["id", "uri", "level", "md5", "search_tags"],
+        recursive=False,
+        output_fields=["search_tags"],
+    )
+    reindex = await backend.get_reindex_inventory_under_uri(
+        uri,
+        ctx=_ctx(),
+        recursive=False,
+        include_virtual_chunks=True,
+        output_fields=["search_tags"],
     )
 
-    assert records["file-l2"]["search_tags"] == ["env=test"]
+    assert set(incremental) == {"base"}
+    assert set(reindex) == {"base", "chunk"}
+    assert reindex["base"] == incremental["base"]
+    assert reindex["chunk"]["search_tags"] == ["env=test"]
     assert all("search_tags" in fields for fields in backend.scroll_output_fields)
-    assert all("vector" not in fields for fields in backend.scroll_output_fields)
-    assert all("sparse_vector" not in fields for fields in backend.scroll_output_fields)
+    assert all(
+        not {"vector", "sparse_vector", "content"}.intersection(fields)
+        for fields in backend.scroll_output_fields
+    )
 
 
 @pytest.mark.asyncio
