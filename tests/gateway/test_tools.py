@@ -1,6 +1,8 @@
+import ast
 import asyncio
 import base64
 import copy
+from pathlib import Path
 from types import SimpleNamespace
 
 import orjson
@@ -8,7 +10,7 @@ import pytest
 from conftest import MCP_TOOLS, mcp_tool
 
 from openviking_gateway.capture import capture_messages
-from openviking_gateway.models import Policy, Upstream
+from openviking_gateway.models import WRITE_TOOLS, Policy, Upstream
 from openviking_gateway.notices import TOOL_NOTICE, tool_tail
 from openviking_gateway.storage import SQLiteKernelStore
 from openviking_gateway.tool_catalog import notice_head, select_tools, tool_block_reason
@@ -50,6 +52,24 @@ def test_default_policy_offers_read_only_and_future_tools():
         for tool in select_tools(catalog, policy)
     }
     assert names == {"find", "search", "read", "list", "grep", "glob", "health", "future"}
+
+
+def test_default_disabled_tools_cover_every_server_tool_that_changes_data():
+    # Read the server's MCP tool annotations from source; the gateway suite has no server.
+    source = Path(__file__).parents[2] / "openviking" / "server" / "mcp_endpoint.py"
+    changes_data = set()
+    for node in ast.walk(ast.parse(source.read_text())):
+        if not isinstance(node, ast.AsyncFunctionDef | ast.FunctionDef):
+            continue
+        for decorator in node.decorator_list:
+            if not (isinstance(decorator, ast.Call) and ast.unparse(decorator.func) == "mcp.tool"):
+                continue
+            kwargs = {kw.arg: kw.value for kw in decorator.keywords}
+            name = kwargs["name"].value if "name" in kwargs else node.name
+            if ast.unparse(kwargs["annotations"]) != "_READ_ONLY_TOOL_ANNOTATIONS":
+                changes_data.add(name)
+    # OpenViking marks search as modifying data, but the gateway offers it as a read tool.
+    assert changes_data - {"search"} == set(WRITE_TOOLS) == set(Policy().disabled_tools)
 
 
 def test_tools_default_to_all_and_only_raw_disabled_names_are_excluded():
