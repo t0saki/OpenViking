@@ -2,6 +2,7 @@ import ast
 import asyncio
 import base64
 import copy
+import re
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -56,7 +57,8 @@ def test_default_policy_offers_read_only_and_future_tools():
 
 def test_default_disabled_tools_cover_every_server_tool_that_changes_data():
     # Read the server's MCP tool annotations from source; the gateway suite has no server.
-    source = Path(__file__).parents[2] / "openviking" / "server" / "mcp_endpoint.py"
+    root = Path(__file__).parents[2]
+    source = root / "openviking" / "server" / "mcp_endpoint.py"
     changes_data = set()
     for node in ast.walk(ast.parse(source.read_text())):
         if not isinstance(node, ast.AsyncFunctionDef | ast.FunctionDef):
@@ -66,10 +68,18 @@ def test_default_disabled_tools_cover_every_server_tool_that_changes_data():
                 continue
             kwargs = {kw.arg: kw.value for kw in decorator.keywords}
             name = kwargs["name"].value if "name" in kwargs else node.name
-            if ast.unparse(kwargs["annotations"]) != "_READ_ONLY_TOOL_ANNOTATIONS":
+            # A tool without annotations is not known to be read-only.
+            annotations = kwargs.get("annotations")
+            if annotations is None or ast.unparse(annotations) != "_READ_ONLY_TOOL_ANNOTATIONS":
                 changes_data.add(name)
-    # OpenViking marks search as modifying data, but the gateway offers it as a read tool.
+    # OpenViking marks search as modifying data, but its only write is the session's recall
+    # de-duplication record, so the gateway offers it as a read tool.
     assert changes_data - {"search"} == set(WRITE_TOOLS) == set(Policy().disabled_tools)
+    # Studio keeps its own copy for new profiles and recommended settings.
+    studio = root / "web-studio" / "src" / "routes" / "gateway" / "-lib" / "profile-schema.ts"
+    block = re.search(r"export const WRITE_TOOLS = \[(.*?)\]", studio.read_text(), re.S)
+    assert block, "WRITE_TOOLS not found in profile-schema.ts"
+    assert re.findall(r"'([^']+)'", block.group(1)) == list(WRITE_TOOLS)
 
 
 def test_tools_default_to_all_and_only_raw_disabled_names_are_excluded():
