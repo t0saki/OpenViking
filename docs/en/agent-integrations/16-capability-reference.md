@@ -200,7 +200,7 @@ The table shows the default path. Turning on [recall digests](#recall-digest) ch
 
 ### Session-start context
 
-Integrations that use the shared plugin code inject one `<openviking-context>` block at session start. It holds the user profile (`viking://user/<space>/memories/profile.md`), an index of the `preferences/` and `entities/` memories, and an `<available-skills>` catalog:
+Integrations that use the shared plugin code inject one `<openviking-context>` block at session start. It holds the user profile (`viking://user/<space>/memories/profile.md`), an index of the `preferences/` and `entities/` memories, and an `<available-skills>` catalog. When the session has an actor peer, the same files under `viking://user/<space>/peers/<peer>/memories/` are added: the profile, preferences, and entities have no message range, so extraction writes the user's own facts to the user root even in a peer session. The user root comes first; the peer profile is a second `<user-profile>` element without the lines it shares with the user profile, and both roots share one budget:
 
 ```text
 <openviking-context source="startup">
@@ -233,7 +233,7 @@ When each integration injects it:
 
 Budgets and limits:
 
-- `profileTokenBudget` (default 10,000 tokens) covers the profile and the memory index. The profile gets half. An oversized profile keeps its first 8 lines and its end; an oversized listing ends with `... +N more`. Token estimates count CJK characters as 1.5 tokens and other text as four characters per token.
+- `profileTokenBudget` (default 10,000 tokens) covers the profiles and the memory index. The profiles get half: the user profile first, the peer profile what is left, or a one-line pointer to its URI when less than 200 tokens remain. The two roots split the index budget. An oversized profile keeps its first 8 lines and its end; an oversized listing ends with `... +N more`. Token estimates count CJK characters as 1.5 tokens and other text as four characters per token.
 - `skillCatalogTokenBudget` (default 1,200 tokens, `OPENVIKING_SKILL_CATALOG_TOKEN_BUDGET`) is a separate budget for the skill catalog. `skillCatalog` (`OPENVIKING_SKILL_CATALOG`) or a budget of 0 turns the catalog off.
 - The catalog comes from one `GET /api/v1/skills` request. The user's own skills come first, and an account skill with the same name as a user skill is left out. Each description is cut to about 40 tokens. If descriptions do not fit, the catalog lists names only; if names do not fit, it ends with `... +N more`, or shrinks to a one-line count. Servers without that endpoint get no catalog.
 - `sessionStartMaxBytes` caps the whole block in UTF-8 bytes: 9,500 for Claude Code and Codex, whose hosts move hook output above about 10,000 characters into a file and show only a preview; 20,000 for ZCode, which drops output above 32 KB; no cap elsewhere. Above the cap, the memory index is dropped first, then the skill catalog.
@@ -485,7 +485,7 @@ The session ID prefix tells you which integration wrote a session on the server.
 | Kimi Code | Unified installer; managed Kimi Code plugin | `kc-<id>` | Shared settings, `plugin.kimicode` |
 | CodeBuddy Code | Unified installer, which registers a local marketplace | `cb-<id>` | Shared settings, `plugin.codebuddy` |
 | OpenCode | Unified installer, npm (`@openviking/opencode-plugin`), or source | `oc-<id>`; subagents `oc-<parent>__subagent-<child>` | Shared settings, `plugin.opencode` |
-| DSH | Unified installer or `dsh plugin add @openviking/dsh-memory-plugin` | `dsh-<id>` | Shared settings, `plugin.dsh`, then the Cordis patch |
+| DSH | Unified installer, `dsh plugin add @openviking/dsh-memory-plugin`, or Desktop's Plugins page | `dsh-<id>` | Shared settings, `plugin.dsh`, then the Cordis patch |
 | pi | Unified installer, into pi's extension directory | `pi-<id>` | Shared settings, `plugin.pi` |
 | OpenClaw | ClawHub, npm installer, or offline bundle; then `openclaw openviking setup` | The session UUID, or a SHA-256 of the session key | `openclaw.json` and a few environment variables |
 | Hermes (bundled) | Ships with Hermes; `hermes memory setup openviking` | Hermes's own session ID | `.env`, a linked `ovcli.conf`, and Hermes `config.yaml` |
@@ -658,9 +658,9 @@ Each note covers what is specific to one integration. Shared behavior is in the 
 
 - It listens to `agent/session-start`, `agent/pre-step`, `session/event`, `session/flush`, `tools/pre-execute`, and `tools/post-execute`.
 - `ctx.provide("openvikingMemory")` lets other Cordis plugins build on it.
-- The installer uses the `web` profile unless `--dsh-profile` names another. Every mode except `dev` installs the published npm package.
+- The installer uses the `web` profile unless `--dsh-profile` names another. On macOS it installs into DeepSeek Harness Desktop's `desktop` profile as a separate harness, `dsh-desktop`, through Desktop's own `dsh` command ([DeepSeek Harness Desktop](./17-dsh.md#deepseek-harness-desktop)). Every mode except `dev` installs the published npm package.
 - Tool results are captured by default (`captureToolResults: true`), so `ov-experience-memory` runs its full loop; turning capture off leaves it able only to find and apply Experience.
-- The URI guard lowercases tool names, denies file tools on `viking://` paths in `tools/pre-execute`, and adds a notice to `bash` commands in `tools/post-execute`.
+- The URI guard lowercases tool names, denies file tools on `viking://` paths in `tools/pre-execute`, and adds a notice to `bash` commands, and to `pwsh` commands on Windows, in `tools/post-execute`.
 - Credentials named in the Cordis patch override every other source. For behavior settings the patch is the lowest layer.
 
 <a id="pi-pi-coding-agent-extension"></a>

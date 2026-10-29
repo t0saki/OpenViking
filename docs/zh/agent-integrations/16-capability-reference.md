@@ -199,7 +199,7 @@ skill 走单独的路径。创建、安装或替换 skill 用 MCP `add_skill` �
 
 ### 会话开场上下文
 
-使用共享插件代码的集成会在会话开始时注入一个 `<openviking-context>` 块，包含用户 profile（`viking://user/<space>/memories/profile.md`）、`preferences/` 和 `entities/` 记忆的索引，以及 `<available-skills>` skill 清单：
+使用共享插件代码的集成会在会话开始时注入一个 `<openviking-context>` 块，包含用户 profile（`viking://user/<space>/memories/profile.md`）、`preferences/` 和 `entities/` 记忆的索引，以及 `<available-skills>` skill 清单。会话带有 actor peer 时，还会加入 `viking://user/<space>/peers/<peer>/memories/` 下的同名文件：profile、preferences 和 entities 没有消息范围，所以即使在 peer 会话中，抽取也会把用户本人的事实写到用户根目录。用户根目录在前；peer profile 是第二个 `<user-profile>` 元素，并去掉与用户 profile 相同的行；两个根目录共用同一份预算：
 
 ```text
 <openviking-context source="startup">
@@ -232,7 +232,7 @@ skill 走单独的路径。创建、安装或替换 skill 用 MCP `add_skill` �
 
 预算与限制：
 
-- `profileTokenBudget`（默认 10,000 token）覆盖 profile 和记忆索引，profile 占一半。profile 超长时保留前 8 行和结尾；清单超长时以 `... +N more` 结尾。token 估算中，CJK 字符按 1.5 token 计，其他文本按每 4 个字符 1 token 计。
+- `profileTokenBudget`（默认 10,000 token）覆盖 profile 和记忆索引，profile 占一半：先放用户 profile，peer profile 使用剩余部分，剩余不足 200 token 时只放一行指向其 URI 的提示。两个根目录分摊索引预算。profile 超长时保留前 8 行和结尾；清单超长时以 `... +N more` 结尾。token 估算中，CJK 字符按 1.5 token 计，其他文本按每 4 个字符 1 token 计。
 - `skillCatalogTokenBudget`（默认 1,200 token，`OPENVIKING_SKILL_CATALOG_TOKEN_BUDGET`）是 skill 清单的独立预算。`skillCatalog`（`OPENVIKING_SKILL_CATALOG`）或把预算设为 0 都会关闭清单。
 - 清单来自一次 `GET /api/v1/skills` 请求。用户自己的 skill 排在前面，与用户 skill 同名的账户 skill 不再列出。每条描述截到约 40 token。描述放不下时只列名称；名称也放不下时以 `... +N more` 结尾，或缩成一行数量。服务端没有该接口时不注入清单。
 - `sessionStartMaxBytes` 按 UTF-8 字节限制整个块：Claude Code 和 Codex 为 9,500，因为这两个宿主会把超过约 10,000 字符的 hook 输出存成文件，只显示预览；ZCode 为 20,000，因为它会丢弃超过 32 KB 的输出；其他集成不设上限。超出上限时，先去掉记忆索引，再去掉 skill 清单。
@@ -484,7 +484,7 @@ Claude Code 和 Codex 默认 `auto`，其他集成默认 `off`。支持服务端
 | Kimi Code | 统一安装器；Kimi Code 托管插件 | `kc-<id>` | 共享配置，`plugin.kimicode` |
 | CodeBuddy Code | 统一安装器，由其注册本地 marketplace | `cb-<id>` | 共享配置，`plugin.codebuddy` |
 | OpenCode | 统一安装器、npm（`@openviking/opencode-plugin`）或源码 | `oc-<id>`；子代理 `oc-<parent>__subagent-<child>` | 共享配置，`plugin.opencode` |
-| DSH | 统一安装器或 `dsh plugin add @openviking/dsh-memory-plugin` | `dsh-<id>` | 共享配置，`plugin.dsh`，然后是 Cordis patch |
+| DSH | 统一安装器、`dsh plugin add @openviking/dsh-memory-plugin` 或 Desktop 的插件页 | `dsh-<id>` | 共享配置，`plugin.dsh`，然后是 Cordis patch |
 | pi | 统一安装器，装入 pi 的扩展目录 | `pi-<id>` | 共享配置，`plugin.pi` |
 | OpenClaw | ClawHub、npm 安装器或离线包；之后运行 `openclaw openviking setup` | 会话 UUID，或会话 key 的 SHA-256 | `openclaw.json` 和少量环境变量 |
 | Hermes（内置） | 随 Hermes 发布；运行 `hermes memory setup openviking` | Hermes 自己的会话 ID | `.env`、关联的 `ovcli.conf` 和 Hermes `config.yaml` |
@@ -657,9 +657,9 @@ Claude Code、Cursor、TRAE、ZCode、Kimi Code、DSH 和 pi 还会安装 **URI 
 
 - 监听 `agent/session-start`、`agent/pre-step`、`session/event`、`session/flush`、`tools/pre-execute` 和 `tools/post-execute`。
 - `ctx.provide("openvikingMemory")` 让其他 Cordis 插件可以在它之上构建功能。
-- 安装器默认使用 `web` profile，可以用 `--dsh-profile` 指定其他 profile。除 `dev` 外的所有模式都安装已发布的 npm 包。
+- 安装器默认使用 `web` profile，可以用 `--dsh-profile` 指定其他 profile。在 macOS 上，它还会把 DeepSeek Harness Desktop 的 `desktop` profile 作为单独的 harness `dsh-desktop`，通过 Desktop 自带的 `dsh` 命令安装（见 [DeepSeek Harness Desktop](./17-dsh.md#deepseek-harness-desktop)）。除 `dev` 外的所有模式都安装已发布的 npm 包。
 - 默认捕获工具结果（`captureToolResults: true`），所以 `ov-experience-memory` 能完整运行；关闭捕获后，只能检索和应用 Experience。
-- URI guard 先把工具名转成小写，在 `tools/pre-execute` 拒绝对 `viking://` 路径的文件工具调用，在 `tools/post-execute` 为包含这种路径的 `bash` 命令附加提示。
+- URI guard 先把工具名转成小写，在 `tools/pre-execute` 拒绝对 `viking://` 路径的文件工具调用，在 `tools/post-execute` 为包含这种路径的 `bash` 命令（Windows 上是 `pwsh` 命令）附加提示。
 - Cordis patch 中写明的凭据优先于其他所有来源；对行为配置来说，patch 是优先级最低的一层。
 
 <a id="pi-pi-coding-agent-extension"></a>
