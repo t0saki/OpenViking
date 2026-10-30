@@ -122,8 +122,12 @@ function useToggleUpstream() {
  * saved until it is dismissed or the gateway scope changes.
  */
 export function useVlmImport({
+  onSuccess,
   onError,
-}: { onError?: (error: unknown) => void } = {}) {
+}: {
+  onSuccess?: (result: VlmImportResult) => void
+  onError?: (error: unknown) => void
+} = {}) {
   const { connection, invalidate, scope } = useGateway()
   const [result, setResult] = React.useState<VlmImportResult | null>(null)
   React.useEffect(() => setResult(null), [scope])
@@ -131,6 +135,7 @@ export function useVlmImport({
     mutationFn: () => importVlm(connection),
     onSuccess: async (next) => {
       setResult(next)
+      onSuccess?.(next)
       await invalidate('upstreams')
     },
     onError: (error) => {

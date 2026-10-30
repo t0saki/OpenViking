@@ -300,10 +300,10 @@ describe('OverviewPage', () => {
 
     expect(await screen.findByText('Get started')).toBeTruthy()
     expect(await screen.findByText('0 of 4 done')).toBeTruthy()
-    expect(hrefOf('Add upstream')).toBe('/gateway/upstreams/new')
-    expect(hrefOf('Customize')).toBe('/gateway/profiles/new')
+    expect(hrefOf('Add manually')).toBe('/gateway/upstreams/new')
+    expect(hrefsOf('Customize')).toContain('/gateway/profiles/new')
     expect(
-      screen.getByText('Add an upstream and a context profile first.'),
+      screen.getByText('Available once the first two steps are done.'),
     ).toBeTruthy()
     expect(screen.getAllByText('—')).toHaveLength(2)
     expect(
@@ -318,7 +318,7 @@ describe('OverviewPage', () => {
 
     api.listProfiles.mockResolvedValue([created])
     fireEvent.click(
-      screen.getByRole('button', { name: 'Create with recommended settings' }),
+      screen.getByRole('button', { name: 'Use recommended settings' }),
     )
     await waitFor(() => expect(api.saveProfile).toHaveBeenCalledTimes(1))
     const [connection, id, settings] = api.saveProfile.mock.calls[0]
@@ -343,7 +343,7 @@ describe('OverviewPage', () => {
     renderOverview()
     fireEvent.click(
       await screen.findByRole('button', {
-        name: 'Create with recommended settings',
+        name: 'Use recommended settings',
       }),
     )
     await waitFor(() =>
@@ -352,7 +352,7 @@ describe('OverviewPage', () => {
       ),
     )
     expect(
-      screen.getByRole('button', { name: 'Create with recommended settings' }),
+      screen.getByRole('button', { name: 'Use recommended settings' }),
     ).toBeTruthy()
   })
 
@@ -552,7 +552,7 @@ describe('OverviewPage', () => {
       id: 'p1',
       revision: 1,
     })
-    fireEvent.click(screen.getByRole('button', { name: '使用推荐设置创建' }))
+    fireEvent.click(screen.getByRole('button', { name: '使用推荐设置' }))
     await waitFor(() => expect(api.saveProfile).toHaveBeenCalledTimes(1))
     expect(api.saveProfile.mock.calls[0][2].name).toBe('默认')
     cleanup()
@@ -834,14 +834,17 @@ describe('OverviewPage quick mode', () => {
     const importButton = await screen.findByRole('button', {
       name: 'Import from OpenViking',
     })
-    expect(hrefOf('Add upstream')).toBe('/gateway/upstreams/new')
+    expect(hrefOf('Add manually')).toBe('/gateway/upstreams/new')
     fireEvent.click(importButton)
     expect(
       await screen.findByText(
         "1 upstream, imported from OpenViking's model settings",
       ),
     ).toBeTruthy()
-    expect(screen.getByText('Imported or updated 1 upstream.')).toBeTruthy()
+    expect(toast.success).toHaveBeenCalledWith(
+      'Imported or updated 1 upstream.',
+    )
+    expect(screen.queryByText('Imported or updated 1 upstream.')).toBeNull()
     expect(api.importVlm).toHaveBeenCalledTimes(1)
     expect(api.saveProfile).not.toHaveBeenCalled()
     expect(api.issueKey).not.toHaveBeenCalled()
@@ -869,7 +872,7 @@ describe('OverviewPage quick mode', () => {
     expect(
       screen.getByRole('button', { name: 'Import from OpenViking' }),
     ).toBeTruthy()
-    expect(hrefOf('Add upstream')).toBe('/gateway/upstreams/new')
+    expect(hrefOf('Add manually')).toBe('/gateway/upstreams/new')
   })
 
   it('offers the step-1 import only when the gateway allows it', async () => {
@@ -890,6 +893,40 @@ describe('OverviewPage quick mode', () => {
     expect(
       screen.queryByRole('button', { name: 'Import from OpenViking' }),
     ).toBeNull()
+  })
+
+  it('issues a key for the current user from step 3', async () => {
+    host.serverMode = 'dev'
+    api.listUpstreams.mockResolvedValue([ARK])
+    api.listProfiles.mockResolvedValue([DEFAULT_PROFILE])
+    api.issueKey.mockResolvedValue({ ...ISSUED, name: 'My key' })
+    renderOverview()
+
+    const step = (
+      await screen.findByText('Clients call the gateway with this key.')
+    ).closest('li') as HTMLElement
+    api.listKeys.mockResolvedValue([ISSUED])
+    fireEvent.click(within(step).getByRole('button', { name: 'Issue key' }))
+
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByText('ovgw_quickSecret')).toBeTruthy()
+    expect(api.issueKey.mock.calls[0][1]).toEqual({
+      ...QUICK_REQUEST,
+      name: 'My key',
+    })
+    expect(api.importVlm).not.toHaveBeenCalled()
+    expect(api.saveProfile).not.toHaveBeenCalled()
+  })
+
+  it('keeps step 3 disabled until an upstream and a profile exist', async () => {
+    renderOverview()
+
+    const step = (
+      await screen.findByText('Available once the first two steps are done.')
+    ).closest('li') as HTMLElement
+    expect(
+      within(step).getByRole('button', { name: 'Issue key' }),
+    ).toHaveProperty('disabled', true)
   })
 
   it('stays hidden on a standalone gateway that is locked without upstreams', async () => {
