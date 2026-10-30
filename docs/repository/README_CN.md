@@ -196,8 +196,8 @@ ov grep "openviking" --uri viking://resources/volcengine/OpenViking/docs/zh
 
 1. 运行官方安装器。它需要联网并写入我的主目录，如果被你的沙箱拦住，请向我申请批准：
    curl -fsSL https://openviking.ai/install | bash -s -- --yes --lang zh --url <SERVER_URL> --api-key <API_KEY>
-2. 装好后读 OpenViking 的接入引导，按它带我完成设置。导入历史、写协作规则这类选择，引导会让你先问我。docs.openviking.net 和 docs.openviking.ai 是同一个文档站，哪个打得开用哪个：
-   https://docs.openviking.net/agents/zh/onboarding.md
+2. 装好后读 OpenViking 的接入引导，按它带我完成设置。导入历史、写协作规则这类选择，引导会让你先问我。docs.openviking.ai 和 docs.openviking.net 是同一个文档站，哪个打得开用哪个：
+   https://docs.openviking.ai/agents/zh/onboarding.md
 
 API key 是我在这个服务上给自己生成的 user key，安装器会把它存到本机的 ~/.openviking/ovcli.conf。命令里原样使用就行，回复里不用再显示它，也不要写进别的文件或规则。全程用中文和我交流。
 ```
