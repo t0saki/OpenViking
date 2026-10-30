@@ -46,7 +46,7 @@ const overview = {
         'How memory is added to new messages and how conversations are saved.',
       done_one: '{{count}} context profile ready',
       done_other: '{{count}} context profiles ready',
-      action: 'Use recommended settings',
+      action: 'Use recommended',
     },
     key: {
       title: 'Issue a gateway key',

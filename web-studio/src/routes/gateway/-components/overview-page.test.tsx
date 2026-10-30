@@ -317,9 +317,7 @@ describe('OverviewPage', () => {
     ).toBeTruthy()
 
     api.listProfiles.mockResolvedValue([created])
-    fireEvent.click(
-      screen.getByRole('button', { name: 'Use recommended settings' }),
-    )
+    fireEvent.click(screen.getByRole('button', { name: 'Use recommended' }))
     await waitFor(() => expect(api.saveProfile).toHaveBeenCalledTimes(1))
     const [connection, id, settings] = api.saveProfile.mock.calls[0]
     expect(connection.apiKey).toBe('admin-key')
@@ -343,7 +341,7 @@ describe('OverviewPage', () => {
     renderOverview()
     fireEvent.click(
       await screen.findByRole('button', {
-        name: 'Use recommended settings',
+        name: 'Use recommended',
       }),
     )
     await waitFor(() =>
@@ -351,9 +349,7 @@ describe('OverviewPage', () => {
         'The gateway rejected these settings. Check the values and try again.',
       ),
     )
-    expect(
-      screen.getByRole('button', { name: 'Use recommended settings' }),
-    ).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Use recommended' })).toBeTruthy()
   })
 
   it('summarizes traffic, OpenViking health and problems once requests arrive', async () => {
@@ -657,6 +653,13 @@ describe('OverviewPage quick mode', () => {
     ).toBeTruthy()
     expect(screen.getByText('Context profile: use “Default”')).toBeTruthy()
     expect(screen.getByText('Or set up step by step')).toBeTruthy()
+    // The button takes the place of the heading; the region keeps the name.
+    expect(
+      within(screen.getByRole('region', { name: 'Quick mode' })).getByRole(
+        'button',
+        { name: 'Get a key' },
+      ),
+    ).toBeTruthy()
     expect(hrefsOf('Learn more')).toContain(gatewayDocsUrl('quickMode', 'en'))
     api.listKeys.mockResolvedValue([ISSUED])
     fireEvent.click(await quickButton())
