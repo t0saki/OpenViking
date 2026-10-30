@@ -26,8 +26,6 @@ const overview = {
     confirm: 'Review',
 
     title: 'Get started',
-    description:
-      'Four steps to the first conversation with memory. This card goes away once a client sends its first request.',
     progress: '{{done}} of {{total}} done',
     done: 'Done',
     view: 'View',

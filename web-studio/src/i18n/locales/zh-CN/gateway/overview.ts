@@ -24,8 +24,6 @@ const overview = {
     confirm: '去确认',
 
     title: '快速开始',
-    description:
-      '完成下面四步，就能让第一段对话用上记忆。客户端发出第一个请求后，这张卡片会自动隐藏。',
     progress: '已完成 {{done}}/{{total}}',
     done: '已完成',
     view: '查看',

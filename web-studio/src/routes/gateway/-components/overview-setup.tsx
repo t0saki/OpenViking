@@ -18,7 +18,6 @@ import {
   Card,
   CardAction,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from '#/components/ui/card'
@@ -282,7 +281,6 @@ export function OverviewSetup() {
           </span>
           {t('overview.setup.title')}
         </CardTitle>
-        <CardDescription>{t('overview.setup.description')}</CardDescription>
         {loaded ? (
           <CardAction>
             <span className="rounded-full border bg-background/70 px-2.5 py-1 text-xs text-muted-foreground tabular-nums">
