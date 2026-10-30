@@ -49,7 +49,7 @@ Editing stays unlocked only in that browser tab, until you choose **Lock** or cl
 
 ## Get started checklist and Quick mode {#get-started-checklist}
 
-The **Get started** checklist sits on the Overview tab until the first request arrives. It lists four steps in order: **Add an upstream**, **Create a context profile**, **Issue a gateway key** and **Connect a client**. Once a client sends its first request, the checklist goes away.
+The **Get started** checklist sits on the Overview tab until the first request arrives. It lists four steps in order: **Add an upstream**, **Create a context profile**, **Issue a gateway key** and **Connect a client**. On the first step, **Import from OpenViking** imports the server's model settings as upstreams, the same as on the Upstreams tab (see [Import OpenViking model settings](07-upstreams.md#import-openviking-model-settings)); it does not issue a key. Once a client sends its first request, the checklist goes away.
 
 Until the first [gateway key](../guides/15-gateway.md#key-terms) exists, the checklist also shows a **Quick mode** card. **Get a key** does the first three steps in one click:
 

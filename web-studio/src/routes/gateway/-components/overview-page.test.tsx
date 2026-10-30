@@ -818,6 +818,80 @@ describe('OverviewPage quick mode', () => {
     expect(screen.queryByRole('button', { name: 'Get a key' })).toBeNull()
   })
 
+  it("imports OpenViking's model settings from step 1 without issuing a key", async () => {
+    let stored: Upstream[] = []
+    api.listUpstreams.mockImplementation(async () => stored)
+    api.importVlm.mockImplementation(async () => {
+      stored = [ARK]
+      return {
+        imported: [{ id: 'vlm-ark', name: 'vlm-ark' }],
+        needs_confirmation: [],
+        skipped: [],
+      }
+    })
+    renderOverview()
+
+    const importButton = await screen.findByRole('button', {
+      name: 'Import from OpenViking',
+    })
+    expect(hrefOf('Add upstream')).toBe('/gateway/upstreams/new')
+    fireEvent.click(importButton)
+    expect(
+      await screen.findByText(
+        "1 upstream, imported from OpenViking's model settings",
+      ),
+    ).toBeTruthy()
+    expect(screen.getByText('Imported or updated 1 upstream.')).toBeTruthy()
+    expect(api.importVlm).toHaveBeenCalledTimes(1)
+    expect(api.saveProfile).not.toHaveBeenCalled()
+    expect(api.issueKey).not.toHaveBeenCalled()
+    expect(
+      screen.queryByRole('button', { name: 'Import from OpenViking' }),
+    ).toBeNull()
+  })
+
+  it('toasts a failed step-1 import and keeps the step open', async () => {
+    api.importVlm.mockRejectedValue(
+      new GatewayError('Unavailable', 409, undefined, 'vlm_import_unavailable'),
+    )
+    renderOverview()
+
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: 'Import from OpenViking',
+      }),
+    )
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith(
+        "This gateway doesn't run inside OpenViking, so it can't read the server's model settings. Add upstreams manually.",
+      ),
+    )
+    expect(
+      screen.getByRole('button', { name: 'Import from OpenViking' }),
+    ).toBeTruthy()
+    expect(hrefOf('Add upstream')).toBe('/gateway/upstreams/new')
+  })
+
+  it('offers the step-1 import only when the gateway allows it', async () => {
+    api.getAccess.mockResolvedValue({
+      managed: false,
+      can_write_objects: true,
+      can_import_vlm: false,
+      can_issue_for_others: true,
+      role: 'admin',
+      account_id: 'acme',
+      user_id: 'admin',
+      warnings: [],
+    })
+    renderOverview()
+
+    expect(await screen.findByText('0 of 4 done')).toBeTruthy()
+    expect(hrefOf('Add upstream')).toBe('/gateway/upstreams/new')
+    expect(
+      screen.queryByRole('button', { name: 'Import from OpenViking' }),
+    ).toBeNull()
+  })
+
   it('stays hidden on a standalone gateway that is locked without upstreams', async () => {
     host.gatewayHost = true
     api.getAccess.mockResolvedValue(LOCKED)

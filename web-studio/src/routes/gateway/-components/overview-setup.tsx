@@ -4,6 +4,8 @@ import {
   ArrowRightIcon,
   CheckIcon,
   ListChecksIcon,
+  LoaderCircleIcon,
+  SparklesIcon,
   TriangleAlertIcon,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
@@ -21,6 +23,7 @@ import { useAppConnection } from '#/hooks/use-app-connection'
 import { cn } from '#/lib/utils'
 
 import type { IssuedKey, KeyRequest, Upstream } from '../-lib/api'
+import { toastGatewayError } from '../-lib/error-toast'
 import { quickPlan } from '../-lib/quick-start'
 import { NEW_ID } from '../-lib/search'
 import {
@@ -35,6 +38,7 @@ import { KeysIssueDialog } from './keys-issue-dialog'
 import { KeysSecretDialog } from './keys-secret-dialog'
 import { OverviewQuickStart } from './overview-quick-start'
 import { RecommendedProfileButton } from './recommended-profile-button'
+import { ImportResultNotice, useVlmImport } from './upstreams-page'
 
 type StepState = 'done' | 'current' | 'todo'
 
@@ -110,7 +114,8 @@ type QuickIssued = {
 }
 
 /**
- * Checklist from an empty gateway to the first request: add an upstream,
+ * Checklist from an empty gateway to the first request: add an upstream (or
+ * import OpenViking's model settings in one click),
  * create a context profile (one click with recommended settings), issue a
  * key, connect a client. A step is done once its list is non-empty. Before
  * the first key, quick mode does the first three steps in one click.
@@ -123,6 +128,10 @@ export function OverviewSetup() {
   const profiles = useProfiles()
   const keys = useKeys()
   const connectionInfo = useConnectionInfo()
+  const vlmImport = useVlmImport({
+    onError: (error) => toastGatewayError(t, error),
+  })
+  const importing = vlmImport.importer.isPending
   const plan = quickPlan({
     keys: keys.data,
     upstreams: upstreams.data,
@@ -223,6 +232,12 @@ export function OverviewSetup() {
             </div>
           </>
         ) : null}
+        {vlmImport.result ? (
+          <ImportResultNotice
+            result={vlmImport.result}
+            onDismiss={vlmImport.dismiss}
+          />
+        ) : null}
         <ol className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
           <SetupStep
             number={1}
@@ -276,19 +291,42 @@ export function OverviewSetup() {
             ) : readOnly ? (
               <ManagementUnlockButton />
             ) : (
-              <Button
-                size="sm"
-                variant={variantOf(0)}
-                nativeButton={false}
-                render={
-                  <Link
-                    to="/gateway/upstreams/$upstreamId"
-                    params={{ upstreamId: NEW_ID }}
-                  />
-                }
-              >
-                {t('overview.setup.upstream.action')}
-              </Button>
+              <>
+                {access?.can_import_vlm ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={variantOf(0)}
+                    disabled={importing}
+                    title={t('upstreams.import.hint')}
+                    onClick={() => vlmImport.importer.mutate()}
+                  >
+                    {importing ? (
+                      <LoaderCircleIcon className="animate-spin" />
+                    ) : (
+                      <SparklesIcon />
+                    )}
+                    {t(
+                      importing
+                        ? 'upstreams.import.running'
+                        : 'upstreams.import.action',
+                    )}
+                  </Button>
+                ) : null}
+                <Button
+                  size="sm"
+                  variant={access?.can_import_vlm ? 'ghost' : variantOf(0)}
+                  nativeButton={false}
+                  render={
+                    <Link
+                      to="/gateway/upstreams/$upstreamId"
+                      params={{ upstreamId: NEW_ID }}
+                    />
+                  }
+                >
+                  {t('overview.setup.upstream.action')}
+                </Button>
+              </>
             )}
           </SetupStep>
           <SetupStep
