@@ -297,7 +297,7 @@ export function OverviewSetup() {
                     type="button"
                     size="sm"
                     variant={variantOf(0)}
-                    disabled={importing}
+                    disabled={importing || !upstreams.data}
                     title={t('upstreams.import.hint')}
                     onClick={() => vlmImport.importer.mutate()}
                   >
