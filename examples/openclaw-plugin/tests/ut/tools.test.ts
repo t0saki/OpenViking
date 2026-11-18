@@ -731,6 +731,21 @@ describe("Tool: ov_session_history (behavioral)", () => {
     expect(JSON.parse(String(init?.body))).toEqual({ action: "overview", sessions: ["sub-2"] });
   });
 
+  it("sends at most ten sessions", async () => {
+    const transport = historyTransport();
+    const { factoryTools, api } = setupPlugin();
+    (api as any).openVikingTransport = transport;
+    contextEnginePlugin.register(api as any);
+    const tool = factoryTools.get("ov_session_history")!({ sessionId: "test-session" });
+    const ids = Array.from({ length: 12 }, (_, i) => `s${i + 1}`);
+
+    await tool.execute("tc-h4", { action: "overview", session: ids.join(",") });
+
+    const [url, init] = transport.mock.calls.at(-1)!;
+    expect(url).toMatch(/\/api\/v1\/sessions\/s1\/history$/);
+    expect(JSON.parse(String(init?.body)).sessions).toEqual(ids.slice(1, 10));
+  });
+
   it("answers a failed request as text", async () => {
     const transport = vi.fn(async () => new Response(
       JSON.stringify({ detail: "Not Found" }),
@@ -743,6 +758,7 @@ describe("Tool: ov_session_history (behavioral)", () => {
 
     const result = await tool.execute("tc-h3", { action: "overview" }) as ToolResult;
     expect(result.content[0]!.text).toContain("Session history lookup failed");
+    expect(result.content[0]!.text).toContain("ov_archive_search");
     expect(result.details.error).toBeDefined();
   });
 });

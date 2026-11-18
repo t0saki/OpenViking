@@ -370,7 +370,10 @@ export function registerOpenVikingArchiveTools(deps: OpenVikingArchiveToolsDeps)
         const msg = err instanceof Error ? err.message : String(err);
         deps.logger?.warn?.(`openviking: ov_session_history failed (session=${sessionId}): ${msg}`);
         return {
-          content: [{ type: "text", text: `Session history lookup failed: ${msg}` }],
+          content: [{
+            type: "text",
+            text: `Session history lookup failed: ${msg}\nIf this server lacks session history, use ov_archive_search and ov_archive_expand instead.`,
+          }],
           details: { error: msg, ovSessionId: sessionId },
         };
       }
