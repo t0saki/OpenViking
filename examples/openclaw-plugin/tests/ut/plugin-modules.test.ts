@@ -448,6 +448,7 @@ describe("plugin module seams", () => {
     const rememberSessionAgentId = vi.fn();
     const verboseRoutingInfo = vi.fn();
     const commitOVSession = vi.fn().mockResolvedValue(true);
+    const noteCompaction = vi.fn();
     const logger = { info: vi.fn(), warn: vi.fn() };
 
     registerOpenVikingLifecycleHooks({
@@ -455,7 +456,7 @@ describe("plugin module seams", () => {
       rememberSessionAgentId,
       isBypassedSession: (ctx) => ctx?.sessionKey === "bypass",
       verboseRoutingInfo,
-      getContextEngine: () => ({ commitOVSession }),
+      getContextEngine: () => ({ commitOVSession, noteCompaction }),
       logger,
     });
 
@@ -478,6 +479,12 @@ describe("plugin module seams", () => {
     await handlers.get("before_reset")?.({}, { sessionId: "session-4", sessionKey: "bypass" });
     expect(verboseRoutingInfo).toHaveBeenCalledWith(expect.stringContaining("bypassing before_reset"));
     expect(commitOVSession).toHaveBeenCalledTimes(1);
+
+    await handlers.get("after_compaction")?.({ compactedCount: 0 }, { sessionKey: "key-5" });
+    await handlers.get("after_compaction")?.({ compactedCount: 1 }, { sessionKey: "bypass" });
+    expect(noteCompaction).not.toHaveBeenCalled();
+    await handlers.get("after_compaction")?.({ compactedCount: -1 }, { sessionId: "session-5", sessionKey: "key-5" });
+    expect(noteCompaction).toHaveBeenCalledWith({ sessionId: "session-5", sessionKey: "key-5" });
   });
 
   it("registers the context engine through a dedicated plugin module", () => {

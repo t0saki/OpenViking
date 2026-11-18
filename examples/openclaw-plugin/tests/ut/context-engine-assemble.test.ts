@@ -1163,6 +1163,27 @@ it("native mode preserves host history and recall without reading OV history", a
   expect(client.searchContext).toHaveBeenCalledOnce();
 });
 
+it("native mode points at ov_session_history after the host compacts", async () => {
+  const native = { contextManagementMode: "native", autoCapture: true };
+  const { engine } = makeEngine({}, { cfgOverrides: native });
+  const messages = [{ role: "user", content: "earlier host constraint" }];
+  const turn = (sessionId: string) => engine.assemble({ sessionId, sessionKey: "agent:main:compacted", messages, prompt: "next question" });
+
+  expect((await turn("s1")).systemPromptAddition).toBeUndefined();
+  // The host builds a fresh engine per run, so the hook may reach another instance.
+  makeEngine({}, { cfgOverrides: native }).engine.noteCompaction({ sessionKey: "agent:main:compacted" });
+  const compacted = await turn("s1");
+  expect(compacted.messages).toBe(messages);
+  expect(compacted.systemPromptAddition).toContain("`ov_session_history`");
+  expect((await turn("s1")).systemPromptAddition).toContain("`ov_session_history`");
+  expect((await turn("s2")).systemPromptAddition).toBeUndefined();
+
+  const { engine: disabled } = makeEngine({}, { cfgOverrides: { ...native, disabledTools: ["ov_session_history"] } });
+  disabled.noteCompaction({ sessionId: "s1", sessionKey: "agent:main:disabled" });
+  expect((await disabled.assemble({ sessionId: "s1", sessionKey: "agent:main:disabled", messages, prompt: "q" })).systemPromptAddition)
+    .toBeUndefined();
+});
+
 it("keeps native history when a completed archive has no summary", async () => {
   const { engine, logger } = makeEngine({
     latest_archive_overview: "", pre_archive_abstracts: [],

@@ -7,6 +7,7 @@ export type OpenVikingHookContext = {
 
 export type ContextEngineCommitPort = {
   commitOVSession: (ctx: { sessionId: string; sessionKey?: string }) => Promise<boolean>;
+  noteCompaction?: (ctx: { sessionId?: string; sessionKey?: string }) => void;
 };
 
 export type OpenVikingLifecycleHookApi = {
@@ -59,7 +60,9 @@ export function registerOpenVikingLifecycleHooks(deps: OpenVikingLifecycleHooksD
       }
     }
   });
-  deps.api.on("after_compaction", async (_event: unknown, _ctx?: OpenVikingHookContext) => {
-    // Reserved hook registration for future post-compaction memory integration.
+  deps.api.on("after_compaction", async (event: unknown, ctx?: OpenVikingHookContext) => {
+    if ((event as { compactedCount?: number } | undefined)?.compactedCount === 0) return;
+    if (deps.isBypassedSession(ctx)) return;
+    deps.getContextEngine()?.noteCompaction?.(ctx ?? {});
   });
 }

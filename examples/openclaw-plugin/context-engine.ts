@@ -115,6 +115,8 @@ export type ContextEngineWithCommit = ContextEngine & {
     sessionKey?: string;
     runtimeContext?: Record<string, unknown>;
   }) => Promise<boolean>;
+  /** Record that the host compacted this conversation's context. */
+  noteCompaction: (ctx: { sessionId?: string; sessionKey?: string }) => void;
 };
 
 type Logger = {
@@ -268,6 +270,18 @@ function usesDeferredTurnCapture(version: string | undefined): boolean | undefin
   return year > 2026 || (year === 2026 && (month > 9 || (month === 9 && day >= 3)));
 }
 
+// Module-level because the host creates an engine per run. Keyed by sessionKey
+// when known; the value binds the key to one sessionId, since a reset reuses the
+// key and some hooks only report the key.
+const compactedSessions = new Map<string, string | undefined>();
+
+function wasCompacted(sessionId: string, sessionKey?: string): boolean {
+  const key = sessionKey ?? sessionId;
+  if (!compactedSessions.has(key)) return false;
+  if (compactedSessions.get(key) === undefined) compactedSessions.set(key, sessionId);
+  return compactedSessions.get(key) === sessionId;
+}
+
 export function createMemoryOpenVikingContextEngine(params: {
   id: string;
   name: string;
@@ -374,6 +388,16 @@ export function createMemoryOpenVikingContextEngine(params: {
 
     commitOVSession: doCommitOVSession,
 
+    noteCompaction(ctx) {
+      const key = ctx.sessionKey ?? ctx.sessionId;
+      if (!key) return;
+      compactedSessions.delete(key);
+      compactedSessions.set(key, ctx.sessionId);
+      if (compactedSessions.size > 1024) {
+        compactedSessions.delete(compactedSessions.keys().next().value as string);
+      }
+    },
+
     // --- standard ContextEngine methods ---
 
     async ingest(): Promise<IngestResult> {
@@ -390,9 +414,11 @@ export function createMemoryOpenVikingContextEngine(params: {
         Object.prototype.hasOwnProperty.call(assembleParams, "availableTools") ||
         Object.prototype.hasOwnProperty.call(assembleParams, "citationsMode") ||
         Object.prototype.hasOwnProperty.call(assembleParams, "prompt");
+      const sessionKey = resolveSessionKey(assembleParams);
       return assembleOpenVikingSession({
         sessionId: assembleParams.sessionId,
-        sessionKey: resolveSessionKey(assembleParams),
+        sessionKey,
+        compacted: wasCompacted(assembleParams.sessionId, sessionKey),
         messages: assembleParams.messages,
         prompt: assembleParams.prompt,
         tokenBudget,
