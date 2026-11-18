@@ -100,7 +100,7 @@ systemPromptAddition = Session Context Guide (when archives exist) + user profil
 
 `latest_archive_overview` is the summary text returned by the server; `[Session History Summary]` is the literal heading prepended by the plugin. This synthetic user message is inserted only when the overview is nonempty. Active messages provide recent uncompressed conversation. The host adds the pending `prompt` to the turn. The plugin uses it for recall without appending a second copy to the returned history. Recalled context belongs to this request and is not directly captured as new conversation in OV.
 
-OV generates the overview through its server-side working-memory flow; the plugin reads the result. The server budgets active messages first and omits the overview if the remaining space is insufficient. `pre_archive_abstracts` is currently an empty array, so the response is not a complete archive index. Use `ov_archive_search` for original details.
+OV generates the overview through its server-side working-memory flow; the plugin reads the result. The server budgets active messages first and omits the overview if the remaining space is insufficient. `pre_archive_abstracts` is currently an empty array, so the response is not a complete archive index. Use `ov_session_history` for original details (`ov_archive_search` on servers without it).
 
 The plugin reserves output headroom, subtracts estimated guide and summary tokens, trims active messages from the oldest end, and normalizes provider message formats such as tool calls and results. It does not hard-truncate the summary to the calculated archive budget, so the partitions are not strict per-layer limits. A new recall block is omitted if it would push the total estimate above `tokenBudget`.
 

@@ -40,7 +40,7 @@ Long-term memories are extracted from a session only after a **commit**. Capture
 | [OpenCode](#opencode) | npm plugin that adds an MCP entry | Server MCP tools, named `openviking_<tool>` |
 | [DSH](#dsh) | In-process Cordis plugin plus an MCP proxy | Server MCP tools, named `mcp__openviking__<tool>` |
 | [pi](#pi) | Native extension with a built-in MCP client | Server MCP tools, registered as `openviking_<tool>` after the MCP handshake succeeds |
-| [OpenClaw](#openclaw) | Context-engine plugin | 16 native tools, 15 enabled by default |
+| [OpenClaw](#openclaw) | Context-engine plugin | 17 native tools, 16 enabled by default |
 | [Hermes](#hermes) | Hermes memory provider | 7 native `viking_*` tools in the updated external plugin; 6 in older bundled providers |
 | [MCP clients, Agent Plugins](#other-integrations) | MCP only | Server MCP tools |
 | [ov CLI](#ov-cli) | Command-line client | Every operation as an explicit command; no agent involved |
@@ -150,7 +150,7 @@ OpenClaw registers its own tools instead of passing MCP tools through.
 | Memory | `memory_recall`, `memory_store`, `memory_forget` | `memory_recall` searches memory; `memory_store` commits through a temporary session |
 | Rules | `ov_rule_search` | Complete applicable constraints; enabled by default, selectable with the `rules` group |
 | Resources and skills | `ov_search`, `ov_read`, `ov_multi_read`, `ov_list`, `add_skill`, `add_resource` | `ov_search` covers resources and the user's skills by default. `add_resource` is off by default and also needs `enableAddResourceTool` |
-| Session archives | `ov_archive_search`, `ov_archive_expand` | Search and expand archived history |
+| Session archives | `ov_archive_search`, `ov_archive_expand`, `ov_session_history` | Search and expand archived history; `ov_session_history` also searches and reads the live tail and full tool outputs |
 | Large tool output | `openviking_tool_result_read`, `openviking_tool_result_search`, `openviking_tool_result_list` | Read tool output the server stored separately |
 | Diagnostics | `ov_recall_trace` | Shows how automatic recall was built |
 
@@ -473,7 +473,7 @@ When the host shortens its context, most integrations make sure the dropped mess
 - Context assembly has two parts. `transformContext` only adds recall, behind five passthrough checks. The main assembly calls `getSessionContext(tokenBudget)` and replaces the host's live history with the server's response, split across four budget tiers, behind three passthrough checks and a message-cleaning step.
 - `compact()` commits with `keep_recent_count` 0, polls every 500 ms for up to 5 minutes, and returns the archive overview as the summary.
 - `ingest()` and `ingestBatch()` do nothing on purpose; turns are captured after each turn.
-- When an archive exists, a short guide is added to the system prompt. It tells the model to reread the summary before saying it has no information, and to try at least two keyword sets with `ov_archive_search`.
+- When an archive exists, a short guide is added to the system prompt. It tells the model to reread the summary before saying it has no information, and to try at least two keyword sets with `ov_session_history` (`ov_archive_search` when that tool is disabled). In `native` mode, after OpenClaw compacts a conversation, a short note points the model at `ov_session_history` on later turns.
 
 <a id="_3-4-4-pi-vs-openclaw-takeover"></a>
 

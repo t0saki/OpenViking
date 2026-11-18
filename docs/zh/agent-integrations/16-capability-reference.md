@@ -40,7 +40,7 @@
 | [OpenCode](#opencode) | npm 插件，自动添加 MCP 条目 | 服务端 MCP 工具，名为 `openviking_<tool>` |
 | [DSH](#dsh) | 同进程 Cordis 插件 + MCP 代理 | 服务端 MCP 工具，名为 `mcp__openviking__<tool>` |
 | [pi](#pi) | 原生扩展，内置 MCP 客户端 | 服务端 MCP 工具；MCP 握手成功后注册为 `openviking_<tool>` |
-| [OpenClaw](#openclaw) | context-engine 插件 | 16 个原生工具，默认启用 15 个 |
+| [OpenClaw](#openclaw) | context-engine 插件 | 17 个原生工具，默认启用 16 个 |
 | [Hermes](#hermes) | Hermes memory provider | 更新后的外部插件有 7 个原生 `viking_*` 工具；旧版内置 provider 有 6 个 |
 | [MCP 客户端、Agent Plugins](#其他集成) | 仅 MCP | 服务端 MCP 工具 |
 | [ov CLI](#ov-cli) | 命令行客户端 | 每个操作都是显式命令，不经过 Agent |
@@ -148,7 +148,7 @@ OpenClaw 注册自己的工具，不转发 MCP 工具。
 | 记忆 | `memory_recall`、`memory_store`、`memory_forget` | `memory_recall` 检索记忆；`memory_store` 通过临时会话提交 |
 | Rule | `ov_rule_search` | 返回完整适用约束；默认启用，也可用 `rules` 分组选择 |
 | 资源与 skill | `ov_search`、`ov_read`、`ov_multi_read`、`ov_list`、`add_skill`、`add_resource` | `ov_search` 默认检索资源和用户的 skill。`add_resource` 默认关闭，还需要开启 `enableAddResourceTool` |
-| 会话归档 | `ov_archive_search`、`ov_archive_expand` | 检索并展开已归档的历史 |
+| 会话归档 | `ov_archive_search`、`ov_archive_expand`、`ov_session_history` | 检索并展开已归档的历史；`ov_session_history` 还能搜索和读取尚未归档的最新消息与完整工具输出 |
 | 大块工具输出 | `openviking_tool_result_read`、`openviking_tool_result_search`、`openviking_tool_result_list` | 读取服务端单独存放的工具输出 |
 | 诊断 | `ov_recall_trace` | 查看自动召回是如何构建的 |
 
@@ -471,7 +471,7 @@ Claude Code 和 Codex 默认 `auto`，其他集成默认 `off`。支持服务端
 - 上下文组装分两部分。`transformContext` 只添加召回，前面有五道 passthrough 检查。主组装调用 `getSessionContext(tokenBudget)`，用服务端的返回替换宿主的实时历史，按四档预算切分，前面有三道 passthrough 检查和一个消息清洗步骤。
 - `compact()` 以 `keep_recent_count` 0 提交，每 500 ms 轮询一次，最多 5 分钟，然后把归档概览作为摘要返回。
 - `ingest()` 和 `ingestBatch()` 有意不做任何事；对话在每轮结束后捕获。
-- 存在归档时，system prompt 会加入一段简短指引，要求模型在回答“没有相关信息”之前先重读摘要，并用 `ov_archive_search` 至少尝试两组关键词。
+- 存在归档时，system prompt 会加入一段简短指引，要求模型在回答“没有相关信息”之前先重读摘要，并用 `ov_session_history`（该工具被禁用时为 `ov_archive_search`）至少尝试两组关键词。`native` 模式下，OpenClaw 压缩对话之后，后续每轮会加一段简短提示，让模型用 `ov_session_history` 查找细节。
 
 <a id="_3-4-4-pi-与-openclaw-接管方式对照"></a>
 
