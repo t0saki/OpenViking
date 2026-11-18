@@ -109,7 +109,7 @@ openclaw openviking setup --base-url <URL> --api-key <KEY> --force-slot --json
 | “What did I say before?”, preferences, decisions, known facts | `memory_recall` |
 | “Remember this now” | `memory_store` |
 | “Forget X” | `memory_forget` |
-| Summary lacks an exact command/path/snippet from old chat | `ov_archive_search`, then `ov_archive_expand` if needed |
+| Summary lacks an exact command/path/snippet from old chat | `ov_session_history` (`action="search"`, then `action="read"`); `ov_archive_search` / `ov_archive_expand` on servers without it |
 | Import docs, PDFs, local dirs, URLs, Git repos, media attachments | manual `/add-resource`; `add_resource` only if `enableAddResourceTool=true` |
 | Import/register an Agent Skill | `add_skill` |
 | Search imported resources or skills | `ov_search` |

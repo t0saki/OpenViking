@@ -141,13 +141,13 @@ $OPENCLAW_STATE_DIR/openclaw.json
 
 | 分组 | 包含工具 |
 | --- | --- |
-| `default` | 默认 14 个 Agent tools。 |
-| `all` | `add_resource` + 默认 14 个 Agent tools。注意 `add_resource` 仍需 `enableAddResourceTool=true`。 |
+| `default` | 默认 16 个 Agent tools。 |
+| `all` | `add_resource` + 默认 16 个 Agent tools。注意 `add_resource` 仍需 `enableAddResourceTool=true`。 |
 | `memory` | `memory_recall`、`memory_store`、`memory_forget`。 |
 | `resource_query` | `ov_search`、`ov_read`、`ov_multi_read`、`ov_list`。 |
 | `import` | `add_resource`、`add_skill`。 |
 | `recall_trace` | `ov_recall_trace`。 |
-| `archive` | `ov_archive_search`、`ov_archive_expand`。 |
+| `archive` | `ov_archive_search`、`ov_archive_expand`、`ov_session_history`。 |
 | `tool_result` | `openviking_tool_result_read`、`openviking_tool_result_search`、`openviking_tool_result_list`。 |
 
 ### 4.2 只保留资源查询工具
@@ -440,6 +440,7 @@ Manifest 中声明了 runtime slash alias：
 | `memory_forget` | `uri?`、`query?`、`targetUri?`、`limit?`、`scoreThreshold?` | 删除记忆 URI，或先搜索后删除唯一高置信候选。 |
 | `ov_archive_search` | `query`、`archiveId?` | 在当前 session 的 archived 原始消息中关键词搜索。 |
 | `ov_archive_expand` | `archiveId` | 展开某个 archive 的原始消息。 |
+| `ov_session_history` | `action`、`query?`、`id?`、`offset?`、`before?`、`after?`、`role?`、`tool?`、`from_id?`、`to_id?`、`limit?`、`session?` | 搜索（`search`）、读取（`read`）或概览（`overview`）当前会话的保存记录，覆盖归档、尚未归档的最新消息和完整工具输出；`session` 默认为当前会话。 |
 | `openviking_tool_result_read` | `tool_output_ref`、`offset?`、`limit?` | 读取外置工具结果的完整或分页内容。 |
 | `openviking_tool_result_search` | `tool_output_ref`、`query`、`limit?`、`context_chars?` | 在外置工具结果中搜索关键词。 |
 | `openviking_tool_result_list` | `tool_name?`、`limit?` | 列出当前 session 中被外置的工具结果。 |

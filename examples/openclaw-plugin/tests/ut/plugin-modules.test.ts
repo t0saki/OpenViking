@@ -635,6 +635,7 @@ describe("plugin module seams", () => {
     expect(registerTool.mock.calls.map(([, opts]) => opts.name)).toEqual([
       "ov_archive_search",
       "ov_archive_expand",
+      "ov_session_history",
     ]);
     const searchFactory = registerTool.mock.calls[0]?.[0];
     const searchTool = searchFactory({ sessionId: "session-1", sessionKey: "session-key" });

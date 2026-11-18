@@ -238,7 +238,24 @@ function allocateContextBudget(totalBudget: number, instructionTokens = 0): Cont
   return { archiveMemory, sessionContext, reserved };
 }
 
-function buildSystemPromptAddition(): string {
+function buildSystemPromptAddition(historyTool: boolean): string {
+  const lookup = historyTool
+    ? [
+      "- If the Summary mentions a topic but lacks the specific detail asked,",
+      "  use the `ov_session_history` tool with action=\"search\" to find the exact",
+      "  detail in the saved conversation (archived turns and full tool outputs),",
+      "  then action=\"read\" with a returned id for the full item.",
+      "  Try 2-3 different keywords extracted from the question.",
+      "- Only conclude information is unavailable AFTER both checking the Summary",
+      "  thoroughly AND searching the history with at least 2 keyword variations.",
+    ]
+    : [
+      "- If the Summary mentions a topic but lacks the specific detail asked,",
+      "  use the `ov_archive_search` tool to grep the original archived messages",
+      "  for the exact detail. Try 2-3 different keywords extracted from the question.",
+      "- Only conclude information is unavailable AFTER both checking the Summary",
+      "  thoroughly AND searching the archives with at least 2 keyword variations.",
+    ];
   return [
     "## Session Context Guide",
     "",
@@ -260,16 +277,12 @@ function buildSystemPromptAddition(): string {
     "  you MUST carefully re-read EVERY section of the [Session History Summary].",
     "  The answer may be expressed with different wording than the question.",
     "  Look for synonyms, related facts, and indirect references.**",
-    "- If the Summary mentions a topic but lacks the specific detail asked,",
-    "  use the `ov_archive_search` tool to grep the original archived messages",
-    "  for the exact detail. Try 2-3 different keywords extracted from the question.",
-    "- Only conclude information is unavailable AFTER both checking the Summary",
-    "  thoroughly AND searching the archives with at least 2 keyword variations.",
+    ...lookup,
   ].join("\n");
 }
 
-function buildInstructionPrompt(): { text: string; tokens: number } {
-  const text = buildSystemPromptAddition();
+function buildInstructionPrompt(historyTool: boolean): { text: string; tokens: number } {
+  const text = buildSystemPromptAddition(historyTool);
   return { text, tokens: estimateTextTokens(text) };
 }
 
@@ -317,9 +330,10 @@ function buildAssembledContext(
   ovSessionId: string,
   logger: ContextEngineLifecycleLogger,
   roughEstimate: (messages: AgentMessage[]) => number,
+  historyTool: boolean,
 ): AssembleBuiltContext {
   const hasArchives = Boolean(overview) || preAbstracts.length > 0;
-  const instruction = hasArchives ? buildInstructionPrompt() : { text: "", tokens: 0 };
+  const instruction = hasArchives ? buildInstructionPrompt(historyTool) : { text: "", tokens: 0 };
 
   // 4-layer context partitioning:
   //   Instruction — system prompt guide (Archive Index / Session History usage)
@@ -711,6 +725,7 @@ async function assembleSessionContext(params: AssembleOpenVikingSessionParams): 
       ovSessionId,
       logger,
       roughEstimate,
+      cfg.enabledTools?.includes("ov_session_history") === true,
     );
 
     if (sanitized.length === 0 && messages.length > 0) {

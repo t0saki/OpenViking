@@ -22,6 +22,7 @@ const DEFAULT_TOOL_NAMES = [
   "memory_forget",
   "ov_archive_search",
   "ov_archive_expand",
+  "ov_session_history",
   "openviking_tool_result_read",
   "openviking_tool_result_search",
   "openviking_tool_result_list",
@@ -49,7 +50,7 @@ describe("openviking tool registry", () => {
       experience: ["ov_search", "ov_read"],
       import: ["add_resource", "add_skill"],
       recall_trace: ["ov_recall_trace"],
-      archive: ["ov_archive_search", "ov_archive_expand"],
+      archive: ["ov_archive_search", "ov_archive_expand", "ov_session_history"],
       tool_result: [
         "openviking_tool_result_read",
         "openviking_tool_result_search",

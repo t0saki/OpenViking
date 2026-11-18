@@ -199,6 +199,12 @@ export type ToolResultListResult = {
   tool_results: Array<Record<string, unknown>>;
 };
 
+export type SessionHistoryResult = {
+  text: string;
+  ids: string[];
+  has_more: boolean;
+};
+
 export type SessionArchiveResult = {
   archive_id: string;
   abstract: string;
@@ -964,6 +970,16 @@ export class OpenVikingClient {
       { method: "GET" },
       undefined,
       actorPeerId,
+    );
+  }
+
+  async sessionHistory(
+    sessionId: string,
+    args: Record<string, unknown>,
+  ): Promise<SessionHistoryResult> {
+    return this.request<SessionHistoryResult>(
+      `/api/v1/sessions/${encodeURIComponent(sessionId)}/history`,
+      { method: "POST", body: JSON.stringify(args) },
     );
   }
 

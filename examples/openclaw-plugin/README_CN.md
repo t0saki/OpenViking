@@ -72,6 +72,7 @@ Agent 会自动完成安装 → 配置 → 重启 → 验证。详见 [INSTALL-A
 | `memory_forget` | 按精确 URI 删除记忆，或搜索并删除唯一高置信匹配 |
 | `ov_archive_search` | 对当前 session 已归档的原始对话消息做关键词 grep |
 | `ov_archive_expand` | 按 archive ID 展开原始消息 |
+| `ov_session_history` | 搜索和读取当前会话的保存记录，包括尚未归档的最新消息和完整工具输出 |
 | `ov_recall_trace` | 查看 auto-recall 和显式 recall/search 记录的召回链路 |
 | `add_skill` | 将 `SKILL.md`、skill 目录、原始 skill 内容或 MCP tool dict 导入 `viking://user/<uid>/skills/...` |
 | `ov_search` | 检索已导入的 resources 和 skills |

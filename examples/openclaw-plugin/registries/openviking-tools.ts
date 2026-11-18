@@ -21,6 +21,7 @@ export type OpenVikingToolName =
   | "memory_forget"
   | "ov_archive_search"
   | "ov_archive_expand"
+  | "ov_session_history"
   | "openviking_tool_result_read"
   | "openviking_tool_result_search"
   | "openviking_tool_result_list";
@@ -53,6 +54,7 @@ export const OPENVIKING_TOOL_SPECS = [
   { name: "memory_forget", group: "memory", defaultEnabled: true },
   { name: "ov_archive_search", group: "archive", defaultEnabled: true },
   { name: "ov_archive_expand", group: "archive", defaultEnabled: true },
+  { name: "ov_session_history", group: "archive", defaultEnabled: true },
   { name: "openviking_tool_result_read", group: "tool_result", defaultEnabled: true },
   { name: "openviking_tool_result_search", group: "tool_result", defaultEnabled: true },
   { name: "openviking_tool_result_list", group: "tool_result", defaultEnabled: true },

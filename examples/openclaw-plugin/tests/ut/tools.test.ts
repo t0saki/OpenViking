@@ -686,6 +686,67 @@ describe("Tool: ov_archive_expand (behavioral)", () => {
   });
 });
 
+describe("Tool: ov_session_history (behavioral)", () => {
+  function historyTransport() {
+    return vi.fn(async (_url: string, _init?: RequestInit) => okResponse({
+      text: "Saved conversation history.",
+      ids: ["3fa91c#2"],
+      has_more: false,
+    }));
+  }
+
+  it("posts to the current conversation's history when session is left out", async () => {
+    const transport = historyTransport();
+    const { factoryTools, api } = setupPlugin();
+    (api as any).openVikingTransport = transport;
+    contextEnginePlugin.register(api as any);
+    const tool = factoryTools.get("ov_session_history")!({ sessionId: "test-session" });
+
+    const result = await tool.execute("tc-h1", {
+      action: "search",
+      query: "ECONNREFUSED",
+      limit: 5,
+      offset: null,
+    }) as ToolResult;
+
+    const [url, init] = transport.mock.calls.at(-1)!;
+    expect(url).toMatch(/\/api\/v1\/sessions\/test-session\/history$/);
+    expect(init?.method).toBe("POST");
+    expect(JSON.parse(String(init?.body))).toEqual({ action: "search", query: "ECONNREFUSED", limit: 5 });
+    expect(result.content[0]!.text).toBe("Saved conversation history.");
+    expect(result.details).toMatchObject({ action: "search", ids: ["3fa91c#2"], has_more: false, ovSessionId: "test-session" });
+  });
+
+  it("uses the sessions the model names, the first one in the path", async () => {
+    const transport = historyTransport();
+    const { factoryTools, api } = setupPlugin();
+    (api as any).openVikingTransport = transport;
+    contextEnginePlugin.register(api as any);
+    const tool = factoryTools.get("ov_session_history")!({ sessionId: "test-session" });
+
+    await tool.execute("tc-h2", { action: "overview", session: " sub-1, sub-2 ,," });
+
+    const [url, init] = transport.mock.calls.at(-1)!;
+    expect(url).toMatch(/\/api\/v1\/sessions\/sub-1\/history$/);
+    expect(JSON.parse(String(init?.body))).toEqual({ action: "overview", sessions: ["sub-2"] });
+  });
+
+  it("answers a failed request as text", async () => {
+    const transport = vi.fn(async () => new Response(
+      JSON.stringify({ detail: "Not Found" }),
+      { status: 404, headers: { "Content-Type": "application/json" } },
+    ));
+    const { factoryTools, api } = setupPlugin();
+    (api as any).openVikingTransport = transport;
+    contextEnginePlugin.register(api as any);
+    const tool = factoryTools.get("ov_session_history")!({ sessionId: "test-session" });
+
+    const result = await tool.execute("tc-h3", { action: "overview" }) as ToolResult;
+    expect(result.content[0]!.text).toContain("Session history lookup failed");
+    expect(result.details.error).toBeDefined();
+  });
+});
+
 describe("Tool: OpenViking tool result access", () => {
   it("registers read, search, and list tools", () => {
     const { tools, api } = setupPlugin();
@@ -2051,10 +2112,10 @@ describe("Tool: ov_recall_trace", () => {
 });
 
 describe("Plugin registration", () => {
-  it("registers all 15 default tools", () => {
+  it("registers all 16 default tools", () => {
     const { api } = setupPlugin();
     contextEnginePlugin.register(api as any);
-    expect(api.registerTool).toHaveBeenCalledTimes(15);
+    expect(api.registerTool).toHaveBeenCalledTimes(16);
   });
 
   it("registers only resource query tools when enabledTools is resource_query", () => {

@@ -41,6 +41,7 @@ Once installed, the plugin provides these agent tools:
 | `memory_forget` | Delete memories by URI or query |
 | `ov_archive_search` | Search across archives by keyword |
 | `ov_archive_expand` | Expand an archive back to raw messages |
+| `ov_session_history` | Search and read the saved conversation, including the live tail and full tool outputs |
 | `ov_recall_trace` | Inspect why recall/search returned or injected specific results |
 | `add_resource` | Import documents, URLs, or Git repos when explicitly enabled |
 | `add_skill` | Import OpenViking skills |

@@ -685,6 +685,26 @@ describe("context-engine assemble()", () => {
     expect(result.systemPromptAddition).toContain("Session Context Guide");
   });
 
+  it("points the guide at ov_session_history unless that tool is disabled", async () => {
+    const archived = {
+      latest_archive_overview: "# Session Summary\nPreviously discussed repository setup.",
+      pre_archive_abstracts: [],
+      messages: [],
+      estimatedTokens: 40,
+      stats: { ...makeStats(), totalArchives: 1, includedArchives: 1, archiveTokens: 40 },
+    };
+    const params = { sessionId: "archived-session", messages: [{ role: "user", content: "hi" }], availableTools: new Set() };
+
+    const enabled = await makeEngine(archived).engine.assemble(params);
+    expect(enabled.systemPromptAddition).toContain("`ov_session_history`");
+    expect(enabled.systemPromptAddition).not.toContain("ov_archive_search");
+
+    const disabled = await makeEngine(archived, { cfgOverrides: { disabledTools: ["ov_session_history"] } })
+      .engine.assemble(params);
+    expect(disabled.systemPromptAddition).toContain("`ov_archive_search`");
+    expect(disabled.systemPromptAddition).not.toContain("ov_session_history");
+  });
+
   it("assembles summary archive and completed tool parts into agent messages", async () => {
     const { engine, client, resolveAgentId } = makeEngine({
       latest_archive_overview: "# Session Summary\nPreviously discussed repository setup.",

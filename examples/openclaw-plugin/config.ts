@@ -187,6 +187,7 @@ export const OPENVIKING_DEFAULT_ENABLED_TOOL_NAMES = [
   "memory_forget",
   "ov_archive_search",
   "ov_archive_expand",
+  "ov_session_history",
   "openviking_tool_result_read",
   "openviking_tool_result_search",
   "openviking_tool_result_list",
@@ -204,7 +205,7 @@ export const OPENVIKING_TOOL_GROUPS: Record<string, readonly OpenVikingToolName[
   rules: ["ov_rule_search"],
   import: ["add_resource", "add_skill"],
   recall_trace: ["ov_recall_trace"],
-  archive: ["ov_archive_search", "ov_archive_expand"],
+  archive: ["ov_archive_search", "ov_archive_expand", "ov_session_history"],
   tool_result: [
     "openviking_tool_result_read",
     "openviking_tool_result_search",
@@ -898,7 +899,7 @@ export const memoryOpenVikingConfigSchema = {
     recallTargetTypes: {
       label: "Recall Target Types",
       placeholder: "user,agent",
-      help: "Comma-separated auto-recall and default memory_recall targets: user, agent, resource. Session history is available through ov_archive_search and ov_archive_expand.",
+      help: "Comma-separated auto-recall and default memory_recall targets: user, agent, resource. Session history is available through ov_session_history, ov_archive_search and ov_archive_expand.",
       advanced: true,
     },
     recallLimit: {
