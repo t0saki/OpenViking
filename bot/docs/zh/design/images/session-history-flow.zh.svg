@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 560" width="880" height="560" font-family="'PingFang SC','Hiragino Sans GB','Microsoft YaHei',Helvetica,Arial,sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#5b6472"/>
+    </marker>
+  </defs>
+  <rect width="880" height="560" fill="#ffffff"/>
+
+  <!-- model -->
+  <rect x="250" y="24" width="380" height="76" rx="10" fill="#f4f6f9" stroke="#8a94a3" stroke-width="1.5"/>
+  <text x="440" y="54" text-anchor="middle" font-size="17" font-weight="600" fill="#1f2630">模型</text>
+  <text x="440" y="80" text-anchor="middle" font-size="14" fill="#3d4654">调用 session_history，通常不带 session</text>
+
+  <!-- arrows model -> middle -->
+  <path d="M360,100 L230,160" stroke="#5b6472" stroke-width="1.5" fill="none" marker-end="url(#arrow)"/>
+  <path d="M520,100 L650,160" stroke="#5b6472" stroke-width="1.5" fill="none" marker-end="url(#arrow)"/>
+  <text x="268" y="126" text-anchor="end" font-size="13" fill="#5b6472">经 Gateway 接入</text>
+  <text x="612" y="126" text-anchor="start" font-size="13" fill="#5b6472">经记忆插件接入</text>
+
+  <!-- gateway -->
+  <rect x="40" y="164" width="380" height="140" rx="10" fill="#eaf2ff" stroke="#3b78d8" stroke-width="1.5"/>
+  <text x="60" y="194" font-size="17" font-weight="600" fill="#1c3f7a">Gateway</text>
+  <text x="400" y="194" text-anchor="end" font-size="13" fill="#3b78d8">#7871</text>
+  <text x="60" y="224" font-size="14" fill="#26364f">· 补上这次对话存过的会话 id</text>
+  <text x="60" y="250" font-size="14" fill="#26364f">· 压缩后告诉模型：原文还在，可以查</text>
+  <text x="60" y="276" font-size="14" fill="#26364f">· 限制每个上下文窗口的查询总量</text>
+
+  <!-- plugins -->
+  <rect x="460" y="164" width="380" height="140" rx="10" fill="#eaf7ee" stroke="#2f9150" stroke-width="1.5"/>
+  <text x="480" y="194" font-size="17" font-weight="600" fill="#1b5a30">记忆插件</text>
+  <text x="820" y="194" text-anchor="end" font-size="13" fill="#2f9150">#7872</text>
+  <text x="480" y="224" font-size="14" fill="#24402d">· 补上当前会话 id</text>
+  <text x="480" y="250" font-size="14" fill="#24402d">· 压缩或恢复后告诉模型：原文还在，可以查</text>
+  <text x="480" y="276" font-size="14" fill="#24402d">· 把对话完整、干净地存进 OpenViking</text>
+
+  <!-- arrows middle -> server -->
+  <path d="M230,304 L360,364" stroke="#5b6472" stroke-width="1.5" fill="none" marker-end="url(#arrow)"/>
+  <path d="M650,304 L520,364" stroke="#5b6472" stroke-width="1.5" fill="none" marker-end="url(#arrow)"/>
+  <text x="440" y="340" text-anchor="middle" font-size="13" fill="#5b6472">带上 session 的同一个调用</text>
+
+  <!-- server -->
+  <rect x="150" y="368" width="580" height="86" rx="10" fill="#fff4e3" stroke="#d98a1c" stroke-width="1.5"/>
+  <text x="170" y="398" font-size="17" font-weight="600" fill="#7a4a08">OpenViking server</text>
+  <text x="710" y="398" text-anchor="end" font-size="13" fill="#d98a1c">#7870</text>
+  <text x="170" y="428" font-size="14" fill="#4f3a1a">session_history：search / read / overview，REST 和 MCP 共用一份实现</text>
+
+  <!-- arrow server -> storage -->
+  <path d="M440,454 L440,484" stroke="#5b6472" stroke-width="1.5" fill="none" marker-end="url(#arrow)"/>
+
+  <!-- storage -->
+  <rect x="150" y="488" width="580" height="52" rx="10" fill="#f4f6f9" stroke="#8a94a3" stroke-width="1.5"/>
+  <text x="440" y="520" text-anchor="middle" font-size="14" fill="#3d4654">会话存储：历次归档 · 尚未归档的最新消息 · 被外置的大段工具输出</text>
+</svg>
