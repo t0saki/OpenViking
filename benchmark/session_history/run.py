@@ -316,6 +316,8 @@ async def ask(gateway, session, history, probe, settings, policy, key):
                 for c in calls
             ),
         ]
+    else:
+        result["error"] = f"still calling client tools after {settings.max_client_rounds} rounds"
     return result
 
 
@@ -361,6 +363,7 @@ def judge(probe, answer):
 
     With no such value the answer is ``correct`` when it contains the expected string on its
     own, else ``none``: it gave no value at all, which may be an abstention. An answer naming
+    only the expected value is ``ambiguous`` when a mention of it is negated. An answer naming
     both the stale and the expected value is correct only when every stale mention is marked
     as the earlier one, or every expected mention as the current one and no stale mention so,
     and no expected mention is marked as earlier or negated.
@@ -371,7 +374,9 @@ def judge(probe, answer):
     if not values:
         bounded = r"(?<![0-9a-z])" + re.escape(expected) + r"(?![0-9a-z]|[.-][0-9a-z])"
         return "correct" if expected and re.search(bounded, text) else "none"
-    if values == [expected]:
+    if values == [expected] and not any(
+        NEGATED.search(lead(text, start, found, 4).split(":")[-1]) for _, start, _ in found
+    ):
         return "correct"
     stale = normalized(probe.stale)
     if stale and set(values) == {stale, expected}:

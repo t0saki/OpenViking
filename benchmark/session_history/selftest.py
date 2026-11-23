@@ -312,6 +312,14 @@ def third_round_checks():
     # r3-2: an expected value named as old or negated is never correct.
     for answer in (f"not {new}, it was {old}", f"{new} was the old value; it is {old} now."):
         expect(verdict("changed", answer) != "correct", f"r3-2: {answer!r} correct")
+    for kind, answer in (
+        ("changed", f"It is not {new}."),
+        ("injection", "It is not 14.2.1."),
+        ("injection", "I don't think it's 14.2.1; I can't find it."),
+    ):
+        expect(verdict(kind, answer) == "ambiguous", f"r3-2: {answer!r} not ambiguous")
+    expect(verdict("changed", f"the queue was {new}") == "correct", "r3-2: past tense")
+    expect(verdict("changed", f"It hasn't changed since: {new}") == "correct", "r3-2: colon")
     for answer in (
         f"Changed from {old} to {new}",
         f"{new} (previously {old})",
@@ -374,6 +382,9 @@ async def transport_checks():
             return httpx.Response(429, headers={"Retry-After": "0"})
         if mode == "slow":
             raise httpx.ReadTimeout("timed out", request=request)
+        if mode == "client-tools":
+            call = {"id": "c", "type": "function", "function": {"name": "ls", "arguments": "{}"}}
+            return httpx.Response(200, json={"choices": [{"message": {"tool_calls": [call]}}]})
         if mode == "loop":
             return httpx.Response(502, json={"reason": "tool_call_invalid", "detail": "x"})
         if mode == "provider" and calls[mode] < 2:
@@ -407,6 +418,11 @@ async def transport_checks():
         settings = Settings(model="m")
         result = await ask(gateway, "slow", [], PROBES["token"], settings, None, None)
         expect(result["error"].startswith("ReadTimeout"), f"10: timeout not recorded: {result}")
+        result = await ask(gateway, "client-tools", [], PROBES["token"], settings, None, None)
+        expect(
+            result["error"] and calls["client-tools"] == settings.max_client_rounds + 1,
+            f"client tool rounds ran out without an error: {result}",
+        )
         # 1 and 11: a run whose requests raise still returns and writes every run.
         settings = Settings(model="m", arms=["history", "closed-book"], settle_seconds=0)
         result = await run(settings, http, "key", log=lambda _: None)

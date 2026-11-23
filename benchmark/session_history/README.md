@@ -251,6 +251,8 @@ the probes go through the real `session_history` code path:
 uv run --no-sync python -m benchmark.session_history.smoke_e2e --context-window 32000
 ```
 
+It exits non-zero when a run's checks are not valid, or when its gap probe is invalid although the gap compaction was attempted.
+
 ## Limits
 
 - The gap needle lies inside the span its own compaction summarises, so in every arm a correct

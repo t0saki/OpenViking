@@ -169,7 +169,16 @@ async def main(argv=None):
             print("     ", probe["answer"][:160].replace("\n", " "))
     if args.output_dir:
         write(result, args.output_dir)
-    return 0
+    invalid = [
+        item
+        for item in result["runs"]
+        if not item["checks"]["valid"]
+        or (
+            item["checks"].get("gap_compaction", "not_run") != "not_run"
+            and not item["checks"]["gap_probe_valid"]
+        )
+    ]
+    return 1 if invalid else 0
 
 
 if __name__ == "__main__":
